@@ -268,6 +268,130 @@ class LocalFolderHierarchyTest {
         assertThat(inventory.get(pageId).version()).isEqualTo(current.version());
     }
 
+    @Test
+    void referenceStorageKeepsCompleteStructuredTextAndOnlyABoundedPreviewInTheSnapshot() throws IOException {
+        KnowledgeSourceHarvestSource source = open();
+        String pageId = id("notiz.txt");
+        PageMetadata metadata = source.pageMetadata(pageId);
+        Path storeDirectory = directory.resolve(".extraction-store");
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(storeDirectory);
+        var documents = new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                new TikaDocumentStructure(), store,
+                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS, 8);
+        var storage = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
+                new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(documents),
+                LocalFilesTextProjector::readable);
+        var snapshots = new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source), storage);
+        var first = snapshots.fetch("docs", metadata);
+        var reference = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                .read(first.payload()).orElseThrow();
+
+        assertThat(first.metadata()).isEqualTo(metadata);
+        assertThat(first.payload().nativeFormat()).isEqualTo(
+                com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.FORMAT);
+        assertThat(reference.originalSha256()).isNotEqualTo(first.payload().rawSha256());
+        assertThat(reference.preview()).isEqualTo("Eine Dat");
+        assertThat(reference.previewTruncated()).isTrue();
+        assertThat(reference.status()).isEqualTo(
+                com.aresstack.spaceharvester.application.assets.ExtractionStatus.OK);
+        assertThat(reference.extractionKey()).isNotNull();
+        assertThat(store.find(reference.extractionKey())).hasValueSatisfying(extraction -> {
+            try (var sections = documents.indexSections(extraction)) {
+                assertThat(sections.map(section -> section.text()).toList())
+                        .containsExactly("Eine Datei an der Wurzel");
+            }
+        });
+        assertThat(snapshots.fetch("docs", pageId).payload()).isEqualTo(first.payload());
+        snapshots.maxTextBytes(() -> 1024);
+        assertThat(new String(snapshots.original("docs", metadata), StandardCharsets.UTF_8))
+                .isEqualTo("Eine Datei an der Wurzel");
+        assertThat(Files.readString(directory.resolve("notiz.txt"))).isEqualTo("Eine Datei an der Wurzel");
+        assertThat(new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source))
+                .fetch("docs", metadata).payload().nativeFormat()).isEqualTo("file");
+    }
+
+    @Test
+    void aChangedOriginalCannotPublishItsStagedStructuredExtraction() throws IOException {
+        KnowledgeSourceHarvestSource source = open();
+        Path file = directory.resolve("notiz.txt");
+        PageMetadata metadata = source.pageMetadata(id("notiz.txt"));
+        String hash = new com.aresstack.spaceharvester.application.snapshot.NativePayload(
+                Files.readAllBytes(file), "text/plain", "file").rawSha256();
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
+                directory.resolve(".extraction-store"));
+        var structure = new TikaDocumentStructure();
+        var changing = new com.aresstack.spaceharvester.application.assets.DocumentStructure() {
+            @Override
+            public String id() {
+                return structure.id();
+            }
+
+            @Override
+            public String version() {
+                return structure.version();
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.assets.StructuredDocument extract(
+                    Path original, String title, String mediaType,
+                    com.aresstack.spaceharvester.application.assets.ExtractionLimits limits,
+                    com.aresstack.spaceharvester.application.assets.StructureSink sink) {
+                var result = structure.extract(original, title, mediaType, limits, sink);
+                try {
+                    Files.writeString(original, "Changed during parsing");
+                } catch (IOException failure) {
+                    throw new java.io.UncheckedIOException(failure);
+                }
+                return result;
+            }
+        };
+        var documents = new com.aresstack.spaceharvester.application.assets.DocumentExtractions(changing, store,
+                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS);
+        var direct = new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(documents);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> direct.extract(source, metadata, type -> true))
+                .isInstanceOf(com.aresstack.spaceharvester.application.sources.SourceAccessException.class);
+        assertThat(store.find(documents.key(hash))).isEmpty();
+    }
+
+    @Test
+    void referenceStrategyDoesNotChangeFolderOrVideoStorageAndMarksUnsupportedFiles() throws IOException {
+        Files.write(directory.resolve("unknown.zzz"), new byte[] {1, 2, 3});
+        Files.write(directory.resolve("aufnahme.mp4"), new byte[] {1, 2, 3});
+        KnowledgeSourceHarvestSource source = open();
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
+                directory.resolve(".extraction-store"));
+        var storage = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
+                new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(
+                        new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                                new TikaDocumentStructure(), store,
+                                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS)),
+                LocalFilesTextProjector::readable);
+        var snapshots = new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source), storage);
+        assertThat(snapshots.fetch("docs", id("Handbuch")).payload().nativeFormat()).isEqualTo("local-folder");
+        assertThat(snapshots.fetch("docs", id("aufnahme.mp4")).payload().nativeFormat())
+                .isEqualTo("remote-media-metadata");
+        var reference = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                .read(snapshots.fetch("docs", id("unknown.zzz")).payload()).orElseThrow();
+        assertThat(reference.status()).isEqualTo(
+                com.aresstack.spaceharvester.application.assets.ExtractionStatus.UNSUPPORTED);
+        assertThat(reference.originalSha256()).isNull();
+        assertThat(reference.preview()).isEmpty();
+    }
+
+    private static com.aresstack.spaceharvester.application.sources.SourceCatalog catalog(HarvestSource source) {
+        return new com.aresstack.spaceharvester.application.sources.SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public java.util.Optional<HarvestSource> find(String sourceId) {
+                return java.util.Optional.of(source).filter(item -> item.id().equals(sourceId));
+            }
+        };
+    }
+
     private Map<String, PageMetadata> list(KnowledgeSourceHarvestSource source, int limit) {
         Map<String, PageMetadata> pages = new LinkedHashMap<>();
         String cursor = null;
