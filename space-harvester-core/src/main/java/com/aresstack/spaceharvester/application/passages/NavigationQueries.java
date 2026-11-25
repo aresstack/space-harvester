@@ -40,6 +40,10 @@ public final class NavigationQueries {
     public DocumentNavigationView page(AccessContext caller, String sourceId, String pageId) {
         DeliveredPage page = pages.cached(caller, sourceId, pageId)
                 .orElseGet(() -> pages.page(caller, sourceId, pageId, false));
+        var local = enrichments.localReading(page.snapshot());
+        if (local.isPresent()) {
+            return local.get().navigation();
+        }
         PageText text = text(page);
         DocumentNavigationView navigation = read(page, text);
         if (text == null || navigation.state() == PagePassages.State.CURRENT
