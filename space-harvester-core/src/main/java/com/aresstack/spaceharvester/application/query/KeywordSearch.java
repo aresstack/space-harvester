@@ -958,6 +958,12 @@ public class KeywordSearch {
     }
 
     /** Was jetzt lädt, nach der Strategie; scheitert sie, lädt nichts, die Funde bleiben vorläufig. */
+    /** Keep implicit search extensions inside the configured global source scope. */
+    public boolean includesSource(Query query, String sourceId) {
+        return query.sourceId() != null || !query.sourceIds().isEmpty() || query.pages() != null
+                || catalog.includeInGlobalSearch(sourceId);
+    }
+
     public boolean allowsPrefetch(String sourceId) {
         return prefetch != null && prefetching.test(sourceId);
     }
@@ -1606,7 +1612,7 @@ public class KeywordSearch {
 
         PageSearchQuery scope() {
             return new PageSearchQuery(sourceId, sourceIds, spaceKeys, List.of(), null, null, null, null, null,
-                    SearchSort.TITLE);
+                    SearchSort.TITLE, pages);
         }
     }
 

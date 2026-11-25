@@ -361,11 +361,18 @@ public final class ChatTurn {
      * globale Suche des Modells durchsuchen darf (die für die KI freigegebenen); {@code null} lässt das Werkzeug weg.
      */
     public ChatTurn appSearch(java.util.function.Supplier<Set<String>> sources) {
+        return appSearch(sources, sources);
+    }
+
+    public ChatTurn appSearch(java.util.function.Supplier<Set<String>> sources,
+                              java.util.function.Supplier<Set<String>> explicitSources) {
         this.appSources = sources;
+        this.explicitAppSources = explicitSources;
         return this;
     }
 
     private java.util.function.Supplier<Set<String>> appSources;
+    private java.util.function.Supplier<Set<String>> explicitAppSources;
 
     /**
      * Suchagent (Angelo 24.11.2026): In der Suche, und ohne gewählten Bereich, recherchiert das Modell mit den
@@ -603,7 +610,7 @@ public final class ChatTurn {
             running.termLookup(termLookup);
         }
         if (appSources != null) {
-            running.appSearch(appSources);
+            running.appSearch(appSources, explicitAppSources);
         }
         tools = running;
         toolset = new ChatToolset() {

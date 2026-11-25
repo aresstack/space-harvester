@@ -1053,7 +1053,7 @@ public final class Harvester implements AutoCloseable {
                     new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
                     HitScorer.of(excerpts), runLog, new NeighborCandidates(pageConnections),
                     new com.aresstack.spaceharvester.application.query.progressive.BackgroundNeighborLoader(pageLoads,
-                            backgroundJobs, keywordSearch::allowsPrefetch), termSearch);
+                            backgroundJobs, keywordSearch::allowsPrefetch), termSearch, keywordSearch::includesSource);
             // R2: dieselbe Methode zur Schlagwortsuche ohne progressive Suche, als eigener Aufruf nach einem Stapel.
             this.neighborSearch = new NeighborSearch(keywordSearch, new NeighborCandidates(pageConnections),
                     new com.aresstack.spaceharvester.application.query.progressive.BackgroundNeighborLoader(pageLoads,
@@ -1136,6 +1136,7 @@ public final class Harvester implements AutoCloseable {
                                     trustBundles, builder.userAgent)))
                     // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Rechners.
                     .perDay(java.time.ZoneId.systemDefault())
+                    .globalSources(catalog::includeInGlobalSearch)
                     // Bereichszusammenfassung (ADR 0034 §7, Angelo 24.11.2026): Bestand statt Änderungen, alle Seiten.
                     .areas(holdings);
             opened.add(changeLog);

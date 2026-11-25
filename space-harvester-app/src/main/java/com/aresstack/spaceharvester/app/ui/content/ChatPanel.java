@@ -1664,14 +1664,18 @@ public final class ChatPanel extends JPanel {
 
     /** Die Wissensquellen, die die interne Suche durchsuchen darf: alle für die KI freigegebenen (ADR 0028). */
     static Set<String> appSearchSources(AppSettings settings, AppRuntime runtime) {
+        return appSearchSources(settings, runtime, false);
+    }
+
+    private static Set<String> appSearchSources(AppSettings settings, AppRuntime runtime, boolean explicit) {
         if (runtime == null) {
             return Set.of();
         }
         Set<String> ids = new java.util.TreeSet<>();
         for (HarvestSource source : runtime.workspace().sources()) {
-            if (allowed(settings, source.id()) && settings.sources().stream()
+            if (allowed(settings, source.id()) && (explicit || settings.sources().stream()
                     .filter(entry -> entry.id().equals(source.id()))
-                    .allMatch(entry -> entry.config().includeInGlobalSearch())) {
+                    .allMatch(entry -> entry.config().includeInGlobalSearch()))) {
                 ids.add(source.id());
             }
         }
@@ -2188,7 +2192,8 @@ public final class ChatPanel extends JPanel {
             turn.searchingNeighbors(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().neighbors());
             // Interne Suche: die globale Suche über die freigegebenen Wissensquellen, gelesen beim Aufruf.
             if (appSearchOn) {
-                turn.appSearch(() -> appSearchSources(context.settings(), context.runtime()));
+                turn.appSearch(() -> appSearchSources(context.settings(), context.runtime()),
+                        () -> appSearchSources(context.settings(), context.runtime(), true));
             }
             // K5a: ebenso der Suchmethode „Synonyme der Fachbegriffe“.
             turn.searchingGlossarySynonyms(
