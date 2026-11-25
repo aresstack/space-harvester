@@ -191,8 +191,9 @@ class ChatBurstTest {
             layoutAll(panel[0]);
             List<Component> rows = panel[0].transcriptRows();
             int answerRow = indexOf(rows, row -> row instanceof AssistantMarkdownMessage);
-            int links = indexOf(rows, row -> row instanceof ChatPanel.SourceLinks);
-            assertThat(links).as("Quellen unter der Antwort").isEqualTo(answerRow + 1);
+            AssistantMarkdownMessage message = (AssistantMarkdownMessage) rows.get(answerRow);
+            assertThat(message.sources()).as("Quellen im Antwort-Footer").isInstanceOf(ChatPanel.SourceLinks.class);
+            assertThat(message.sources().isVisible()).isTrue();
             assertThat(rows.get(answerRow).getY()).as("Antwort genau an der Stelle der gelben Blase, ohne Lücke")
                     .isEqualTo(thoughtY[0]);
             shot(panel[0], "3-antwort");
@@ -211,7 +212,7 @@ class ChatBurstTest {
     }
 
     private static boolean sourcesShown(ChatPanel panel) {
-        return panel.transcriptRows().stream().anyMatch(row -> row instanceof ChatPanel.SourceLinks);
+        return panel.sourceLinks().stream().anyMatch(Component::isVisible);
     }
 
     private static int indexOf(List<Component> rows, java.util.function.Predicate<Component> test) {

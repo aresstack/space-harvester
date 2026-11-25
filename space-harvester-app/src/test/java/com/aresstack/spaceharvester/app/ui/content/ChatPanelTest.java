@@ -147,13 +147,20 @@ class ChatPanelTest {
             copies.get(1).doClick();
             assertThat(copied).containsExactly("Frühere Frage", "Frühere Antwort");
             assertThat(copies.get(1).isConfirming()).isTrue();
-            // Links vom Kopierknopf der QR-Knopf (Angelo 24.11.2026): öffnet die Nachricht als QR-Code.
+            // Keep the QR action to the right of the timestamp on both message types.
             java.util.List<com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton> qrs = new java.util.ArrayList<>();
             collect(panel[0], com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton.class, qrs);
             assertThat(qrs).hasSize(5);
             assertThat(qrs.get(0).getParent()).isSameAs(copies.get(0).getParent());
             assertThat(qrs.get(0).getParent().getComponentZOrder(qrs.get(0)))
-                    .isLessThan(qrs.get(0).getParent().getComponentZOrder(copies.get(0)));
+                    .isGreaterThan(qrs.get(0).getParent().getComponentZOrder(copies.get(0)));
+            for (com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton qr : qrs) {
+                java.awt.Container controls = qr.getParent();
+                int index = controls.getComponentZOrder(qr);
+                assertThat(index).isPositive();
+                assertThat(controls.getComponent(index - 1))
+                        .isInstanceOf(com.aresstack.spaceharvester.app.ui.markdown.MessageTimestamp.class);
+            }
             java.util.List<String> shown = new java.util.ArrayList<>();
             panel[0].setQrCodes((name, text) -> shown.add(text));
             qrs.get(0).doClick();
