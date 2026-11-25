@@ -868,7 +868,7 @@ public final class ChatPanel extends JPanel {
             public void preview(String text) {
                 if (dictationPhase == DictationPhase.RECORDING) {
                     String value = text == null ? "" : text.strip();
-                    dictationPreview.setText(value.isEmpty() ? "" : "Vorschau: " + value);
+                    dictationPreview.setText(value.isEmpty() ? "" : "Live-Ausschnitt: " + value);
                     dictationPreview.setVisible(!value.isEmpty());
                     dictationPreview.setCaretPosition(dictationPreview.getDocument().getLength());
                     dictationPreview.getParent().revalidate();
