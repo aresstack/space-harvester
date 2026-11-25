@@ -1103,12 +1103,13 @@ public final class MainWindow implements AppContext.Navigator {
         }
         boolean leftSearch = changed && current == AppContext.Section.SEARCH;
         current = section;
-        placeDocumentNavigation(section);
         if (!followingDocumentHistory && leftSearch && explorer.scopes().isEmpty() && !explorer.allSelected()) {
             // Raus aus der Suche ohne Auswahl: „Wissensquellen“ wird gewählt und gelb markiert, als hätte man es
             // angeklickt (Angelo, 24.11.2026).
             explorer.selectAll();
         }
+        content.searchFront(section == AppContext.Section.SEARCH);
+        placeDocumentNavigation(section);
         placeOverlay();
         if (changed && section == AppContext.Section.SEARCH) {
             // Gesucht wird in dem, was links gewählt ist; nur der Suchreiter von Hand hebt die Auswahl auf.

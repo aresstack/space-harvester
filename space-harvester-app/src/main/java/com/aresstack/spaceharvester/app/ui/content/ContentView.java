@@ -28,6 +28,7 @@ public final class ContentView implements View {
     private final JPanel root = new JPanel(new BorderLayout());
     private final LocationBar crumbs = new LocationBar();
     private JPanel historyHeader;
+    private boolean searchFront;
     /** Pfad der gezeigten Seite, sobald der Core ihn geliefert hat: die Vorfahren in der Bereichsanzeige. */
     private com.aresstack.spaceharvester.application.navigation.PageNavigation.Position position;
     private java.util.function.Consumer<com.aresstack.spaceharvester.application.navigation.PageNavigation.Position>
@@ -74,6 +75,7 @@ public final class ContentView implements View {
         });
         // Zurück/Vor (im Viewer-Header, Maustasten): Bereichsanzeige und Baum folgen dem wieder gezeigten Ort.
         detail.onNavigated(place -> {
+            allSources = false;
             sourceId = place.sourceId();
             spaceKey = place.page() ? null : place.spaceKey();
             renderCrumbs();
@@ -363,12 +365,13 @@ public final class ContentView implements View {
      * „Chat“ (Angelo, 13.11.2026); {@code null} ohne Auswahl.
      */
     public void selection(ExportPanel.Selection selection) {
-        folder = selection instanceof ExportPanel.Selection.Collection collection ? collection : null;
         detail.export().selection(selection);
-        // Der Chat löst die Auswahl im Core zu Seiten auf (ADR 0029) und frischt sie bei Bestandsmeldungen auf; der
-        // Graph grenzt sich auf dieselben Seiten ein, ohne ein zweites Mal aufzulösen.
         detail.chat().onResolved(resolved -> detail.graph().within(resolved == null ? null : resolved.pages()));
         detail.chat().selection(selection);
+        if (searchFront) {
+            return;
+        }
+        folder = selection instanceof ExportPanel.Selection.Collection collection ? collection : null;
         detail.standing().selection(selection);
         detail.overviewSelection(selection);
         // Eine Seite zeigt unter „Analysen“ ihre eigenen Analysen, jede weitere Ebene den Stand der Auswahl.
@@ -452,6 +455,12 @@ public final class ContentView implements View {
             historyHeader.revalidate();
             historyHeader.repaint();
         }
+    }
+
+    /** Keep search filters separate from the displayed document and its navigation history. */
+    public void searchFront(boolean active) {
+        searchFront = active;
+        detail.searchFront(active);
     }
 
     public void beforeHistoryNavigation(Runnable listener) {

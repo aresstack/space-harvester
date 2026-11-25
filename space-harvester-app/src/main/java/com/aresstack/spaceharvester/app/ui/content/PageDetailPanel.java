@@ -546,6 +546,7 @@ public final class PageDetailPanel extends JPanel {
     /** Solange Zurück/Vor lädt, kommt die verlassene Seite nicht noch einmal in den Verlauf. */
     private boolean navigating;
     private Runnable beforeHistoryNavigation = () -> { };
+    private boolean searchFront;
     /** Zählt Link-Aktivierungen; nur die Auflösung des zuletzt geklickten Links wirkt. */
     private int linkRequest;
     /** Anker des Links, der die gerade ladende Seite geöffnet hat; die Leseansicht rollt dorthin. */
@@ -952,16 +953,12 @@ public final class PageDetailPanel extends JPanel {
         backButton.navigator(new com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator() {
             @Override
             public com.aresstack.spaceharvester.app.ui.controls.BackButton.History history() {
-                return new com.aresstack.spaceharvester.app.ui.controls.BackButton.History(names(forwardStack), names(backStack));
+                return documentHistory();
             }
 
             @Override
             public void go(int steps) {
-                if (steps < 0) {
-                    step(backStack, forwardStack, -steps);
-                } else if (steps > 0) {
-                    step(forwardStack, backStack, steps);
-                }
+                navigateHistory(steps);
             }
         });
         updateNavigation();
@@ -3897,16 +3894,16 @@ public final class PageDetailPanel extends JPanel {
 
     /** Zurück zum zuvor Gezeigten; das Aktuelle kommt in den Vor-Verlauf. */
     public boolean back() {
-        return step(backStack, forwardStack);
+        return navigateHistory(-1);
     }
 
     /** Vor zum zuletzt per Zurück Verlassenen. */
     public boolean forward() {
-        return step(forwardStack, backStack);
+        return navigateHistory(1);
     }
 
     public boolean canGoBack() {
-        return !backStack.isEmpty();
+        return searchFront && current() != null || !backStack.isEmpty();
     }
 
     public boolean canGoForward() {
@@ -3923,8 +3920,41 @@ public final class PageDetailPanel extends JPanel {
         beforeHistoryNavigation = java.util.Objects.requireNonNull(listener, "listener");
     }
 
-    private boolean step(java.util.Deque<Place> from, java.util.Deque<Place> to) {
-        return step(from, to, 1);
+    void searchFront(boolean active) {
+        searchFront = active;
+        updateNavigation();
+    }
+
+    private com.aresstack.spaceharvester.app.ui.controls.BackButton.History documentHistory() {
+        List<String> back = new java.util.ArrayList<>();
+        Place shown = current();
+        if (searchFront && shown != null) {
+            back.addAll(names(new java.util.ArrayDeque<>(List.of(shown))));
+        }
+        back.addAll(names(backStack));
+        return new com.aresstack.spaceharvester.app.ui.controls.BackButton.History(names(forwardStack), back);
+    }
+
+    /** Return to the last document first when the search temporarily covers the document viewer. */
+    private boolean navigateHistory(int steps) {
+        if (steps == 0 || context.runtime() == null) {
+            return false;
+        }
+        Place shown = current();
+        if (steps < 0 && searchFront && shown != null) {
+            int remaining = -steps - 1;
+            if (remaining > backStack.size()) {
+                return false;
+            }
+            if (remaining == 0) {
+                beforeHistoryNavigation.run();
+                searchFront(false);
+                navigated.accept(shown);
+                return true;
+            }
+            return step(backStack, forwardStack, remaining);
+        }
+        return steps < 0 ? step(backStack, forwardStack, -steps) : step(forwardStack, backStack, steps);
     }
 
     /** Springt {@code steps} Orte weit; die übersprungenen wandern ungeladen in den Verlauf der Gegenrichtung. */
@@ -3933,6 +3963,7 @@ public final class PageDetailPanel extends JPanel {
             return false;
         }
         beforeHistoryNavigation.run();
+        searchFront = false;
         Place now = current();
         Place next = null;
         for (int i = 0; i < steps; i++) {
