@@ -24,6 +24,11 @@ public interface PageContentFetcher {
         return fetch(sourceId, expected.pageId());
     }
 
+    /** Whether a source may extract a local original during a first read, without cached metadata. */
+    default boolean mayExtractLocalOriginal(String sourceId) {
+        return false;
+    }
+
     /** Ob {@link #fetch(String, PageMetadata)} die Datei dieser Kopfdaten ganz lädt; Standard: immer. */
     default boolean loadsWhole(PageMetadata metadata) {
         return true;

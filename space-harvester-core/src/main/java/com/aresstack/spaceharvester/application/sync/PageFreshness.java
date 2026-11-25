@@ -154,7 +154,8 @@ public class PageFreshness {
         Future<Refreshed> check = CHECKS.submit(() -> checkNow(sourceId, pageId, cachedHeader, cachedSnapshot,
                 permitted));
         // Eine zu große Datei braucht für ihren Textauszug das ganze Original: dafür die eigene, längere Frist.
-        Duration deadline = cachedHeader.filter(header -> !fetcher.loadsWhole(header.metadata())).isPresent()
+        Duration deadline = fetcher.mayExtractLocalOriginal(sourceId)
+                || cachedHeader.filter(header -> !fetcher.loadsWhole(header.metadata())).isPresent()
                 ? largeFileTimeout : timeout;
         try {
             return check.get(deadline.toMillis(), TimeUnit.MILLISECONDS);
