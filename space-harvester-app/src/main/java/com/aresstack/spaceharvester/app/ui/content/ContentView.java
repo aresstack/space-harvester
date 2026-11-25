@@ -71,7 +71,7 @@ public final class ContentView implements View {
             renderCrumbs();
             positionListener.accept(shown);
         });
-        // Zurück/Vor (an der Suchleiste, Maustasten): Bereichsanzeige und Baum folgen dem wieder gezeigten Ort.
+        // Zurück/Vor (im Viewer-Header, Maustasten): Bereichsanzeige und Baum folgen dem wieder gezeigten Ort.
         detail.onNavigated(place -> {
             sourceId = place.sourceId();
             spaceKey = place.page() ? null : place.spaceKey();
@@ -89,7 +89,7 @@ public final class ContentView implements View {
                 BorderFactory.createEmptyBorder(4, 12, 4, 12)));
         // Eine Zeile statt zwei (Angelo, 16.11.2026): links, wo die Seite liegt, mittig ihre Überschrift, rechts Stern
         // und das Dreieck mit den weiteren Aktionen. Die Überschrift kürzt sich mit „…“, wenn der Platz nicht reicht.
-        top.add(crumbs, BorderLayout.WEST);
+        top.add(locationHeader(), BorderLayout.WEST);
         top.add(detail.headerTitle(), BorderLayout.CENTER);
         top.add(detail.headerActions(), BorderLayout.EAST);
 
@@ -419,9 +419,23 @@ public final class ContentView implements View {
         detail.showExport();
     }
 
-    /** Zurück und Vor der Seitenansicht links an der Suchleiste des Hauptfensters (Angelo, 24.11.2026). */
-    public JComponent navigation() {
-        return detail.navigation();
+    /** Keep the existing history button immediately before the breadcrumb, within its original width budget. */
+    private JComponent locationHeader() {
+        JComponent navigation = detail.navigation();
+        JPanel header = new JPanel(new BorderLayout(6, 0)) {
+            @Override
+            public java.awt.Dimension getPreferredSize() {
+                int available = getParent() == null ? 0 : getParent().getWidth();
+                java.awt.Dimension button = navigation.getPreferredSize();
+                int reserved = button.width + 6;
+                java.awt.Dimension path = crumbs.preferredSizeForWidth(available, reserved);
+                return new java.awt.Dimension(reserved + path.width, Math.max(button.height, path.height));
+            }
+        };
+        header.setOpaque(false);
+        header.add(navigation, BorderLayout.WEST);
+        header.add(crumbs, BorderLayout.CENTER);
+        return header;
     }
 
     PageDetailPanel detail() {

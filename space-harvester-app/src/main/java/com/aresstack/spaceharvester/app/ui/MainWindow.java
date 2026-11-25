@@ -681,7 +681,7 @@ public final class MainWindow implements AppContext.Navigator {
 
         // Gesamtstand aller Aufträge; Anhalten und Abbrechen stehen für alle zugleich in der Kopfzeile der Aufträge.
         jobStatus = new JobStatusLine(context.events());
-        backForward(content.navigation());
+        backForward(null);
         // Verlangt eine Quelle einen Einmalcode, steht es ganz links; der Klick führt zum Codefeld unter „Aufträge“.
         signInNotice = new SignInNotice(context, request -> {
             show(AppContext.Section.ACTIVITIES);
@@ -1111,8 +1111,8 @@ public final class MainWindow implements AppContext.Navigator {
             // angeklickt (Angelo, 24.11.2026).
             explorer.selectAll();
         }
-        // Zurück und Vor an der Suchleiste blättern in der Suche zwischen ihren Suchen und Filtern, sonst in den Seiten.
-        backForward(section == AppContext.Section.SEARCH ? searchView.navigation() : content.navigation());
+        // Keep search history with the search field and document history with the viewer.
+        backForward(section == AppContext.Section.SEARCH ? searchView.navigation() : null);
         placeOverlay();
         if (changed && section == AppContext.Section.SEARCH) {
             // Gesucht wird in dem, was links gewählt ist; nur der Suchreiter von Hand hebt die Auswahl auf.
@@ -1158,7 +1158,10 @@ public final class MainWindow implements AppContext.Navigator {
     /** Setzt Zurück und Vor eines Bereichs links an die Suchleiste. */
     private void backForward(JComponent buttons) {
         backForward.removeAll();
-        backForward.add(buttons, BorderLayout.CENTER);
+        if (buttons != null) {
+            backForward.add(buttons, BorderLayout.CENTER);
+        }
+        backForward.setVisible(buttons != null);
         backForward.revalidate();
         backForward.repaint();
         if (searchSlot != null) {

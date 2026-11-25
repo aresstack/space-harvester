@@ -141,9 +141,15 @@ final class LocationBar extends JPanel {
 
     @Override
     public Dimension getPreferredSize() {
-        int full = fullWidth();
         int available = getParent() == null ? 0 : getParent().getWidth();
-        return new Dimension(available <= 0 ? full : Math.min(full, (int) (available * SHARE)), rowHeight());
+        return preferredSizeForWidth(available, 0);
+    }
+
+    /** Preserve the header width share when a leading navigation control uses part of it. */
+    Dimension preferredSizeForWidth(int available, int reserved) {
+        int full = fullWidth();
+        int budget = Math.max(0, (int) (available * SHARE) - reserved);
+        return new Dimension(available <= 0 ? full : Math.min(full, budget), rowHeight());
     }
 
     @Override
