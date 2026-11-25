@@ -19,4 +19,10 @@ To update, verify the new upstream commit and license, copy only src/main/java
 and src/main/antlr4 plus LICENSE, inspect changes, regenerate parsers and run
 the integration tests. Do not copy third-party test data without license review.
 
+The SHA-256 manifest covers the 1,122 imported files (including LICENSE),
+verified against the pinned upstream checkout. Hashes normalize CRLF to LF.
+The Gradle task `verifyUpstreamCopy` checks for modified, missing and additional
+files before compiling; regenerate the manifest from the verified upstream
+snapshot when updating the import.
+
 Issue: #1422.

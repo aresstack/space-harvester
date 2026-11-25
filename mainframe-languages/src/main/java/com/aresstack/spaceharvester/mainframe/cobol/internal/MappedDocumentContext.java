@@ -21,6 +21,10 @@ final class MappedDocumentContext extends CobolDocumentContext {
     private MappedCobolText.Builder output = new MappedCobolText.Builder();
     private List<ReplaceClauseContext> clauses = List.of();
 
+    void appendToken(MappedCobolText source, org.antlr.v4.runtime.Token token) {
+        source.appendTokenTo(output, token);
+    }
+
     void append(MappedCobolText text) {
         output.append(text);
     }
@@ -61,7 +65,11 @@ final class MappedDocumentContext extends CobolDocumentContext {
             }
             String expression = Arrays.stream(from.split("\\s+"))
                     .map(Pattern::quote).collect(Collectors.joining("[\\r\\n\\s]+"));
-            result = result.replace(Pattern.compile(expression), to);
+            boolean word = clause.replaceable().cobolWord() != null;
+            if (word) {
+                expression = "(?<![A-Za-z0-9_-])" + expression + "(?![A-Za-z0-9_-])";
+            }
+            result = result.replace(Pattern.compile(expression, word ? Pattern.CASE_INSENSITIVE : 0), to);
         }
         output = new MappedCobolText.Builder();
         output.append(result);

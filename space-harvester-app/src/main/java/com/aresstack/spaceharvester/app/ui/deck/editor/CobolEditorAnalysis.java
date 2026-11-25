@@ -6,7 +6,6 @@ import com.aresstack.spaceharvester.mainframe.cobol.CobolAnalysis;
 import com.aresstack.spaceharvester.mainframe.cobol.CobolAnalyzer;
 import com.aresstack.spaceharvester.mainframe.cobol.CobolSource;
 import com.aresstack.spaceharvester.mainframe.cobol.CopybookResolver;
-import com.aresstack.spaceharvester.mainframe.cobol.internal.ProLeapCobolAnalyzer;
 import com.aresstack.spaceharvester.mainframe.dependency.SourceRelations;
 import com.aresstack.spaceharvester.mainframe.outline.Outline;
 
@@ -23,9 +22,11 @@ final class CobolEditorAnalysis {
     private final CopybookResolver resolver;
     private final String location;
     private final long revision;
+    private String analyzedText;
+    private Result analyzedResult;
 
     CobolEditorAnalysis(DocumentStore store, String location, long revision) {
-        this.analyzer = new ProLeapCobolAnalyzer();
+        this.analyzer = CobolAnalyzer.proLeap();
         this.resolver = new EditorCopybookResolver(store);
         this.location = location;
         this.revision = revision;
@@ -35,10 +36,15 @@ final class CobolEditorAnalysis {
         return location.equals(currentLocation) && revision == currentRevision;
     }
 
-    Result analyze(String text, SourceRelations relations) {
+    synchronized Result analyze(String text, SourceRelations relations) {
+        if (analyzedResult != null && text.equals(analyzedText)) {
+            return analyzedResult;
+        }
         CobolSource source = CobolSource.fixed(location, text);
         CobolAnalysis analysis = analyzer.analyze(source, resolver);
-        return new Result(Outline.fromCobolAnalysis(source, analysis), relations.analyzeCobol(source, analysis));
+        analyzedResult = new Result(Outline.fromCobolAnalysis(source, analysis), relations.analyzeCobol(source, analysis));
+        analyzedText = text;
+        return analyzedResult;
     }
 
     /** Cache positive and negative sibling resolutions for a loaded editor revision. */

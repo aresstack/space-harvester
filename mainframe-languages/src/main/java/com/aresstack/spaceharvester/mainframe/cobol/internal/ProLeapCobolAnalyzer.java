@@ -62,7 +62,7 @@ public final class ProLeapCobolAnalyzer implements CobolAnalyzer {
     private Program buildSemanticModel(CobolSource source, MappedCobolText prepared, CommonTokenStream tokens,
                                        CobolParser.StartRuleContext tree, List<Diagnostic> diagnostics) {
         // Do not treat a recovered or incomplete syntax tree as a complete semantic graph.
-        if (!diagnostics.isEmpty()) {
+        if (diagnostics.stream().anyMatch(d -> d.kind() == CobolAnalysis.DiagnosticKind.SYNTAX_ERROR)) {
             return null;
         }
         try {

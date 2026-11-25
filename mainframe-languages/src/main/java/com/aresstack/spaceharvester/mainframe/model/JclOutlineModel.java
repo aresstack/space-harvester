@@ -49,11 +49,15 @@ public class JclOutlineModel {
     // ── COBOL helpers ───────────────────────────────────────────────
 
     public List<JclElement> getDivisions() {
-        return filterByType(JclElementType.DIVISION);
+        return elements.stream().filter(e -> e.getType() == JclElementType.DIVISION
+                || e.getType() == JclElementType.PROCEDURE_DIVISION).toList();
     }
 
     public List<JclElement> getSections() {
-        return filterByType(JclElementType.SECTION);
+        return elements.stream().filter(e -> switch (e.getType()) {
+            case SECTION, WORKING_STORAGE, LINKAGE_SECTION, FILE_SECTION, SCREEN_SECTION -> true;
+            default -> false;
+        }).toList();
     }
 
     public List<JclElement> getParagraphs() {

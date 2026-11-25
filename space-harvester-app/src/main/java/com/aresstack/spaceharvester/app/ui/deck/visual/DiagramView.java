@@ -369,6 +369,7 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
         String text = editor.text();
         String name = editor.session().name();
         Optional<SourceLanguage> language = editor.language();
+        var preparedOutline = editor.cobolDiagramOutline(text);
         DiagramType wanted = type;
         int depth = mindmapDepth;
         boolean compact = collapsed;
@@ -384,7 +385,8 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
                             wanted, false);
                 }
                 VisualAction.takeLabelProblem();
-                return SourceDiagrams.generate(text, name, language, wanted, depth, compact, auto, targets);
+                return SourceDiagrams.generate(text, name, language, wanted, depth, compact, auto, targets,
+                        preparedOutline.get());
             }
 
             @Override
@@ -503,10 +505,14 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
         if (dot > 0) {
             base = base.substring(0, dot);
         }
+        String exportText = editor.text();
+        String exportName = editor.session().name();
+        Optional<SourceLanguage> exportLanguage = editor.language();
+        var exportOutline = editor.cobolDiagramOutline(exportText);
         Runnable fullRegenerator = mermaid ? null : () -> {
             // Vollständiges (nicht kompaktes) Diagramm für den Export, wie MainframeMate
-            SourceDiagrams.Result full = SourceDiagrams.generate(editor.text(), editor.session().name(),
-                    editor.language(), type, mindmapDepth, false, false, targets);
+            SourceDiagrams.Result full = SourceDiagrams.generate(exportText, exportName,
+                    exportLanguage, type, mindmapDepth, false, false, targets, exportOutline.get());
             full.mermaid().ifPresent(diagram::setMermaidSource);
         };
         Frame owner = (Frame) SwingUtilities.getAncestorOfClass(Frame.class, this);

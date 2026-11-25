@@ -45,7 +45,13 @@ public record CobolAnalysis(List<Element> elements, List<ProgramCall> calls,
 
     public record SymbolReference(String name, Span usage, Span definition) { }
 
-    public record Diagnostic(String message, Position position) { }
+    public enum DiagnosticKind { SYNTAX_ERROR, COPYBOOK, ANALYSIS_ERROR }
+
+    public record Diagnostic(String message, Position position, DiagnosticKind kind) {
+        public Diagnostic(String message, Position position) {
+            this(message, position, DiagnosticKind.ANALYSIS_ERROR);
+        }
+    }
 
     /** Keep all call sites in calls(); deduplicate only for the external-call view. */
     public List<ProgramCall> knownLiteralCalls() {

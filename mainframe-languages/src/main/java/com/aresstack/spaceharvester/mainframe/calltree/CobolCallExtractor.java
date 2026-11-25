@@ -4,7 +4,6 @@ import com.aresstack.spaceharvester.mainframe.cobol.CobolAnalysis;
 import com.aresstack.spaceharvester.mainframe.cobol.CobolAnalyzer;
 import com.aresstack.spaceharvester.mainframe.cobol.CobolSource;
 import com.aresstack.spaceharvester.mainframe.cobol.CopybookResolver;
-import com.aresstack.spaceharvester.mainframe.cobol.internal.ProLeapCobolAnalyzer;
 
 import java.util.List;
 
@@ -14,7 +13,7 @@ final class CobolCallExtractor implements CallExtractor {
     private final CopybookResolver copybooks;
 
     CobolCallExtractor() {
-        this(new ProLeapCobolAnalyzer(), CopybookResolver.NONE);
+        this(CobolAnalyzer.proLeap(), CopybookResolver.NONE);
     }
 
     CobolCallExtractor(CobolAnalyzer analyzer, CopybookResolver copybooks) {

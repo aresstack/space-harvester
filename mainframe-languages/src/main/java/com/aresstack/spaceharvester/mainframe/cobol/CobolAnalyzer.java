@@ -4,4 +4,8 @@ package com.aresstack.spaceharvester.mainframe.cobol;
 @FunctionalInterface
 public interface CobolAnalyzer {
     CobolAnalysis analyze(CobolSource source, CopybookResolver copybooks);
+
+    static CobolAnalyzer proLeap() {
+        return new com.aresstack.spaceharvester.mainframe.cobol.internal.ProLeapCobolAnalyzer();
+    }
 }

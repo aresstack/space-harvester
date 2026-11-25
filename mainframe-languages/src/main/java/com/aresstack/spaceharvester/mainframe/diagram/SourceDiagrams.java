@@ -80,6 +80,13 @@ public final class SourceDiagrams {
      */
     public static Result generate(String content, String sourceName, Optional<SourceLanguage> language,
             DiagramType type, int mindmapDepth, boolean collapsed, boolean autoCollapse, SourceResolver resolver) {
+        return generate(content, sourceName, language, type, mindmapDepth, collapsed, autoCollapse, resolver, null);
+    }
+
+    /** Use the resolved outline of the same source snapshot when available. */
+    public static Result generate(String content, String sourceName, Optional<SourceLanguage> language,
+            DiagramType type, int mindmapDepth, boolean collapsed, boolean autoCollapse, SourceResolver resolver,
+            Outline preparedOutline) {
         if (content == null || content.isEmpty()) {
             return new Result(Optional.empty(), type, collapsed);
         }
@@ -99,7 +106,8 @@ public final class SourceDiagrams {
             }
         }
 
-        JclOutlineModel model = Outline.parse(lang, content, sourceName).model();
+        JclOutlineModel model = preparedOutline != null && preparedOutline.language() == lang
+                ? preparedOutline.model() : Outline.parse(lang, content, sourceName).model();
         if (model == null || model.isEmpty()) {
             return new Result(Optional.empty(), type, collapsed);
         }
@@ -108,8 +116,14 @@ public final class SourceDiagrams {
         if (type == DiagramType.MINDMAP && mindmapDepth > 0) {
             try {
                 CodeAnalyticsService analytics = CodeAnalyticsService.getInstance();
-                callTree = analytics.buildCallTree(content, sourceName, analytics.detectLanguage(content),
-                        mindmapDepth, resolver);
+                if (lang == SourceLanguage.COBOL) {
+                    callTree = analytics.buildCallTreeFromCalls(sourceName,
+                            com.aresstack.spaceharvester.mainframe.calltree.SourceLanguage.COBOL,
+                            cobolCalls(model), mindmapDepth, resolver);
+                } else {
+                    callTree = analytics.buildCallTree(content, sourceName, analytics.detectLanguage(content),
+                            mindmapDepth, resolver);
+                }
             } catch (RuntimeException e) {
                 LOG.log(Level.FINE, "Aufrufbaum gescheitert", e);
             }
@@ -128,6 +142,22 @@ public final class SourceDiagrams {
             produced = DiagramType.STRUCTURE;
         }
         return new Result(Optional.ofNullable(result).filter(s -> !s.trim().isEmpty()), produced, compact);
+    }
+
+    private static List<com.aresstack.spaceharvester.mainframe.calltree.ExternalCall> cobolCalls(JclOutlineModel model) {
+        java.util.Map<String, com.aresstack.spaceharvester.mainframe.calltree.ExternalCall> calls =
+                new java.util.LinkedHashMap<>();
+        for (JclElement element : model.getElements()) {
+            if (element.getType() == JclElementType.CALL_STMT) {
+                String target = element.getParameter("TARGET");
+                if (target != null && !target.isBlank()) {
+                    calls.putIfAbsent(target.toUpperCase(Locale.ROOT),
+                            new com.aresstack.spaceharvester.mainframe.calltree.ExternalCall(
+                                    target, "CALL", element.getLineNumber(), element.getRawText()));
+                }
+            }
+        }
+        return List.copyOf(calls.values());
     }
 
     /** DDMs aus den VIEW … OF …-Anweisungen eines Natural-Programms (MainframeMate: aus dem NDV-Quellen-Cache). */

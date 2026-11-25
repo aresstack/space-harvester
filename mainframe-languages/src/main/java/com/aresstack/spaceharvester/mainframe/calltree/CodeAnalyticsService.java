@@ -124,7 +124,26 @@ public class CodeAnalyticsService {
         if (currentDepth >= maxDepth || sourceCode == null) return;
 
         List<ExternalCall> calls = extractor.extractExternalCalls(sourceCode, parent.getName());
+        expandCalls(parent, calls, language, extractor, maxDepth, currentDepth, visited, resolver);
+    }
 
+    /** Reuse already analyzed root calls while resolving descendants normally. */
+    public CallTreeNode buildCallTreeFromCalls(String sourceName, SourceLanguage language,
+                                               List<ExternalCall> calls, int maxDepth, SourceResolver resolver) {
+        CallTreeNode root = new CallTreeNode(sourceName, null, 0);
+        CallExtractor extractor = getExtractor(language);
+        if (maxDepth <= 0 || extractor == null) {
+            return root;
+        }
+        java.util.Set<String> visited = new java.util.HashSet<>();
+        visited.add(sourceName.toUpperCase(java.util.Locale.ROOT));
+        expandCalls(root, calls, language, extractor, maxDepth, 0, visited, resolver);
+        return root;
+    }
+
+    private void expandCalls(CallTreeNode parent, List<ExternalCall> calls, SourceLanguage language,
+                             CallExtractor extractor, int maxDepth, int currentDepth,
+                             java.util.Set<String> visited, SourceResolver resolver) {
         for (ExternalCall call : calls) {
             String targetKey = call.getTargetName().toUpperCase();
             boolean recursive = visited.contains(targetKey);

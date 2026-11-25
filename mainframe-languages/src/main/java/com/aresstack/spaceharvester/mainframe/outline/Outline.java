@@ -154,14 +154,13 @@ public final class Outline {
 
     /** Die Zählzeile unter der Gliederung, Wortlaut wie in MainframeMate. */
     public String status() {
-        if (!model.getAnalysisDiagnostics().isEmpty()) {
-            return "Analyse unvollständig: " + model.getAnalysisDiagnostics().get(0);
-        }
+        String suffix = model.getAnalysisDiagnostics().isEmpty() ? ""
+                : " · Analyse unvollständig: " + model.getAnalysisDiagnostics().getFirst();
         if (model.isEmpty()) {
-            return "Keine Struktur erkannt";
+            return "Keine Struktur erkannt" + suffix;
         }
         int total = model.getElementCount();
-        return switch (language) {
+        String counts = switch (language) {
             case COBOL -> String.format("%d Div, %d Sec, %d Para, %d Elemente", model.getDivisions().size(),
                     model.getSections().size(), model.getParagraphs().size(), total);
             case NATURAL -> String.format("%d Subs, %d Calls, %d DB, %d Elemente", model.getSubroutines().size(),
@@ -170,6 +169,7 @@ public final class Outline {
                     model.getSteps().size(), total);
             case DDM -> String.format("%d Elemente", total);
         };
+        return counts + suffix;
     }
 
     /** Überschrift wie „📑 JCL Outline“ in MainframeMate. */

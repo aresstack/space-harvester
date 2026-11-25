@@ -28,16 +28,15 @@ public final class CobolOutlineProjection {
             element.attributes().forEach(item::addParameter);
             if (!element.span().start().source().equals(source.name())) {
                 item.addParameter("SOURCE", element.span().start().source());
+                item.addParameter("SOURCE_LINE", Integer.toString(element.span().start().line()));
             }
             if (element.parentIndex() >= 0) {
                 projected.get(element.parentIndex()).addChild(item);
             }
             projected.add(item);
         }
-        // Restore source order for existing diagram consumers while retaining hierarchy links.
-        projected.stream().sorted(java.util.Comparator.comparingInt(element ->
-                element.getLineNumber() == 0 ? Integer.MAX_VALUE : element.getLineNumber()))
-                .forEach(model::addElement);
+        // Preserve the expanded syntax-tree order. Physical source lines across copybooks are not comparable.
+        projected.forEach(model::addElement);
         return model;
     }
 

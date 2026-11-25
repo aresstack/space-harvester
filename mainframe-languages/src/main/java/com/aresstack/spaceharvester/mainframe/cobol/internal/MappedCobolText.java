@@ -5,30 +5,66 @@ import com.aresstack.spaceharvester.mainframe.cobol.CobolAnalysis.Span;
 import org.antlr.v4.runtime.Token;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Keep origin positions attached to text across preprocessing transformations. */
+/** Store contiguous source positions as runs rather than allocating a position per character. */
 final class MappedCobolText {
+    private record Run(int start, int end, Position origin, boolean advancing) {
+        Position position(int index) {
+            return advancing ? new Position(origin.source(), origin.line(),
+                    origin.column() + index - start, origin.debuggingLine()) : origin;
+        }
+    }
+
     private final String text;
-    private final Position[] origins;
+    private final List<Run> runs;
     private final int[] codePointOffsets;
 
-    private MappedCobolText(String text, Position[] origins) {
+    private MappedCobolText(String text, List<Run> runs) {
         this.text = text;
-        this.origins = origins;
-        this.codePointOffsets = new int[text.codePointCount(0, text.length()) + 1];
-        for (int i = 0, offset = 0; i < codePointOffsets.length - 1; i++) {
-            codePointOffsets[i] = offset;
-            offset += Character.charCount(text.codePointAt(offset));
+        this.runs = List.copyOf(runs);
+        int count = text.codePointCount(0, text.length());
+        if (count == text.length()) {
+            codePointOffsets = null;
+        } else {
+            codePointOffsets = new int[count + 1];
+            int offset = 0;
+            for (int i = 0; i < count; i++) {
+                codePointOffsets[i] = offset;
+                offset += Character.charCount(text.codePointAt(offset));
+            }
+            codePointOffsets[count] = text.length();
         }
-        codePointOffsets[codePointOffsets.length - 1] = text.length();
     }
 
     String text() {
         return text;
+    }
+
+    private int charOffset(int index) {
+        if (index < 0) {
+            return -1;
+        }
+        if (codePointOffsets == null) {
+            return index <= text.length() ? index : -1;
+        }
+        return index < codePointOffsets.length ? codePointOffsets[index] : -1;
+    }
+
+    private int runIndex(int offset) {
+        int lo = 0;
+        int hi = runs.size();
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (runs.get(mid).end() <= offset) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
     }
 
     Position at(Token token) {
@@ -36,8 +72,11 @@ final class MappedCobolText {
     }
 
     Position atCodePoint(int index) {
-        return index < 0 || index >= codePointOffsets.length - 1
-                ? Position.UNKNOWN : origins[codePointOffsets[index]];
+        int offset = charOffset(index);
+        if (offset < 0 || offset >= text.length()) {
+            return Position.UNKNOWN;
+        }
+        return runs.get(runIndex(offset)).position(offset);
     }
 
     Span span(Token first, Token last) {
@@ -46,17 +85,12 @@ final class MappedCobolText {
         return new Span(start, end.line() == 0 ? start : end);
     }
 
-    MappedCobolText token(Token token) {
-        int start = token.getStartIndex();
-        int end = token.getStopIndex() + 1;
-        if (start < 0 || end < start || end >= codePointOffsets.length) {
-            return new Builder().build();
+    void appendTokenTo(Builder target, Token token) {
+        int start = charOffset(token.getStartIndex());
+        int end = charOffset(token.getStopIndex() + 1);
+        if (start >= 0 && end >= start) {
+            target.appendSlice(this, start, end);
         }
-        return slice(codePointOffsets[start], codePointOffsets[end]);
-    }
-
-    private MappedCobolText slice(int start, int end) {
-        return new MappedCobolText(text.substring(start, end), Arrays.copyOfRange(origins, start, end));
     }
 
     MappedCobolText replace(Pattern pattern, String replacement) {
@@ -64,34 +98,73 @@ final class MappedCobolText {
         Builder result = new Builder();
         int offset = 0;
         while (matcher.find()) {
-            result.append(slice(offset, matcher.start()));
-            Position origin = matcher.start() < origins.length ? origins[matcher.start()] : Position.UNKNOWN;
-            // Anchor generated replacement text to the original replaced text, not to the COPY statement.
+            result.appendSlice(this, offset, matcher.start());
+            Position origin = matcher.start() < text.length()
+                    ? runs.get(runIndex(matcher.start())).position(matcher.start()) : Position.UNKNOWN;
             result.append(replacement, new Position(origin.source(), origin.line(), 0, origin.debuggingLine()));
             offset = matcher.end();
         }
-        result.append(slice(offset, text.length()));
+        result.appendSlice(this, offset, text.length());
         return result.build();
     }
 
     static final class Builder {
         private final StringBuilder text = new StringBuilder();
-        private final List<Position> origins = new ArrayList<>();
+        private final List<Run> runs = new ArrayList<>();
 
         void append(String value, Position origin) {
+            append(value, origin, false);
+        }
+
+        void appendLineContent(String value, Position origin) {
+            append(value, origin, origin.column() > 0);
+        }
+
+        private void append(String value, Position origin, boolean advancing) {
+            int start = text.length();
             text.append(value);
-            for (int i = 0; i < value.length(); i++) {
-                origins.add(origin);
+            addRun(start, text.length(), origin, advancing);
+        }
+
+        private void addRun(int start, int end, Position origin, boolean advancing) {
+            if (start == end) {
+                return;
             }
+            if (!runs.isEmpty()) {
+                Run previous = runs.getLast();
+                if (previous.end() == start && previous.advancing() == advancing
+                        && previous.position(advancing ? start : previous.start()).equals(origin)) {
+                    runs.set(runs.size() - 1, new Run(previous.start(), end, previous.origin(), advancing));
+                    return;
+                }
+            }
+            runs.add(new Run(start, end, origin, advancing));
         }
 
         void append(MappedCobolText value) {
-            text.append(value.text);
-            origins.addAll(Arrays.asList(value.origins));
+            appendSlice(value, 0, value.text.length());
+        }
+
+        void appendSlice(MappedCobolText value, int start, int end) {
+            if (start == end) {
+                return;
+            }
+            int targetStart = text.length();
+            text.append(value.text, start, end);
+            for (int i = value.runIndex(start); i < value.runs.size(); i++) {
+                Run run = value.runs.get(i);
+                if (run.start() >= end) {
+                    break;
+                }
+                int from = Math.max(start, run.start());
+                int to = Math.min(end, run.end());
+                addRun(targetStart + from - start, targetStart + to - start,
+                        run.position(from), run.advancing());
+            }
         }
 
         MappedCobolText build() {
-            return new MappedCobolText(text.toString(), origins.toArray(Position[]::new));
+            return new MappedCobolText(text.toString(), runs);
         }
     }
 }

@@ -321,10 +321,16 @@ final class CobolStructureVisitor extends CobolBaseVisitor<Void> {
         String raw = switch (kind) {
             case DIVISION, PROCEDURE_DIVISION, SECTION, WORKING_STORAGE, LINKAGE_SECTION,
                     FILE_SECTION, SCREEN_SECTION, PARAGRAPH, FILE_DESCRIPTOR -> name;
+            case EXEC_SQL, EXEC_SQLIMS, EXEC_CICS -> embeddedText(ctx);
             default -> text(ctx);
         };
         elements.add(new Element(kind, name, parentIndex, span(ctx), raw, attributes));
         return elements.size() - 1;
+    }
+
+    private String embeddedText(ParserRuleContext ctx) {
+        return text(ctx).replaceAll("(?m)^\\s*\\*>EXEC(?:SQLIMS|SQL|CICS)[ \\t]*", "")
+                .replaceAll("(?i)(END-EXEC)[ \\t]*\\}", "$1").strip();
     }
 
     private Span span(ParserRuleContext ctx) {

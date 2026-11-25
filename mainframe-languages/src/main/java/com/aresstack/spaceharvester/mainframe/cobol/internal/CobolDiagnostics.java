@@ -22,6 +22,7 @@ final class CobolDiagnostics extends BaseErrorListener {
     public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line,
                             int charPositionInLine, String message, RecognitionException cause) {
         Position position = offendingSymbol instanceof Token token ? source.at(token) : Position.UNKNOWN;
-        diagnostics.add(new Diagnostic(message, position));
+        diagnostics.add(new Diagnostic(message, position,
+                com.aresstack.spaceharvester.mainframe.cobol.CobolAnalysis.DiagnosticKind.SYNTAX_ERROR));
     }
 }

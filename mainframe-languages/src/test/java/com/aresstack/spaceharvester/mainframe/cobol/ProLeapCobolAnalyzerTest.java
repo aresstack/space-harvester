@@ -1,7 +1,6 @@
 package com.aresstack.spaceharvester.mainframe.cobol;
 
 import com.aresstack.spaceharvester.mainframe.cobol.CobolAnalysis.*;
-import com.aresstack.spaceharvester.mainframe.cobol.internal.ProLeapCobolAnalyzer;
 import com.aresstack.spaceharvester.mainframe.model.JclElement;
 import com.aresstack.spaceharvester.mainframe.model.JclElementType;
 import com.aresstack.spaceharvester.mainframe.parser.CobolParser;
@@ -13,7 +12,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ProLeapCobolAnalyzerTest {
-    private final CobolAnalyzer analyzer = new ProLeapCobolAnalyzer();
+    private final CobolAnalyzer analyzer = CobolAnalyzer.proLeap();
 
     private static final String SOURCE = """
                    IDENTIFICATION DIVISION.
@@ -198,6 +197,8 @@ class ProLeapCobolAnalyzerTest {
                 .containsExactly(Kind.EXEC_SQL, Kind.EXEC_CICS);
         assertThat(result.calls()).extracting(ProgramCall::target).containsExactly("ACTUAL");
         assertThat(result.calls().getFirst().span().start().line()).isEqualTo(10);
+        assertThat(element(result, "EXEC SQL").text()).contains("SELECT").doesNotContain("*>EXECSQL");
+        assertThat(element(result, "EXEC CICS").text()).contains("LINK PROGRAM").doesNotContain("*>EXECCICS");
     }
 
     @Test
@@ -235,6 +236,49 @@ class ProLeapCobolAnalyzerTest {
         assertThat(result.calls()).extracting(ProgramCall::target).containsExactly("DEBUGPGM", "ACTUAL");
         assertThat(result.calls().getFirst().span().start().debuggingLine()).isTrue();
         assertThat(result.knownLiteralCalls()).extracting(ProgramCall::target).containsExactly("ACTUAL");
+    }
+
+    @Test
+    void missingCopybookDoesNotDiscardLocalReferences() {
+        CobolAnalysis result = analyze("""
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       DATA DIVISION.
+                       WORKING-STORAGE SECTION.
+                       01 WS-COUNT PIC 9.
+                           COPY MISSING.
+                       PROCEDURE DIVISION.
+                           MOVE 1 TO WS-COUNT.
+                           STOP RUN.
+                """);
+        assertThat(result.isPartial()).isTrue();
+        assertThat(result.semanticAnalysisComplete()).isFalse();
+        assertThat(result.references()).anySatisfy(reference -> {
+            assertThat(reference.name()).isEqualTo("WS-COUNT");
+            assertThat(reference.definition().start().line()).isEqualTo(5);
+            assertThat(reference.usage().start().line()).isEqualTo(8);
+        });
+    }
+
+    @Test
+    void replacesWholeWordsWithoutChangingCaseInsensitiveNeighbors() {
+        String source = """
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       DATA DIVISION.
+                       WORKING-STORAGE SECTION.
+                           COPY CPY REPLACING id BY WS-ID.
+                       PROCEDURE DIVISION.
+                           STOP RUN.
+                """;
+        String copy = """
+                       01 ID PIC X.
+                       01 VALID-FLAG PIC X.
+                """;
+        CobolAnalysis result = analyzer.analyze(CobolSource.fixed("DEMO.cbl", source),
+                (including, name, library) -> Optional.of(CobolSource.fixed("CPY", copy)));
+        assertThat(result.diagnostics()).isEmpty();
+        assertThat(result.elements()).extracting(Element::name).contains("WS-ID", "VALID-FLAG");
     }
 
     private CobolAnalysis analyze(String content) {

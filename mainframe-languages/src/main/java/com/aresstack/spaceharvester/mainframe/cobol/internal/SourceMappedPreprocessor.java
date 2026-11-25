@@ -76,10 +76,8 @@ final class SourceMappedPreprocessor extends CobolPreprocessorImpl {
             output.append(content, new Position(source.name(), line.getNumber() + 1, 0, debugging));
             return;
         }
-        for (int i = 0; i < content.length(); i++) {
-            output.append(content.substring(i, i + 1),
-                    new Position(source.name(), line.getNumber() + 1, firstColumn + offset + i, debugging));
-        }
+        output.appendLineContent(content,
+                new Position(source.name(), line.getNumber() + 1, firstColumn + offset, debugging));
     }
 
     private MappedCobolText processDocument(CobolSource source, MappedCobolText normalized,

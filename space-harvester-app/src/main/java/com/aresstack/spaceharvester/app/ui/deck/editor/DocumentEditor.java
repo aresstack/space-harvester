@@ -830,12 +830,7 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
 
     private void reparseCobol(long outlineTicket) {
         long relationTicket = ++relationsTicket;
-        String location = session.location().isBlank() ? session.name() : session.location();
-        long revision = session.revision();
-        if (cobolEditorAnalysis == null || !cobolEditorAnalysis.matches(location, revision)) {
-            cobolEditorAnalysis = new CobolEditorAnalysis(session.store(), location, revision);
-        }
-        CobolEditorAnalysis worker = cobolEditorAnalysis;
+        CobolEditorAnalysis worker = cobolWorker();
         String text = area.getText();
         if (!relationsPanel.hasData()) {
             relationsPanel.loading();
@@ -853,6 +848,24 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
                 }
             });
         });
+    }
+
+    private CobolEditorAnalysis cobolWorker() {
+        String location = session.location().isBlank() ? session.name() : session.location();
+        long revision = session.revision();
+        if (cobolEditorAnalysis == null || !cobolEditorAnalysis.matches(location, revision)) {
+            cobolEditorAnalysis = new CobolEditorAnalysis(session.store(), location, revision);
+        }
+        return cobolEditorAnalysis;
+    }
+
+    /** Capture a COBOL snapshot on the EDT and analyze it only on the caller's worker thread. */
+    public java.util.function.Supplier<Outline> cobolDiagramOutline(String text) {
+        if (!language().filter(value -> value == SourceLanguage.COBOL).isPresent()) {
+            return () -> null;
+        }
+        CobolEditorAnalysis worker = cobolWorker();
+        return () -> worker.analyze(text, DocumentEditors.relations()).outline();
     }
 
     private void showNaturalBlocks() {

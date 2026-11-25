@@ -80,10 +80,10 @@ final class SourceMappedDocumentListener extends CobolDocumentParserListenerImpl
         }
         List<Token> hidden = tokens.getHiddenTokensToLeft(token.getTokenIndex(), CobolPreprocessorLexer.HIDDEN);
         if (hidden != null) {
-            hidden.forEach(value -> context().append(input.token(value)));
+            hidden.forEach(value -> context().appendToken(input, value));
         }
         if (token.getType() != Token.EOF) {
-            context().append(input.token(token));
+            context().appendToken(input, token);
         }
     }
 
@@ -127,11 +127,11 @@ final class SourceMappedDocumentListener extends CobolDocumentParserListenerImpl
         try {
             Optional<CobolSource> result = resolver.resolve(source, name, library);
             if (result.isEmpty()) {
-                diagnostics.add(new Diagnostic("Copybook not found: " + name, position));
+                diagnostics.add(new Diagnostic("Copybook not found: " + name, position, DiagnosticKind.COPYBOOK));
             }
             return result;
         } catch (IOException | RuntimeException error) {
-            diagnostics.add(new Diagnostic("Cannot resolve COPY " + name + ": " + error.getMessage(), position));
+            diagnostics.add(new Diagnostic("Cannot resolve COPY " + name + ": " + error.getMessage(), position, DiagnosticKind.COPYBOOK));
             return Optional.empty();
         }
     }

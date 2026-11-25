@@ -3,7 +3,6 @@ package com.aresstack.spaceharvester.mainframe.parser;
 import com.aresstack.spaceharvester.mainframe.cobol.CobolAnalyzer;
 import com.aresstack.spaceharvester.mainframe.cobol.CobolSource;
 import com.aresstack.spaceharvester.mainframe.cobol.CopybookResolver;
-import com.aresstack.spaceharvester.mainframe.cobol.internal.ProLeapCobolAnalyzer;
 import com.aresstack.spaceharvester.mainframe.model.JclOutlineModel;
 
 import java.util.Objects;
@@ -14,7 +13,7 @@ public final class CobolParser {
     private final CopybookResolver copybooks;
 
     public CobolParser() {
-        this(new ProLeapCobolAnalyzer(), CopybookResolver.NONE);
+        this(CobolAnalyzer.proLeap(), CopybookResolver.NONE);
     }
 
     public CobolParser(CobolAnalyzer analyzer, CopybookResolver copybooks) {
