@@ -43,15 +43,33 @@ public class InventoryCollector {
 
     /** Check cancellation before each new inventory page instead of blocking for an entire tree crawl. */
     public Inventory collect(String sourceId, String spaceKey, Runnable checkpoint) {
+        return collect(sourceId, spaceKey, checkpoint, entries -> { });
+    }
+
+    /** Publish newly discovered metadata in bounded groups while the inventory is still running. */
+    public Inventory collect(String sourceId, String spaceKey, Runnable checkpoint,
+                             java.util.function.Consumer<List<PageMetadataListing.Entry>> progress) {
         Objects.requireNonNull(checkpoint, "checkpoint");
+        Objects.requireNonNull(progress, "progress");
         Instant startedAt = clock.instant();
         Map<String, PageMetadataListing.Entry> pages = new LinkedHashMap<>();
+        List<PageMetadataListing.Entry> pending = new java.util.ArrayList<>();
+        java.util.function.Consumer<PageMetadataListing.Entry> accept = entry -> {
+            if (add(spaceKey, pages, entry)) {
+                pending.add(entry);
+                if (pages.size() == 1 || pending.size() >= batchSize) {
+                    progress.accept(List.copyOf(pending));
+                    pending.clear();
+                }
+            }
+        };
         try {
-            checkpoint.run();
-            boolean visited = queries.visitInventory(sourceId, spaceKey, checkpoint,
-                    entry -> add(spaceKey, pages, entry));
+            boolean visited = queries.visitInventory(sourceId, spaceKey, checkpoint, accept);
             if (!visited) {
-                collectBatches(sourceId, spaceKey, checkpoint, pages);
+                collectBatches(sourceId, spaceKey, checkpoint, accept);
+            }
+            if (!pending.isEmpty()) {
+                progress.accept(List.copyOf(pending));
             }
             return result(sourceId, spaceKey, Inventory.Status.COMPLETE, null, pages, startedAt);
         } catch (SourceAccessException failure) {
@@ -63,14 +81,14 @@ public class InventoryCollector {
     }
 
     private void collectBatches(String sourceId, String spaceKey, Runnable checkpoint,
-                                Map<String, PageMetadataListing.Entry> pages) {
+                                java.util.function.Consumer<PageMetadataListing.Entry> accept) {
         Set<String> cursors = new HashSet<>();
         String cursor = null;
         do {
             checkpoint.run();
             PageMetadataListing listing = queries.pageMetadata(sourceId, spaceKey, cursor, batchSize);
             for (PageMetadataListing.Entry entry : listing.entries()) {
-                add(spaceKey, pages, entry);
+                accept.accept(entry);
             }
             cursor = listing.nextCursor();
             if (cursor != null && !cursors.add(cursor)) {
@@ -79,7 +97,7 @@ public class InventoryCollector {
         } while (cursor != null);
     }
 
-    private static void add(String spaceKey, Map<String, PageMetadataListing.Entry> pages,
+    private static boolean add(String spaceKey, Map<String, PageMetadataListing.Entry> pages,
                             PageMetadataListing.Entry entry) {
         String pageId = entry.page().pageId();
         if (!spaceKey.equals(entry.page().partitionKey())) {
@@ -91,6 +109,7 @@ public class InventoryCollector {
                 && earlier.attributesHash().equals(entry.attributesHash()))) {
             throw new InconsistentInventory("Seite " + pageId + " hat sich während der Listung geändert");
         }
+        return earlier == null;
     }
 
     private static final class InconsistentInventory extends RuntimeException {
