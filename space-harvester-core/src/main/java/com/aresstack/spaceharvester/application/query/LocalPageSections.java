@@ -37,7 +37,8 @@ public final class LocalPageSections {
         StoredExtraction extraction = documents.stored(reference.extractionKey())
                 .orElseThrow(() -> new IllegalStateException("Referenced extraction missing"));
         try (Stream<DocumentExtractions.IndexSection> sections = documents.indexSections(extraction)) {
-            Stream<PageTextIndex.Entry> entries = sections.flatMap(section -> split(section.text())
+            Stream<PageTextIndex.Entry> entries = sections.flatMap(section -> split(section.partTitle().isBlank() ? section.text()
+                    : section.partTitle() + "\n" + section.text())
                     .map(text -> new PageTextIndex.Entry(snapshot.key(), metadata.partitionKey(),
                             metadata.title(), text, input, mediaType)));
             // Keep an entry for title searches even for a document without text.
