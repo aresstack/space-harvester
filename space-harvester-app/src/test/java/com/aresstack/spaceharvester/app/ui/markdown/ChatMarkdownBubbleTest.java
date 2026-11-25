@@ -92,6 +92,20 @@ class ChatMarkdownBubbleTest {
     }
 
     @Test
+    void timestampUsesTheOriginalStackedTimeOverDateFormat() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            long at = 1700000000000L;
+            MessageTimestamp stamp = new MessageTimestamp(java.awt.Color.DARK_GRAY);
+            stamp.setTime(at);
+            assertThat(stamp.getText()).isEqualTo(
+                    com.aresstack.enterpriseai.ui.comic.bubble.BubbleTimestamps.stackedHtml(at));
+            assertThat(stamp.getHorizontalAlignment()).isEqualTo(javax.swing.SwingConstants.RIGHT);
+            assertThat(stamp.getToolTipText()).isEqualTo(
+                    com.aresstack.enterpriseai.ui.comic.bubble.BubbleTimestamps.tooltip(at));
+        });
+    }
+
+    @Test
     void surfaceThemeKeepsReadableTextInLightAndDarkMode() {
         for (java.awt.Color background : List.of(java.awt.Color.WHITE, new java.awt.Color(24, 24, 24))) {
             MarkdownTheme theme = MarkdownTheme.forSurface(background);
