@@ -699,7 +699,7 @@ class MainWindowTest {
     }
 
     @Test
-    void documentHistoryStaysInViewerAndSearchHistoryStaysWithSearchField() throws Exception {
+    void documentAndSearchHistoryStayInTheirOwnViewHeaders() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, """
                 space-harvester-app:
@@ -710,12 +710,10 @@ class MainWindowTest {
             MainWindow window = new MainWindow(context);
             javax.swing.JPanel surface = window.content(() -> { }, () -> { });
             javax.swing.JComponent bar = window.searchView().searchBar();
-            javax.swing.JComponent nav = window.backForward();
             window.show(AppContext.Section.CONTENT);
             surface.setSize(1280, 820);
             layout(surface);
-            assertThat(nav.isVisible()).isFalse();
-            assertThat(nav.getComponentCount()).isZero();
+            assertThat(arrows(bar.getParent())).isEmpty();
             assertThat(arrows(surface)).hasSize(1);
             java.awt.Component documentBack = arrows(surface).get(0);
             assertThat(SwingUtilities.isDescendingFrom(documentBack,
@@ -731,19 +729,23 @@ class MainWindowTest {
             for (int width : new int[] {960, 1280, 1920}) {
                 surface.setSize(width, 820);
                 layout(surface);
-                assertThat(nav.isVisible()).isTrue();
-                assertThat(nav.getParent()).isSameAs(bar.getParent());
-                assertThat(nav.getWidth()).isPositive();
-                assertThat(nav.getX() + nav.getWidth() + SearchBarLayout.LEADING_GAP).isEqualTo(bar.getX());
+                assertThat(arrows(bar.getParent())).isEmpty();
                 assertThat(bar.getWidth()).isBetween(SearchBarLayout.MIN_WIDTH, SearchBarLayout.MAX_WIDTH);
-                assertThat(arrows(surface)).hasSize(1).doesNotContain(documentBack);
+                java.awt.Component searchBack = window.searchView().backVisit;
+                assertThat(arrows(surface)).containsExactly(searchBack);
+                assertThat(searchBack.getParent()).isSameAs(window.searchView().heading);
+                assertThat(SwingUtilities.getAncestorOfClass(javax.swing.JScrollPane.class, searchBack)).isNull();
+                java.awt.Component title = ((java.awt.BorderLayout) searchBack.getParent().getLayout())
+                        .getLayoutComponent(java.awt.BorderLayout.CENTER);
+                assertThat(searchBack.getWidth()).isPositive();
+                assertThat(searchBack.getX() + searchBack.getWidth()).isLessThan(title.getX());
             }
             window.show(AppContext.Section.CONTENT);
             layout(surface);
             assertThat(arrows(surface)).containsExactly(documentBack);
             assertThat(documentBack.getParent()).isSameAs(header);
             window.show(AppContext.Section.SETTINGS);
-            assertThat(nav.isVisible()).isFalse();
+            assertThat(arrows(bar.getParent())).isEmpty();
         });
     }
 

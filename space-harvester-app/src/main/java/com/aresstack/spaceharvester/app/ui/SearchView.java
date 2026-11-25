@@ -123,8 +123,6 @@ public final class SearchView implements View {
     final javax.swing.AbstractButton repeat;
     /** Zurück zwischen den Suchen dieser Sitzung (Begriff und Bereich); gedrückt halten zeigt den Verlauf. */
     final com.aresstack.spaceharvester.app.ui.controls.BackButton backVisit;
-    /** Zurück links an der Suchleiste, solange die Suche zu sehen ist. */
-    private final JPanel navigation = new JPanel(new FlowLayout(FlowLayout.CENTER, 2, 0));
     /** Was links im Baum markiert ist; leer für „Wissensquellen“. */
     private List<Explorer.Scope> marked = List.of();
     /** Der Bereich der letzten Suche als Schnappschuss beim Start; {@code null} vor der ersten. */
@@ -353,8 +351,7 @@ public final class SearchView implements View {
                         }
                     }
                 });
-        navigation.setOpaque(false);
-        navigation.add(backVisit);
+        heading.leading(backVisit);
         repeat = heading.tool(Glyph.SYNC, REPEAT_TIP, this::repeat);
         repeat.setEnabled(false);
         // Solange die Suche zu sehen ist, gehören die Maustasten 4/5 im ganzen Fenster ihr.
@@ -1196,11 +1193,6 @@ public final class SearchView implements View {
         search();
     }
 
-
-    /** Zurück und Vor der Suche links an der Suchleiste des Hauptfensters. */
-    public JComponent navigation() {
-        return navigation;
-    }
 
     /** Eine frühere Suche: Begriff, Bereich (Filter) und wie weit die Liste gescrollt war. */
     record Visit(String text, List<Explorer.Scope> area, int scroll) {

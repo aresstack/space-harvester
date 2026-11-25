@@ -116,12 +116,6 @@ public final class MainWindow implements AppContext.Navigator {
     /** Karte des Stands einer Perspektive in der Statuszeile (Präfix vor der Kennung). */
     private static final String PERSPECTIVE_STATUS = "perspective:";
     private JobStatusLine jobStatus;
-    /**
-     * Das eine Paar Zurück und Vor, direkt links an der Suchleiste der Kopfzeile, in jedem Bereich sichtbar: in der
-     * Suche blättert es zwischen den Suchen, sonst zwischen den Seiten; der freie Platz liegt links davor (Angelo,
-     * 24.11.2026).
-     */
-    private final JPanel backForward = new JPanel(new BorderLayout());
     private final JLabel status = Comic.muted(" ");
     /** ✕ hinter dem Stand der App: ein Ergebnis (etwa eines Exports) bleibt stehen, bis es der Benutzer wegklickt. */
     private final ComposerButton statusClose = closeButton();
@@ -495,8 +489,7 @@ public final class MainWindow implements AppContext.Navigator {
         top.add(west, BorderLayout.WEST);
         top.add(east, BorderLayout.EAST);
         // Ein Suchfeld für das ganze Fenster, mittig zwischen den Icon-Gruppen (#515).
-        backForward.setOpaque(false);
-        searchSlot = SearchBarLayout.wrap(searchView.searchBar(), backForward);
+        searchSlot = SearchBarLayout.wrap(searchView.searchBar());
         top.add(searchSlot, BorderLayout.CENTER);
         ComicWindowDragger.install(top);
         // Meldet die Leiste beim Tooltip-Dienst an; den Text liefert getToolTipText je nach Fensterzustand.
@@ -681,7 +674,6 @@ public final class MainWindow implements AppContext.Navigator {
 
         // Gesamtstand aller Aufträge; Anhalten und Abbrechen stehen für alle zugleich in der Kopfzeile der Aufträge.
         jobStatus = new JobStatusLine(context.events());
-        backForward(null);
         // Verlangt eine Quelle einen Einmalcode, steht es ganz links; der Klick führt zum Codefeld unter „Aufträge“.
         signInNotice = new SignInNotice(context, request -> {
             show(AppContext.Section.ACTIVITIES);
@@ -1111,8 +1103,6 @@ public final class MainWindow implements AppContext.Navigator {
             // angeklickt (Angelo, 24.11.2026).
             explorer.selectAll();
         }
-        // Keep search history with the search field and document history with the viewer.
-        backForward(section == AppContext.Section.SEARCH ? searchView.navigation() : null);
         placeOverlay();
         if (changed && section == AppContext.Section.SEARCH) {
             // Gesucht wird in dem, was links gewählt ist; nur der Suchreiter von Hand hebt die Auswahl auf.
@@ -1153,25 +1143,6 @@ public final class MainWindow implements AppContext.Navigator {
             stageCards.show(stage, Perspectives.HARVESTER);
             viewStatus.setVisible(false);
         }
-    }
-
-    /** Setzt Zurück und Vor eines Bereichs links an die Suchleiste. */
-    private void backForward(JComponent buttons) {
-        backForward.removeAll();
-        if (buttons != null) {
-            backForward.add(buttons, BorderLayout.CENTER);
-        }
-        backForward.setVisible(buttons != null);
-        backForward.revalidate();
-        backForward.repaint();
-        if (searchSlot != null) {
-            searchSlot.revalidate();
-        }
-    }
-
-    /** Für Tests: Zurück und Vor links an der Suchleiste. */
-    JComponent backForward() {
-        return backForward;
     }
 
     /** „Zurück“ der Einstellungen: dorthin, woher sie kamen, auch in eine andere Perspektive. */
