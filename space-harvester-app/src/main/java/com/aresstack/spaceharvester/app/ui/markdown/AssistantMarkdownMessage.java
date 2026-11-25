@@ -52,7 +52,7 @@ public final class AssistantMarkdownMessage extends JPanel implements WidthAware
     }
 
     public void setTimestamp(long epochMillis) {
-        timestamp.setText(BubbleTimestamps.stackedHtml(epochMillis));
+        timestamp.setText(BubbleTimestamps.timeText(epochMillis) + " · " + BubbleTimestamps.dateText(epochMillis));
         timestamp.setToolTipText(BubbleTimestamps.tooltip(epochMillis));
         revalidate();
     }

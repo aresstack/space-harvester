@@ -169,8 +169,11 @@ class ChatReadAloudTest {
     void neitherUserNorAssistantCanReachThePlaybackControl() {
         for (int width = 200; width <= 1200; width += 7) {
             int orbX = width - 60;
-            assertThat(ChatPanel.transcriptWidth(width, orbX, true)).isLessThan(orbX);
-            assertThat(ChatPanel.transcriptWidth(width, orbX, false)).isEqualTo(width);
+            for (int scrollbarWidth : new int[] {0, 15}) {
+                int inset = ChatPanel.transcriptInset(width, orbX, scrollbarWidth, true);
+                assertThat(width - scrollbarWidth - inset).isLessThan(orbX);
+                assertThat(ChatPanel.transcriptInset(width, orbX, scrollbarWidth, false)).isZero();
+            }
         }
     }
 

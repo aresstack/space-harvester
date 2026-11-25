@@ -2741,7 +2741,7 @@ public final class ChatPanel extends JPanel {
         if (mermaid == null) {
             mermaid = CachingMermaidImageRenderer.forChat();
         }
-        MarkdownTheme theme = MarkdownTheme.forSurface(transcriptScroll.getViewport().getView().getBackground());
+        MarkdownTheme theme = MarkdownTheme.forSurface(transcriptScroll.getViewport().getBackground());
         MarkdownMessageView view = new MarkdownMessageView(theme, linkOpener, mermaid);
         view.setMarkdown(markdown);
         AssistantMarkdownMessage bubble = new AssistantMarkdownMessage(view, theme.getMutedForeground());
@@ -3415,7 +3415,12 @@ public final class ChatPanel extends JPanel {
         top = Math.max(0, Math.min(top, height - size));
         gap = Math.max(gap, barWidth + NavigableDocumentPage.ORB_INSET);
         int orbX = Math.max(0, width - gap - size);
-        transcriptScroll.setBounds(0, 0, transcriptWidth(width, orbX, readAloud.orb().isVisible()), height);
+        transcriptScroll.setBounds(0, 0, width, height);
+        int inset = transcriptInset(width, orbX, barWidth, readAloud.orb().isVisible());
+        if (transcript.getInsets().right != inset) {
+            transcript.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, inset));
+            transcript.revalidate();
+        }
         readAloud.orb().setBounds(orbX, top, size, size);
     }
 
@@ -3459,9 +3464,9 @@ public final class ChatPanel extends JPanel {
         return found;
     }
 
-    /** Keep the scroll viewport and its scrollbar outside the floating playback control. */
-    static int transcriptWidth(int width, int orbX, boolean orbVisible) {
-        return orbVisible ? Math.max(0, Math.min(width, orbX - 6)) : Math.max(0, width);
+    /** Reserve space inside the scrollable surface without moving the scrollbar. */
+    static int transcriptInset(int width, int orbX, int scrollbarWidth, boolean orbVisible) {
+        return orbVisible ? Math.max(0, width - scrollbarWidth - orbX + 6) : 0;
     }
 
     int bubbles() {
