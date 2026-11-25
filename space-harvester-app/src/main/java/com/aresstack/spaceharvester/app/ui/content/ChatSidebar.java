@@ -109,6 +109,7 @@ public final class ChatSidebar extends JPanel {
         for (javax.swing.JMenuItem export : chat.exportMenus()) {
             menu.add(export);
         }
+        menu.addSeparator();
         menu.add(deleteAll);
         // Die Grenzen der Parallelität wie im Menü der Aufträge (Angelo 24.11.2026).
         menu.addSeparator();

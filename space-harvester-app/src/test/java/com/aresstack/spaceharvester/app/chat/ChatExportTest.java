@@ -37,6 +37,20 @@ class ChatExportTest {
     }
 
     @Test
+    void unnamedChatsUseShortDistinctQuestionTitlesWithoutChangingIdentity() {
+        ChatRecord empty = ChatRecord.fresh(1);
+        ChatRecord first = empty.plus(ChatRecord.Message.user("Erste Frage", 1), 1);
+        ChatRecord second = ChatRecord.fresh(2).plus(ChatRecord.Message.user("Zweite\nFrage", 2), 2);
+        assertThat(ChatExport.displayTitle(empty)).isEqualTo("Neuer Chat");
+        assertThat(ChatExport.displayTitle(first)).isEqualTo("Erste Frage");
+        assertThat(ChatExport.displayTitle(second)).isEqualTo("Zweite Frage");
+        assertThat(ChatExport.displayTitle(first.withTitle("Fachlicher Titel", 3))).isEqualTo("Fachlicher Titel");
+        assertThat(first.title()).isEqualTo(first.id());
+        ChatRecord longQuestion = empty.plus(ChatRecord.Message.user("Ein langer Titel ".repeat(8), 1), 1);
+        assertThat(ChatExport.displayTitle(longQuestion)).hasSizeLessThanOrEqualTo(50).endsWith("…");
+    }
+
+    @Test
     void titleRequestUsesNoToolsAndDoesNotModifyTheChat() {
         ChatRecord chat = ChatRecord.fresh(1).plus(ChatRecord.Message.user("Datenhaus", 1), 1);
         assertThat(ChatTitle.request(chat, "model", "low").tools()).isEmpty();

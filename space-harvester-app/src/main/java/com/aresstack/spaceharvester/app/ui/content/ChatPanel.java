@@ -219,7 +219,7 @@ public final class ChatPanel extends JPanel {
     private final AppContext context;
     /** „Chat:“ und der Name des aktuellen Chats; Rechtsklick bietet Umbenennen und Löschen. */
     private final JLabel chatName = new JLabel();
-    private final javax.swing.JButton titleAi = new javax.swing.JButton("✦");
+    private final IconButton titleAi = new IconButton(Glyph.SPARKLE, "Chat-Titel mit KI erzeugen").compact();
     private boolean titlePending;
     /** Der Name beim Umbenennen an Ort und Stelle. */
     private final JTextField chatNameEditor = new JTextField();
@@ -2832,25 +2832,24 @@ public final class ChatPanel extends JPanel {
     private void answerActions(AssistantMarkdownMessage message, ChatRecord snapshot, ChatRecord.Message answer) {
         Color ink = MarkdownTheme.forSurface(transcriptScroll.getViewport().getBackground()).getMutedForeground();
         JPanel buttons = (JPanel) headerButtons(ink, ASSISTANT, message.view()::getMarkdown);
-        addExportButton(buttons, "↓", "Antwort exportieren", snapshot, answer,
+        addExportButton(buttons, Glyph.EXPORT, "Antwort exportieren", snapshot, answer,
                 com.aresstack.spaceharvester.app.chat.ChatExport.Scope.ANSWER);
-        addExportButton(buttons, "☷", "Quellen exportieren", snapshot, answer,
+        addExportButton(buttons, Glyph.SOURCES_EXPORT, "Quellen exportieren", snapshot, answer,
                 com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES);
         message.setActions(buttons);
     }
 
-    private void addExportButton(JPanel buttons, String icon, String label, ChatRecord snapshot,
+    private void addExportButton(JPanel buttons, javax.swing.Icon icon, String label, ChatRecord snapshot,
             ChatRecord.Message answer, com.aresstack.spaceharvester.app.chat.ChatExport.Scope scope) {
-        javax.swing.JButton button = new javax.swing.JButton(icon);
-        button.setToolTipText(label);
-        button.setContentAreaFilled(false);
-        button.setBorderPainted(false);
+        IconButton button = new IconButton(icon, label).compact();
+        button.setForeground(MarkdownTheme.forSurface(transcriptScroll.getViewport().getBackground()).getMutedForeground());
         javax.swing.JMenu formats = exportMenu(label, snapshot, answer, scope);
         button.setEnabled(formats.isEnabled());
         button.addActionListener(e -> {
             ChatRecord current = chat.id().equals(snapshot.id()) ? chat : snapshot;
             ChatRecord named = snapshot.withTitle(current.title(), snapshot.modifiedAt());
-            exportMenu(label, named, answer, scope).getPopupMenu().show(button, 0, button.getHeight());
+            PopupHover.clearOnClose(exportMenu(label, named, answer, scope).getPopupMenu(), button)
+                    .show(button, 0, button.getHeight());
         });
         buttons.add(button);
     }
@@ -2916,7 +2915,8 @@ public final class ChatPanel extends JPanel {
         Path folder = home;
         titlePending = true;
         titleAi.setEnabled(false);
-        titleAi.setText("…");
+        titleAi.setIcon(Glyph.SYNC);
+        titleAi.setToolTipText("Chat-Titel wird erzeugt");
         try {
             runtime.workspace().aiChat().stream(
                     com.aresstack.spaceharvester.app.chat.ChatTitle.request(snapshot, model, effortValue()),
@@ -2939,7 +2939,8 @@ public final class ChatPanel extends JPanel {
 
     private void finishTitle(ChatRecord snapshot, Path folder, String result) {
         titlePending = false;
-        titleAi.setText("✦");
+        titleAi.setIcon(Glyph.SPARKLE);
+        titleAi.setToolTipText("Chat-Titel mit KI erzeugen");
         String title = com.aresstack.spaceharvester.app.chat.ChatTitle.clean(result);
         if (chat.id().equals(snapshot.id()) && java.util.Objects.equals(home, folder)
                 && !title.isBlank() && chat.title().equals(snapshot.title())) {

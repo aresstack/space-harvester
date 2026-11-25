@@ -39,7 +39,15 @@ public final class ChatExport {
     private ChatExport() { }
 
     public static String displayTitle(ChatRecord chat) {
-        return chat.renamed() ? chat.title() : "Neuer Chat";
+        if (chat.renamed()) {
+            return chat.title();
+        }
+        if (chat.isEmpty()) {
+            return "Neuer Chat";
+        }
+        String question = subject(chat).replaceAll("\\s+", " ").strip();
+        int length = question.codePointCount(0, question.length());
+        return length <= 50 ? question : question.substring(0, question.offsetByCodePoints(0, 49)).strip() + "…";
     }
 
     public static String subject(ChatRecord chat) {

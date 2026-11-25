@@ -121,7 +121,7 @@ class ChatPanelTest {
             // Der Space zeigt seinen zuletzt geänderten Chat samt Verlauf.
             panel[0].selection(new Selection.Node("handbuch", space, null, "Handbuch"));
             assertThat(panel[0].chat().id()).isEqualTo(earlier.id());
-            assertThat(panel[0].chatName()).isEqualTo("Neuer Chat");
+            assertThat(panel[0].chatName()).isEqualTo("Frühere Frage");
             assertThat(panel[0].bubbles()).isEqualTo(5);
             // Preserve the user speech bubble and put the assistant actions below the Markdown body.
             java.util.List<com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownMessage> answers =
@@ -199,7 +199,7 @@ class ChatPanelTest {
             assertThat(panel[0].bubbles()).isEqualTo(5);
             assertThat(panel[0].knowledge()).startsWith("Wissen: Handbuch · alle Spaces");
             // Unter ▾ zuerst die Chats des gewählten Bereichs, darunter abgetrennt alle übrigen; der offene mit Haken.
-            assertThat(menuTexts(panel[0])).containsExactly(ChatPanel.CHATS_HERE, "    " + other.id(), "—",
+            assertThat(menuTexts(panel[0])).containsExactly(ChatPanel.CHATS_HERE, "    Ganz andere Frage", "—",
                     ChatPanel.CHATS_ELSEWHERE, "✓ Zugriffsrechte");
             // Ein Chat aus der Liste öffnet sich aus seinem eigenen Bereich und bleibt dort gespeichert.
             ((javax.swing.JMenuItem) panel[0].chatMenuItems().get(1)).doClick();
@@ -208,7 +208,7 @@ class ChatPanelTest {
             panel[0].selection(new Selection.Node("handbuch", space, null, "Handbuch"));
             assertThat(panel[0].chat().id()).isEqualTo(other.id());
             assertThat(menuTexts(panel[0])).containsExactly(ChatPanel.CHATS_HERE, "    Zugriffsrechte", "—",
-                    ChatPanel.CHATS_ELSEWHERE, "✓ " + other.id());
+                    ChatPanel.CHATS_ELSEWHERE, "✓ Ganz andere Frage");
             // Ein neuer, leerer Chat gehört noch keinem Bereich: er zieht mit der Auswahl mit.
             javax.swing.AbstractButton fresh = (javax.swing.AbstractButton)
                     ((java.awt.Container) panel[0].headerActions()).getComponent(0);
@@ -498,7 +498,7 @@ class ChatPanelTest {
             // trotzdem löschbar.
             panel.selection(new Selection.Node("handbuch", null, null, "Handbuch"));
             for (Component item : panel.chatMenuItems()) {
-                if (item instanceof javax.swing.JMenuItem menuItem && menuItem.getText().endsWith(second.id())) {
+                if (item instanceof javax.swing.JMenuItem menuItem && menuItem.getText().endsWith("Zweite Frage")) {
                     menuItem.doClick();
                 }
             }
