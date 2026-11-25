@@ -1088,6 +1088,7 @@ public final class Harvester implements AutoCloseable {
             documentEnrichments.localDocuments(cache::find, structuredDocuments);
             opened.add(documentEnrichments);
             sectionTexts.set(documentEnrichments);
+            pageRecomputation.localDocuments(documentEnrichments);
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
                     // SY1: danach der automatische Synonymlauf der Quelle als Hintergrundauftrag.

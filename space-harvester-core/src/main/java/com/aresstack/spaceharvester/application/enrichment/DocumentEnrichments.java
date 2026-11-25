@@ -187,6 +187,26 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
         return hasCurrentLocalAnalysis(snapshot, processorId);
     }
 
+    /** Explicitly recompute local section results in the existing interactive job. */
+    public Enrichments.Run recomputeLocal(PageSnapshot snapshot, String processorId, JobContext context) {
+        if (!enabled.getAsBoolean()) {
+            return new Enrichments.Run(false, 0, 0, 0);
+        }
+        Optional<Pending> pending = localPending(snapshot.key());
+        if (pending.isEmpty() || !LocalOriginalReference.read(snapshot.payload())
+                .map(reference -> Objects.equals(reference.extractionKey(), pending.get().exactExtraction()))
+                .orElse(false)) {
+            return new Enrichments.Run(false, 0, 0, 0);
+        }
+        Pending item = pending.get();
+        int removed = removals(item);
+        try {
+            return process(item, context, null, true, processorId);
+        } finally {
+            forgetIfRemoved(item, removed);
+        }
+    }
+
     /** Schedule the newly committed local original, not a preview or a synthetic attachment. */
     public void indexedLocal(PageSnapshot snapshot) {
         if (localDocuments == null || !LocalOriginalReference.recognizes(snapshot.payload())) {
@@ -983,16 +1003,23 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      */
     private void process(Pending item, JobContext context,
                          com.aresstack.spaceharvester.application.network.NetworkWait wait) {
+        process(item, context, wait, false, null);
+    }
+
+    private Enrichments.Run process(Pending item, JobContext context,
+                                    com.aresstack.spaceharvester.application.network.NetworkWait wait,
+                                    boolean force, String processorId) {
         com.aresstack.spaceharvester.application.network.NetworkState net = wait == null ? null : network;
         Optional<StoredExtraction> extraction = item.extraction();
         if (extraction.isEmpty()) {
-            // Ohne lesbare Extraktion gilt der alte Stand weiter.
-            return;
+            // Keep the previous result if the extraction is unavailable.
+            return new Enrichments.Run(false, 0, 0, 0);
         }
         Manifest manifest = manifest(item, extraction.get());
-        if (manifest.current()) {
-            return;
+        if (!force && manifest.current()) {
+            return new Enrichments.Run(true, 0, 0, 0);
         }
+        int[] counts = new int[3];
         long embeddingMaxChars = manifest.embeddingMaxChars();
         String basis = manifest.basis();
         Map<String, String> versions = manifest.versions();
@@ -1013,7 +1040,7 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             List<Enrichment> results = stored.getOrDefault(hash.getKey(), List.of());
             // Andere Grenze oder inzwischen freigegeben: der zweite Durchgang entscheidet je Abschnitt und rechnet nur,
             // was an dieser Stelle nicht mehr gilt (Enrichments#refreshDocument).
-            if (!covered(results, versions, hash.getValue(), seen.get(hash.getKey()))
+            if (force || !covered(results, versions, hash.getValue(), seen.get(hash.getKey()))
                     || results.stream().anyMatch(result -> !Objects.equals(previousLimit(result.extraction()),
                     "embedding-max-chars=" + embeddingMaxChars))
                     || results.stream().anyMatch(enrichments::outdated)) {
@@ -1034,9 +1061,16 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                     context.discovered(1);
                 }
                 // Ohne Extraktion: die trägt erst der Abschluss unten nach, wenn alle Abschnitte durchliefen.
+                List<Enrichment> previous = stored.getOrDefault(document, List.of());
+                if (force) {
+                    previous = processorId == null ? List.of() : previous.stream()
+                            .filter(result -> !processorId.equals(result.processorId())).toList();
+                }
                 Enrichments.Run run = enrichments.refreshDocument(document, index, hashes.get(document), null, text,
-                        stored.getOrDefault(document, List.of()), null, new DocumentPosition(offset,
-                                embeddingMaxChars));
+                        previous, null, new DocumentPosition(offset, embeddingMaxChars));
+                counts[0] += run.computed();
+                counts[1] += run.current();
+                counts[2] += run.failed();
                 if (wait != null && run.failed() > 0 && !net.online()) {
                     // Am Netz gescheitert: nichts rot, kein Versuch verbraucht. Das gespeicherte FAILED gälte beim
                     // Wiederholen als aktuell (gleiche Eingabe und Version) und der Abschnitt bekäme nie sein
@@ -1078,6 +1112,7 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                     .forEach(section -> enrichments.store().removeSection(document, section));
         }
         enrichments.flush();
+        return new Enrichments.Run(true, counts[0], counts[1], counts[2]);
     }
 
     /** Entfernt die gescheiterten Ergebnisse eines Abschnitts und behält die gelungenen. */

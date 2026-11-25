@@ -33,6 +33,11 @@ public final class PageRecomputation {
 
     private final Jobs jobs;
     private final Enrichments enrichments;
+    private volatile DocumentEnrichments localDocuments;
+
+    public void localDocuments(DocumentEnrichments localDocuments) {
+        this.localDocuments = Objects.requireNonNull(localDocuments, "localDocuments");
+    }
 
     public PageRecomputation(Jobs jobs, Enrichments enrichments) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
@@ -163,10 +168,27 @@ public final class PageRecomputation {
         int computed = 0;
         int current = 0;
         int failed = 0;
+        boolean local = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                .recognizes(snapshot.payload()) && localDocuments != null;
+        if (local && (processorId == null || enrichments.documentProcessorIds().contains(processorId))) {
+            Enrichments.Run sections = localDocuments.recomputeLocal(snapshot, processorId, context);
+            if (!sections.supported() || processorId != null) {
+                return sections;
+            }
+            computed += sections.computed();
+            current += sections.current();
+            failed += sections.failed();
+        }
         for (String id : ids) {
             context.checkpoint();
+            if (local && enrichments.documentProcessorIds().contains(id)) {
+                continue;
+            }
             Enrichments.Run part = enrichments.recompute(snapshot, id);
             if (!part.supported()) {
+                if (local) {
+                    continue;
+                }
                 return part;
             }
             computed += part.computed();
