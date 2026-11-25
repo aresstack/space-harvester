@@ -362,6 +362,10 @@ public final class CommandDeck {
                     shown = active.datasets();
                     extra = new com.aresstack.spaceharvester.app.chat.FtpChatTools(ftp.selected(), ftp::selected);
                     rules = com.aresstack.spaceharvester.app.chat.FtpChatTools.rules();
+                    var diagnosis = active.datasets().diagnosis();
+                    if (diagnosis != null) {
+                        extra = new com.aresstack.spaceharvester.app.chat.MvsDiagnosisTools(extra, diagnosis, stillShown);
+                    }
                 }
             }
         } else if (sent == DeckArea.NDV) {
@@ -494,7 +498,12 @@ public final class CommandDeck {
 
     /** Zeigt einen Arbeitsbereich; offene Sitzungen der anderen bleiben, wie sie sind. */
     public void show(DeckArea next) {
-        if (area != next) chatGeneration++;
+        if (area != next) {
+            chatGeneration++;
+            if (area == DeckArea.FTP && ftp.activeSessionView() != null) {
+                ftp.activeSessionView().datasets().revokeDiagnosis();
+            }
+        }
         area = next;
         buttons.get(next).setSelected(true);
         cards.show(workspace, next.name());

@@ -25,6 +25,9 @@ public interface ChatToolset {
     /** Identify the selected text for safe reuse of a captured snapshot. */
     default String viewIdentity() { return ""; }
 
+    /** Pass the selected model before offering tools. */
+    default void modelSelected(String model) {}
+
     /** Bricht laufende Arbeit ab (Stopp im Chat). */
     default void cancel() {
     }

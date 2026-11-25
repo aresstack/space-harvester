@@ -125,20 +125,26 @@ public final class FtpDocumentStore implements DocumentStore {
 
     @Override
     public SaveResult save(EditorDocument loaded, String text, boolean overwrite) throws DocumentException {
+        if (!loaded.writeRestriction().isEmpty()) throw new DocumentException(loaded.writeRestriction());
         String path = loaded.location();
         boolean records = session.mvs();
         // Nur auf MVS gilt das Satzformat (letzter Umbruch kein leerer Satz); andere Dateien gehen unverändert hinaus.
         String outgoing = records && text.endsWith("\n") ? text.substring(0, text.length() - 1) : text;
         try {
-            RemoteFile written = session.filesOnce(files -> files.writeIfUnchanged(path, outgoing,
-                    overwrite ? null : loaded.hash())).get();
+            RemoteFile written = session.filesOnce(files -> {
+                if (overwrite && records) {
+                    RemoteFile current = files.read(path);
+                    if (!current.writeRestriction().isEmpty()) throw new java.io.IOException(current.writeRestriction());
+                }
+                return files.writeIfUnchanged(path, outgoing, overwrite ? null : loaded.hash());
+            }).get();
             copybookMembers.invalidate(written.path());
             RemoteFile fresh = await(session.files(files -> files.read(written.path())), "Lesen nach dem Speichern");
             if (fresh.text().equals(expected(outgoing, records))) {
                 // Der Editor behält seinen Text als Stand (sonst bliebe er nach dem Speichern „geändert“), der
                 // Fingerabdruck ist der des Hosts für die nächste Prüfung.
                 return new SaveResult.Saved(new EditorDocument(fresh.path(), loaded.name(), text, loaded.charset(),
-                        loaded.lineEnding(), fresh.hash()));
+                        loaded.lineEnding(), fresh.hash(), fresh.writeRestriction()));
             }
             if (overwrite) {
                 // Ausdrücklich überschrieben, der Host hat aber etwas anderes abgelegt (etwa Satzlänge): sein Stand
@@ -177,7 +183,7 @@ public final class FtpDocumentStore implements DocumentStore {
 
     private EditorDocument document(RemoteFile file) {
         return new EditorDocument(file.path(), name(file.path()), file.text(), session.profile().encoding(), "\n",
-                file.hash());
+                file.hash(), file.writeRestriction());
     }
 
     /** Anzeigename: auf MVS das Member bzw. der Dataset-Name, sonst der Dateiname. */

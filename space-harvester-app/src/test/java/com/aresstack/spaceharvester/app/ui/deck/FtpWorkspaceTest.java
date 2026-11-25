@@ -107,11 +107,28 @@ class FtpWorkspaceTest {
             assertThat(datasets.tools().definitions()).extracting(com.aresstack.spaceharvester.ai.AiChat.Tool::name)
                     .contains("dataset_lesen").doesNotContain("jobs_auflisten", "jobs_suchen", "spool_lesen");
             assertThat(tool(datasets, "jobs_auflisten", "{}")).contains("Abgelehnt");
+            var diagnosis = view.datasets().shown().get(0);
+            SwingUtilities.invokeAndWait(() -> {
+                view.datasets().confirm = (title, question) -> true;
+                view.datasets().armDiagnosis(diagnosis);
+            });
+            var binary = onEdt(deck::chatScope);
+            binary.tools().modelSelected("other-model");
+            assertThat(binary.tools().definitions()).extracting(com.aresstack.spaceharvester.ai.AiChat.Tool::name)
+                    .doesNotContain("read_mvs_bytes");
+            binary.tools().modelSelected("openai/gpt-oss-120b");
+            assertThat(binary.tools().definitions()).extracting(com.aresstack.spaceharvester.ai.AiChat.Tool::name)
+                    .contains("inspect_mvs_dataset", "read_mvs_bytes", "inspect_mvs_records");
+            assertThat(tool(binary, "read_mvs_bytes", "{\"offset\":0,\"length\":16}"))
+                    .contains("00000000", "2f 2f 42 55 49 4c 44");
+            assertThat(tool(binary, "inspect_mvs_dataset", "{}")).contains("DSORG: PO", "SHA-256:");
 
             SwingUtilities.invokeAndWait(() -> deck.ftp().toggle().select(FtpSessionView.JOBS));
             waitFor(() -> onEdt(() -> view.jobs().shownJobs().size() == 3), until);
             var jes = onEdt(deck::chatScope);
             assertThat(jes.area()).endsWith("JES-Jobs");
+            assertThat(tool(binary, "read_mvs_bytes", "{\"offset\":0,\"length\":16}")).contains("anderen Bereich");
+            assertThat(onEdt(view.datasets()::diagnosis)).isNull();
             assertThat(jes.system()).contains("Aktive FTP-Unteransicht: JES-Jobs", "JOB04700", "JOB04701")
                     .doesNotContain("//BUILD    JOB");
             assertThat(jes.tools().definitions()).extracting(com.aresstack.spaceharvester.ai.AiChat.Tool::name)

@@ -91,6 +91,11 @@ public final class DeckChatTools implements ChatToolset {
     }
 
     @Override
+    public void modelSelected(String model) {
+        if (extra != null) extra.modelSelected(model);
+    }
+
+    @Override
     public List<AiChat.Tool> definitions() {
         List<AiChat.Tool> tools = new ArrayList<>();
         tools.add(new AiChat.Tool(VIEW, "Liest, was der Benutzer im Bereich gerade sieht: Beschriftungen, Felder, "
