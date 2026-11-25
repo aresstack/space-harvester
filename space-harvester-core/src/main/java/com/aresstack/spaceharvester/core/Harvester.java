@@ -984,12 +984,16 @@ public final class Harvester implements AutoCloseable {
             this.keywordSearch = new KeywordSearch(catalog, access,
                     new PassageSnippets(textIndex, enrichmentStore::find), prefetch, builder.discoveryQueries,
                     excerpts, builder.selection(), runLog, findings,
-                    prefetchFollows ? () -> this.settings.search().prefetchHits() : () -> true, sourceIds -> {
+                    sourceId -> prefetchFollows
+                            ? this.settings.sync().override(sourceId).effectivePrefetch(this.settings.search().prefetchHits())
+                            : builder.prefetchSearchHits, sourceIds -> {
                         SyncBeforeSearch before = this.syncBeforeSearch;
                         if (before != null) {
                             before.searching(sourceIds);
                         }
-                    }, SearchExpansion.typed(termRelations::counterparts), glossarySynonyms.expansion());
+                    }, SearchExpansion.typed(termRelations::counterparts), glossarySynonyms.expansion(),
+                    sourceId -> this.settings == null
+                            || !Boolean.FALSE.equals(this.settings.sync().override(sourceId).backgroundFill()));
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
@@ -1003,7 +1007,7 @@ public final class Harvester implements AutoCloseable {
                     Enrichments.stop(renewals, Duration.ofSeconds(10));
                 });
                 // Fundstelle 10: Mit Hintergrundaufträgen sichtbar als „Veraltete Treffer nachladen“.
-                PageRenewal visible = new PageRenewal(pages, renewals, pageLoads);
+                PageRenewal visible = new PageRenewal(pages, renewals, pageLoads, keywordSearch::allowsPrefetch);
                 opened.add(visible);
                 renewal = visible;
             }
@@ -1049,11 +1053,11 @@ public final class Harvester implements AutoCloseable {
                     new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
                     HitScorer.of(excerpts), runLog, new NeighborCandidates(pageConnections),
                     new com.aresstack.spaceharvester.application.query.progressive.BackgroundNeighborLoader(pageLoads,
-                            backgroundJobs), termSearch);
+                            backgroundJobs, keywordSearch::allowsPrefetch), termSearch);
             // R2: dieselbe Methode zur Schlagwortsuche ohne progressive Suche, als eigener Aufruf nach einem Stapel.
             this.neighborSearch = new NeighborSearch(keywordSearch, new NeighborCandidates(pageConnections),
                     new com.aresstack.spaceharvester.application.query.progressive.BackgroundNeighborLoader(pageLoads,
-                            backgroundJobs));
+                            backgroundJobs, keywordSearch::allowsPrefetch));
             opened.add(orchestrator);
             this.progressiveSearch = orchestrator;
             start.step("Suche");

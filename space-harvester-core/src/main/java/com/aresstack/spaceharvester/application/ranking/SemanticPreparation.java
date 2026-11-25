@@ -133,6 +133,9 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
         java.util.Map<PageKey, PageSnapshot> unique = new java.util.LinkedHashMap<>();
         Set<PageKey> visited = new java.util.HashSet<>();
         for (KeywordSearch.Hit hit : found.hits()) {
+            if (!keywords.allowsPrefetch(hit.sourceId())) {
+                continue;
+            }
             PageKey key = new PageKey(hit.sourceId(), hit.pageId());
             if (!visited.add(key)) {
                 continue;

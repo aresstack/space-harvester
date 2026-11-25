@@ -79,6 +79,20 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void sourcePrefetchOverrideRoundTripsIndependentlyOfBackgroundFill() throws Exception {
+        Path file = home.resolve("prefetch.yml");
+        editor.save(file, editor.draft(file, files("handbuch", "/tmp/a")));
+        var rule = new com.aresstack.spaceharvester.application.configuration.SourceSyncOverride(
+                null, null, null, null, null, null, null, null, null, true, false);
+        editor.save(file, editor.withSyncRule(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                "handbuch", rule));
+        var restored = loader.load(file).syncRule("handbuch");
+        assertThat(restored).isEqualTo(rule);
+        assertThat(restored.effectivePrefetch(true)).isFalse();
+        assertThat(restored.backgroundFill()).isTrue();
+    }
+
+    @Test
     void createsAMissingFile() throws Exception {
         Path file = home.resolve("neu").resolve("app.yml");
         editor.save(file, editor.draft(file, files("handbuch", "C:\\Daten\\Hand \"buch\"")));

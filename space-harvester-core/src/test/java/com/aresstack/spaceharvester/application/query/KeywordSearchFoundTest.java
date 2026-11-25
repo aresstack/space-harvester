@@ -60,6 +60,28 @@ class KeywordSearchFoundTest {
     }
 
     @Test
+    void sourceSpecificPrefetchLeavesNativeHitsVisibleWithoutLoadingOrCataloguingThem() {
+        fast.results("betrieb", "1");
+        slow.results("betrieb", "9");
+        List<String> loaded = new ArrayList<>();
+        var findings = mock(com.aresstack.spaceharvester.application.acquisition.FindingCatalog.class);
+        KeywordSearch search = new KeywordSearch(catalog, allowAll(), texts, (caller, hits) -> {
+            hits.forEach(hit -> loaded.add(hit.sourceId()));
+            return KeywordSearch.Prefetch.Fill.NONE;
+        }, 1, ExcerptPriority.off(), CandidateSelectionStrategy.topN(1), com.aresstack.spaceharvester.application.searchrun.SearchRunLog.NONE, findings,
+                "fast"::equals, KeywordSearch.BeforeSearch.NONE, SearchExpansion.NONE, SearchExpansion.NONE,
+                "fast"::equals);
+
+        var result = search.search(APP, KeywordSearch.Query.of("betrieb"), null, 25);
+
+        assertThat(loaded).containsExactly("fast");
+        assertThat(result.found()).extracting(KeywordSearch.Hit::sourceId)
+                .containsExactlyInAnyOrder("fast", "slow");
+        org.mockito.Mockito.verify(findings, org.mockito.Mockito.never()).accept(any(),
+                org.mockito.ArgumentMatchers.eq("slow"), any());
+    }
+
+    @Test
     void aFastSourceIsReportedWhileASlowOneIsStillSearching() throws Exception {
         fast.results("betrieb", "1", "2");
         slow.results("betrieb", "9");

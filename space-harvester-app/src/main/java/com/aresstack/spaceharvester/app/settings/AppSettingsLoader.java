@@ -841,7 +841,8 @@ public final class AppSettingsLoader {
                             problems),
                     optionalFlag(get(rule, SourceSyncOverride.BEFORE_SEARCH), prefix + "before-search", problems),
                     mode, strategy, maxAge, retention,
-                    optionalFlag(get(rule, SourceSyncOverride.BACKGROUND_FILL), prefix + "background-fill", problems)));
+                    optionalFlag(get(rule, SourceSyncOverride.BACKGROUND_FILL), prefix + "background-fill", problems),
+                    optionalFlag(get(rule, SourceSyncOverride.PREFETCH_HITS), prefix + "prefetch-hits", problems)));
         }
         return rules;
     }

@@ -465,7 +465,8 @@ public final class SourcesView implements View {
         SourceSyncOverride rule = settings.syncRule(entry.id());
         SyncSettings effective = settings.effectiveSync(entry.id());
         syncFacts.add("Erkennung", "Wie erfährt die App von neuen und geänderten Seiten?", Comic.MUTED)
-                .add("Über die Suche", "immer: gefundene Seiten kommen in den Cache")
+                .add("Suchtreffer nachladen", (rule.prefetchHits() == null ? "Wie global"
+                        : onOff(rule.prefetchHits())) + origin(rule.prefetchHits()), tone(rule.prefetchHits()))
                 .add(SettingDialogs.CHANGE_SEARCH_TITLE, interval(effective.interval(), "CQL, ohne "
                         + "Administratorrechte") + origin(rule.changeSearchInterval()), tone(rule.changeSearchInterval()))
                 .add(SettingDialogs.INVENTORY_TITLE, interval(effective.inventoryInterval(), "nur Seitenmetadaten")

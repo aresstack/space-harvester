@@ -183,14 +183,16 @@ class QueryConfiguration {
                 : new PassageSnippets(index, enrichments::find);
         return new KeywordSearch(catalog, access, snippets, prefetch, maxQueries,
                 excerpts(reranker.getIfUnique(), excerptRanking), selection(selectionValue, loadsValue), runs,
-                findings, () -> live.current().search().prefetchHits(),
+                findings, sourceId -> live.current().sync().override(sourceId)
+                        .effectivePrefetch(live.current().search().prefetchHits()),
                 sourceIds -> syncBeforeSearch.ifAvailable(before -> before.searching(sourceIds)),
                 // #336, Teil 4: bestätigte Synonyme, Varianten und Ausschreibungen als Anfragen je Quelle.
                 relations.getIfAvailable() == null ? SearchExpansion.NONE
                         : SearchExpansion.typed(relations.getIfAvailable()::counterparts),
                 // K5a: vorgeschlagene Synonyme bestätigter Fachbegriffe, nur wenn die Anfrage es einschaltet.
                 relations.getIfAvailable() == null || glossary.getIfAvailable() == null ? SearchExpansion.NONE
-                        : new GlossarySynonyms(glossary.getIfAvailable(), relations.getIfAvailable()).expansion());
+                        : new GlossarySynonyms(glossary.getIfAvailable(), relations.getIfAvailable()).expansion(),
+                sourceId -> !Boolean.FALSE.equals(live.current().sync().override(sourceId).backgroundFill()));
     }
 
     /** Der Cross-Encoder für Titel und Auszug, wenn {@code rerank-model} gesetzt ist; sonst keine Bewertung. */
@@ -354,7 +356,7 @@ class QueryConfiguration {
                 processor.id(), SemanticPreparation.DEFAULT_WAIT);
         return new RelevanceSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access,
                 store.getIfUnique(), vectors.getIfUnique(), processor,
-                background == null ? null : new PageRenewal(pages, background),
+                background == null ? null : new PageRenewal(pages, background, null, keywords::allowsPrefetch),
                 reranker.getIfUnique(() -> SearchReranker.NONE),
                 texts.getIfUnique(), preparation, runs,
                 // ADR 0026, AP9a: auch in den Vektoren der Anhänge, solange enrichment.documents.enabled gilt.
