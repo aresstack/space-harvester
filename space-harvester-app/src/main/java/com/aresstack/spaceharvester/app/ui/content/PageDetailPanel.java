@@ -44,6 +44,7 @@ import com.aresstack.spaceharvester.application.terms.PageTerms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.PageBookmark;
+import com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -2641,6 +2642,15 @@ public final class PageDetailPanel extends JPanel {
             showOriginalVideo(metadata);
             return;
         }
+        if (LocalOriginalReference.recognizes(payload)) {
+            readingPane.clear(" ");
+            if (!showLargeOriginal(metadata)) {
+                showOriginalWithoutPreview(metadata, "Das Original verbleibt im lokalen Ordner und wird nicht "
+                        + "im Cache gespeichert. Für dieses Format oder diese Größe ist keine Vorschau verfügbar. "
+                        + "Öffnen und Speichern greifen bei Bedarf auf das Original zu.");
+            }
+            return;
+        }
         if (com.aresstack.spaceharvester.application.snapshot.LargeFiles.placeholder(payload)) {
             readingPane.clear(" ");
             if (!showLargeOriginal(metadata)) {
@@ -2944,6 +2954,12 @@ public final class PageDetailPanel extends JPanel {
                 + (textOnly ? "\nDer Textauszug steht im Reiter „Podcast-Ansicht“, die Suche findet die Datei darüber."
                 : "\nAbgelegt sind nur ihre Kopfdaten (kein lesbarer Text oder größer als die Grenze zum Laden).")
                 + "\nGrenzen unter Einstellungen › Daten › „Größte Datei im Cache“.";
+        showOriginalWithoutPreview(metadata, reason);
+    }
+
+    /** Show an original that can be opened or saved but has no in-memory preview. */
+    private void showOriginalWithoutPreview(PageMetadata metadata, String reason) {
+        long size = com.aresstack.spaceharvester.application.snapshot.LargeFiles.size(metadata);
         AppRuntime runtime = context.runtime();
         String type = com.aresstack.spaceharvester.application.snapshot.LargeFiles.viewableType(metadata);
         ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(),
@@ -3076,6 +3092,7 @@ public final class PageDetailPanel extends JPanel {
     private static boolean isNativePreview(PageSnapshot snapshot) {
         String kind = snapshot.metadata().attributes().get(PageMetadata.RESOURCE_KIND);
         String largeType = com.aresstack.spaceharvester.application.snapshot.LargeFiles.placeholder(snapshot.payload())
+                || LocalOriginalReference.recognizes(snapshot.payload())
                 ? com.aresstack.spaceharvester.application.snapshot.LargeFiles.viewableType(snapshot.metadata()) : null;
         return PageMetadata.LINK_KIND.equals(kind)
                 || "true".equals(snapshot.metadata().attributes().get(PageMetadata.REMOTE_MEDIA))
