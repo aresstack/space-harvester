@@ -135,13 +135,16 @@ class QueryConfiguration {
      */
     @Bean
     FindingCatalog findingCatalog(SourceCatalog catalog, AccessGuard access, ObjectProvider<LucenePageCache> cache,
-                                  ObjectProvider<BackgroundFill> fill) {
+                                  ObjectProvider<BackgroundFill> fill, LiveConfiguration live) {
         LucenePageCache available = cache.getIfAvailable();
         if (available == null) {
             return FindingCatalog.NONE;
         }
         return new FindingCataloging(catalog, access, new LuceneFindingStore(available),
-                gaps -> fill.ifAvailable(background -> background.offer(gaps)), Clock.systemUTC());
+                gaps -> fill.ifAvailable(background -> background.offer(gaps)), Clock.systemUTC(),
+                sourceId -> live.current().sync().override(sourceId)
+                        .effectivePrefetch(live.current().search().prefetchHits())
+                        && live.current().syncFor(sourceId).backgroundFill());
     }
 
     /** Die Titel- und Metadatensuche im Index, etwa für die Confluence-kompatible Fassade. */

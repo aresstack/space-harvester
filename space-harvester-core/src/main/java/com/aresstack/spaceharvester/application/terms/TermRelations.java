@@ -504,6 +504,13 @@ public class TermRelations {
      */
     public synchronized ProposalRun propose(String actor, RelationOrigin origin, RelationScope scope,
                                             Set<RelationType> types, String generation, List<Proposal> proposals) {
+        return propose(actor, origin, scope, types, generation, proposals, true);
+    }
+
+    /** Preserve existing proposals and evidence when the run covers only part of the corpus. */
+    public synchronized ProposalRun propose(String actor, RelationOrigin origin, RelationScope scope,
+                                            Set<RelationType> types, String generation, List<Proposal> proposals,
+                                            boolean reconcileExisting) {
         Objects.requireNonNull(actor, "actor");
         Objects.requireNonNull(scope, "scope");
         Objects.requireNonNull(generation, "generation");
@@ -551,7 +558,7 @@ public class TermRelations {
                 put.put(id, created);
                 audit.add(new TermRelationStore.AuditEntry(id, "propose", actor, now, ReviewStatus.PROPOSED, 1));
                 added++;
-            } else if (current.status() == ReviewStatus.REJECTED || current.origin() != origin) {
+            } else if (!reconcileExisting || current.status() == ReviewStatus.REJECTED || current.origin() != origin) {
                 // Benutzerentscheidungen und andere Herkunft haben Vorrang.
                 suppressed++;
             } else if (current.evidence().equals(proposal.evidence()) && !current.evidenceStale()) {
@@ -566,7 +573,7 @@ public class TermRelations {
             }
         }
         for (TermRelation relation : existing.values()) {
-            if (relation.origin() != origin || !relation.scope().equals(scope) || !types.contains(relation.type())
+            if (!reconcileExisting || relation.origin() != origin || !relation.scope().equals(scope) || !types.contains(relation.type())
                     || named.contains(relation.id())) {
                 continue;
             }

@@ -810,7 +810,11 @@ public final class Harvester implements AutoCloseable {
                         if (fill != null) {
                             fill.offer(gaps);
                         }
-                    }, clock);
+                    }, clock, sourceId -> (manager != null && !builder.prefetchSearchHitsFixed
+                            ? this.settings.sync().override(sourceId).effectivePrefetch(this.settings.search().prefetchHits())
+                            : builder.prefetchSearchHits)
+                            && (manager != null && !builder.backgroundFillFixed
+                            ? this.settings.syncFor(sourceId).backgroundFill() : builder.backgroundFill));
             opened.add(findings);
             if (backgroundJobs != null) {
                 // Fundstelle 14: Funde katalogisieren als Hintergrundart „Funde katalogisieren“.

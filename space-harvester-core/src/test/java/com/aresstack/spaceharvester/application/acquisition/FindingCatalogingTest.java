@@ -45,14 +45,26 @@ class FindingCatalogingTest {
     private final Set<String> excludedSpaces = ConcurrentHashMap.newKeySet();
     private final MemoryStore store = new MemoryStore();
     private final List<BackgroundFill.Gap> gaps = Collections.synchronizedList(new ArrayList<>());
+    private final java.util.concurrent.atomic.AtomicBoolean allowed = new java.util.concurrent.atomic.AtomicBoolean(true);
     private final FindingCataloging cataloging = new FindingCataloging(catalog(), new AccessGuard(
             (context, scope, kind) -> kind == AccessKind.METADATA && context.kind() != AccessContext.PrincipalKind.END_USER
                     && !excludedSpaces.contains(scope.spaceKey()) ? AccessDecision.ALLOW : AccessDecision.DENY),
-            store, gaps::addAll, Clock.systemUTC());
+            store, gaps::addAll, Clock.systemUTC(), id -> allowed.get());
 
     @AfterEach
     void close() {
         cataloging.close();
+    }
+
+    @Test
+    void aDisabledSourceDoesNotCatalogueNewFindings() throws InterruptedException {
+        page("1", "DEV", "3");
+        allowed.set(false);
+        cataloging.offer(APP, "wiki", List.of(new FindingCatalog.Finding("1", "3")));
+        assertThat(cataloging.awaitIdle(WAIT)).isTrue();
+        assertThat(asked).isEmpty();
+        assertThat(store.headers).isEmpty();
+        assertThat(gaps).isEmpty();
     }
 
     @Test
@@ -189,6 +201,27 @@ class FindingCatalogingTest {
             list.add(new FindingCatalog.Finding("p" + i, "1"));
         }
         return list;
+    }
+
+    @Test
+    void queuedFindingsAreSkippedWhenAcquisitionIsDisabledBeforeExecution() throws Exception {
+        page("1", "DEV", "3");
+        java.util.Queue<Runnable> held = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        var jobs = busyJobs(held, 2);
+        var background = new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+        cataloging.background(background);
+        try {
+            cataloging.offer(APP, "wiki", List.of(new FindingCatalog.Finding("1", "3")));
+            await(() -> queued(background).size() == 1);
+            allowed.set(false);
+            runAll(held);
+            assertThat(asked).isEmpty();
+            assertThat(store.headers).isEmpty();
+            assertThat(gaps).isEmpty();
+            assertThat(queued(background)).isEmpty();
+        } finally {
+            jobs.close();
+        }
     }
 
     @Test
