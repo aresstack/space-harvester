@@ -105,7 +105,7 @@ public final class SemanticVariantSearch implements VariantSearch {
             // Liegt das ähnlichste Stück in einem Anhang (ADR 0026, AP9a): Ausschnitt aus dessen Abschnitt und der
             // Anhang wie bei Treffern der Volltextsuche (#723).
             hits.add(new KeywordSearch.Hit(key.sourceId(), key.pageId(), metadata.partitionKey(), metadata.title(),
-                    inDocument ? relevance.documentExcerpt(ranked, MAX_SNIPPET_CHARS).replaceAll("\\s+", " ").strip()
+                    (inDocument || best != null && best.localOriginal()) ? relevance.documentExcerpt(ranked, MAX_SNIPPET_CHARS).replaceAll("\\s+", " ").strip()
                             : snippet(key, best), metadata.url(), metadata.version(), metadata.modifiedAt(),
                     metadata.parentPageId(),
                     inDocument ? new KeywordSearch.AttachmentMatch(best.attachmentId(), best.attachmentTitle(),

@@ -642,7 +642,7 @@ public final class Harvester implements AutoCloseable {
                     new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits);
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
                     new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector(),
-                    new com.aresstack.spaceharvester.source.LocalReferenceTextProjector(),
+                    new com.aresstack.spaceharvester.source.LocalReferenceTextProjector(structuredDocuments),
                     // Angelo 20.11.2026: Videoseiten ohne Text lesen ihr Transkript, die letzte Korrektur zuerst; die
                     // Ablage entsteht erst weiter unten.
                     new com.aresstack.spaceharvester.application.presentation.VideoTranscriptTextProjector(
@@ -751,7 +751,7 @@ public final class Harvester implements AutoCloseable {
             this.snapshots = builder.localOriginalReferences
                     ? new SourceSnapshots(catalog, new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
                             new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(structuredDocuments),
-                            type -> true))
+                            LocalFilesTextProjector::readable))
                     : new SourceSnapshots(catalog);
             // Größere Dateien nimmt der Cache nicht an: gar nicht erst herunterladen, nur die Kopfdaten ablegen.
             long maxPageBytes = builder.maxPageBytes;

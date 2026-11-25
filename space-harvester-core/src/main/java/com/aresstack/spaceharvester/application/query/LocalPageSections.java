@@ -41,10 +41,15 @@ public final class LocalPageSections {
                     : section.partTitle() + "\n" + section.text())
                     .map(text -> new PageTextIndex.Entry(snapshot.key(), metadata.partitionKey(),
                             metadata.title(), text, input, mediaType)));
-            // Keep an entry for title searches even for a document without text.
-            try (Stream<PageTextIndex.Entry> all = Stream.concat(entries, Stream.of(new PageTextIndex.Entry(
-                    snapshot.key(), metadata.partitionKey(), metadata.title(), "", input, mediaType)))) {
-                index.replacePageSections(snapshot.key(), all::iterator);
+            // Retain a title-only entry only when the document has no indexable sections.
+            try (entries) {
+                var iterator = entries.iterator();
+                if (iterator.hasNext()) {
+                    index.replacePageSections(snapshot.key(), () -> iterator);
+                } else {
+                    index.replacePageSections(snapshot.key(), java.util.List.of(new PageTextIndex.Entry(
+                            snapshot.key(), metadata.partitionKey(), metadata.title(), "", input, mediaType)));
+                }
             }
         }
         return true;
