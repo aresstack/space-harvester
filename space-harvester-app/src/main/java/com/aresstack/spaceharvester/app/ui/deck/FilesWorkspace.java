@@ -165,6 +165,8 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private int cardCounter;
     private final CardLayout cards = new CardLayout();
     private final JPanel center = new JPanel(cards);
+    private final FileNavigationTree explorer = new FileNavigationTree(this::openEntry);
+    private JPanel addressRow;
     private final JPanel browserTools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
 
     /** Das eine Zurück wie im Space Harvester; gedrückt halten zeigt den Verlauf, Vor per Alt+Rechts/Maustaste. */
@@ -264,7 +266,6 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         browserTools.add(collapseAll);
         browserTools.add(expandAll);
         browserTools.add(detailsToggle);
-        browserTools.add(filterFrame);
         browserTools.add(sortButton);
         JPanel head = DeckBars.head(pills, browserTools);
 
@@ -294,8 +295,26 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
 
         bind(this, KeyStroke.getKeyStroke(KeyEvent.VK_T, InputEvent.CTRL_DOWN_MASK), "deck-new-tab",
                 () -> newTab(null));
-        add(head, BorderLayout.NORTH);
-        add(center, BorderLayout.CENTER);
+        JPanel reading = new JPanel(new BorderLayout());
+        reading.setOpaque(false);
+        JPanel readingHead = new JPanel(new BorderLayout());
+        readingHead.setOpaque(false);
+        readingHead.add(head, BorderLayout.NORTH);
+        readingHead.add(addressRow, BorderLayout.SOUTH);
+        reading.add(readingHead, BorderLayout.NORTH);
+        reading.add(center, BorderLayout.CENTER);
+
+        JPanel side = new JPanel(new BorderLayout(0, 6));
+        side.setOpaque(false);
+        JPanel sideHead = new JPanel(new BorderLayout(0, 4));
+        sideHead.setOpaque(false);
+        sideHead.add(new com.aresstack.spaceharvester.app.ui.controls.SideHead("Dateien", null), BorderLayout.NORTH);
+        sideHead.add(filterFrame, BorderLayout.CENTER);
+        side.add(sideHead, BorderLayout.NORTH);
+        side.add(Comic.scroll(explorer), BorderLayout.CENTER);
+        side.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(null, null, null), BorderLayout.SOUTH);
+        add(new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
+                side, DeckBars.withFind(reading), 280).withDividerToggle(), BorderLayout.CENTER);
 
         groupToggle.marked(AppState.shared().getBoolean(GROUP_KEY, false));
         collapseAll.setVisible(groupToggle.marked());
@@ -467,14 +486,20 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         back.navigator(com.aresstack.spaceharvester.app.ui.controls.BackButton.Navigator.of(
                 () -> new com.aresstack.spaceharvester.app.ui.controls.BackButton.History(browser.forwardEntries(), browser.backEntries()),
                 steps -> browser.go(steps)));
-        up.addActionListener(e -> browser.up());
-        refresh.addActionListener(e -> browser.refresh());
+        up.addActionListener(e -> {
+            select(null);
+            browser.up();
+        });
+        refresh.addActionListener(e -> {
+            if (selected == null) {
+                browser.refresh();
+            } else {
+                reloadSelected();
+            }
+        });
         path.getAccessibleContext().setAccessibleName("Pfad");
         path.setToolTipText("<html>Pfad oder SharePoint-Adresse (https://…) eingeben und mit Enter öffnen</html>");
-        path.addActionListener(e -> {
-            go(path.getText());
-            table.requestFocusInWindow();
-        });
+        path.addActionListener(e -> openAddress());
         InputFrame pathFrame = new InputFrame(path);
         star.addActionListener(e -> browser.location().ifPresent(this::toggleBookmark));
         pathFrame.addButton(star);
@@ -488,10 +513,11 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         navigation.add(back);
         navigation.add(up);
         navigation.add(refresh);
-        JPanel pathRow = new JPanel(new BorderLayout(8, 0));
-        pathRow.setOpaque(false);
-        pathRow.add(navigation, BorderLayout.WEST);
-        pathRow.add(pathFrame, BorderLayout.CENTER);
+        addressRow = new JPanel(new BorderLayout(8, 0));
+        addressRow.setOpaque(false);
+        addressRow.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
+        addressRow.add(navigation, BorderLayout.WEST);
+        addressRow.add(pathFrame, BorderLayout.CENTER);
 
         // Namenszeile zum Anlegen: Feld mit „Anlegen“ im Feld, Esc bricht ab.
         name.getAccessibleContext().setAccessibleName("Name");
@@ -510,10 +536,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         rows.setLayout(new javax.swing.BoxLayout(rows, javax.swing.BoxLayout.Y_AXIS));
         rows.setOpaque(false);
         rows.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
-        pathRow.setAlignmentX(LEFT_ALIGNMENT);
         nameRow.setAlignmentX(LEFT_ALIGNMENT);
-        rows.add(pathRow);
-        rows.add(javax.swing.Box.createVerticalStrut(6));
         rows.add(nameRow);
 
         // Liste: Name mit Symbol, Größe, Geändert; Mehrfachauswahl zum Löschen.
@@ -591,8 +614,12 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         back.refresh();
         up.setEnabled(browser.canGoUp());
         String location = browser.location().orElse("");
-        if (!path.isFocusOwner() && !path.getText().equals(location)) {
-            path.setText(location);
+        String address = selected == null ? location : selected.location();
+        if (!path.isFocusOwner() && !path.getText().equals(address)) {
+            path.setText(address);
+        }
+        if (!location.isEmpty() && !browser.loading() && browser.failure().isEmpty()) {
+            explorer.showFolder(browser.source(), location, browser.visible());
         }
         if (!location.isEmpty() && !browser.loading() && browser.failure().isEmpty()
                 && browser == browseTabs.get(0).browser) {
@@ -688,6 +715,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     /** Zeigt die Liste ({@code null}) oder ein offenes Dokument. */
     void select(EditorSession session) {
         selected = session;
+        path.setText(session == null ? browser.location().orElse("") : session.location());
         ComposerToggleButton pill = session == null ? browseTab.pill : pillOf.get(session);
         if (pill != null) {
             pill.setSelected(true);
@@ -768,6 +796,9 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         }
         pill.setToolTipText(session.location() + (session.dirty() ? " – ungespeicherte Änderungen" : ""));
         if (session == selected) {
+            if (!path.isFocusOwner()) {
+                path.setText(session.location());
+            }
             showStatus();
             showActions();
         }
@@ -827,8 +858,12 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         if (chosen.size() != 1) {
             return;
         }
-        FileEntry entry = chosen.get(0);
+        openEntry(chosen.get(0));
+    }
+
+    private void openEntry(FileEntry entry) {
         if (entry.directory()) {
+            select(null);
             go(entry.location());
         } else if (preview != null && com.aresstack.spaceharvester.app.deck.DocumentPreviewStore
                 .isDocument(entry.name())) {
@@ -838,6 +873,29 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
             EditorSession session = editors.open(store, entry.location(), entry.name());
             select(session);
         }
+    }
+
+    FileNavigationTree navigationTree() {
+        return explorer;
+    }
+
+    private void openAddress() {
+        String target = path.getText().strip();
+        for (EditorSession session : pillOf.keySet()) {
+            if (session.location().equals(target)) {
+                select(session);
+                return;
+            }
+        }
+        for (FileEntry entry : browser.entries()) {
+            if (entry.location().equals(target)) {
+                openEntry(entry);
+                return;
+            }
+        }
+        select(null);
+        go(target);
+        table.requestFocusInWindow();
     }
 
     /** Strg+Doppelklick bzw. „Vorschau“: Datei schreibgeschützt öffnen, Dokumente als Text. */

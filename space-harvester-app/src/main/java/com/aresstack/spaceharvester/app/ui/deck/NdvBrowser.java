@@ -405,12 +405,8 @@ final class NdvBrowser extends JPanel {
         right.setBorder(BorderFactory.createEmptyBorder(8, 6, 0, 12));
         ComicDivider.install(right);
         // Unter der Arbeitsfläche rechts die Leiste mit der Lupe, auf einer Linie mit der Fußleiste der Seitenleiste.
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, DeckBars.withFind(right));
-        split.setResizeWeight(0.2);
-        split.setDividerLocation(220);
-        split.setOpaque(false);
-        split.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 0));
-        ComicDivider.install(split);
+        var split = new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
+                left, DeckBars.withFind(right), 280).withDividerToggle();
         add(split, BorderLayout.CENTER);
         add(indexPanel, BorderLayout.EAST);
         indexPanel.setVisible(indexVisible);

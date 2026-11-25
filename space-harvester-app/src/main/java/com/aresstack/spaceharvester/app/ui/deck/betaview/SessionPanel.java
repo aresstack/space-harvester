@@ -55,27 +55,10 @@ final class SessionPanel extends JPanel implements SearchPane.Actions, DocumentP
         side.add(search, java.awt.BorderLayout.CENTER);
         side.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(null, search.footTabs(), null),
                 java.awt.BorderLayout.SOUTH);
-        split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, side,
-                com.aresstack.spaceharvester.app.ui.deck.DeckBars.withFind(documents));
-        ComicDivider.install(split);
-        split.setBorder(null);
-        split.setOpaque(false);
-        split.setResizeWeight(0.42);
-        search.setMinimumSize(new java.awt.Dimension(search.headerWidth(), 0));
+        split = new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(side,
+                com.aresstack.spaceharvester.app.ui.deck.DeckBars.withFind(documents),
+                Math.max(380, search.headerWidth())).withDividerToggle();
         documents.setMinimumSize(new java.awt.Dimension(320, 0));
-        // Erste Aufteilung, sobald die Breite bekannt ist: 42 % für die Suche, aber nie weniger als ihre Kopfzeile.
-        split.addComponentListener(new java.awt.event.ComponentAdapter() {
-            private boolean placed;
-
-            @Override
-            public void componentResized(java.awt.event.ComponentEvent event) {
-                if (!placed && split.getWidth() > 0) {
-                    placed = true;
-                    split.setDividerLocation(Math.max((int) Math.round(split.getWidth() * 0.42),
-                            search.headerWidth()));
-                }
-            }
-        });
         add(split, BorderLayout.CENTER);
         stateChanged();
     }

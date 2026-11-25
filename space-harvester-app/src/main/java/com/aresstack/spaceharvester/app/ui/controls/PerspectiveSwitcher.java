@@ -32,7 +32,7 @@ public final class PerspectiveSwitcher extends JPanel {
     static final String PREPARING = "in Vorbereitung";
 
     private final Perspectives perspectives;
-    private final JLabel logo = new JLabel();
+    private final com.aresstack.spaceharvester.app.ui.IconButton logo;
     private final HeritageTitle title = new HeritageTitle();
     private final JLabel arrow = new JLabel(new DownTriangle());
     private final KeyboardFocusRing ring;
@@ -47,10 +47,8 @@ public final class PerspectiveSwitcher extends JPanel {
         setToolTipText(TOOLTIP);
         title.setFont(Comic.semiBold(18f));
         title.setForeground(Comic.INK);
-        this.logo.setIcon(logo);
-        this.logo.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 8));
-        // Das Logo öffnet das Menü nicht; es trägt (vorläufig) einen versteckten Auslöser, siehe logo().
-        this.logo.addMouseListener(new MouseAdapter() { });
+        this.logo = new com.aresstack.spaceharvester.app.ui.IconButton(logo, "Seitenleiste einklappen");
+        this.logo.setBorder(BorderFactory.createEmptyBorder());
         arrow.setForeground(Comic.INK);
         arrow.setVerticalAlignment(SwingConstants.CENTER);
         arrow.setBorder(BorderFactory.createEmptyBorder(2, 0, 0, 0));
@@ -135,6 +133,17 @@ public final class PerspectiveSwitcher extends JPanel {
 
     private static String escape(String text) {
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    public void onSidebarToggle(Runnable toggle) {
+        logo.addActionListener(event -> toggle.run());
+    }
+
+    public void sidebarState(boolean available, boolean open) {
+        String tooltip = !available ? "Keine Seitenleiste verfügbar"
+                : open ? "Seitenleiste einklappen" : "Seitenleiste ausklappen";
+        logo.setToolTipText(tooltip);
+        logo.getAccessibleContext().setAccessibleName(tooltip);
     }
 
     /** Das Logo oben links, für versteckte Auslöser. */
