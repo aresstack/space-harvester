@@ -33,60 +33,18 @@ public class NestedScrollWheelRouterTest {
     }
 
     @Test
-    public void tallBlockScrollsItselfInTheMiddle() throws Exception {
-        onEdt(new Runnable() {
-            @Override
-            public void run() {
-                Fixture fixture = new Fixture(200);
-                fixture.inner.getVerticalScrollBar().setValue(100);
-                wheel(fixture.inner, 1.0);
-                assertTrue(fixture.inner.getVerticalScrollBar().getValue() > 100);
-                assertEquals(0, fixture.outer.getVerticalScrollBar().getValue());
-            }
-        });
-    }
-
-    @Test
-    public void tallBlockAtBottomHandsWheelToChat() throws Exception {
-        onEdt(new Runnable() {
-            @Override
-            public void run() {
-                Fixture fixture = new Fixture(200);
-                int end = fixture.endOfInner();
-                fixture.inner.getVerticalScrollBar().setValue(end);
-                wheel(fixture.inner, 1.0);
-                assertEquals(end, fixture.inner.getVerticalScrollBar().getValue());
-                assertTrue(fixture.outer.getVerticalScrollBar().getValue() > 0);
-            }
-        });
-    }
-
-    @Test
-    public void tallBlockAtTopHandsWheelUpToChat() throws Exception {
-        onEdt(new Runnable() {
-            @Override
-            public void run() {
-                Fixture fixture = new Fixture(200);
-                fixture.outer.getVerticalScrollBar().setValue(300);
-                wheel(fixture.inner, -1.0);
-                assertEquals(0, fixture.inner.getVerticalScrollBar().getValue());
-                assertTrue(fixture.outer.getVerticalScrollBar().getValue() < 300);
-            }
-        });
-    }
-
-    @Test
-    public void fineTouchpadRotationsAddUp() throws Exception {
-        onEdt(new Runnable() {
-            @Override
-            public void run() {
-                Fixture fixture = new Fixture(200);
-                fixture.inner.getVerticalScrollBar().setValue(100);
-                for (int i = 0; i < 20; i++) {
-                    wheel(fixture.inner, 0.05);
-            }
-            assertTrue(fixture.inner.getVerticalScrollBar().getValue() > 100);
-            }
+    public void tallBlockDisplaysAllLinesAndScrollsChatInBothDirections() throws Exception {
+        onEdt(() -> {
+            Fixture fixture = new Fixture(200);
+            assertEquals(JScrollPane.VERTICAL_SCROLLBAR_NEVER, fixture.inner.getVerticalScrollBarPolicy());
+            assertTrue(!fixture.inner.getVerticalScrollBar().isVisible());
+            assertTrue(fixture.inner.getViewport().getExtentSize().height
+                    >= fixture.inner.getViewport().getView().getPreferredSize().height);
+            wheel(fixture.inner, 1.0);
+            assertTrue(fixture.outer.getVerticalScrollBar().getValue() > 0);
+            fixture.outer.getVerticalScrollBar().setValue(300);
+            wheel(fixture.inner, -1.0);
+            assertTrue(fixture.outer.getVerticalScrollBar().getValue() < 300);
         });
     }
 
@@ -113,8 +71,7 @@ public class NestedScrollWheelRouterTest {
     public void fullHeightWideBlockScrollsChatNormallyAndHorizontallyWithShift() throws Exception {
         onEdt(() -> {
             JTextArea wide = new JTextArea("x".repeat(400));
-            CappedScrollPane inner = new CappedScrollPane(wide, 300, 8, THEME,
-                    CappedScrollPane.HeightPolicy.FULL_CONTENT);
+            MarkdownScrollPane inner = new MarkdownScrollPane(wide, 300, 8, THEME);
             JPanel column = new JPanel(null);
             column.setPreferredSize(new Dimension(400, 3000));
             inner.setBounds(0, 0, 300, inner.preferredHeightForWidth(300));
@@ -137,11 +94,11 @@ public class NestedScrollWheelRouterTest {
         });
     }
 
-    private static void wheel(CappedScrollPane target, double rotation) {
+    private static void wheel(MarkdownScrollPane target, double rotation) {
         target.dispatchEvent(event(target, rotation, 0));
     }
 
-    private static MouseWheelEvent event(CappedScrollPane target, double rotation, int modifiers) {
+    private static MouseWheelEvent event(MarkdownScrollPane target, double rotation, int modifiers) {
         int clicks = rotation < 0 ? -1 : (rotation >= 1 ? 1 : 0);
         return new MouseWheelEvent(target, MouseWheelEvent.MOUSE_WHEEL, System.currentTimeMillis(), modifiers,
                 10, 10, 10, 10, 0, false, MouseWheelEvent.WHEEL_UNIT_SCROLL, 3, clicks, rotation);
@@ -155,20 +112,20 @@ public class NestedScrollWheelRouterTest {
         return text.toString();
     }
 
-    /** A chat-like outer scroll pane holding a tall column with one capped block in it. */
+    /** A chat-like outer scroll pane holding a tall column with one full-height block in it. */
     private static final class Fixture {
         final JScrollPane outer;
-        final CappedScrollPane inner;
+        final MarkdownScrollPane inner;
 
         Fixture(int lineCount) {
             this(new JTextArea(lines(lineCount)));
         }
 
         Fixture(JTextArea view) {
-            inner = new CappedScrollPane(view, 300, 8, THEME);
+            inner = new MarkdownScrollPane(view, 300, 8, THEME);
             JPanel column = new JPanel(null);
-            column.setPreferredSize(new Dimension(400, 3000));
             Dimension size = inner.getPreferredSize();
+            column.setPreferredSize(new Dimension(400, Math.max(3000, size.height + 1000)));
             inner.setBounds(0, 0, 300, size.height);
             column.add(inner);
             outer = new JScrollPane(column, ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS,
@@ -180,8 +137,5 @@ public class NestedScrollWheelRouterTest {
             inner.getViewport().doLayout();
         }
 
-        int endOfInner() {
-            return inner.getVerticalScrollBar().getMaximum() - inner.getVerticalScrollBar().getVisibleAmount();
-        }
     }
 }

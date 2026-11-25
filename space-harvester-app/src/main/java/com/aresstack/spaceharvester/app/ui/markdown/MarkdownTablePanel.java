@@ -53,7 +53,7 @@ import java.util.List;
  * table (via the cell editor mechanism, which forwards the drag to it) instead of selecting the row, so the quote flow
  * of {@link MarkdownMessageView} sees an ordinary text selection.
  */
-final class MarkdownTablePanel extends CappedScrollPane implements SelectableTextHost {
+final class MarkdownTablePanel extends MarkdownScrollPane implements SelectableTextHost {
 
     static final int MAX_COLUMN_WIDTH = 420;
     private static final int CELL_PADDING = 18;
@@ -64,7 +64,7 @@ final class MarkdownTablePanel extends CappedScrollPane implements SelectableTex
 
     MarkdownTablePanel(TableBlock tableBlock, MarkdownTheme theme, InlineMarkdownRenderer inlineRenderer,
                        DesktopLinkOpener linkOpener) {
-        super(new JTable(createModel(tableBlock, theme, inlineRenderer)), 400, 4, theme, HeightPolicy.FULL_CONTENT);
+        super(new JTable(createModel(tableBlock, theme, inlineRenderer)), 400, 4, theme);
         this.linkOpener = linkOpener;
         final JTable table = (JTable) getViewport().getView();
         table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);

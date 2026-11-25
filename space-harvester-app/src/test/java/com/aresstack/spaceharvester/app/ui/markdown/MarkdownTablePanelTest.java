@@ -113,7 +113,7 @@ public class MarkdownTablePanelTest {
                 panel.doLayout();
                 panel.getViewport().doLayout();
                 table.doLayout();
-                assertTrue(height > CappedScrollPane.MAX_CONTENT_HEIGHT);
+                assertTrue(height > 320);
                 assertEquals(javax.swing.JScrollPane.VERTICAL_SCROLLBAR_NEVER, panel.getVerticalScrollBarPolicy());
                 assertFalse(panel.getVerticalScrollBar().isVisible());
                 assertEquals(width == 260, panel.getHorizontalScrollBar().isVisible());

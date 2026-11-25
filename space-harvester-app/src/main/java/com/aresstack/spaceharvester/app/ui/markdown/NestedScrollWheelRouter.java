@@ -8,14 +8,7 @@ import java.awt.Point;
 import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
 
-/**
- * Scroll-Chaining für verschachtelte Scrollbereiche (Codeblöcke, Tabellen im Chat): Das Mausrad bewegt zuerst den
- * inneren Bereich, solange der in Drehrichtung noch Platz hat; hat er keinen vertikalen Scrollbedarf oder steht er
- * am oberen/unteren Rand, geht dasselbe Ereignis an den nächsten äußeren {@link JScrollPane} weiter. Mit gedrückter
- * Umschalttaste (oder ohne sichtbaren vertikalen Balken) gilt dasselbe für die horizontale Richtung, damit breite
- * Tabellen seitlich scrollbar bleiben. Feine Touchpad-Drehungen ({@code preciseWheelRotation}) werden aufsummiert
- * statt verworfen.
- */
+/** Route vertical wheel input to the transcript and Shift+wheel to the horizontal block scrollbar. */
 final class NestedScrollWheelRouter implements MouseWheelListener {
 
     private final JScrollPane scrollPane;
@@ -50,18 +43,7 @@ final class NestedScrollWheelRouter implements MouseWheelListener {
 
     /** Route ordinary wheel input through full-height blocks to the surrounding transcript. */
     private JScrollBar barFor(MouseWheelEvent event) {
-        JScrollBar vertical = scrollPane.getVerticalScrollBar();
-        boolean verticalUsable = vertical != null && vertical.isVisible();
-        if (scrollPane.getVerticalScrollBarPolicy() == JScrollPane.VERTICAL_SCROLLBAR_NEVER && !event.isShiftDown()) {
-            return null;
-        }
-        if (event.isShiftDown() || !verticalUsable) {
-            JScrollBar horizontal = scrollPane.getHorizontalScrollBar();
-            if (horizontal != null && horizontal.isVisible()) {
-                return horizontal;
-            }
-        }
-        return verticalUsable ? vertical : null;
+        return event.isShiftDown() ? scrollPane.getHorizontalScrollBar() : null;
     }
 
     static boolean canScroll(JScrollBar bar, double rotation) {
