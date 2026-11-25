@@ -164,9 +164,49 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     public synchronized void put(Entry entry) {
         Objects.requireNonNull(entry, "entry");
         requireOpen();
+        replacePageSections(entry.key(), List.of(entry));
+    }
+
+    @Override
+    public synchronized void replacePageSections(PageKey page, Iterable<Entry> sections) {
+        Objects.requireNonNull(page, "page");
+        Objects.requireNonNull(sections, "sections");
+        requireOpen();
+        String[] space = {null};
+        Iterable<Document> documents = () -> new java.util.Iterator<>() {
+            private final java.util.Iterator<Entry> source = sections.iterator();
+
+            @Override
+            public boolean hasNext() {
+                return source.hasNext();
+            }
+
+            @Override
+            public Document next() {
+                Entry entry = source.next();
+                if (!page.equals(entry.key()) || space[0] != null && !space[0].equals(entry.spaceKey())) {
+                    throw new IllegalArgumentException("Section belongs to a different page or space");
+                }
+                space[0] = entry.spaceKey();
+                return pageDocument(entry);
+            }
+        };
+        try {
+            writer.updateDocuments(new Term(ID, id(page)), documents);
+            changed();
+        } catch (IOException e) {
+            throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
+        }
+        if (space[0] != null) {
+            respace(page, space[0]);
+        }
+    }
+
+    private static Document pageDocument(Entry entry) {
         String text = entry.text().length() > MAX_TEXT_CHARS ? entry.text().substring(0, MAX_TEXT_CHARS)
                 : entry.text();
         Document doc = new Document();
+        // Give all page sections the same replacement key; attachment IDs have a separate namespace.
         doc.add(new StringField(ID, id(entry.key()), Field.Store.NO));
         doc.add(new StringField(KIND, PAGE_KIND, Field.Store.YES));
         doc.add(new StringField(PAGE, id(entry.key()), Field.Store.NO));
@@ -179,13 +219,7 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         if (!entry.mediaType().isEmpty()) {
             doc.add(new StoredField(MEDIA_TYPE, entry.mediaType()));
         }
-        try {
-            writer.updateDocument(new Term(ID, id(entry.key())), doc);
-            changed();
-        } catch (IOException e) {
-            throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
-        }
-        respace(entry.key(), entry.spaceKey());
+        return doc;
     }
 
     /**

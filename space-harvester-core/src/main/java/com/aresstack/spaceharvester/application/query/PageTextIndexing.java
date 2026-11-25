@@ -26,10 +26,16 @@ public final class PageTextIndexing {
 
     private final List<PageTextProjector> projectors;
     private final PageTextIndex index;
+    private final LocalPageSections localSections;
 
     public PageTextIndexing(List<PageTextProjector> projectors, PageTextIndex index) {
+        this(projectors, index, null);
+    }
+
+    public PageTextIndexing(List<PageTextProjector> projectors, PageTextIndex index, LocalPageSections localSections) {
         this.projectors = List.copyOf(projectors);
         this.index = Objects.requireNonNull(index, "index");
+        this.localSections = localSections;
     }
 
     /** Der Index, den diese Indizierung füllt. */
@@ -50,6 +56,9 @@ public final class PageTextIndexing {
      */
     public boolean index(PageSnapshot snapshot, PageMetadata current) {
         try {
+            if (localSections != null && localSections.supports(snapshot)) {
+                return localSections.index(snapshot, current, index);
+            }
             Optional<PageText> text = projection(snapshot);
             if (text.isEmpty()) {
                 index.remove(snapshot.key());
