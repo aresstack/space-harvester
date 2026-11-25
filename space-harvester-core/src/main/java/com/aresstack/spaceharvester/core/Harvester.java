@@ -3483,7 +3483,7 @@ public final class Harvester implements AutoCloseable {
         private Duration largeFileTimeout = PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT;
         private int maxTreeNodes = 50_000;
         private int maxPageBytes = LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES;
-        private boolean localOriginalReferences;
+        private boolean localOriginalReferences = true;
         private long maxTextFileBytes = DEFAULT_MAX_TEXT_FILE_BYTES;
         private boolean prefetchSearchHits = true;
         private boolean prefetchSearchHitsFixed;
@@ -3670,7 +3670,7 @@ public final class Harvester implements AutoCloseable {
             return adapters;
         }
 
-        /** Enable the reference-based local storage pipeline for integration testing. */
+        /** Override the default reference-based local storage pipeline. */
         public Builder localOriginalReferences(boolean enabled) {
             this.localOriginalReferences = enabled;
             return this;
