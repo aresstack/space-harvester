@@ -1227,9 +1227,11 @@ public final class SearchView implements View {
     private boolean restoringHistory;
     private java.util.function.Consumer<SearchLocation> searchLocationListener = location -> { };
 
-    record SearchLocation(String text, List<Explorer.Scope> area, boolean technical, String label) {
+    record SearchLocation(String text, List<Explorer.Scope> area, boolean technical, boolean semantic,
+                          boolean neighbors, boolean synonyms, boolean termPages, Set<DocumentKind> kinds, String label) {
         SearchLocation {
             area = List.copyOf(area);
+            kinds = Set.copyOf(kinds);
         }
     }
 
@@ -1239,8 +1241,12 @@ public final class SearchView implements View {
 
     private void publishSearchLocation(String text, List<Explorer.Scope> area) {
         if (!restoringHistory) {
+            Set<DocumentKind> selectedKinds = kindBoxes.entrySet().stream()
+                    .filter(entry -> entry.getValue().isSelected()).map(Map.Entry::getKey)
+                    .collect(java.util.stream.Collectors.toSet());
             searchLocationListener.accept(new SearchLocation(text, area, technicalTerms.isSelected(),
-                    "Suche: " + visitName(new Visit(text, area))));
+                    semantic.isSelected(), neighbors.isSelected(), glossarySynonyms.isSelected(), termPages.isSelected(),
+                    selectedKinds, "Suche: " + visitName(new Visit(text, area))));
         }
     }
 
@@ -1252,6 +1258,11 @@ public final class SearchView implements View {
             use(location.area());
             query.setText(location.text());
             technicalTerms.setSelected(location.technical());
+            semantic.setSelected(location.semantic());
+            neighbors.setSelected(location.neighbors());
+            glossarySynonyms.setSelected(location.synonyms());
+            termPages.setSelected(location.termPages());
+            kindBoxes.forEach((kind, box) -> box.setSelected(location.kinds().contains(kind)));
             search();
         } finally {
             revisiting = false;
@@ -1780,6 +1791,7 @@ public final class SearchView implements View {
     }
 
     private void search() {
+        pageScopeRequest++;
         AppRuntime runtime = context.runtime();
         if (runtime == null) {
             feedback.warning("Keine Laufzeit", "Die Konfiguration konnte nicht gestartet werden; siehe Einstellungen.");

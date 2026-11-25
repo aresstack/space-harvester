@@ -320,6 +320,11 @@ public final class MainWindow implements AppContext.Navigator {
         searchView.onSubmit(() -> show(AppContext.Section.SEARCH));
         // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
         content.onPosition(position -> {
+            if (position != null) {
+                content.currentHistoryPlace().filter(place -> place.title() != null && !place.title().isBlank())
+                        .ifPresent(place -> history.updateLabel(new WorkspaceLocation.Document(place)));
+            }
+            content.refreshHistoryNavigation();
             explorer.currentPage(position);
             if (position != null && revealOpened) {
                 revealOpened = false;
@@ -1180,7 +1185,7 @@ public final class MainWindow implements AppContext.Navigator {
             explorer.select(search.location().area());
             searchView.restoreSearchLocation(search.location());
         }
-        SwingUtilities.invokeLater(content::refreshHistoryNavigation);
+        content.refreshHistoryNavigation();
     }
 
     /** Move the same document history control between the two view headers. */

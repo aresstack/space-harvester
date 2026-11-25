@@ -41,6 +41,14 @@ final class WorkspaceHistory<T> implements BackButton.Navigator {
         }
     }
 
+    void updateLabel(T location) {
+        for (int i = 0; i < entries.size(); i++) {
+            if (Objects.equals(entries.get(i), location)) {
+                entries.set(i, location);
+            }
+        }
+    }
+
     boolean restoring() {
         return restoring;
     }
@@ -64,11 +72,17 @@ final class WorkspaceHistory<T> implements BackButton.Navigator {
         if (steps == 0 || target < 0 || target >= entries.size() || restoring) {
             return;
         }
+        int previous = index;
+        boolean previousPreview = preview;
         restoring = true;
+        index = target;
+        preview = false;
         try {
             restore.accept(entries.get(target));
-            index = target;
-            preview = false;
+        } catch (RuntimeException failure) {
+            index = previous;
+            preview = previousPreview;
+            throw failure;
         } finally {
             restoring = false;
         }

@@ -3883,8 +3883,12 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         Place now = current();
-        if (next != null) {
-            locationVisited.accept(next);
+        if (workspaceHistory != null) {
+            if (next != null) {
+                locationVisited.accept(next);
+            }
+            updateNavigation();
+            return;
         }
         if (next != null && next.sameAs(now)) {
             return;
