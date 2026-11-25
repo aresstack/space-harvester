@@ -205,6 +205,17 @@ class HarvesterLocalFilesTest {
             }
             assertThat(harvester.pages().cached(harvester.caller(), "docs", id).orElseThrow()
                     .snapshot().payload().rawSha256()).isEqualTo(cached.payload().rawSha256());
+
+            // Import into a clean data directory without access to the original or its extraction store.
+            try (Harvester imported = Harvester.builder().source(docs()).dataDirectory(data.resolve("imported"))
+                    .build()) {
+                var job = imported.packageImport().start(portablePackage, "docs", false, owner);
+                var status = imported.jobs().await(job.id(), owner, java.time.Duration.ofSeconds(60));
+                assertThat(status.state().name()).as("Import: %s", status.error()).isEqualTo("COMPLETED");
+                var page = imported.pages().cached(imported.caller(), "docs", id).orElseThrow().snapshot();
+                assertThat(imported.pageText(page)).map(PageText::text)
+                        .hasValueSatisfying(text -> assertThat(text).contains("Zielbegriff"));
+            }
         }
     }
 
