@@ -10,6 +10,10 @@ public interface SyncListener {
     SyncListener NONE = new SyncListener() {
     };
 
+    /** Report newly discovered metadata during inventory, before content retrieval starts. */
+    default void inventoryProgress(java.util.List<com.aresstack.spaceharvester.application.sources.PageMetadataListing.Entry> entries) {
+    }
+
     /** Die Inventur ist fertig; {@code pages} Seiten wurden gelesen. */
     default void inventoried(int pages) {
     }

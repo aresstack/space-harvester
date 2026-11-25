@@ -137,6 +137,65 @@ public class LocalFilesStoredContentTest {
     }
 
     @Test
+    public void singlePassInventoryEmitsTheSameFilesWithoutReadingContents() throws Exception {
+        for (int index = 0; index < 250; index++) {
+            write("many/" + index + ".txt", "text");
+        }
+        List<KnowledgeResource> visited = new ArrayList<KnowledgeResource>();
+        java.util.concurrent.atomic.AtomicInteger checkpoints = new java.util.concurrent.atomic.AtomicInteger();
+        source.visitInventory("handbuch", checkpoints::incrementAndGet, visited::add);
+        List<String> actual = paths(visited);
+        Collections.sort(actual);
+        assertEquals(paths(source.resources("handbuch", "", 500).resources()), actual);
+        assertEquals(254, actual.size());
+        assertTrue(checkpoints.get() >= actual.size());
+        assertTrue(checkpoints.get() < 300);
+    }
+
+    @Test
+    public void singlePassInventoryStopsImmediatelyOnCancellation() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger checkpoints = new java.util.concurrent.atomic.AtomicInteger();
+        try {
+            source.visitInventory("handbuch", () -> {
+                if (checkpoints.incrementAndGet() == 3) {
+                    throw new java.util.concurrent.CancellationException();
+                }
+            }, resource -> { });
+            fail("Expected cancellation");
+        } catch (java.util.concurrent.CancellationException expected) {
+            assertEquals(3, checkpoints.get());
+        }
+    }
+
+    @Test
+    public void missingRootMakesSinglePassInventoryFail() throws Exception {
+        Path removed = Files.move(root, root.resolveSibling("removed"));
+        try {
+            assertKind(Kind.UNAVAILABLE, () -> {
+                source.visitInventory("handbuch", () -> { }, resource -> { });
+                return null;
+            });
+        } finally {
+            Files.move(removed, root);
+        }
+    }
+
+    @Test
+    public void aRegularFileReplacingTheRootCannotConfirmAnInventory() throws Exception {
+        Path removed = Files.move(root, root.resolveSibling("removed"));
+        try {
+            Files.write(root, new byte[] {1});
+            assertKind(Kind.UNAVAILABLE, () -> {
+                source.visitInventory("handbuch", () -> { }, resource -> fail("Do not emit the root as a file"));
+                return null;
+            });
+        } finally {
+            Files.deleteIfExists(root);
+            Files.move(removed, root);
+        }
+    }
+
+    @Test
     public void aFileAddedBeforeTheCursorDoesNotShiftTheNextBatch() throws Exception {
         PartitionResources first = source.resources("handbuch", "", 2);
         write("0-neu.txt", "neu");

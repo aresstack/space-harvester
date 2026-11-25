@@ -43,40 +43,79 @@ public class InventoryCollector {
 
     /** Check cancellation before each new inventory page instead of blocking for an entire tree crawl. */
     public Inventory collect(String sourceId, String spaceKey, Runnable checkpoint) {
+        return collect(sourceId, spaceKey, checkpoint, entries -> { });
+    }
+
+    /** Publish newly discovered metadata in bounded groups while the inventory is still running. */
+    public Inventory collect(String sourceId, String spaceKey, Runnable checkpoint,
+                             java.util.function.Consumer<List<PageMetadataListing.Entry>> progress) {
         Objects.requireNonNull(checkpoint, "checkpoint");
+        Objects.requireNonNull(progress, "progress");
         Instant startedAt = clock.instant();
         Map<String, PageMetadataListing.Entry> pages = new LinkedHashMap<>();
+        List<PageMetadataListing.Entry> pending = new java.util.ArrayList<>();
+        java.util.function.Consumer<PageMetadataListing.Entry> accept = entry -> {
+            if (add(spaceKey, pages, entry)) {
+                pending.add(entry);
+                if (pages.size() == 1 || pending.size() >= batchSize) {
+                    progress.accept(List.copyOf(pending));
+                    pending.clear();
+                }
+            }
+        };
+        try {
+            boolean visited = queries.visitInventory(sourceId, spaceKey, checkpoint, accept);
+            if (!visited) {
+                collectBatches(sourceId, spaceKey, checkpoint, accept);
+            }
+            if (!pending.isEmpty()) {
+                progress.accept(List.copyOf(pending));
+            }
+            return result(sourceId, spaceKey, Inventory.Status.COMPLETE, null, pages, startedAt);
+        } catch (SourceAccessException failure) {
+            return result(sourceId, spaceKey, Inventory.Status.INCOMPLETE,
+                    "Listung abgebrochen (" + failure.reason() + "): " + failure.getMessage(), pages, startedAt);
+        } catch (InconsistentInventory failure) {
+            return result(sourceId, spaceKey, Inventory.Status.INCONSISTENT, failure.getMessage(), pages, startedAt);
+        }
+    }
+
+    private void collectBatches(String sourceId, String spaceKey, Runnable checkpoint,
+                                java.util.function.Consumer<PageMetadataListing.Entry> accept) {
         Set<String> cursors = new HashSet<>();
         String cursor = null;
         do {
             checkpoint.run();
-            PageMetadataListing listing;
-            try {
-                listing = queries.pageMetadata(sourceId, spaceKey, cursor, batchSize);
-            } catch (SourceAccessException e) {
-                return result(sourceId, spaceKey, Inventory.Status.INCOMPLETE,
-                        "Listung abgebrochen (" + e.reason() + "): " + e.getMessage(), pages, startedAt);
-            }
+            PageMetadataListing listing = queries.pageMetadata(sourceId, spaceKey, cursor, batchSize);
             for (PageMetadataListing.Entry entry : listing.entries()) {
-                String pageId = entry.page().pageId();
-                if (!spaceKey.equals(entry.page().partitionKey())) {
-                    return result(sourceId, spaceKey, Inventory.Status.INCONSISTENT, "Seite " + pageId
-                            + " gehört laut Quelle zu Space " + entry.page().partitionKey(), pages, startedAt);
-                }
-                PageMetadataListing.Entry earlier = pages.putIfAbsent(pageId, entry);
-                if (earlier != null && !(earlier.metadataHash().equals(entry.metadataHash())
-                        && earlier.attributesHash().equals(entry.attributesHash()))) {
-                    return result(sourceId, spaceKey, Inventory.Status.INCONSISTENT,
-                            "Seite " + pageId + " hat sich während der Listung geändert", pages, startedAt);
-                }
+                accept.accept(entry);
             }
             cursor = listing.nextCursor();
             if (cursor != null && !cursors.add(cursor)) {
-                return result(sourceId, spaceKey, Inventory.Status.INCONSISTENT,
-                        "Die Quelle hat denselben Cursor wiederholt geliefert", pages, startedAt);
+                throw new InconsistentInventory("Die Quelle hat denselben Cursor wiederholt geliefert");
             }
         } while (cursor != null);
-        return result(sourceId, spaceKey, Inventory.Status.COMPLETE, null, pages, startedAt);
+    }
+
+    private static boolean add(String spaceKey, Map<String, PageMetadataListing.Entry> pages,
+                            PageMetadataListing.Entry entry) {
+        String pageId = entry.page().pageId();
+        if (!spaceKey.equals(entry.page().partitionKey())) {
+            throw new InconsistentInventory("Seite " + pageId + " gehört laut Quelle zu Space "
+                    + entry.page().partitionKey());
+        }
+        PageMetadataListing.Entry earlier = pages.putIfAbsent(pageId, entry);
+        if (earlier != null && !(earlier.metadataHash().equals(entry.metadataHash())
+                && earlier.attributesHash().equals(entry.attributesHash()))) {
+            throw new InconsistentInventory("Seite " + pageId + " hat sich während der Listung geändert");
+        }
+        return earlier == null;
+    }
+
+    private static final class InconsistentInventory extends RuntimeException {
+        private InconsistentInventory(String message) {
+            super(message);
+        }
     }
 
     private Inventory result(String sourceId, String spaceKey, Inventory.Status status, String problem,
