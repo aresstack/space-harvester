@@ -53,7 +53,7 @@ class OutlineTest {
 
         assertThat(outline.isEmpty()).isFalse();
         List<String> labels = outline.groups(Outline.ALL).stream().map(Outline.Group::label).toList();
-        assertThat(labels).startsWith("📋 Jobs", "▶ Steps", "📄 DDs");
+        assertThat(labels).startsWith("Jobs", "Steps", "DDs");
         assertThat(outline.status()).isEqualTo("1 Jobs, 2 Steps, " + outline.model().getElementCount() + " Elemente");
         assertThat(outline.filters()).containsExactly("Alle", "Jobs", "Steps (EXEC)", "DDs", "Prozeduren");
         List<JclElement> steps = outline.groups("Steps (EXEC)").get(0).elements();

@@ -36,27 +36,27 @@ public final class Outline {
 
     private static final Map<SourceLanguage, List<Bucket>> BUCKETS = Map.of(
             SourceLanguage.JCL, List.of(
-                    new Bucket("📋 Jobs", EnumSet.of(JOB)),
-                    new Bucket("▶ Steps", EnumSet.of(EXEC)),
-                    new Bucket("📄 DDs", EnumSet.of(DD)),
-                    new Bucket("📦 Prozeduren", EnumSet.of(PROC, PEND))),
+                    new Bucket("Jobs", EnumSet.of(JOB)),
+                    new Bucket("Steps", EnumSet.of(EXEC)),
+                    new Bucket("DDs", EnumSet.of(DD)),
+                    new Bucket("Prozeduren", EnumSet.of(PROC, PEND))),
             SourceLanguage.COBOL, List.of(
-                    new Bucket("📂 Divisions", EnumSet.of(DIVISION, PROCEDURE_DIVISION)),
-                    new Bucket("📁 Sections", EnumSet.of(SECTION, WORKING_STORAGE, LINKAGE_SECTION, FILE_SECTION,
+                    new Bucket("Divisions", EnumSet.of(DIVISION, PROCEDURE_DIVISION)),
+                    new Bucket("Sections", EnumSet.of(SECTION, WORKING_STORAGE, LINKAGE_SECTION, FILE_SECTION,
                             SCREEN_SECTION)),
-                    new Bucket("📝 Paragraphs", EnumSet.of(PARAGRAPH)),
-                    new Bucket("🔢 Data Items", EnumSet.of(LEVEL_01, LEVEL_77, LEVEL_88, DATA_ITEM)),
-                    new Bucket("📞 Calls & Performs", EnumSet.of(CALL_STMT, DYNAMIC_CALL_STMT, DEBUG_CALL_STMT, PERFORM_STMT))),
+                    new Bucket("Paragraphs", EnumSet.of(PARAGRAPH)),
+                    new Bucket("Data Items", EnumSet.of(LEVEL_01, LEVEL_77, LEVEL_88, DATA_ITEM)),
+                    new Bucket("Calls & Performs", EnumSet.of(CALL_STMT, DYNAMIC_CALL_STMT, DEBUG_CALL_STMT, PERFORM_STMT))),
             SourceLanguage.NATURAL, List.of(
-                    new Bucket("💾 DEFINE DATA", EnumSet.of(NAT_DEFINE_DATA, NAT_LOCAL, NAT_PARAMETER, NAT_GLOBAL,
+                    new Bucket("DEFINE DATA", EnumSet.of(NAT_DEFINE_DATA, NAT_LOCAL, NAT_PARAMETER, NAT_GLOBAL,
                             NAT_INDEPENDENT, NAT_DATA_VAR, NAT_DATA_VIEW, NAT_DATA_REDEFINE, NAT_DATA_CONST)),
-                    new Bucket("📦 Subroutines", EnumSet.of(NAT_SUBROUTINE, NAT_INLINE_SUBROUTINE)),
-                    new Bucket("📞 Calls", EnumSet.of(NAT_CALLNAT, NAT_CALL, NAT_FETCH, NAT_PERFORM)),
-                    new Bucket("📊 DB Zugriffe", EnumSet.of(NAT_READ, NAT_FIND, NAT_HISTOGRAM, NAT_STORE, NAT_UPDATE,
+                    new Bucket("Subroutines", EnumSet.of(NAT_SUBROUTINE, NAT_INLINE_SUBROUTINE)),
+                    new Bucket("Calls", EnumSet.of(NAT_CALLNAT, NAT_CALL, NAT_FETCH, NAT_PERFORM)),
+                    new Bucket("DB Zugriffe", EnumSet.of(NAT_READ, NAT_FIND, NAT_HISTOGRAM, NAT_STORE, NAT_UPDATE,
                             NAT_DELETE, NAT_GET)),
-                    new Bucket("🔄 Kontrollfluss", EnumSet.of(NAT_DECIDE, NAT_IF_BLOCK, NAT_FOR, NAT_REPEAT,
+                    new Bucket("Kontrollfluss", EnumSet.of(NAT_DECIDE, NAT_IF_BLOCK, NAT_FOR, NAT_REPEAT,
                             NAT_ON_ERROR)),
-                    new Bucket("🖥 I/O", EnumSet.of(NAT_INPUT, NAT_WRITE, NAT_DISPLAY, NAT_PRINT))),
+                    new Bucket("I/O", EnumSet.of(NAT_INPUT, NAT_WRITE, NAT_DISPLAY, NAT_PRINT))),
             SourceLanguage.DDM, List.of());
 
     /** Filtername (wie die Auswahl in MainframeMate) → Bucket-Index; „I/O“ hatte dort keinen eigenen Filter. */
@@ -140,7 +140,7 @@ public final class Outline {
                 }
             }
             if (!others.isEmpty()) {
-                groups.add(new Group("⚙ Andere", List.copyOf(others)));
+                groups.add(new Group("Andere", List.copyOf(others)));
             }
             return List.copyOf(groups);
         }

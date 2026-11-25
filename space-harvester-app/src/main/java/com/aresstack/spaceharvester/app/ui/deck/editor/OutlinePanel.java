@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.app.ui.deck.editor;
 
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.Glyph;
+import com.aresstack.spaceharvester.app.ui.controls.NavigationTreeIcons;
 import com.aresstack.spaceharvester.mainframe.model.JclElement;
 import com.aresstack.spaceharvester.mainframe.outline.Outline;
 import java.awt.BorderLayout;
@@ -241,6 +243,23 @@ final class OutlinePanel extends JPanel {
 
     private static final class Renderer extends DefaultTreeCellRenderer {
 
+        private javax.swing.Icon elementIcon(JclElement element) {
+            return switch (element.getType()) {
+                case DIVISION, SECTION, PROCEDURE_DIVISION, WORKING_STORAGE, LINKAGE_SECTION,
+                        FILE_SECTION, SCREEN_SECTION, JOB, PROC, PEND, NAT_DEFINE_DATA,
+                        NAT_SUBROUTINE, NAT_INLINE_SUBROUTINE, DDM_GROUP -> NavigationTreeIcons.FOLDER;
+                case COPY_STMT, INCLUDE, JCLLIB, NAT_COPYCODE, NAT_INCLUDE -> NavigationTreeIcons.INCOMING;
+                case CALL_STMT, DYNAMIC_CALL_STMT, DEBUG_CALL_STMT, EXEC, EXEC_CICS,
+                        NAT_CALL, NAT_CALLNAT, NAT_FETCH -> NavigationTreeIcons.OUTGOING;
+                case PERFORM_STMT, NAT_PERFORM, NAT_FOR, NAT_REPEAT -> Glyph.REFRESH;
+                case DATA_ITEM, LEVEL_01, LEVEL_77, NAT_DATA_VAR, NAT_DATA_VIEW, DDM_FIELD,
+                        EXEC_SQL, EXEC_SQLIMS -> Glyph.TABLE;
+                case LEVEL_88 -> Glyph.ACCEPT;
+                case DDM_DESCRIPTOR, DDM_SUPERDESCRIPTOR -> Glyph.KEY;
+                default -> NavigationTreeIcons.PAGE;
+            };
+        }
+
         Renderer() {
             putClientProperty("html.disable", Boolean.TRUE);
         }
@@ -251,7 +270,8 @@ final class OutlinePanel extends JPanel {
             Object item = ((DefaultMutableTreeNode) value).getUserObject();
             JLabel label = (JLabel) super.getTreeCellRendererComponent(tree, item instanceof JclElement element
                     ? element.getDisplayText() : String.valueOf(item), selected, expanded, leaf, row, focus);
-            label.setIcon(null);
+            label.setIcon(item instanceof JclElement element ? elementIcon(element)
+                    : leaf ? null : NavigationTreeIcons.FOLDER);
             label.setToolTipText(item instanceof JclElement element ? element.getTooltipText() : null);
             return label;
         }
