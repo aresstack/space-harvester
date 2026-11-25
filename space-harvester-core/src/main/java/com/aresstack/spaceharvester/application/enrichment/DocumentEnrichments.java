@@ -631,7 +631,8 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             Iterator<Pending> iterator = pending.values().iterator();
             while (iterator.hasNext()) {
                 DocumentKey attachment = iterator.next().attachment();
-                if (attachment.page().equals(page) && !attachmentIds.contains(attachment.attachmentId().orElse(""))) {
+                if (!attachment.localOriginal() && attachment.page().equals(page)
+                        && !attachmentIds.contains(attachment.attachmentId().orElse(""))) {
                     iterator.remove();
                     removals.merge(attachment.value(), 1, Integer::sum);
                 }
@@ -1001,7 +1002,8 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
         Map<String, String> versions = enrichments.documentProcessorVersions(attachment.page());
         Map<DocumentKey, List<Enrichment>> stored = new HashMap<>();
         for (Enrichment enrichment : enrichments.store().findDocuments(attachment.page())) {
-            if (enrichment.document().attachmentId().equals(attachment.attachmentId())) {
+            if (enrichment.document().localOriginal() == attachment.localOriginal()
+                    && enrichment.document().attachmentId().equals(attachment.attachmentId())) {
                 stored.computeIfAbsent(enrichment.document(), key -> new ArrayList<>()).add(enrichment);
             }
         }

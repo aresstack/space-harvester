@@ -143,6 +143,7 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
         Map<DocumentKey, PageStatementAnalysis> all = analyses();
         List<DocumentKey> gone = document.isPage() || document.isEmbedded() ? List.of(document)
                 : all.keySet().stream().filter(other -> other.page().equals(document.page())
+                && other.localOriginal() == document.localOriginal()
                 && other.attachmentId().equals(document.attachmentId())).toList();
         try {
             Files.deleteIfExists(file(document));
@@ -261,6 +262,9 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
         root.put("sourceId", analysis.key().sourceId());
         root.put("pageId", analysis.key().pageId());
         // Dokumente (ADR 0026): getrennte Felder, nie eine zusammengesetzte Kennung; bei Seiten fehlen beide.
+        if (analysis.document().localOriginal()) {
+            root.put("localOriginal", true);
+        }
         analysis.document().attachmentId().ifPresent(id -> root.put("attachmentId", id));
         analysis.document().part().ifPresent(part -> root.put("partId", part.value()));
         root.put("spaceKey", analysis.spaceKey());
@@ -447,7 +451,7 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
         String attachmentId = text(root, "attachmentId");
         String partId = text(root, "partId");
         DocumentKey document = new DocumentKey(key, Optional.ofNullable(attachmentId),
-                Optional.ofNullable(partId).map(PartId::parse));
+                Optional.ofNullable(partId).map(PartId::parse), root.path("localOriginal").asBoolean(false));
         return new PageStatementAnalysis(key, text(root, "spaceKey"), text(root, "title"),
                 text(root, "revision"), root.path("inputSha256").asString(), root.path("analyzerId").asString(),
                 root.path("analyzerVersion").asString(), Instant.parse(root.path("analyzedAt").asString()), result,

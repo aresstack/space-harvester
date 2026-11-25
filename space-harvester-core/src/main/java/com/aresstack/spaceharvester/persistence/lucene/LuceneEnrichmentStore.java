@@ -152,6 +152,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     private static final String DOCUMENT = "documentKey";
     private static final String DOCUMENT_PROCESSOR = "documentProcessor";
     private static final String ATTACHMENT_ID = "documentAttachmentId";
+    private static final String LOCAL_ORIGINAL = "documentLocalOriginal";
     private static final String PART_ID = "documentPartId";
     private static final String SECTION = "documentSection";
     private static final String DOCUMENT_EXTRACTION = "documentExtraction";
@@ -451,7 +452,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                     writer.deleteDocuments(new Term(ID, id), new Term(VECTOR_OF, id), new Term(TERM_OF, id),
                             new Term(FACT_OF, id));
                 }
-            } else if (document.isEmbedded() || document.attachmentId().isEmpty()) {
+            } else if (document.isEmbedded() || document.attachmentId().isEmpty() && !document.localOriginal()) {
                 writer.deleteDocuments(new Term(DOCUMENT, document.value()),
                         new Term(VECTOR_DOCUMENT_KEY, document.value()), new Term(TERM_DOCUMENT_KEY, document.value()));
             } else {
@@ -887,7 +888,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     }
 
     private static String attachment(DocumentKey document) {
-        return page(document.page()) + SEPARATOR + document.attachmentId().orElse("");
+        return page(document.page()) + SEPARATOR + (document.localOriginal()
+                ? String.valueOf(SEPARATOR) + SEPARATOR + "local-original" : document.attachmentId().orElse(""));
     }
 
     private static Document document(Enrichment enrichment) {
@@ -1208,6 +1210,9 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
 
     /** Anhang, Teil und Abschnitt getrennt gespeichert (Schlüsselform, ADR 0026); nie aus einer Zeichenkette zerlegt. */
     private static void storeDocument(Document doc, Enrichment enrichment) {
+        if (enrichment.document().localOriginal()) {
+            doc.add(new StoredField(LOCAL_ORIGINAL, "true"));
+        }
         enrichment.document().attachmentId().ifPresent(id -> doc.add(new StoredField(ATTACHMENT_ID, id)));
         enrichment.document().part().ifPresent(id -> doc.add(new StoredField(PART_ID, id.value())));
         doc.add(new StoredField(SECTION, enrichment.section()));
@@ -1217,7 +1222,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     private static DocumentKey documentKey(PageKey page, Document doc) {
         String partId = doc.get(PART_ID);
         return new DocumentKey(page, Optional.ofNullable(doc.get(ATTACHMENT_ID)),
-                Optional.ofNullable(partId).map(PartId::parse));
+                Optional.ofNullable(partId).map(PartId::parse), "true".equals(doc.get(LOCAL_ORIGINAL)));
     }
 
     private static int section(Document doc) {
