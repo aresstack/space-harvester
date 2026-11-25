@@ -106,6 +106,9 @@ public final class ChatSidebar extends JPanel {
                 com.aresstack.spaceharvester.app.ui.Glyph.TRASH);
         deleteAll.setFont(Comic.regular(13f));
         deleteAll.addActionListener(e -> chat.deleteAllChats());
+        for (javax.swing.JMenuItem export : chat.exportMenus()) {
+            menu.add(export);
+        }
         menu.add(deleteAll);
         // Die Grenzen der Parallelität wie im Menü der Aufträge (Angelo 24.11.2026).
         menu.addSeparator();

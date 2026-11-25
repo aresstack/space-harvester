@@ -219,6 +219,8 @@ public final class ChatPanel extends JPanel {
     private final AppContext context;
     /** „Chat:“ und der Name des aktuellen Chats; Rechtsklick bietet Umbenennen und Löschen. */
     private final JLabel chatName = new JLabel();
+    private final javax.swing.JButton titleAi = new javax.swing.JButton("✦");
+    private boolean titlePending;
     /** Der Name beim Umbenennen an Ort und Stelle. */
     private final JTextField chatNameEditor = new JTextField();
     private final JPanel nameHolder = new JPanel(new BorderLayout());
@@ -415,6 +417,11 @@ public final class ChatPanel extends JPanel {
         });
         nameHolder.setOpaque(false);
         nameHolder.add(chatName, BorderLayout.CENTER);
+        titleAi.setToolTipText("Chat-Titel mit KI erzeugen");
+        titleAi.setContentAreaFilled(false);
+        titleAi.setBorderPainted(false);
+        titleAi.addActionListener(e -> generateChatTitle());
+        nameHolder.add(titleAi, BorderLayout.EAST);
         chats.setContentAreaFilled(false);
         chats.setBorderPainted(false);
         chats.setOpaque(false);
@@ -2620,6 +2627,7 @@ public final class ChatPanel extends JPanel {
                 next = store.load(startedNode, started.id());
                 next = (next == null ? started : next).plus(answer, answer.at());
                 store.save(startedNode, next);
+                answerActions(bubble, next, answer);
             }
             if (detached) {
                 return;
@@ -2792,6 +2800,153 @@ public final class ChatPanel extends JPanel {
         this.clipboard = clipboard;
     }
 
+    public List<JMenuItem> exportMenus() {
+        ChatRecord snapshot = chat;
+        JMenuItem id = new JMenuItem("Chat-ID kopieren");
+        id.addActionListener(e -> {
+            clipboard.accept(snapshot.id());
+            status.setText("Chat-ID kopiert");
+        });
+        return List.of(exportMenu("Exportieren", snapshot, null,
+                        com.aresstack.spaceharvester.app.chat.ChatExport.Scope.CHAT),
+                exportMenu("Quellen exportieren", snapshot, null,
+                        com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES), id);
+    }
+
+    private javax.swing.JMenu exportMenu(String label, ChatRecord snapshot, ChatRecord.Message answer,
+            com.aresstack.spaceharvester.app.chat.ChatExport.Scope scope) {
+        javax.swing.JMenu menu = new javax.swing.JMenu(label);
+        for (com.aresstack.spaceharvester.app.chat.ChatExport.Format format :
+                com.aresstack.spaceharvester.app.chat.ChatExport.Format.values()) {
+            JMenuItem item = new JMenuItem(format.label);
+            item.addActionListener(e -> export(snapshot, answer, scope, format));
+            menu.add(item);
+        }
+        menu.setEnabled(scope == com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES
+                ? !com.aresstack.spaceharvester.app.chat.ChatExport.sources(answer == null
+                        ? snapshot.messages() : List.of(answer)).isEmpty() : !snapshot.isEmpty());
+        return menu;
+    }
+
+    private void answerActions(AssistantMarkdownMessage message, ChatRecord snapshot, ChatRecord.Message answer) {
+        Color ink = MarkdownTheme.forSurface(transcriptScroll.getViewport().getBackground()).getMutedForeground();
+        JPanel buttons = (JPanel) headerButtons(ink, ASSISTANT, message.view()::getMarkdown);
+        addExportButton(buttons, "↓", "Antwort exportieren", snapshot, answer,
+                com.aresstack.spaceharvester.app.chat.ChatExport.Scope.ANSWER);
+        addExportButton(buttons, "☷", "Quellen exportieren", snapshot, answer,
+                com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES);
+        message.setActions(buttons);
+    }
+
+    private void addExportButton(JPanel buttons, String icon, String label, ChatRecord snapshot,
+            ChatRecord.Message answer, com.aresstack.spaceharvester.app.chat.ChatExport.Scope scope) {
+        javax.swing.JButton button = new javax.swing.JButton(icon);
+        button.setToolTipText(label);
+        button.setContentAreaFilled(false);
+        button.setBorderPainted(false);
+        javax.swing.JMenu formats = exportMenu(label, snapshot, answer, scope);
+        button.setEnabled(formats.isEnabled());
+        button.addActionListener(e -> exportMenu(label, snapshot, answer, scope).getPopupMenu()
+                .show(button, 0, button.getHeight()));
+        buttons.add(button);
+    }
+
+    private void export(ChatRecord snapshot, ChatRecord.Message answer,
+            com.aresstack.spaceharvester.app.chat.ChatExport.Scope scope,
+            com.aresstack.spaceharvester.app.chat.ChatExport.Format format) {
+        javax.swing.JFileChooser chooser = new javax.swing.JFileChooser();
+        int index = 0;
+        if (answer != null) {
+            for (ChatRecord.Message entry : snapshot.messages()) {
+                if (entry.assistant()) {
+                    index++;
+                }
+                if (entry == answer || entry.equals(answer)) {
+                    break;
+                }
+            }
+        }
+        chooser.setSelectedFile(new java.io.File(com.aresstack.spaceharvester.app.chat.ChatExport.filename(
+                snapshot, index, scope, format)));
+        if (chooser.showSaveDialog(this) != javax.swing.JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        Path chosen = chooser.getSelectedFile().toPath();
+        Path target = chosen.toString().toLowerCase(java.util.Locale.ROOT).endsWith("." + format.extension)
+                ? chosen : Path.of(chosen + "." + format.extension);
+        if (java.nio.file.Files.exists(target) && javax.swing.JOptionPane.showConfirmDialog(this,
+                "Datei überschreiben?", "Exportieren", javax.swing.JOptionPane.YES_NO_OPTION)
+                != javax.swing.JOptionPane.YES_OPTION) {
+            return;
+        }
+        new javax.swing.SwingWorker<Void, Void>() {
+            @Override protected Void doInBackground() throws Exception {
+                com.aresstack.spaceharvester.app.chat.ChatExport.write(
+                        com.aresstack.spaceharvester.app.chat.ChatExport.document(snapshot, answer, scope),
+                        format, target);
+                return null;
+            }
+            @Override protected void done() {
+                try {
+                    get();
+                    status.setText("Export gespeichert: " + target.getFileName());
+                } catch (Exception error) {
+                    status.setText("Export fehlgeschlagen: " + error.getMessage());
+                }
+            }
+        }.execute();
+    }
+
+    private void generateChatTitle() {
+        if (titlePending || chat.isEmpty() || turn != null) {
+            return;
+        }
+        AppRuntime runtime = context.runtime();
+        String model = context.settings() == null || context.settings().ai() == null ? null
+                : context.settings().ai().chatModel();
+        if (runtime == null || runtime.workspace().aiChat() == null || model == null || model.isBlank()) {
+            status.setText(NO_CHAT_MODEL);
+            return;
+        }
+        ChatRecord snapshot = chat;
+        Path folder = home;
+        titlePending = true;
+        titleAi.setEnabled(false);
+        titleAi.setText("…");
+        try {
+            runtime.workspace().aiChat().stream(
+                    com.aresstack.spaceharvester.app.chat.ChatTitle.request(snapshot, model, effortValue()),
+                    new com.aresstack.spaceharvester.ai.AiChat.Listener() {
+                        @Override public void delta(String text) { }
+                        @Override public void completed(String text) {
+                            SwingUtilities.invokeLater(() -> finishTitle(snapshot, folder, text));
+                        }
+                        @Override public void failed(com.aresstack.spaceharvester.ai.AiChatException error) {
+                            SwingUtilities.invokeLater(() -> finishTitle(snapshot, folder, null));
+                        }
+                        @Override public void cancelled() {
+                            SwingUtilities.invokeLater(() -> finishTitle(snapshot, folder, null));
+                        }
+                    });
+        } catch (RuntimeException error) {
+            finishTitle(snapshot, folder, null);
+        }
+    }
+
+    private void finishTitle(ChatRecord snapshot, Path folder, String result) {
+        titlePending = false;
+        titleAi.setText("✦");
+        String title = com.aresstack.spaceharvester.app.chat.ChatTitle.clean(result);
+        if (chat.id().equals(snapshot.id()) && java.util.Objects.equals(home, folder)
+                && !title.isBlank() && chat.title().equals(snapshot.title())) {
+            chat = chat.withTitle(title, System.currentTimeMillis());
+            store.save(home, chat);
+        } else if (chat.id().equals(snapshot.id()) && title.isBlank()) {
+            status.setText("Chat-Titel konnte nicht erzeugt werden");
+        }
+        showChatName();
+    }
+
     private void scrollDown() {
         SwingUtilities.invokeLater(() -> {
             javax.swing.JScrollBar bar = transcriptScroll.getVerticalScrollBar();
@@ -2838,6 +2993,7 @@ public final class ChatPanel extends JPanel {
                 AssistantMarkdownMessage answer = addAnswer(message.cancelled()
                         ? message.text() + "\n\n" + CANCELLED : message.text(), message.at());
                 answeringSources.show(message.sources());
+                answerActions(answer, record, message);
                 readAloud.answer(answer);
             }
         }
@@ -2849,7 +3005,8 @@ public final class ChatPanel extends JPanel {
     }
 
     private void showChatName() {
-        chatName.setText(chat.title());
+        chatName.setText(com.aresstack.spaceharvester.app.chat.ChatExport.displayTitle(chat));
+        titleAi.setEnabled(!chat.isEmpty() && !titlePending && turn == null);
         chats.setEnabled(true);
         updateHeaderActions();
     }
@@ -2930,7 +3087,7 @@ public final class ChatPanel extends JPanel {
     private JMenuItem chatItem(ChatStore.Entry entry, boolean deleted) {
         ChatRecord record = entry.record();
         boolean current = !deleted && record.id().equals(chat.id());
-        String label = (current ? "✓ " : "    ") + record.title();
+        String label = (current ? "✓ " : "    ") + com.aresstack.spaceharvester.app.chat.ChatExport.displayTitle(record);
         JMenuItem item = new JMenuItem(deleted ? "<html><s>" + escapeHtml(label) + "</s></html>" : label);
         String area = lastArea(record);
         item.setToolTipText(deleted ? DELETED_TIP : Texts.count(record.messages().size(), "Nachricht", "Nachrichten")
@@ -3199,7 +3356,7 @@ public final class ChatPanel extends JPanel {
     }
 
     void startRename() {
-        chatNameEditor.setText(chat.title());
+        chatNameEditor.setText(chat.renamed() ? chat.title() : "");
         nameHolder.remove(chatName);
         nameHolder.add(chatNameEditor, BorderLayout.CENTER);
         nameHolder.revalidate();
