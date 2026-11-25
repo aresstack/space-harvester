@@ -228,6 +228,7 @@ public final class MainWindow implements AppContext.Navigator {
                 new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass),
                 com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context),
                 new com.aresstack.spaceharvester.app.ui.deck.AppTerminalTunnel(context));
+        commandDeck.folderIndexAction(new LocalFolderIndexAction(context));
         // NDV direkt wie MainframeMate; nur Verbindungen mit „Proxy der App verwenden“ nehmen den Proxy der App.
         commandDeck.ndvRoute(com.aresstack.spaceharvester.app.ui.deck.NdvNetwork.of(context));
         // E-Akte: Proxy und TLS-Vertrauen der App (Windows-ROOT), das Anmeldeprotokoll ohne Werte ins Log.

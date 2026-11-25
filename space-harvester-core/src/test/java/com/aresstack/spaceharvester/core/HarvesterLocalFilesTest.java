@@ -95,6 +95,28 @@ class HarvesterLocalFilesTest {
     }
 
     @Test
+    void folderPageIdentitySelectsOnlyItsSubtreeForExplicitIndexing() throws Exception {
+        Files.createDirectories(directory.resolve("selected"));
+        Files.writeString(directory.resolve("selected/one.md"), "Teilbaumprobe");
+        Files.writeString(directory.resolve("outside.md"), "Aussenprobe");
+        try (Harvester harvester = Harvester.builder().source(docs()).dataDirectory(data)
+                .backgroundFill(false).build()) {
+            String folder = LocalFilesSourceAdapter.folderPageId(Path.of("selected"));
+            var job = harvester.indexing().index("docs", "docs", folder, Harvester.OWNER,
+                    com.aresstack.spaceharvester.application.sync.SyncMode.CATALOG_ONLY);
+            var result = harvester.await(job.id(), java.time.Duration.ofSeconds(30));
+            assertThat(result.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED);
+            assertThat(harvester.indexing().marks().marked("docs", "docs", folder)).isTrue();
+            var inside = new com.aresstack.spaceharvester.application.query.KeywordSearch.Query(
+                    "Teilbaumprobe", "docs", java.util.Set.of(), java.util.Set.of());
+            var outside = new com.aresstack.spaceharvester.application.query.KeywordSearch.Query(
+                    "Aussenprobe", "docs", java.util.Set.of(), java.util.Set.of());
+            assertThat(harvester.keywordSearch().search(harvester.caller(), inside, null, 10).hits()).isNotEmpty();
+            assertThat(harvester.keywordSearch().search(harvester.caller(), outside, null, 10).hits()).isEmpty();
+        }
+    }
+
+    @Test
     void referenceModeConnectsTheRealCacheReaderAndSearchPipeline() throws IOException {
         Path file = directory.resolve("notiz.txt");
         Files.writeString(file, "Beginning\n" + "ordinary paragraph\n\n".repeat(7000) + "Zielbegriff");

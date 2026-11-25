@@ -457,7 +457,7 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
         return folders;
     }
 
-    private static String encode(String path) {
+    static String encode(String path) {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(path.getBytes(StandardCharsets.UTF_8));
     }
 

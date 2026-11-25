@@ -80,6 +80,14 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
                 }, VideoFileTypes::streamableType, true);
     }
 
+    /** Resolve a relative folder path using the same local IDs as the source navigation. */
+    public static String folderPageId(Path relative) {
+        if (relative.isAbsolute() || relative.toString().isEmpty() || relative.normalize().startsWith("..")) {
+            throw new IllegalArgumentException("Expected a folder path relative to the source root");
+        }
+        return LocalFolderHierarchy.encode(relative.toString().replace('\\', '/'));
+    }
+
     @Override
     public String type() {
         return TYPE;
