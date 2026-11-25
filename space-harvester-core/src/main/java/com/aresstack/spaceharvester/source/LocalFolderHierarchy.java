@@ -61,7 +61,7 @@ import java.util.Objects;
  * The navigation reads only immediate children and never traverses unopened directories.
  */
 final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListingSource, ResourceMetadataSource,
-        StoredContentSource, PageNavigationSource, ResourceNodeKindSource, OriginalFileSource, SourceMediaRange,
+        StoredContentSource, PageNavigationSource, ResourceNodeKindSource, OriginalFileSource, DirectOriginalFileSource, SourceMediaRange,
         com.aresstack.enterpriseai.source.api.PartitionInventorySource {
 
     /** {@link StoredContent#nativeFormat()} eines Ordners: kein Inhalt. */
@@ -225,6 +225,16 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
             return Optional.empty();
         }
         return port.copyOriginal(localId, target, wanted, maxBytes);
+    }
+
+    @Override
+    public <T> Optional<T> readOriginalInPlace(String localId, Predicate<String> wanted, long maxBytes,
+                                               DirectOriginalFileSource.Reader<T> reader) throws KnowledgeSourceException {
+        if (folderOf(localId) != null) {
+            return Optional.empty();
+        }
+        return port.readOriginal(localId, wanted, maxBytes,
+                (original, resource) -> reader.read(original, describeFile(resource)));
     }
 
     @Override

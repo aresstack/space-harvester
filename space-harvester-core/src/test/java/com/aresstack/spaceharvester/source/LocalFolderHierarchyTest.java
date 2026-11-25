@@ -229,6 +229,26 @@ class LocalFolderHierarchyTest {
         }
     }
 
+    @Test
+    void largeLocalTextIsReadAtItsOriginalPathWithoutCreatingTemporaryCopies() throws IOException {
+        HarvestSource source = open();
+        String pageId = id("notiz.txt");
+        PageMetadata metadata = source.pageMetadata(pageId);
+        Path temporary = directory.resolve("must-not-be-created");
+        LargeFileTexts texts = new LargeFileTexts(new TikaDocumentStructure(),
+                () -> com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS, temporary);
+        assertThat(source.readsOriginalInPlace()).isTrue();
+        assertThat(source.readOriginalInPlace(pageId, type -> true, 1024,
+                (path, actual, type) -> path)).contains(directory.resolve("notiz.txt").toRealPath());
+        assertThat(texts.text(source, metadata, 1024)).contains("Eine Datei an der Wurzel");
+        assertThat(temporary).doesNotExist();
+
+        Files.writeString(directory.resolve("notiz.txt"), "Changed and longer content");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> texts.text(source, metadata, 1024))
+                .isInstanceOf(com.aresstack.spaceharvester.application.sources.SourceAccessException.class);
+        assertThat(temporary).doesNotExist();
+    }
+
     private Map<String, PageMetadata> list(KnowledgeSourceHarvestSource source, int limit) {
         Map<String, PageMetadata> pages = new LinkedHashMap<>();
         String cursor = null;
