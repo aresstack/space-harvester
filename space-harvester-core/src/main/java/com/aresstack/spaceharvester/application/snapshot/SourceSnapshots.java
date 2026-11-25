@@ -25,6 +25,8 @@ public class SourceSnapshots implements PageContentFetcher {
     private static final Runnable NOTHING = () -> { };
 
     private final SourceCatalog catalog;
+    private final SnapshotStorageStrategy cachedOriginals;
+    private final SnapshotStorageStrategy localOriginals;
     private volatile PageLoads loads = PageLoads.NONE;
     /** Größte Datei, die ganz geladen wird ({@link LargeFiles}); {@code <= 0} ohne Grenze. */
     private volatile java.util.function.LongSupplier maxBytes = () -> 0;
@@ -47,7 +49,15 @@ public class SourceSnapshots implements PageContentFetcher {
     }
 
     public SourceSnapshots(SourceCatalog catalog) {
+        this(catalog, null);
+    }
+
+    /** Supply the local-original policy explicitly once its consumers support the reference format. */
+    public SourceSnapshots(SourceCatalog catalog, SnapshotStorageStrategy localOriginals) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
+        this.localOriginals = localOriginals;
+        this.cachedOriginals = new CachedOriginalStorage(this::fetch, this::loadsWhole,
+                () -> maxTextBytes.getAsLong(), (source, metadata, limit) -> texts.text(source, metadata, limit));
     }
 
     /**
@@ -102,6 +112,15 @@ public class SourceSnapshots implements PageContentFetcher {
         java.nio.file.Path file = null;
         Runnable ended = started(new PageKey(sourceId, metadata.pageId()));
         try {
+            if (source.readsOriginalInPlace()) {
+                return source.readOriginalInPlace(metadata.pageId(), type -> true, limit,
+                        (original, actual, type) -> {
+                            com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions
+                                    .requireSameRevision(source, metadata, actual);
+                            return java.nio.file.Files.readAllBytes(original);
+                        }).orElseThrow(() -> new SourceAccessException(sourceId,
+                                SourceAccessException.Reason.UNSUPPORTED, "Die Quelle liefert dieses Original nicht als Datei", null));
+            }
             file = java.nio.file.Files.createTempFile("space-harvester-original-", ".part");
             if (source.downloadOriginal(metadata.pageId(), file, type -> true, limit).isEmpty()) {
                 throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNSUPPORTED,
@@ -129,24 +148,17 @@ public class SourceSnapshots implements PageContentFetcher {
      */
     @Override
     public PageSnapshot fetch(String sourceId, PageMetadata expected) {
-        if (loadsWhole(expected)) {
-            return fetch(sourceId, expected.pageId());
-        }
         HarvestSource source = catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
-        long textLimit = maxTextBytes.getAsLong();
-        if (textLimit > 0 && LargeFiles.size(expected) <= textLimit) {
-            Runnable ended = started(new PageKey(sourceId, expected.pageId()));
-            try {
-                java.util.Optional<String> text = texts.text(source, expected, textLimit);
-                if (text.isPresent()) {
-                    return LargeFiles.textOnly(sourceId, expected,
-                            text.get().getBytes(java.nio.charset.StandardCharsets.UTF_8), java.time.Instant.now());
-                }
-            } finally {
-                quietly(ended);
-            }
+        Runnable ended = started(new PageKey(sourceId, expected.pageId()));
+        try {
+            return storage(source, expected).capture(source, expected);
+        } finally {
+            quietly(ended);
         }
-        return LargeFiles.placeholder(sourceId, expected, java.time.Instant.now());
+    }
+
+    private SnapshotStorageStrategy storage(HarvestSource source, PageMetadata metadata) {
+        return localOriginals != null && localOriginals.supports(source, metadata) ? localOriginals : cachedOriginals;
     }
 
     @Override
@@ -175,6 +187,12 @@ public class SourceSnapshots implements PageContentFetcher {
         HarvestSource source = catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
         Runnable ended = started(new PageKey(sourceId, pageId));
         try {
+            if (localOriginals != null && localOriginals.supportsSource(source)) {
+                PageMetadata metadata = source.pageMetadata(pageId);
+                if (localOriginals.supports(source, metadata)) {
+                    return localOriginals.capture(source, metadata);
+                }
+            }
             return fetch(source, pageId);
         } finally {
             quietly(ended);

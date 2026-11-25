@@ -8,7 +8,8 @@ import java.util.Objects;
 
 /**
  * Die Antwort der Quelle Byte für Byte (HTTP-Body nach Transportdekodierung), nie aus geparsten Objekten
- * rekonstruiert, ohne Header, Cookies oder Zugangsdaten.
+ * rekonstruiert, ohne Header, Cookies oder Zugangsdaten. Bei explizit abgeleiteten Formaten wie
+ * {@link LocalOriginalReference#FORMAT} sind es die Bytes der gespeicherten Darstellung, nicht des Originals.
  *
  * <p>{@link #rawSha256()} ist {@code sha256:<hex>} über genau diese Bytes. Er belegt, dass ein gespeicherter Snapshot
  * unverändert ist, zeigt aber keine Inhaltsänderung an: Dieselbe Revision kann wegen volatiler Felder (Links,
