@@ -270,11 +270,24 @@ class FtpWorkspaceTest {
                 assertThat(onEdt(datasets::current)).isEqualTo("'KKR'");
                 assertThat(host.commands()).containsExactlyElementsOf(commandsBefore);
                 assertThat(new CobolAnalysisAreaSettings().load(session).orElseThrow().home()).isEqualTo("KKR.SRC");
+                assertThat(onEdt(() -> datasets.inventoryAction().button().isEnabled())).isTrue();
+                SwingUtilities.invokeAndWait(() -> datasets.inventoryAction().button().doClick());
+                waitFor(() -> onEdt(() -> datasets.inventoryAction().result().isPresent()), until);
+                var inventory = onEdt(() -> datasets.inventoryAction().result().orElseThrow());
+                assertThat(inventory.complete()).as(inventory.failures().toString()).isTrue();
+                assertThat(inventory.members()).isNotEmpty().allMatch(member -> inventory.area()
+                        .containsProgramDataset(com.aresstack.spaceharvester.deck.ftp.MvsPath.splitMember(member.path())[0]));
+                assertThat(inventory.members()).extracting(com.aresstack.spaceharvester.deck.ftp.CobolInventory.Member::path)
+                        .contains("'KKR.SRC.COBOL(KOMET)'");
+                assertThat(onEdt(datasets::current)).isEqualTo("'KKR'");
+                assertThat(host.commands().subList(commandsBefore.size(), host.commands().size()))
+                        .noneMatch(command -> command.matches("(?i)^(RETR|STOR|DELE|MKD|RMD).*"));
             } finally {
                 SwingUtilities.invokeAndWait(() -> datasets.setAnalysisHome(""));
             }
             assertThat(onEdt(datasets::analysisArea)).isEmpty();
-            assertThat(host.commands()).containsExactlyElementsOf(commandsBefore);
+            assertThat(onEdt(() -> datasets.inventoryAction().result())).isEmpty();
+            assertThat(onEdt(() -> datasets.inventoryAction().button().isEnabled())).isFalse();
 
             // Wie MainframeMate: sortieren, Detail-Spalten, Filter mit roter Warnung.
             SwingUtilities.invokeAndWait(() -> datasets.sort(EntryList.Sort.NAME_DESC));

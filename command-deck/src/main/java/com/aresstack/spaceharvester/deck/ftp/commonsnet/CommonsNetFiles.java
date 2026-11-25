@@ -138,6 +138,39 @@ final class CommonsNetFiles implements FileConnection {
     }
 
     @Override
+    public List<String> listAnalysisDatasets(String prefix) throws IOException {
+        if (!mvs) {
+            throw new IOException("Keine MVS-Verbindung");
+        }
+        var area = new com.aresstack.spaceharvester.deck.ftp.CobolAnalysisArea(prefix, List.of());
+        String query = MvsPath.absolute(area.home() + ".*");
+        String[] names = ftp.listNames(query);
+        int reply = ftp.getReplyCode();
+        if (!org.apache.commons.net.ftp.FTPReply.isPositiveCompletion(reply)) {
+            String message = Clients.reply(ftp);
+            if (reply == 550 && message.toLowerCase(Locale.ROOT).contains("no data sets found")) {
+                return List.of();
+            }
+            if (org.apache.commons.net.ftp.FTPReply.isNegativeTransient(reply)) {
+                throw new IOException("Katalog " + query + " – " + message);
+            }
+            throw new FtpReplyException("Katalog " + query + " – " + message, reply);
+        }
+        if (names == null) {
+            throw new IOException("Katalog " + query + ": keine Liste empfangen");
+        }
+        Set<String> datasets = new java.util.TreeSet<>();
+        for (String raw : names) {
+            String name = MvsPath.unquote(raw).toUpperCase(Locale.ROOT);
+            if (!area.containsProgramDataset(name) || name.equals(area.home())) {
+                throw new IOException("Unerwarteter Katalogeintrag: " + raw);
+            }
+            datasets.add(MvsPath.absolute(name));
+        }
+        return List.copyOf(datasets);
+    }
+
+    @Override
     public List<RemoteEntry> listCopybookMembers(String dataset) throws IOException {
         if (!mvs) {
             return list(dataset);

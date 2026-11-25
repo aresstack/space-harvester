@@ -118,6 +118,7 @@ final class FtpDatasetsView extends JPanel {
     private final IconButton detailsButton = new IconButton(Glyph.TABLE, "Details zeigen (Größe, Datum, RECFM/LRECL)");
     private final IconButton groupButton = new IconButton(new DrawnIcon(false), "Nach Endung gruppieren");
     private final CobolAnalysisAreaSettings analysisSettings = new CobolAnalysisAreaSettings();
+    private final CobolInventoryAction inventory = new CobolInventoryAction(this);
     private final IconButton analysisHome = new IconButton(Glyph.GRAPH, "COBOL-Analysebereich konfigurieren");
     private final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Gruppen aufklappen");
     private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Gruppen zuklappen");
@@ -331,7 +332,7 @@ final class FtpDatasetsView extends JPanel {
         sideBar = new EditorSideBar(new EditorSideBar.Home(SIDE_DATASETS, FilesIcons.folder(), "Datasets",
                 new com.aresstack.spaceharvester.app.ui.controls.SideHead(SIDE_DATASETS, filter)
                         .actions(sortButton, detailsButton, groupButton),
-                listArea, com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, expandAll, analysisHome)),
+                listArea, com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, expandAll, analysisHome, inventory.button())),
                 List.of(), AppState.shared().get(SIDE_TAB_KEY),
                 name -> AppState.shared().put(SIDE_TAB_KEY, name));
         javax.swing.JComponent side = sideBar;
@@ -384,7 +385,10 @@ final class FtpDatasetsView extends JPanel {
     }
 
     void setConnected(boolean value) {
-        if (!value) revokeDiagnosis();
+        if (!value) {
+            revokeDiagnosis();
+            inventory.invalidate();
+        }
         connected = value;
         enableActions();
     }
@@ -962,10 +966,24 @@ final class FtpDatasetsView extends JPanel {
 
     void setAnalysisHome(String home) {
         analysisSettings.save(owner.session(), home);
+        inventory.invalidate();
         refreshAnalysisHome();
     }
 
+    CobolInventoryAction inventoryAction() {
+        return inventory;
+    }
+
+    FtpSession inventorySession() {
+        return owner.session();
+    }
+
+    void inventoryStatus(String text, boolean error) {
+        owner.status(text, error);
+    }
+
     private void refreshAnalysisHome() {
+        inventory.refresh();
         boolean available = connected && CobolAnalysisAreaSettings.available(owner.session());
         analysisHome.setEnabled(available);
         analysisHome.setVisible(owner.session().mvs());

@@ -21,6 +21,11 @@ public interface FileConnection extends AutoCloseable {
 
     List<RemoteEntry> list(String path) throws IOException;
 
+    /** List catalogued descendants of a qualified MVS dataset prefix; never hide a failed listing. */
+    default List<String> listAnalysisDatasets(String prefix) throws IOException {
+        throw new IOException("Strikte MVS-Katalogauflistung wird nicht unterstützt");
+    }
+
     /** List only PDS members for copybook resolution, without traversing sub-datasets. */
     default List<RemoteEntry> listCopybookMembers(String dataset) throws IOException {
         return list(dataset);
