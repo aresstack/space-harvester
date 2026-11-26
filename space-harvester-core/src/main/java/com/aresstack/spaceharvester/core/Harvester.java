@@ -184,6 +184,7 @@ import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileReadStates;
 import com.aresstack.spaceharvester.persistence.files.FileExclusionMarks;
 import com.aresstack.spaceharvester.persistence.files.FileIndexMarks;
+import com.aresstack.spaceharvester.persistence.files.FileNavigationMarks;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore;
 import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
@@ -371,6 +372,7 @@ public final class Harvester implements AutoCloseable {
     private final SpaceSyncJobs syncs;
     private final Indexing indexing;
     private final Exclusions exclusions;
+    private final com.aresstack.spaceharvester.application.sync.NavigationMarks navigationMarks;
     private final ChangeEvents changeEvents;
     private final Reconciliation reconciliation;
     /** Bestandsinventur nach {@code sync.inventory-interval}, nur aus der Konfiguration (ADR 0014/0015). */
@@ -1149,6 +1151,8 @@ public final class Harvester implements AutoCloseable {
                     (sourceId, pageId) -> reader.header(new PageKey(sourceId, pageId))
                             .map(header -> header.metadata().title()).orElse(null));
             navigation.exclusions(exclusions);
+            // Erwerbsgrund „Navigation“ (ADR 0037, Punkt 3): nur dieser Grund wird gespeichert.
+            this.navigationMarks = new FileNavigationMarks(builder.dataDirectory);
             keywordSearch.exclusions(exclusions);
             findings.exclusions(exclusions);
             // Automatische Auslöser laden Ausgeschlossenes nie; ausdrückliches Öffnen, Lesen und Export bleiben möglich.
@@ -2858,6 +2862,11 @@ public final class Harvester implements AutoCloseable {
     /** Ausschließen: was der Benutzer ausgeschlossen hat, fehlt in Baum und Suche und wird nicht indexiert. */
     public Exclusions exclusions() {
         return exclusions;
+    }
+
+    /** Die über die Navigationsbefüllung erworbenen Ressourcen (ADR 0037, Punkt 3). */
+    public com.aresstack.spaceharvester.application.sync.NavigationMarks navigationMarks() {
+        return navigationMarks;
     }
 
     /** Bilder und Anhänge einer markierten Wurzel beschaffen; vor dem Aufbau der Beschaffung nichts. */
