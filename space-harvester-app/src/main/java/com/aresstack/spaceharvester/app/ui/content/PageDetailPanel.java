@@ -825,7 +825,13 @@ public final class PageDetailPanel extends JPanel {
         searchPrograms.addActionListener(event -> searchStoredPrograms());
         analysisActions.add(recomputeProgram);
         recomputeProgram.setVisible(false);
-        recomputeProgram.addActionListener(event -> recompute(com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment.ID));
+        recomputeProgram.addActionListener(event -> {
+            if (page == null) return;
+            String processor = com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment.source(page.snapshot()).isPresent()
+                    ? com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment.ID
+                    : com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment.ID;
+            recompute(processor);
+        });
         analysisActions.add(recomputeBusiness);
         recomputeBusiness.setVisible(false);
         recomputeBusiness.addActionListener(event -> analyzeBusiness());
@@ -1419,7 +1425,7 @@ public final class PageDetailPanel extends JPanel {
         boolean program = programAnalysisTabs.show(snapshot, views);
         subpages.box().setVisible(!program);
         recomputeProgram.setVisible(program);
-        recomputeBusiness.setVisible(program);
+        recomputeBusiness.setVisible(program && com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot).isPresent());
         searchPrograms.setVisible(snapshot.metadata().attributes().containsKey("ftp.path"));
         showRelations();
     }
@@ -2748,8 +2754,10 @@ public final class PageDetailPanel extends JPanel {
         java.util.Optional<String> code = matching || nativeFtp
                 ? com.aresstack.spaceharvester.app.runtime.program.StoredFtpText.read(snapshot)
                     .map(com.aresstack.spaceharvester.app.runtime.program.StoredFtpText::content)
-                : com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot)
-                    .map(com.aresstack.spaceharvester.mainframe.cobol.CobolSource::content);
+                : com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment.source(snapshot)
+                    .map(com.aresstack.spaceharvester.app.runtime.program.StoredFtpText::content)
+                    .or(() -> com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot)
+                        .map(com.aresstack.spaceharvester.mainframe.cobol.CobolSource::content));
         code.ifPresent(source -> showOriginalProgram(source, matching ? focus.line() : 0));
         if (matching && code.isPresent()) tabs.select(READING);
         if (focus != null && (!matching || code.isEmpty())) {

@@ -247,6 +247,7 @@ public final class AppRuntime implements AutoCloseable {
         if (!ftpSources.isEmpty()) {
             builder.snapshotEnrichmentProcessor(lookup -> new com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment(ftpSources, lookup));
             builder.snapshotEnrichmentProcessor(lookup -> new com.aresstack.spaceharvester.app.runtime.program.CobolBusinessEnrichment(ftpSources, lookup));
+            builder.enrichmentProcessor(new com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment(ftpSources.keySet()));
         }
         builder.accessPolicy(policy);
         // #499: MaltParser nur auf Knopfdruck; das Modell lädt erst der erste Klick, ohne Modell startet die App normal.

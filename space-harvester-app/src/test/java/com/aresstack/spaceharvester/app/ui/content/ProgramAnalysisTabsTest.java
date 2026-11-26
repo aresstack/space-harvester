@@ -95,6 +95,45 @@ class ProgramAnalysisTabsTest {
     }
 
     @Test
+    void reopensJclAnalysisAndSwitchesDocumentSpecificTabs() throws Exception {
+        String code = "//JOB JOB\n//STEP EXEC PGM=DEMO\n//IN DD DSN=APP.DATA.IN,DISP=SHR\n";
+        var legacy = snapshot("ftp", code, code);
+        var program = PageSnapshot.of("ftp", legacy.metadata(),
+                new NativePayload(code.getBytes(StandardCharsets.UTF_8), "text/plain",
+                        com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider.SOURCE_TEXT_FORMAT),
+                Instant.now());
+        var changed = snapshot("ftp", code.replace("DEMO", "OTHER"), code.replace("DEMO", "OTHER"));
+        var processor = new com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment(Set.of("ftp"));
+        try (var store = LuceneEnrichmentStore.open(home)) {
+            var enrichments = new Enrichments(new KnowledgeDocumentTextProjector(), List.of(processor), store, Clock.systemUTC());
+            assertThat(enrichments.refresh(program).computed()).isEqualTo(1);
+            assertThat(enrichments.refresh(program).current()).isEqualTo(1);
+            store.flush();
+        }
+        try (var store = LuceneEnrichmentStore.open(home)) {
+            var enrichments = new Enrichments(new KnowledgeDocumentTextProjector(), List.of(processor), store, Clock.systemUTC());
+            var views = enrichments.view(program);
+            assertThat(views).singleElement().satisfies(view -> {
+                assertThat(view.freshness()).isEqualTo(Enrichment.Freshness.CURRENT);
+                var artifact = com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment.read(view.enrichment().payloadJson());
+                assertThat(artifact.analysis().dependencies()).hasSize(2);
+            });
+            SwingUtilities.invokeAndWait(() -> {
+                var tabs = new PillTabs().tab("Absätze", new JPanel());
+                var analysis = new ProgramAnalysisTabs(tabs);
+                assertThat(analysis.show(program, views)).isTrue();
+                assertThat(tabs.names()).containsExactly("Jobstruktur", "Programm- und Prozeduraufrufe", "Dataset-Abhängigkeiten", "JCL-Hinweise");
+                tabs.select("Dataset-Abhängigkeiten");
+                assertThat(cells(tabs)).contains("APP.DATA.IN", "SHR");
+                assertThat(analysis.show(changed, enrichments.view(changed))).isTrue();
+                assertThat(cells(tabs)).doesNotContain("APP.DATA.IN", "SHR");
+                analysis.reset();
+                assertThat(tabs.names()).containsExactly("Absätze");
+            });
+        }
+    }
+
+    @Test
     void reopensDataFlowAndClearsStaleRows() throws Exception {
         String code = CODE.replace("           CALL 'BOOKING'.", "           MOVE 'A' TO CUSTOMER.\n           DISPLAY CUSTOMER.");
         PageSnapshot program = snapshot("ftp", code, code);
