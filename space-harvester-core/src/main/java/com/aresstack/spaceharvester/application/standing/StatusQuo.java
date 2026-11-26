@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
@@ -580,6 +581,13 @@ public final class StatusQuo {
             Optional<String> text = analysis.flatMap(found -> sentences.text(page,
                     found.analysis().inputSha256()));
             for (ParsedStatements.Statement statement : list) {
+                SourceLocationEvidence source = statement.derivation().source();
+                if (source != null) {
+                    // ADR 0032, Fortschreibung 26.11.2026: eine Programmaussage steht nicht im Lesetext; ihr Wortlaut
+                    // ist die Hypothese, ihre Stelle die erste Codestelle im Programm selbst
+                    texts.put(statement.id(), programSentence(statement, source, text));
+                    continue;
+                }
                 ParsedStatements.Sentence sentence = bounds.get(statement.sentence());
                 boolean known = analysis.isPresent() && analysis.get().analysis().result().statements().stream()
                         .anyMatch(candidate -> candidate.id().equals(statement.id()));
@@ -594,6 +602,17 @@ public final class StatusQuo {
             }
         });
         return texts;
+    }
+
+    private static SentenceText programSentence(ParsedStatements.Statement statement, SourceLocationEvidence source,
+                                                Optional<String> text) {
+        Optional<SourceLocationEvidence.Characters> site = text.flatMap(program -> source.sites().stream()
+                .filter(candidate -> candidate.document().equals(source.program())).findFirst()
+                .flatMap(candidate -> candidate.characters(program)));
+        int start = site.map(SourceLocationEvidence.Characters::start).orElse(-1);
+        int end = site.map(SourceLocationEvidence.Characters::end).orElse(-1);
+        return new SentenceText(null, statement.derivation().simplifiedSentence(), start, end, start, end,
+                site.isEmpty());
     }
 
     /**

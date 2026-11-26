@@ -327,6 +327,15 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
                     Objects.requireNonNull(source, "source"));
         }
 
+        /**
+         * Ob die Aussage eine eigene Stelle belegt und nicht neben ihrer Original-Aussage steht: Originalsatz oder
+         * Programmanalyse. Aussagen der Vorstufe und Korrekturen zählten ihre Stelle sonst doppelt (ADR 0032); eine
+         * Programmaussage hat kein Original im Lesetext und zählt als Ist-Zustand (Fortschreibung 26.11.2026).
+         */
+        public boolean ownSite() {
+            return origin == Origin.ORIGINAL || origin == Origin.PROGRAMM;
+        }
+
         /** Dieselbe Herkunft mit Merkmalen aus der Original-Aussage desselben Verbs. */
         public Derivation withFeaturesFromOriginal() {
             return new Derivation(origin, stageFlag, simplifiedSentence, Origin.ORIGINAL, corrects, section, source);

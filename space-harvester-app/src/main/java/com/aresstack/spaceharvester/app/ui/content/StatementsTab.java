@@ -146,6 +146,8 @@ final class StatementsTab extends JPanel {
     private boolean stored;
     /** Ob die angezeigte Analyse aktuell ist: nur dann lässt sie sich prüfen. */
     private boolean current;
+    /** Ob die Quellstellenbelege der gezeigten Programmaussagen nicht mehr aktuell sind (ADR 0032, Fortschreibung). */
+    private boolean evidenceStale;
     /** „mit Vorstufe“ (ADR 0032, FL3): gilt für den nächsten Klick auf „Analysieren“. */
     private final javax.swing.JCheckBox simplify = Comic.checkBox(WITH_STAGE);
     private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton cancel = Comic.button(CANCEL,
@@ -1134,6 +1136,7 @@ final class StatementsTab extends JPanel {
             List<ParsedStatements.Statement> other = result.statements().stream()
                     .filter(statement -> !statement.core()).toList();
             String analyzer = StatementProvenance.analyzer(statements.analysis().analyzerId());
+            evidenceStale = stale && PageStatements.EVIDENCE_CHANGED.equals(statements.reason());
             section("Kernaussagen", core, result, mentions, stale, offsets, analyzer);
             section("Weitere Aussagen", other, result, mentions, stale, offsets, analyzer);
             if (result.statements().isEmpty()) {
@@ -1166,14 +1169,17 @@ final class StatementsTab extends JPanel {
         lines.add(heading);
         copyText.append(title).append("\n\n");
         for (ParsedStatements.Statement statement : statements) {
-            List<String> body = describe(statement, result, mentions, offsets ? sentence(result, statement) : null,
-                    analyzer);
+            // Eine Programmaussage steht in der Hypothese, nicht im Lesetext der Seite: Beleg ist die Quellstelle
+            boolean program = StatementProvenance.program(statement);
+            boolean jump = offsets && !program;
+            List<String> body = describe(statement, result, mentions, jump ? sentence(result, statement) : null,
+                    analyzer, evidenceStale);
             // Kopieren liefert alles, die Zeile zeigt das Knappe; Herkunft, Urteil und Stufe stehen im Overlay (A1).
             List<String> shown = shown(body);
             lines.add(String.join(" | ", shown));
             copyText.append(String.join("\n", body)).append("\n\n");
-            String details = StatementProvenance.details(statement, analyzer, mentions);
-            list.add(entry(shown, stale, offsets ? span(result, statement) : null, details));
+            String details = StatementProvenance.details(statement, analyzer, mentions, evidenceStale);
+            list.add(entry(shown, stale, jump ? span(result, statement) : null, details));
             list.add(Box.createVerticalStrut(4));
         }
         list.add(Box.createVerticalStrut(8));
@@ -1249,8 +1255,14 @@ final class StatementsTab extends JPanel {
      */
     static List<String> describe(ParsedStatements.Statement statement, ParsedStatements result,
                                  Map<String, ParsedStatements.Mention> mentions, String evidence, String analyzer) {
+        return describe(statement, result, mentions, evidence, analyzer, false);
+    }
+
+    static List<String> describe(ParsedStatements.Statement statement, ParsedStatements result,
+                                 Map<String, ParsedStatements.Mention> mentions, String evidence, String analyzer,
+                                 boolean evidenceStale) {
         List<String> body = new ArrayList<>();
-        body.add(StatementProvenance.line(statement, analyzer));
+        body.add(StatementProvenance.line(statement, analyzer, evidenceStale));
         String lemma = statement.predicateLemma();
         body.add(statement.predicateText() + (lemma == null || lemma.equals(statement.predicateText()) ? ""
                 : " (" + lemma + ")"));
