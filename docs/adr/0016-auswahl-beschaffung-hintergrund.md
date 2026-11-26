@@ -2,6 +2,9 @@
 
 - Status: **Angenommen, zweiter Schritt umgesetzt** (Strang Q, 18.10.2026; Entscheidungen von Angelo, 18.10.
   17:41–17:47). Ergänzt [ADR 0013](0013-suche-ueber-den-cache.md) bei der Beschaffung der Treffer.
+- Fortgeschrieben durch [ADR 0037](0037-quellenumfang-nutzungssteuerung-beschaffung.md) (Prefetch und
+  Hintergrundfüllung je Quelle unabhängig; Fund erfassen und Inhalt beschaffen getrennt) und
+  [ADR 0038](0038-indexbasierte-progressive-und-agentengestuetzte-suche.md) (Verhältnis der Suchvarianten).
 - Umgesetzt mit #296: vorläufige Trefferliste, Laden in Rangfolge, Fortschritt und Abbruch je Suche.
 - Umgesetzt im zweiten Schritt (Punkte 4 bis 6): austauschbare `CandidateSelectionStrategy`, `AcquisitionScheduler`
   mit Vorrang für den Vordergrund, dauerhafte Hintergrundfüllung `BackgroundFill`.

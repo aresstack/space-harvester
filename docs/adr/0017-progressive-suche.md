@@ -2,6 +2,8 @@
 
 - Status: **Angenommen, im Core umgesetzt** (Strang Q, 18.10.2026; Entscheidungen von Angelo, 18.10. 18:03
   und 18:07). Ergänzt [ADR 0013](0013-suche-ueber-den-cache.md) und [ADR 0016](0016-auswahl-beschaffung-hintergrund.md).
+- Fortgeschrieben durch [ADR 0038](0038-indexbasierte-progressive-und-agentengestuetzte-suche.md): Die progressive
+  Suche ist dort Variante 2 der gemeinsamen Pipeline; die Agenten-Recherche ist eine getrennte zweite Spur.
 - Gilt für die **semantische Suche** (Haken, ADR 0013). Die Schlagwortsuche bleibt Standard und unverändert.
 - Umgesetzt: `SearchOrchestrator` im Core mit regelbasierten Varianten, Wellen, Prioritätsfreigabe, Qualitätsziel
   und Budgets (Paket `application.query.progressive`, `Harvester.progressiveSearch()`).

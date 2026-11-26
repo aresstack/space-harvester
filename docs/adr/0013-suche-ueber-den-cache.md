@@ -4,6 +4,9 @@
   [ADR 0010](0010-export-ohne-vorbereiteten-bestand.md) Punkt 9 (Schlagwortsuche) und
   [ADR 0011](0011-embeddings-ueber-externen-ki-dienst.md) bei der Relevanzsuche; nimmt die hybride Suche aus #181
   zurück.
+- Fortgeschrieben durch [ADR 0038](0038-indexbasierte-progressive-und-agentengestuetzte-suche.md): Punkt 1 gilt
+  unverändert; Punkt 2 und 3 gelten je Quelle nur, soweit ihre Beschaffungsregeln das Laden erlauben, und vorläufige
+  native Funde dürfen vorläufig bleiben.
 - Bezüge: #169 (Haken „Semantische Suche“ in der App), #180 (Volltextindex), #181 (Zerlegung, Reranking),
   [ADR 0012](0012-core-als-gemeinsame-bibliothek.md) (Funktionsparität).
 
