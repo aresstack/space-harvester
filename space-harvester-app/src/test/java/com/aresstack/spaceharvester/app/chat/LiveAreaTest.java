@@ -9,7 +9,6 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.api.Test;
 
@@ -42,7 +41,7 @@ class LiveAreaTest {
         }
     }
 
-    static Stream<Arguments> shapes() {
+    static Stream<Shape> shapes() {
         return Stream.of(
                 // SharePoint: gruppenbasiert, Partition = Quelle, Ordner als Pfad (ADR 0040/0042).
                 new Shape("SharePoint", "sp", "sp", "folder:/sites/team/Dokumente/Projekt",
@@ -138,7 +137,7 @@ class LiveAreaTest {
 
     @Test
     void aWholeSourceTakesEveryPageOfItWithoutAskingTheSource() {
-        FakeNavigation navigation = new FakeNavigation(shapes().map(arguments -> (Shape) arguments.get()[0])
+        FakeNavigation navigation = new FakeNavigation(shapes()
                 .filter(shape -> shape.name().equals("BSCW")).findFirst().orElseThrow());
         LiveArea area = new LiveArea(navigation, List.of(Selection.Root.source("bscw")));
 
