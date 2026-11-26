@@ -8,7 +8,11 @@ import java.util.Objects;
  * welcher Wartezeit der Abruf einer Quelle nach einem Netzfehler, einer Zeitüberschreitung, 429 oder 5xx wiederholt
  * wird, und nach wie vielen solchen Fehlern nacheinander sich ein Auftrag selbst anhält („Verbindung unterbrochen“).
  *
- * <p>Es gibt nur eine Wiederholungsschleife: die des REST-Clients der Quelle (exponentielle Wartezeit mit Zufall). Nie
+ * <p>Zwei Ebenen, nie dieselbe Anfrage doppelt: Der REST-Client der Quelle wiederholt eine einzelne HTTP-Anfrage
+ * ({@link #maxAttempts()}, {@link #initialDelay()} bis {@link #maxDelay()}, exponentiell mit Zufall). Der
+ * Beschaffungsplaner ({@code AcquisitionScheduler}) fordert danach eine ganze Seite, deren Abruf trotzdem vorübergehend
+ * scheiterte, im selben Auftrag erneut an, ebenfalls bis {@link #maxAttempts()} Mal, nach der Wartezeit des
+ * Wiederanlaufs ({@link #resumeDelay(int)}); ohne Netz wartet er, bis es zurück ist (Angelo 26.11.2026, WLAN). Nie
  * wiederholt werden 401, 403, 404, ungültige Antworten, Datei-Downloads mit offener Code-Abfrage und das Absenden eines
  * Einmalcodes; dort entstünde sonst eine neue Sitzung mit neuer Mail. Eigene {@code options} einer Quelle
  * ({@code maxRetries}, {@code retryBackoffMillis}, {@code maxRetryBackoffMillis}) gehen vor.
