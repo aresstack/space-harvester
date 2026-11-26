@@ -115,6 +115,23 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
     die Werkzeugrunden; sie platzt mit dem ersten Antworttext. Die Antwortblase wartet bis dahin unsichtbar (kein „…“).
     Über dem Eingabefeld stehen nur noch Aktionsknöpfe, Text und Anhänge. `treffer_auswerten` gibt es bei jeder
     Frage mit Bereich oder interner Suche, nicht nur auf dem Suchreiter.
+15. **Bereich für jede Quelle, auch ohne Katalog** (Nachtrag, Angelo 26.11.2026): Bei SharePoint antwortete der Chat
+    trotz Auswahl im Baum, ihm lägen keine Wissensquellen vor, und erfand dann Inhalte. Ursache: Der Bereich kam nur
+    aus dem Katalog (`Holdings.resolve`, ADR 0029). Ein SharePoint-Ordner steht dort nicht (gruppenbasierte Quellen
+    schreiben bei der Navigation nichts in den Cache, ADR 0040 Punkt 3), ebenso jeder nie abgeglichene Space; der
+    Bereich war leer, und `im_bereich_suchen` meldete „Es ist kein Bereich gewählt.“. Jetzt gilt für Wurzeln, die der
+    Katalog nicht kennt, was der Baum zeigt (`LiveArea`, quellenunabhängig über `PageNavigation`): `seiten_auflisten`
+    listet die Kinder je Knoten über die Navigation, eine Seite gehört nach ihren Vorfahren laut Quelle zum Bereich,
+    die Suche fragt die Quellen und Spaces der Wurzeln ohne Seitengrenze und lässt danach alles außerhalb weg.
+    `seite_lesen` holt eine Seite des Bereichs, die nicht lokal liegt, wie die Leseansicht von der Quelle; sie liegt
+    danach lokal und wird vor dem Senden freigegeben wie jede andere (ADR 0028 bleibt: Freigegeben wird nur, was
+    lokal liegt). Alle Rollen mit Wissen aus dem Bestand tragen die Regel „Erfinde nichts“: Ohne Treffer oder ohne
+    Zugriff sagt das Modell das klar und gibt kein eigenes Wissen als Inhalt der Quellen aus.
+    Ergänzt nach Angelos Prüfung (26.11.2026): Lokaler Bestand und Live-Zugriff ergänzen sich, solange der Katalog die
+    Auswahl nicht vollständig kennt (`PageSelection.complete()`), auch bei bekannten Wurzeln. Die Grenze des Teilbaums
+    greift im Core schon in der Suche (`KeywordSearch.Query.bounded` mit `SearchBoundary`): Funde außerhalb werden
+    weder katalogisiert noch geladen, im Volltextindex vor der Rangfolge verworfen und nie Nachbarn. Die Auswahl im Baum
+    beschafft nichts; gelesen und freigegeben wird nur, was das Modell für die Frage tatsächlich liest.
 
 ## Folgen
 

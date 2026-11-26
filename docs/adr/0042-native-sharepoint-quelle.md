@@ -68,6 +68,13 @@ durchsuchen. Das bedeutet einen vollständigen Dateisystemscan über das Netz, e
    - Der Umbau geschieht zusammen mit Punkt 5 im Enterprise AI Client und kommt über den regulären
      Upstream-Abgleich in den Space Harvester.
 
+7. **Bibliotheken ausblenden mit dem allgemeinen Ausschließen** (Angelo, 26.11.2026). Für SharePoint gibt es keine
+   eigene Auswahl der Bibliotheken. Unerwünschte Bibliotheken auf oberster Ebene (etwa „Style Library“,
+   „FormServerTemplates“, „SiteAssets“) und Ordner darin schließt man wie bei jeder Quelle aus: per Rechtsklick im
+   Baum oder in der Übersicht „Ausgeschlossen“ der Quelle, die die Bibliotheken vom Server abfragt
+   ([ADR 0037](0037-quellenumfang-nutzungssteuerung-beschaffung.md), Punkt 15). Neu angelegte Bibliotheken bleiben
+   sichtbar. Ausschließen löscht nichts.
+
 ## Stand (main `69835ca8`, 26.11.2026)
 
 | Baustein | Stand |
@@ -78,6 +85,7 @@ durchsuchen. Das bedeutet einen vollständigen Dateisystemscan über das Netz, e
 | Exakte ChangeTokens speichern und erst nach Verarbeitung fortschreiben | **nicht umgesetzt** (Punkt 5) |
 | Änderungsabruf ohne Register im Prozess | **weicht ab** (Punkt 6) |
 | Verhalten eines echten SharePoint bei mehr als 100 Dateien | **nicht nachgewiesen** (PowerShell-Test steht aus) |
+| Punkt 7: Bibliotheken ausschließen (allgemeiner Mechanismus) | auf develop (#1504), Abgleich folgt (ADR 0037, Punkt 15) |
 
 ## Abweichungen des Codes vom Zielbild
 

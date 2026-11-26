@@ -605,6 +605,36 @@ class ChangeLogTest {
                 .doesNotContain("500");
     }
 
+    /**
+     * Ordner jeder Tiefe (Angelo 26.11.2026): Die Ebene eines Knotens ohne eigenen Inhalt zählt nur Seiten, deren
+     * Elternkette bis zu ihm reicht, auch Enkel; dieselben Updates wie Quelle und Space, Kopf des Texts mit dem Space.
+     */
+    @Test
+    void theFolderLevelHoldsOnlyThePagesBelowTheFolderInAnyDepth() {
+        twoUpdatesAndAnOpenOne();
+        header("ordner", null, "Ordner");
+        header("unterordner", "ordner", "Unterordner");
+        header("100", "unterordner", "Startseite");
+        header("102", null, "Neu");
+        String folder = ChangeLevel.key("DEV", "ordner");
+
+        List<ChangeUpdate> all = log.updates(CALLER, "wiki");
+        List<ChangeUpdate> below = log.updates(CALLER, "wiki", folder);
+
+        assertThat(below).extracting(ChangeUpdate::id).containsExactly(all.get(1).id(), all.get(2).id());
+        // Das offene Update hat nur Seite 102 außerhalb des Ordners und fehlt; im ersten Update nur Seite 100 (Enkel).
+        assertThat(below.getFirst().pages()).isEqualTo(1);
+        assertThat(log.report(CALLER, "wiki", all.get(1).id(), folder).pages()).extracting(ReportedPage::pageId)
+                .containsExactly("100");
+        assertThat(log.updateText(CALLER, "wiki", all.get(1).id(), folder, 0, 10).markdown())
+                .startsWith("# Update wiki · Space DEV\n");
+        assertThat(log.report(CALLER, "wiki", all.get(1).id(), ChangeLevel.key("DEV", "unterordner")).pages())
+                .extracting(ReportedPage::pageId).containsExactly("100");
+        assertThat(ChangeLevel.of(folder)).isEqualTo(new ChangeLevel("DEV", "ordner"));
+        assertThat(ChangeLevel.key("DEV", null)).isEqualTo("DEV");
+        assertThat(ChangeLevel.of("DEV").subtree()).isFalse();
+    }
+
     @Test
     void aMoveBetweenTwoSpacesCountsInBothWithoutRevealingAHiddenSpace() {
         movesBetweenSpaces();

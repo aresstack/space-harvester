@@ -151,6 +151,9 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
     private final Consumer<List<BackgroundFill.Gap>> catalogued;
     private final Clock clock;
     private final java.util.function.Predicate<String> acquisitionAllowed;
+    /** Ausgeschlossene Funde kommen nicht in den Katalog (Angelo 26.11.2026); ohne Aufruf ist nichts ausgeschlossen. */
+    private volatile com.aresstack.spaceharvester.application.sync.Exclusions exclusions =
+            com.aresstack.spaceharvester.application.sync.Exclusions.NONE;
     private final Object monitor = new Object();
     /**
      * Höchstens {@value #PARALLELISM} Kopfdatenabrufe zugleich, über alle Teile und den bisherigen Weg hinweg
@@ -197,6 +200,11 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
     @Override
     public void offer(AccessContext finder, String sourceId, List<Finding> findings) {
         accept(finder, sourceId, findings);
+    }
+
+    /** Ausgeschlossenes katalogisiert die Fundübernahme nicht. */
+    public void exclusions(com.aresstack.spaceharvester.application.sync.Exclusions exclusions) {
+        this.exclusions = Objects.requireNonNull(exclusions, "exclusions");
     }
 
     /**
@@ -357,6 +365,12 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
         }
         if (!acquisitionAllowed.test(key.sourceId())) {
             return new Done(null, Effect.SKIPPED);
+        }
+        if (exclusions.within(key.sourceId(), metadata.partitionKey(),
+                pageId -> pageId.equals(key.pageId()) ? metadata.parentPageId() : null).test(key.pageId())) {
+            // Ausgeschlossen: kein Eintrag, keine Lücke für die Hintergrundfüllung; ein bestehender bleibt.
+            count(() -> excluded++);
+            return new Done(metadata.version(), Effect.SKIPPED);
         }
         Outcome outcome = store.catalog(PageHeader.of(key.sourceId(), metadata, clock.instant()));
         switch (outcome) {
