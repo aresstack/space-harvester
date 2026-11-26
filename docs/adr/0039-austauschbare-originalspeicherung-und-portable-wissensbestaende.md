@@ -1,9 +1,8 @@
 # ADR 0039: Austauschbare Originalspeicherung und portable Wissensbestände
 
 - Status: **Angenommen, auf main umgesetzt** (Entscheidungen von Angelo, 25./26.11.2026, festgehalten in #1437 samt
-  Kommentaren). Die Abnahme mit echten Nutzerdateien und OneNote steht aus, #1437 ist deshalb offen. Was im Text mit
-  *vorgeschlagen* gekennzeichnet ist, stammt aus den Antworten des ursprünglichen Chats vom 26.11.2026, 14:21, und
-  gilt erst mit Angelos Bestätigung.
+  Kommentaren). Die Abnahme mit echten Nutzerdateien und OneNote steht aus, #1437 ist deshalb offen. Die Antworten auf die
+  Rückfragen vom 26.11.2026 (14:21 und 14:41) sind eingearbeitet.
 - Quellen: #1437 (Zielarchitektur, Architekturleitplanken, sechs Fortschrittskommentare), PRs #1439, #1442, #1444,
   #1445, #1450, #1452, #1453, #1463, #1472; Angelos Zusammenfassung vom 26.11.2026 (Abschnitte 7 bis 9) und Klärung vom 26.11.2026, 14:12 (Punkt 4).
 - Bezüge: [ADR 0003](0003-lucene-cache.md) (Cache), [ADR 0010](0010-export-ohne-vorbereiteten-bestand.md) (Export),
@@ -32,15 +31,19 @@ Baum erneut (bei 10.000 Dateien etwa 100 Vollscans).
    Es gibt nur diese zwei Strategien. Bedarfscache, LRU und Quoten kommen erst, wenn SharePoint oder ein Netzlaufwerk
    sie brauchen (YAGNI).
 
-   **Die Strategie ergibt sich vorerst aus der Art der Quelle, ohne eigene Einstellung für den Benutzer**
-   (*vorgeschlagen*). Die Architektur lässt verschiedene Strategien je Quelle zu.
+   **Die Strategie ergibt sich vorerst aus der Art der Quelle, ohne eigene Einstellung für den Benutzer.** Die
+   Architektur lässt verschiedene Strategien je Quelle zu.
 
    | Quelle | Strategie |
    | --- | --- |
-   | Lokale Dateien | Referenz |
-   | Netzlaufwerk | lokaler Originalcache |
+   | Lokale Dateiquelle | Originalreferenz |
+   | Künftige Netzlaufwerkquelle | Originalcache |
    | SharePoint, BSCW | Originalcache |
    | Confluence | bestehender Snapshot |
+
+   **Die Strategie wird nie selbsttätig anhand des Pfades umgeschaltet.** Ein Netzlaufwerk ist nicht in jeder
+   Umgebung verlässlich zu erkennen, und eine stille Umschaltung könnte unbemerkt große Datenmengen kopieren. Eine
+   lokale Dateiquelle auf einem Netzwerkpfad behält die Originalreferenz und bekommt die Warnung aus Punkt 11.
 2. **Lokale Originalreferenzen sind der Standard** (`Harvester.Builder.localOriginalReferences`, Vorgabe `true`).
    Das Referenzformat heißt `local-original-reference/v1`.
 3. **Was bei einer lokalen Quelle dauerhaft bleibt:**
@@ -79,18 +82,17 @@ Baum erneut (bei 10.000 Dateien etwa 100 Vollscans).
    aktuellen Revision. Die Zustände einer Wissensressource sind getrennt: Metadaten vorhanden, Original erreichbar,
    Text extrahiert, Volltextindex aktuell, semantisch erschlossen, fachlich analysiert. Ordner zählen nicht als
    Dokumente. Extraktionsfehler, veraltete und unvollständige Bestände werden unterschieden.
-   - **Auf Dauer gilt dieselbe Bedeutung für alle Quellen** (*vorgeschlagen*). Heute gilt sie für lokale Dateien.
-   - **Im Baum steht der Volltextstatus** (*vorgeschlagen*). „Semantisch erschlossen“ und „fachlich analysiert“
+   - **Auf Dauer gilt dieselbe Bedeutung für alle Quellen.** Heute gilt sie für lokale Dateien.
+   - **Im Baum steht der Volltextstatus.** „Semantisch erschlossen“ und „fachlich analysiert“
      erscheinen im Tooltip, in der Detailansicht und in der Quellenverwaltung, nicht als weitere Zeichen im Baum.
-   - **Rechnung für das Ordnerzeichen** (*vorgeschlagen*): Geeignet sind alle Dateien außer „nicht anwendbar“ und
+   - **Rechnung für das Ordnerzeichen:** Geeignet sind alle Dateien außer „nicht anwendbar“ und
      „gesperrt“. Grün nur, wenn jede geeignete Datei indexiert und aktuell ist. Gekürzt, veraltet, fehlgeschlagen
      und noch nicht indexiert verhindern Grün. Ein Unterordner, der noch nicht inventarisiert ist, verhindert Grün,
      weil sein Inhalt unbekannt ist. Ein Ordner ohne eine geeignete Datei bekommt ein neutrales Zeichen.
-   - **Gesperrte Dateien** zählen nicht in den Nenner und werden eigens ausgewiesen („3 gesperrt“)
-     (*vorgeschlagen*).
+   - **Gesperrte Dateien** zählen nicht in den Nenner und werden eigens ausgewiesen („3 gesperrt“).
    - **Dateien ohne Text** (gescanntes PDF, Bild): Ist für die Quelle ein geeignetes Verfahren zur Texterschließung
      eingeschaltet, zählen sie als noch nicht indexiert. Sonst sind sie neutral („ohne Text“). Eine reine
-     Bildklassifikation ist kein solches Verfahren (*vorgeschlagen*).
+     Bildklassifikation ist kein solches Verfahren.
    - **Ein Ordner ist grün, wenn alle dafür geeigneten Ressourcen vollständig und aktuell indexiert sind**
      (bestätigt am 26.11.2026). Ein Bild ohne indexierbaren Text verhindert nicht, dass ein Ordner mit 20
      indexierten PDFs als vollständig gilt: „20/20 indexiert, 1 nicht anwendbar“.
@@ -108,7 +110,16 @@ Baum erneut (bei 10.000 Dateien etwa 100 Vollscans).
     umgestellt. SharePoint ist eine eigene, native Quelle (#1438,
     [ADR 0042](0042-native-sharepoint-quelle.md)) und nutzt zunächst den Originalcache. Eine generische
     Netzlaufwerkquelle ist zurückgestellt. Beim Einrichten einer lokalen Quelle warnt die Oberfläche vor einem
-    Netzwerkpfad (UNC, WebDAV, SMB), soweit er sich verlässlich erkennen lässt.
+    Netzwerkpfad (UNC, WebDAV, SMB), soweit er sich verlässlich erkennen lässt: Die Originale werden nicht lokal
+    gespeichert, und solange der Pfad nicht erreichbar ist, gibt es weder Originalansicht noch regulären
+    Originalexport. Vorerst genügt diese Warnung.
+12. **Der Lesetext hat keine Gesamtgrenze** (beschlossen am 26.11.2026, 14:41). Die feste Grenze von 1 000 000 Zeichen
+    entfällt; sie wird nicht nur einstellbar. Die abschnittsweise Ablage und Indexierung trägt auch die
+    Leseansicht:
+    - Alle Abschnitte eines Dokuments bleiben erreichbar und werden nach Bedarf dargestellt.
+    - Die Oberfläche muss nicht das ganze Dokument zugleich im Speicher halten. Abschnittsweises Laden,
+      Virtualisierung oder Paginierung lösen das Ressourcenproblem, ohne Inhalte vorzuenthalten.
+    - Fundstellennavigation, Textsuche, Markierungen und Analysebezüge arbeiten über Abschnittsgrenzen hinweg.
 
 ## Stand (main `69835ca8`, 26.11.2026)
 
@@ -124,13 +135,14 @@ Baum erneut (bei 10.000 Dateien etwa 100 Vollscans).
 | Warnung vor erkennbaren Netzwerkpfaden beim Einrichten einer lokalen Quelle | **fehlt**, vorgesehen (F39-5) |
 | Ordnerzeichen nach der Rechnung aus Punkt 8 | **weicht ab**, Korrektur beauftragt |
 | Bestandszeichen mit derselben Bedeutung für alle Quellen | nur lokale Dateien |
+| Leseansicht ohne Gesamtgrenze, abschnittsweise (Punkt 12) | **weicht ab:** feste Grenze von 1 000 000 Zeichen an vier Stellen |
 | Abnahme mit echten Nutzerdateien und OneNote | offen |
 
 ## Bekannte Einschränkungen
 
 - Die Hashprüfung ist kein atomarer Schnappschuss des Dateisystems. Eine Änderung bei gleicher Größe und
   unverändertem Zeitstempel erkennt die Inventur nicht; erst der Export bemerkt sie am Hash.
-- Der Lesetext ist auf 1 Mio. Zeichen begrenzt, fest im Code (siehe „Grenzen und Limits“). Der Reranker sieht bei mehrteiligen Dokumenten nur einen Abschnitt.
+- Der Lesetext ist heute auf 1 Mio. Zeichen begrenzt, fest im Code; nach Punkt 12 entfällt das. Der Reranker sieht bei mehrteiligen Dokumenten nur einen Abschnitt.
 - Lokale Embeddings sind nicht gegen einen echten KI-Dienst abgenommen.
 
 ## Widersprüche und Auffälligkeiten
@@ -138,9 +150,10 @@ Baum erneut (bei 10.000 Dateien etwa 100 Vollscans).
 - **Die Strategie fragt den Quellentyp ab.** `LocalOriginalStorage.supportsSource` prüft `"files".equals(type)`
   zusätzlich zur Fähigkeit `readsOriginalInPlace()`. Die Entscheidung „von der Quelle entkoppelt“ ist damit nur über
   die Fähigkeit erfüllt, nicht vollständig.
-- **Der Schalter ist global, nicht je Quelle.** `localOriginalReferences` gilt für den ganzen Harvester. Die
-  Zuordnung aus Punkt 1 („Netzlaufwerk: lokaler Originalcache“) lässt sich damit heute nicht ausdrücken: Eine lokale
-  Quelle, deren Pfad auf einem Netzlaufwerk liegt, bekommt die Referenzstrategie (siehe F39-9).
+- **Der Schalter ist global, nicht je Quelle.** `localOriginalReferences` gilt für den ganzen Harvester. Eine
+  lokale Quelle mit Kopie lässt sich damit nicht einzeln einstellen. Das ist
+  nach Punkt 1 gewollt: Eine lokale Quelle auf einem Netzwerkpfad behält die Referenzstrategie, bis es eine eigene
+  Netzlaufwerkquelle gibt.
 - **Der Status deckt weniger ab als das Zielbild.** `IndexState` kennt `INDEXED`, `PARTIAL`, `OUTDATED`,
   `NOT_INDEXED`, `NO_TEXT`, `FAILED`, `LOCKED` und gilt für lokale Dateien. „Semantisch erschlossen“ und „fachlich
   analysiert“ sind dort keine eigenen Zustände, und andere Quellen zeigen weiter den Cachezustand.
@@ -153,19 +166,21 @@ Baum erneut (bei 10.000 Dateien etwa 100 Vollscans).
 
 ## Geklärt am 26.11.2026
 
-Stand der Antworten: **Beschlossen** gilt. *Vorgeschlagen* ist eine Empfehlung aus dem ursprünglichen Chat und gilt
-erst, wenn Angelo sie bestätigt.
+Alle Punkte sind entschieden. Die Antworten stammen vom 26.11.2026 (14:21, 14:38 und 14:41); Angelo hat sie aus
+dem ursprünglichen Chat übermittelt und am 26.11.2026, 14:41, alle Empfehlungen bestätigt.
 
 | Frage | Antwort | Stand |
 | --- | --- | --- |
-| F39-1: Neue Bestandszeichen für alle Quellen | Ja, auf Dauer dieselbe Bedeutung überall | *Vorgeschlagen*, in Punkt 8 |
-| F39-2: Weitere Zustände im Baum | Nein, im Baum genügt der Volltextstatus; der Rest steht im Tooltip, in der Detailansicht und in der Quellenverwaltung | *Vorgeschlagen*, in Punkt 8 |
-| F39-3: Speicherstrategie je Quelle wählbar | Die Architektur lässt es zu; vorerst ergibt sie sich aus der Art der Quelle | *Vorgeschlagen*, in Punkt 1 |
+| F39-1: Neue Bestandszeichen für alle Quellen | Ja, auf Dauer dieselbe Bedeutung überall | **Beschlossen**, in Punkt 8 |
+| F39-2: Weitere Zustände im Baum | Nein, im Baum genügt der Volltextstatus; der Rest steht im Tooltip, in der Detailansicht und in der Quellenverwaltung | **Beschlossen**, in Punkt 8 |
+| F39-3: Speicherstrategie je Quelle wählbar | Die Architektur lässt es zu; vorerst ergibt sie sich aus der Art der Quelle | **Beschlossen**, in Punkt 1 |
 | F39-4: Aufräumfunktion für alte Originalkopien | Nein, weder Migration noch Aufräumen | **Beschlossen**, in Punkt 10 |
 | F39-5: Warnung vor Netzwerkpfaden | Ja, soweit verlässlich erkennbar | **Vorgesehen**, in Punkt 11 |
-| F39-6: Rechnung für das Ordnerzeichen | Wie vorgeschlagen | *Vorgeschlagen*, in Punkt 8 |
-| F39-7: Dateien ohne Text | Mit eingeschalteter Texterschließung „noch nicht indexiert“, sonst neutral | *Vorgeschlagen*, in Punkt 8 |
-| F39-8: Gesperrte Dateien | Nicht im Nenner, eigens ausgewiesen | *Vorgeschlagen*, in Punkt 8 |
+| F39-6: Rechnung für das Ordnerzeichen | Wie in Punkt 8 beschrieben | **Beschlossen**, in Punkt 8 |
+| F39-7: Dateien ohne Text | Mit eingeschalteter Texterschließung „noch nicht indexiert“, sonst neutral | **Beschlossen**, in Punkt 8 |
+| F39-8: Gesperrte Dateien | Nicht im Nenner, eigens ausgewiesen | **Beschlossen**, in Punkt 8 |
+| F39-9: Strategie am erkannten Pfad festmachen | Nein. Vorerst genügt die Warnung; keine selbsttätige Umschaltung; die Netzlaufwerkquelle bleibt zurückgestellt | **Beschlossen**, in Punkt 1 und 11 |
+| F39-10: Lesetext auf 1 000 000 Zeichen begrenzt | Die Grenze entfällt; die Leseansicht arbeitet abschnittsweise | **Beschlossen**, in Punkt 12 |
 
 ## Grenzen und Limits
 
@@ -189,17 +204,6 @@ Vorgabe steht jedes davon zur Prüfung, ob es entfallen oder durch Strom und Abs
 
 „Nicht geprüft“ heißt: Die Einstellung ist dokumentiert und wird gelesen; ob sie im Einstellungsdialog der
 Desktop-App steht, habe ich nicht für jede einzeln nachgesehen.
-
-## Offene Fragen an Angelo
-
-- **F39-9 (zu Punkt 1):** Die Zuordnung „nach Art der Quelle“ unterscheidet lokale Dateien und Netzlaufwerk. Eine
-  Netzlaufwerkquelle gibt es aber nicht (Punkt 11): Ein Pfad auf einem verbundenen Netzlaufwerk ist heute eine
-  lokale Quelle und bekommt die Referenzstrategie. Ist das Laufwerk nicht erreichbar, fehlen Original, Ansicht und
-  regulärer Export; Suche und Bestandsausgabe laufen weiter. Soll die Strategie deshalb am **erkannten Pfad**
-  hängen (Netzwerkpfad: Originalcache, sonst Referenz), oder genügt vorerst die Warnung aus Punkt 11?
-- **F39-10 (zu „Grenzen und Limits“):** Der Lesetext ist an vier Stellen fest auf 1 000 000 Zeichen begrenzt.
-  Lokale Originale sind schon abschnittsweise indexiert (#1450). Soll diese Grenze entfallen (alles
-  abschnittsweise) oder eine Einstellung werden?
 
 ## Folgen
 

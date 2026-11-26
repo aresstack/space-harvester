@@ -1,9 +1,9 @@
 # ADR 0037: Quellenumfang, Nutzungssteuerung und Beschaffungsstrategien
 
 - Status: **Angenommen** (Entscheidungen von Angelo, 25./26.11.2026, festgehalten in #1460, Epic #1461 Abschnitt C
-  und #1475). Nutzungsoptionen und quellenweise Beschaffung sind auf main. Was im Text mit
-  *vorgeschlagen* gekennzeichnet ist, stammt aus den Antworten des ursprünglichen Chats vom 26.11.2026, 14:21, und
-  gilt erst mit Angelos Bestätigung; die Übersicht steht unter „Geklärt am 26.11.2026“.
+  und #1475). Nutzungsoptionen und quellenweise Beschaffung sind auf main. Die Antworten auf die
+  Rückfragen vom 26.11.2026 (14:21, 14:38, 14:41) sind eingearbeitet; die Übersicht steht unter „Geklärt am
+  26.11.2026“.
 - Quellen: #1460, Epic #1461 (Abschnitte C und C.1), #1475, PRs #1462, #1477, #1482; Angelos Zusammenfassung vom
   26.11.2026 (Abschnitte 3, 5 und 12) und Klärung vom 26.11.2026, 14:12 (Punkte 1 bis 3).
 - Bezüge: [ADR 0014](0014-abgleich-berechtigung-suche-getrennt.md) (Rechte),
@@ -47,8 +47,16 @@ die fachliche Suche und das Glossar überlagern und ungefragt vollständig herun
    | Beschaffung | `prefetch-hits`, `background-fill` je Quelle | Suchtreffer bzw. fehlende Seiten werden nicht automatisch geladen. |
 
    Fehlende Angaben bedeuten das bisherige Verhalten (`true` bzw. der globale Standard). Bestehende Quellen ändern
-   sich ohne neue Angaben nicht. **Neue technische Quellen** (FTP, NDV) entstehen mit „In globale Suche
-   einbeziehen“ aus; der Benutzer kann das ändern (beschlossen).
+   sich ohne neue Angaben nicht. **Die Vorgabe für „In globale Suche einbeziehen“ bei einer neuen
+   Quelle liefert der Adapter** mit der Beschreibung seines Quellentyps. Die allgemeine Oberfläche übernimmt sie
+   und muss nicht wissen, was FTP, NDV oder JES ist. Der Benutzer kann sie ändern. Bereits eingerichtete Quellen
+   werden nicht umgestellt.
+
+   | Neue Quelle | In globaler Suche |
+   | --- | --- |
+   | Confluence, SharePoint, BSCW | an |
+   | Lokale Dateien | an, beim Indexieren wählbar |
+   | FTP, NDV, JES, BetaView | aus |
 3. **Umschalten löscht nichts.** Keine der Eigenschaften entfernt vorhandene Daten, ändert Berechtigungen oder
    deutet Analysefreigaben um.
 4. **Eine Durchsetzungsstelle für den Suchumfang.** Titel-, Volltext-, Vektor- und Chat-Suche sowie der Prefetch
@@ -61,7 +69,7 @@ die fachliche Suche und das Glossar überlagern und ungefragt vollständig herun
    - Globale Glossar-, Begriffs-, Akronym-, Synonym- und Änderungsansichten schließen ausgeschlossene Quellen aus;
      ausdrücklich gewählte Bereiche bleiben erreichbar.
 5. **Kennzeichnung „Nur gezielte Suche“** mit Symbol, Tooltip und Text. Farbe ist nie das einzige Signal und darf
-   nicht wie ein Fehler aussehen. Die Farbe ist ein bernsteinfarbener Rand (*vorgeschlagen*).
+   nicht wie ein Fehler aussehen. Die Farbe ist ein bernsteinfarbener Rand.
 6. **Kein zweites Synchronisierungsmodell.** Die Beschaffung nutzt `SourceSyncOverride`, `SyncSettings`,
    `SyncMode`, `Indexing` und `IndexMarks`/`FileIndexMarks`. Die Regeln je Quelle stehen im Reiter
    „Synchronisierung“. Dort gibt es zusätzlich zu den einzelnen Schaltern die Presets „Vollständig“ und „Selektiv“
@@ -87,7 +95,7 @@ die fachliche Suche und das Glossar überlagern und ungefragt vollständig herun
      auch dann, wenn der globale Standard an ist.
    - Ist nur die Vollindexierung aus, darf der erlaubte Such-Prefetch Treffer im regulären Cache behalten (stabile
      Fundstellen, kein Wegwerfindex).
-   - **Die Hintergrundfüllung bleibt auf den konfigurierten Umfang der Quelle beschränkt** (*vorgeschlagen*). Ist
+   - **Die Hintergrundfüllung bleibt auf den konfigurierten Umfang der Quelle beschränkt.** Ist
      „Suchtreffer nachladen“ aus und die Hintergrundfüllung an, darf sie Suchfunde innerhalb des Umfangs
      verarbeiten. Außerhalb des Umfangs löst eine Suche nie mittelbar eine Erweiterung des dauerhaften Bestands
      aus. Berechtigungen werden davon unabhängig immer zusätzlich geprüft.
@@ -101,12 +109,17 @@ die fachliche Suche und das Glossar überlagern und ungefragt vollständig herun
    Die Zuordnung einer Deck-Sitzung zu einer Quelle verlangt denselben Host, Port und dasselbe Konto (ADR 0036,
    Punkt 5). Die navigationsgetriebene Befüllung erweitert den Inventurbereich nie.
 
-   **Die Navigationsbefüllung ist eine allgemeine Beschaffungsregel, keine Eigenheit von FTP und NDV**
-   (*vorgeschlagen*). Eine Wissensquelle hat vier Beschaffungsarten: Synchronisierung, Navigationsbefüllung,
+   **Die Navigationsbefüllung ist eine allgemeine Beschaffungsregel, keine Eigenheit von FTP und NDV.**
+   Eine Wissensquelle hat vier Beschaffungsarten: Synchronisierung, Navigationsbefüllung,
    Such-Prefetch und Hintergrundfüllung. Der Adapter sagt über seine Fähigkeiten, welche er unterstützt. Welche
    davon genutzt werden, steht in der allgemeinen Quellenkonfiguration im Reiter „Synchronisierung“. Alle vier
    nutzen dieselbe Infrastruktur für Aufträge, Eignungsprüfung, Berechtigungen und Ablage. Die heutige
    Adapteroption `navigationFill` bleibt lesbar, ist aber auf Dauer keine zweite, widersprüchliche Konfiguration.
+
+   **Die Navigationsbefüllung ist für jede neu angelegte Quelle aus**, auch für FTP und NDV. Sie ist eine
+   zusätzliche, ausdrücklich gewählte Beschaffungsart: Bloßes Durchblättern löst keine dauerhafte Indexierung aus.
+   Eine bereits ausdrücklich eingeschaltete Einstellung bleibt erhalten. Navigieren, Öffnen und die dafür technisch
+   nötigen Abrufe sind davon unberührt.
 10. **Drei getrennte Verantwortlichkeiten** (Leitplanke 26.11.2026). Bei jeder automatischen Beschaffung sind zu
     unterscheiden: der **Auslöser** (Inventur, Navigation, Suchtreffer, Hintergrundfüllung, ausdrückliches
     Indexieren), die **Eignungsprüfung** (darf und soll dieser Inhalt geladen und extrahiert werden) und der
@@ -120,7 +133,7 @@ die fachliche Suche und das Glossar überlagern und ungefragt vollständig herun
     - Es gelten die vorhandenen, einstellbaren Größen- und Beschaffungsgrenzen. Eine neue, willkürliche Grenze
       kommt nicht dazu.
     - Der ausdrückliche Zugriff auf jede andere Datei bleibt möglich.
-    - **Ablauf der Klassifizierung** (*vorgeschlagen*): zuerst die Metadaten. Ergebnis „geeignet“ lädt den
+    - **Ablauf der Klassifizierung:** zuerst die Metadaten. Ergebnis „geeignet“ lädt den
       Quelltext, „ungeeignet“ lädt nichts automatisch, „unbekannt“ führt zu einer begrenzten Leseprobe. Die
       Leseprobe ist **auf der Transportebene** begrenzt: Es wird nie ein großes Dataset ganz geladen, um seine
       ersten Kilobytes anzusehen. Das Ergebnis wird je Revision gespeichert.
@@ -146,7 +159,7 @@ die fachliche Suche und das Glossar überlagern und ungefragt vollständig herun
     | Situation | Verhalten |
     | --- | --- |
     | Die Ressource ist im Quellsystem nachweislich gelöscht | Die reguläre Synchronisierung entfernt sie selbsttätig aus dem Bestand |
-    | Ein HLQ oder eine Bibliothek wird aus der Konfiguration genommen | Ressourcen ohne verbleibenden Erwerbsgrund werden **Kandidaten** für „Bereinigen“; entfernt wird dadurch nichts |
+    | Ein HLQ oder eine Bibliothek wird aus der Konfiguration genommen | Beim Ändern informiert eine Rückfrage über die Zahl der betroffenen Ressourcen. Die Änderung entfernt nichts: Ressourcen ohne verbleibenden Erwerbsgrund werden **Kandidaten** für „Bereinigen“ |
     | Die Navigationsbefüllung wird ausgeschaltet | Bestand und Erwerbsgrund bleiben; es kommt nur nichts mehr dazu |
     | Die Quelle ist vorübergehend nicht erreichbar | Bestand bleibt |
     | Berechtigungsfehler | Bestand bleibt, der Zugriff wird entsprechend eingeschränkt |
@@ -189,7 +202,9 @@ die fachliche Suche und das Glossar überlagern und ungefragt vollständig herun
 | NDV: `startPoints`, `allLibraries`, `navigationFill` (`NdvSourceProvider`, `NdvSourceRules`) | auf main (#1482) |
 | Beim Indexieren aus dem Deck wählbar: „Nur gezielte Suche (nicht in globaler Suche)“ | auf main (#1467) |
 | Presets „Vollständig“ und „Selektiv“ im Reiter „Synchronisierung“ | **fehlen**, beschlossen (F37-2) |
-| Neue FTP- und NDV-Quellen standardmäßig „Nur gezielte Suche“ | **nicht umgesetzt**, beschlossen (F37-1) |
+| Vorgabe „In globale Suche“ je Quellentyp vom Adapter; FTP, NDV, JES, BetaView aus | **nicht umgesetzt**, beschlossen (F37-1, F37-11) |
+| Navigationsbefüllung für neue Quellen aus | auf main (`navigationFill` hat in `FtpSourceProvider` und `NdvSourceProvider` die Vorgabe `false`) |
+| Navigationsbefüllung als allgemeine Beschaffungsregel im Reiter „Synchronisierung“ | **nicht umgesetzt**, beschlossen (F37-3) |
 | Punkt 8: Fund erfassen unabhängig vom Prefetch | **weicht ab**, siehe unten; Korrektur beauftragt |
 | Punkt 11: gemeinsame Eignungsprüfung in der FTP-Navigationsbefüllung | **weicht ab**; Korrektur beauftragt |
 | Punkt 12: Erwerbsgründe je Ressource, Aktion „Bereinigen“, Aktualitätsprüfung beim Öffnen | **nicht umgesetzt**, zur Umsetzung freigegeben |
@@ -235,21 +250,23 @@ Das schließt die Prüfung beim Öffnen und beim erneuten Besuch aus Punkt 12.
 
 ## Geklärt am 26.11.2026
 
-Stand der Antworten: **Beschlossen** gilt. *Vorgeschlagen* ist eine Empfehlung aus dem ursprünglichen Chat und gilt
-erst, wenn Angelo sie bestätigt.
+Alle Punkte sind entschieden. Die Antworten stammen vom 26.11.2026 (14:21, 14:38 und 14:41); Angelo hat sie aus
+dem ursprünglichen Chat übermittelt und am 26.11.2026, 14:41, alle Empfehlungen bestätigt.
 
 | Frage | Antwort | Stand |
 | --- | --- | --- |
 | F37-1: Vorgabe „globale Suche“ für neue technische Quellen | Aus; der Benutzer kann es ändern | **Beschlossen**, in Punkt 2 |
 | F37-2: Presets „Vollständig“ und „Selektiv“ | Ja, zusätzlich zu den einzelnen Schaltern | **Beschlossen**, in Punkt 6 |
-| F37-3: `navigationFill` in die allgemeinen Beschaffungsregeln | Ja, als allgemeine Beschaffungsart mit Fähigkeit des Adapters | *Vorgeschlagen*, in Punkt 9 |
-| F37-4: Farbe von „Nur gezielte Suche“ | Bernsteinfarbener Rand, dazu Symbol und Tooltip | *Vorgeschlagen*, in Punkt 5 |
-| F37-5: Hintergrundfüllung für Funde außerhalb des Umfangs | Nein, sie bleibt auf den konfigurierten Umfang beschränkt | *Vorgeschlagen*, in Punkt 8 |
-| F37-6: Begrenzte Leseprobe | Ja, wenn die Metadaten nicht genügen; auf der Transportebene begrenzt | *Vorgeschlagen*, in Punkt 11 |
-| F37-7: Bereich aus dem Umfang nehmen | Ressourcen ohne Erwerbsgrund werden Kandidaten für die eigene Aktion „Bereinigen“ mit Anzahl und Bestätigung. Die Empfehlung von 14:21 (Rückfrage vor der Übernahme der Änderung, danach Entfernen) ist damit ersetzt. | **Beschlossen** (14:38), in Punkt 12 |
+| F37-3: `navigationFill` in die allgemeinen Beschaffungsregeln | Ja, als allgemeine Beschaffungsart mit Fähigkeit des Adapters | **Beschlossen**, in Punkt 9 |
+| F37-4: Farbe von „Nur gezielte Suche“ | Bernsteinfarbener Rand, dazu Symbol und Tooltip | **Beschlossen**, in Punkt 5 |
+| F37-5: Hintergrundfüllung für Funde außerhalb des Umfangs | Nein, sie bleibt auf den konfigurierten Umfang beschränkt | **Beschlossen**, in Punkt 8 |
+| F37-6: Begrenzte Leseprobe | Ja, wenn die Metadaten nicht genügen; auf der Transportebene begrenzt | **Beschlossen**, in Punkt 11 |
+| F37-7: Bereich aus dem Umfang nehmen | Die Rückfrage beim Ändern der Konfiguration informiert nur über die Auswirkung. Entfernt wird allein durch die eigene Aktion „Bereinigen“ mit Anzahl und Bestätigung. | **Beschlossen** (14:38, präzisiert 14:41), in Punkt 12 |
 | F37-8: Navigationsbefüllung ausschalten | Erworbene Ressourcen bleiben | **Beschlossen**, in Punkt 12 |
 | F37-9: Aktualität nur durch Navigation erworbener Ressourcen | Prüfung beim Öffnen und beim erneuten Besuch, mit den vorhandenen Mechanismen | **Beschlossen** (14:38), in Punkt 12 |
 | F37-10: Nur „Navigationsbefüllung“ speichern | Ja; Inventur abgeleitet, ausdrückliche Indexierung aus den `IndexMarks` | **Beschlossen** (14:38), in Punkt 12 |
+| F37-11: Vorgabe „globale Suche“ als Eigenschaft des Adapters | Ja; FTP, NDV, JES und BetaView aus, die übrigen an; eingerichtete Quellen bleiben | **Beschlossen**, in Punkt 2 |
+| F37-12: Navigationsbefüllung standardmäßig aus | Ja, für alle neu angelegten Quellen, auch FTP und NDV | **Beschlossen**, in Punkt 9 |
 
 ## Grenzen und Limits
 
@@ -276,16 +293,6 @@ Quellenverwaltung einstellbar.
 
 Die neue Leseprobe aus Punkt 11 und die Aktion „Bereinigen“ aus Punkt 12 bringen keine neue feste Grenze mit: Die Größe der
 Leseprobe wird eine Einstellung.
-
-## Offene Fragen an Angelo
-
-- **F37-11 (zu Punkt 2):** „Technische Quelle“ darf keine Fallunterscheidung nach Quellentyp in der allgemeinen
-  Oberfläche werden (ADR 0036, Punkt 4). Mein Vorschlag: Der Adapter nennt als Eigenschaft die Vorgabe für neue
-  Quellen („in globaler Suche: aus“), FTP und NDV setzen sie. Einverstanden? Und gilt die Vorgabe „aus“ auch für
-  JES und BetaView, falls dafür Quellen angelegt werden?
-- **F37-12 (zu Punkt 9):** Wenn die Navigationsbefüllung allgemein wird, könnte sie auch für lokale Ordner,
-  SharePoint und BSCW eingeschaltet werden. Dann indexiert bloßes Durchblättern Inhalte. Mein Vorschlag: Für jede
-  Quelle ist sie standardmäßig aus und muss ausdrücklich eingeschaltet werden. Einverstanden?
 
 ## Folgen
 

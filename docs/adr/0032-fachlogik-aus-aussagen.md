@@ -1,6 +1,7 @@
 # ADR 0032: Fachlogik aus Aussagen – Prüfstand, Vorstufe „Sätze vereinfachen“, Merkmale und Auswertung
 
 - Status: Angenommen (17.11.2026). Entwurf des Architekten (Strang AT), Nummer vom Koordinator.
+  **Fortgeschrieben** am 26.11.2026 um die Belegart „Quellstelle“ (siehe am Ende).
 - Konzept und Messbericht für Angelo: https://claude.ai/artifact/HedyiZRKJCJpAAVt4modMH
 - Messbericht: [docs/fachlogik/messung-2026-11-17.md](../fachlogik/messung-2026-11-17.md), Pakete:
   [docs/fachlogik/arbeitspakete.md](../fachlogik/arbeitspakete.md); Daten im Prüfstand (siehe „Umsetzung FL0“)
@@ -413,3 +414,34 @@ Auftrag des Architekten, Form A des UX-Managers.
 - Verbraucher der Kante: nur Fachsicht (Übersicht und Reiter „Graph“), Overlay und Begriffswissen (W6: Verb und Merkmale je
   Aussage, den Wortlaut setzt der Chat selbst). Verben-Reiter, Glossar und Stand lesen `DomainTermGraph.Edge` nicht; der Export des
   Bestandsgraphen bleibt unberührt. Andere Listen oder Tabellen der Fachsicht gibt es nicht.
+
+## Fortschreibung (26.11.2026): Belegart „Quellstelle“ für Aussagen aus Programmcode (ADR 0041)
+
+Entscheidung vom 26.11.2026, 14:41 (Antwort auf F41-5, von Angelo aus dem ursprünglichen Chat übermittelt). Noch
+nicht umgesetzt.
+
+- **Ein Bestand.** Bestätigte fachliche Erkenntnisse aus Programmcode (COBOL, JCL, Natural) liegen in diesem
+  Fachlogik-Bestand. Es entsteht kein zweiter Bestand für Regeln aus Code. Technische Parserfakten bleiben
+  Artefakte am Programm (ADR 0041, Punkt 3).
+- **Der Beleg wird eine gemeinsame Abstraktion mit zwei Arten.** Bisher gilt: „Beleg bleibt der Originalsatz“.
+  Das gilt weiter für Aussagen aus Text und heißt jetzt Textbeleg. Neu ist der Quellstellenbeleg.
+
+  | Belegart | Inhalt | Prüfung |
+  | --- | --- | --- |
+  | Textbeleg | Originalsatz, Dokumentrevision, Textposition | Wortabgleich im Core und die bestehenden Prüfverfahren, unverändert |
+  | Quellstellenbeleg | Programmidentität, Quellrevision, Zeilenbereiche, Parserfakten, Analyseversion | technische Belegprüfung und Bestätigung durch einen Menschen (W3) |
+
+- **Der Wortabgleich gilt nicht für Quellstellenbelege.** Eine Bedingung wie `IF KZ-STATUS = 'A'` enthält die
+  Inhaltswörter der fachlichen Aussage nicht. An seine Stelle tritt: Die Quellstelle muss in der genannten
+  Revision vorhanden sein und zum Parserfakt passen, und die Aussage zählt erst mit der Bestätigung durch einen
+  Menschen als fachlich bestätigt.
+- **Ein Quellstellenbeleg kann mehrere zusammengehörige Codestellen nennen** (mehrere Paragraphen, Programme oder
+  Copybooks).
+- **Ist und Soll.** Eine bestätigte Aussage über Programmcode beschreibt, was das Programm tut (Ist). Sie ist
+  keine geltende Soll-Regel, denn ein Programm kann fehlerhaft sein. Das Soll kommt weiter aus Vorschriften und
+  Fachtexten. Damit liefern Quellstellenbelege die Ist-Seite für den Soll-Ist-Vergleich (FL8); dessen Befunde
+  bleiben Hinweise, keine Feststellungen.
+- **Veraltete Belege.** Ändert sich der Programmcode oder eine maßgebliche Abhängigkeit (etwa ein Copybook), gilt
+  der Beleg als möglicherweise veraltet. Eine frühere Bestätigung wird nie ungeprüft auf die neue Revision
+  übertragen. Das entspricht „Beleg veraltet“ bei geprüften Aussagen aus Text.
+- Die KI-Freigabe je Seite (ADR 0028) und die Rechteprüfung gelten für Programmcode wie für jede andere Seite.

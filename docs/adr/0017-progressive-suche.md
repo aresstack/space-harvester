@@ -189,9 +189,9 @@ Der Server verdrahtet `SemanticVariantSearch` über seine `RelevanceSearch` im `
 - **Varianten bilden und dauerhaft laden sind unabhängig.** Varianten laufen auch für Quellen, deren Regeln nichts
   dauerhaft laden lassen. `SemanticPreparation` lädt und bettet dann für diese Quellen nichts ein; „mit jeder
   Variante wächst der Bestand im Cache“ (vierter Schritt) gilt nur für Quellen mit erlaubtem Nachladen.
-- **Vorgeschlagen, noch nicht bestätigt** (Antwort aus dem ursprünglichen Chat vom 26.11.2026 auf F38-1): Für
-  Quellen ohne Beschaffung zeigt auch die semantische Suche native Funde, getrennt als vorläufig und nicht
-  semantisch bewertet, nie mit Vektortreffern vermischt (ADR 0038, Punkt 5). Der vierte Schritt schließt `found`
-  semantisch aus; er gilt für alle anderen Quellen weiter und für diese, bis Angelo den Vorschlag bestätigt.
+- **Der vierte Schritt ist für Quellen ohne Beschaffung fortgeschrieben** (beschlossen am 26.11.2026, F38-1):
+  Für solche Quellen zeigt auch die semantische Suche native Funde, getrennt als vorläufig und nicht semantisch
+  bewertet, nie mit Vektortreffern vermischt (ADR 0038, Punkt 5). Für alle anderen Quellen gilt der vierte Schritt
+  unverändert: `found` gibt es dort semantisch nicht.
 - Der Modus `ALL_VARIANTS` „für einen Recherche-Agenten“ meint einen Agenten als Verbraucher dieser Suche. Die
   Agenten-Recherche über Werkzeuge der Live-Dienste ist eine getrennte zweite Spur (ADR 0038, Punkt 7).

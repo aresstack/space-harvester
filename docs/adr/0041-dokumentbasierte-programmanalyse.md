@@ -3,8 +3,8 @@
 - Status: **Angenommen als Zielbild** (Entscheidungen von Angelo, 25./26.11.2026, festgehalten in Epic #1447,
   #1470 samt Kommentaren und Epic #1461 Abschnitt G). Der COBOL-Parser ist auf main. Die gespeicherten Analysen,
   die Programmsuche und die Analyse-Reiter liegen in **PR #1488 (offen, gegen develop)**; solange er nicht gemergt
-  ist, beschreibt diese ADR dort den Entwurfsstand. Was im Text mit *vorgeschlagen* gekennzeichnet ist, stammt aus
-  den Antworten des ursprünglichen Chats vom 26.11.2026, 14:21, und gilt erst mit Angelos Bestätigung.
+  ist, beschreibt diese ADR dort den Entwurfsstand. Die Antworten auf die Rückfragen vom 26.11.2026 (14:21 und 14:41) sind
+  eingearbeitet.
 - Quellen: Epic #1447, #1470 (sechs Kommentare, darunter die Architekturentscheidungen vom 26.11., 02:05 und 02:08),
   Epic #1461 (G), #1486 (Review-Nacharbeiten) samt Kommentar, #1422, #1473, PRs #1423, #1471, #1479, #1481, #1488;
   Angelos Zusammenfassung vom 26.11.2026 (Abschnitte 13 bis 15).
@@ -46,10 +46,11 @@ Wissensquellen, und ihre Analysen liegen im gemeinsamen Bestand. **Maßgeblich i
    Kontrollfluss, Datenfluss, Diagnosen, fachliche Analyse). Die bestehende Textanalyse bleibt unverändert.
 5. **Command Deck, Viewer, Chat und KI-Werkzeuge lesen dieselben Artefakte** über dieselben lesenden
    Anwendungsfälle. Es gibt keine zweite Analyseimplementierung für die KI.
-   - **Analyse-Logik, Prozessoren und Zugriffsverträge gehören in den Core** (*vorgeschlagen*, nach ADR 0012).
-     Eine REST-Schnittstelle muss nicht sofort entstehen; die fachliche Logik darf aber nicht dauerhaft nur in der
-     Desktop-App liegen.
-   - **Ein externer MCP-Zugriff ist zurückgestellt, nicht ausgeschlossen** (*vorgeschlagen*). Der eingebaute Chat
+   - **Analyse-Logik, Prozessoren und Zugriffsverträge gehören in den Core** oder in geeignete
+     UI-unabhängige Module (nach ADR 0012), ebenso Ablage und fachliche Anwendungsfälle. Eine REST-Schnittstelle
+     muss nicht sofort entstehen; die fachliche Logik darf aber nicht dauerhaft nur in der Desktop-App liegen. Der
+     Umzug ist ein eigener Schritt **nach PR #1488**, damit dieser nicht weiter wächst.
+   - **Ein externer MCP-Zugriff ist zurückgestellt, nicht ausgeschlossen.** Der eingebaute Chat
      nutzt die lesenden Werkzeuge direkt; jetzt entsteht kein zusätzlicher MCP-Server.
 6. **Parser arbeiten auf dem Original.** Parserfakten werden nie in Markdown verwandelt, um sie wieder zu parsen.
    Quellpositionen (Zeile, Spalte) bleiben erhalten. Der Parser-Kern hängt nicht von Swing ab, ProLeap-Typen
@@ -67,11 +68,35 @@ Wissensquellen, und ihre Analysen liegen im gemeinsamen Bestand. **Maßgeblich i
    Aufrufgraph eine technische Beziehung; nichts davon gilt selbsttätig als Fachregel, Geschäftsobjekt oder
    Prozess. Ein Modellaufruf wird immer ausdrücklich ausgelöst.
 
-   **Bestätigte fachliche Erkenntnisse kommen in den vorhandenen Fachlogik-Bestand** (ADR 0032), mit Programm,
-   Revision, Quellstelle, Parserfakten und Analyseversion als Beleg, sofern dessen Modell das trägt
-   (*vorgeschlagen*). Technische Parserfakten bleiben Artefakte am Programm. So liegen Geschäftsregeln aus Erlassen,
-   Confluence und Programmcode in einem Bestand und nicht nach Herkunftssystem getrennt. Was dafür am Modell von
-   ADR 0032 fehlt, steht unter F41-5.
+   **Bestätigte fachliche Erkenntnisse kommen in den vorhandenen Fachlogik-Bestand** (ADR 0032). Es entsteht kein
+   zweiter Fachlogik-Bestand. Technische Parserfakten bleiben Artefakte am Programm. So liegen Geschäftsregeln aus
+   Erlassen, Confluence und Programmcode in einem Bestand und nicht nach Herkunftssystem getrennt.
+
+   **Der Fachlogik-Bestand bekommt dafür eine zweite Belegart** (beschlossen am 26.11.2026, 14:41; ADR 0032 ist
+   fortgeschrieben). Eine fachliche Aussage hat einen Beleg; der Beleg ist eine gemeinsame Abstraktion mit zwei
+   Arten:
+
+   | Belegart | Inhalt | Prüfung |
+   | --- | --- | --- |
+   | Textbeleg | Originalsatz, Dokumentrevision, Textposition | Wortabgleich und die bestehenden Prüfverfahren aus ADR 0032 |
+   | Quellstellenbeleg | Programmidentität, Quellrevision, Zeilenbereiche, Parserfakten, Analyseversion | technische Belegprüfung und Bestätigung durch einen Menschen |
+
+   Ein Quellstellenbeleg kann mehrere zusammengehörige Codestellen nennen, denn eine Regel kann sich über mehrere
+   Paragraphen, Programme oder Copybooks erstrecken. Die Erkenntnisebenen bleiben getrennt:
+
+   | Erkenntnis | Status |
+   | --- | --- |
+   | Der Parser erkennt `IF KZ-STATUS = 'A'` | deterministischer technischer Fakt |
+   | Die KI deutet die Bedingung als „Antrag ist abgeschlossen“ | fachliche Hypothese |
+   | Ein Mensch bestätigt diese Bedeutung | fachlich bestätigte Erkenntnis |
+   | Das Programm setzt die Regel tatsächlich um | belegter technischer **Ist-Zustand** |
+   | Eine Vorschrift verlangt diese Regel | fachlicher **Soll-Zustand** |
+
+   - **Ist und Soll bleiben verschieden.** Auch eine von einem Menschen bestätigte Aussage über Programmcode ist
+     keine rechtlich oder fachlich geltende Soll-Regel: Ein Programm kann fehlerhaft sein.
+   - **Eine Bestätigung gilt für die Revision, an der sie gegeben wurde.** Ändert sich der Programmcode oder eine
+     maßgebliche Abhängigkeit, gilt der Beleg als möglicherweise veraltet. Die frühere Bestätigung wird nie
+     ungeprüft auf die neue Revision übertragen.
 8. **Unsicheres bleibt als unsicher sichtbar.** Dynamische Aufrufziele, nicht auflösbare Verweise, fehlende Quellen
    und Teilanalysen werden gekennzeichnet. Es gibt keine Aussage „keine Aufrufer“ oder „keine Verwendungen“, solange
    der Suchbereich nicht vollständig analysiert ist. Bei mehreren Kandidaten wählt der Benutzer mit Herkunft; es
@@ -82,6 +107,14 @@ Wissensquellen, und ihre Analysen liegen im gemeinsamen Bestand. **Maßgeblich i
    wird ausdrücklich angefordert und bleibt bis zur Quellstelle rückverfolgbar. Mermaid ist der Renderer für
    technische Diagramme. Draw.io kommt erst auf der höheren Ebene (Geschäftsprozesse, fachliche Dokumentation);
    einen formatübergreifenden Umbau der Renderer gibt es vorerst nicht.
+
+   **Die KI-Beschriftung von Diagrammen hat keine feste Zeichengrenze** (beschlossen am 26.11.2026, 14:41). Betroffen
+   ist die Beschriftung durch `DiagramLabels`, nicht der deterministische Renderer. Aufgeteilt wird nach dem
+   verfügbaren Modellkontext und entlang der Parserstruktur (Paragraphen, Funktionen, Kontrollflussblöcke), nicht
+   blind nach Zeichenzahl. Die Teile werden über stabile Parser- und Knotenidentitäten zusammengeführt. Die
+   vorhandene Aufteilung der fachlichen KI-Analyse wird wiederverwendet, soweit sie passt. Scheitert ein Teil,
+   bleiben die deterministisch erzeugten Diagramminhalte, und die fehlenden KI-Beschriftungen sind als fehlend
+   gekennzeichnet.
 10. **Identität und Gültigkeit.** Für die Ressource gilt ADR 0036, Punkt 7. Die Gültigkeit einer Analyse hängt an:
     Programmrevision (Inhalts-Hash), Parser- und Analyseversion, SYSLIB- bzw. Bibliotheksreihenfolge, Revisionen
     der aufgelösten Copybooks und den **negativen Proben** (Copybooks, die gesucht und nicht gefunden wurden). Eine
@@ -111,7 +144,8 @@ Wissensquellen, und ihre Analysen liegen im gemeinsamen Bestand. **Maßgeblich i
 | Programmsuche und Aufrufhierarchie auf dem gespeicherten Bestand, Chat-Werkzeuge | PR #1488 offen |
 | Ablaufdiagramm aus dem statischen Kontrollfluss statt aus der Absatzfolge (#1473) | PR #1488 offen |
 | Fachliche KI-Analyse als Hypothese (`CobolBusinessEnrichment`, ausdrücklich ausgelöst) | PR #1488 offen |
-| Zustand „fachlich bestätigt“ mit Prüfung durch Menschen | nicht umgesetzt |
+| Zustand „fachlich bestätigt“ mit Prüfung durch Menschen, Quellstellenbeleg im Fachlogik-Bestand | nicht umgesetzt |
+| KI-Beschriftung von Diagrammen ohne feste Zeichengrenze | **weicht ab:** `DiagramLabels` kürzt nach 4000 Zeichen |
 | Vollständiger Kontroll- und Datenfluss (`GO TO`, Fall-through, programmübergreifend), SQL/CICS-Semantik | offen |
 | Abnahme gegen echtes z/OS-FTP, NDV und KI-Dienst | offen |
 
@@ -123,7 +157,8 @@ Merge mit Beleg geschlossen (#1486).
 - **Epic #1447 gegen die Entscheidung vom 26.11.** Der Epic-Text verlangt in Abschnitt A einen eigenen, persistent
   konfigurierten Analysebereich („Home-Verzeichnis“) und in Abschnitt D die Oberfläche im Command Deck. Die spätere
   Entscheidung (#1470, 02:05 und 02:08) macht daraus die Startpunkte der FTP-Quelle und Reiter im gemeinsamen
-  Viewer. Der Epic-Text ist nicht nachgezogen; er soll angepasst werden (F41-4).
+  Viewer. Der Epic-Text ist am 26.11.2026 um einen Abschnitt „Geltende Architektur“ ergänzt worden, der A und D ersetzt
+  und ausdrücklich auch für Natural und JCL gilt.
 - **MCP.** Epic #1447 (E) und Angelos Zusammenfassung sprechen von „lesenden MCP-Tools“ für den Chat, ein
   Kommentar zu #1470 nennt den „externen MCP-Anschluss“ als offen. PR #1488 hat den externen MCP-HTTP-Server
   dagegen entfernt; der Chat nutzt die Werkzeuge direkt (#1486, P2). Nach Punkt 5 ist der externe Zugriff
@@ -134,21 +169,24 @@ Merge mit Beleg geschlossen (#1486).
   Tickets ab.
 - **Lage im Modul `space-harvester-app`.** Die Programm-Enrichments und `ProgramAnalysisAccess` liegen in PR #1488
   unter `app.runtime.program`, nicht im Core. Der Server (REST) kann sie damit nicht anbieten. Nach Punkt 5 gehören
-  sie in den Core (siehe F41-6).
+  sie in den Core; der Umzug folgt nach PR #1488.
 - **Draw.io.** Die Zusammenfassung nennt „Mermaid- oder Draw.io-Diagramme“. Die Prioritätskorrektur in #1470
   (26.11., 01:25) stellt Draw.io ausdrücklich zurück. Punkt 9 folgt der Korrektur.
 
 ## Geklärt am 26.11.2026
 
-Stand der Antworten: **Beschlossen** gilt. *Vorgeschlagen* ist eine Empfehlung aus dem ursprünglichen Chat und gilt
-erst, wenn Angelo sie bestätigt.
+Alle Punkte sind entschieden. Die Antworten stammen vom 26.11.2026 (14:21, 14:38 und 14:41); Angelo hat sie aus
+dem ursprünglichen Chat übermittelt und am 26.11.2026, 14:41, alle Empfehlungen bestätigt.
 
 | Frage | Antwort | Stand |
 | --- | --- | --- |
-| F41-1: Externer MCP-Zugriff | Zurückgestellt, nicht ausgeschlossen; jetzt kein zusätzlicher MCP-Server | *Vorgeschlagen*, in Punkt 5 |
-| F41-2: Programmanalyse in den Core | Ja: Logik, Prozessoren und Zugriffsverträge; REST nicht sofort | *Vorgeschlagen*, in Punkt 5 |
-| F41-3: Ablage bestätigter Erkenntnisse | Im Fachlogik-Bestand aus ADR 0032, sofern dessen Modell passt; Parserfakten bleiben am Programm | *Vorgeschlagen*, in Punkt 7 |
-| F41-4: Epic #1447 anpassen | Ja, Abschnitte A und D an die Entscheidung vom 26.11. angleichen | Folgerung; der Epic-Text ist noch nicht geändert |
+| F41-1: Externer MCP-Zugriff | Zurückgestellt, nicht ausgeschlossen; jetzt kein zusätzlicher MCP-Server | **Beschlossen**, in Punkt 5 |
+| F41-2: Programmanalyse in den Core | Ja: Logik, Prozessoren und Zugriffsverträge; REST nicht sofort | **Beschlossen**, in Punkt 5 |
+| F41-3: Ablage bestätigter Erkenntnisse | Im Fachlogik-Bestand aus ADR 0032, mit der neuen Belegart „Quellstelle“; Parserfakten bleiben am Programm | **Beschlossen**, in Punkt 7 |
+| F41-4: Epic #1447 anpassen | Ja; der eigene COBOL-Home ist kein Architekturziel mehr, und das gilt ebenso für Natural und JCL | **Beschlossen**, Epic-Text am 26.11.2026 ergänzt |
+| F41-5: Belegart „Quellstelle“ im Fachlogik-Bestand | Ja; gemeinsame Abstraktion „Beleg“ mit Textbeleg und Quellstellenbeleg, Bestätigung durch Menschen, Ist und Soll getrennt | **Beschlossen**, in Punkt 7 und in ADR 0032 |
+| F41-6: Umzug der Programmanalyse in den Core | Als eigener Schritt nach PR #1488 | **Beschlossen**, in Punkt 5 |
+| F41-7: Diagrammbeschriftung nach 4000 Zeichen abgeschnitten | Die feste Grenze entfällt; Aufteilung nach Modellkontext und Parserstruktur | **Beschlossen**, in Punkt 9 |
 
 ## Grenzen und Limits
 
@@ -164,22 +202,8 @@ Nach ADR 0036, Punkt 12. Stand develop vom 26.11.2026; was nur in PR #1488 steht
 | KI-Beschriftung von Diagrammen: Wartezeit je Anfrage | 30 s | **fest im Code** (`DiagramLabels.TIMEOUT_SECONDS`) | nein |
 
 Die Programmanalyse selbst hat kein Größenlimit für Programme: Die KI-Stufe teilt nach dem Tokenbudget des
-Modells auf (PR #1488, #1486). Die Beschriftung der Diagramme schneidet dagegen still nach 4000 Zeichen ab; das
-widerspricht „Unsicheres bleibt sichtbar“ (Punkt 8), solange die Kürzung nicht angezeigt wird.
-
-## Offene Fragen an Angelo
-
-- **F41-5 (zu Punkt 7):** ADR 0032 belegt jede Aussage mit ihrem Originalsatz und prüft, dass die Inhaltswörter der
-  Aussage aus diesem Satz stammen. Für Programmcode passt das nicht: Eine Bedingung wie `IF KZ-STATUS = 'A'`
-  enthält die fachlichen Wörter der Regel nicht. Mein Vorschlag: Der Fachlogik-Bestand bekommt eine zweite
-  Belegart „Quellstelle“ (Programm, Revision, Zeilenbereich, Parserfakt, Analyseversion). Der Wortabgleich entfällt
-  dafür; an seine Stelle tritt, dass eine Aussage aus Code erst mit der Prüfung durch einen Menschen (W3) als
-  geltend zählt. Einverstanden?
-- **F41-6 (zu Punkt 5):** Der Umzug in den Core betrifft den offenen PR #1488, an dem ein anderer Strang arbeitet.
-  Soll der Umzug noch in #1488 geschehen oder als eigener Schritt danach? Mein Vorschlag: danach, damit #1488
-  nicht weiter wächst.
-- **F41-7 (zu „Grenzen und Limits“):** Die Diagrammbeschriftung schneidet den Code nach 4000 Zeichen ab. Soll sie
-  wie die fachliche Analyse nach dem Tokenbudget des Modells aufteilen, sodass die Grenze entfällt?
+Modells auf (PR #1488, #1486). Die Beschriftung der Diagramme schneidet dagegen heute still nach 4000 Zeichen ab; das
+widerspricht Punkt 8 und entfällt nach Punkt 9.
 
 ## Folgen
 

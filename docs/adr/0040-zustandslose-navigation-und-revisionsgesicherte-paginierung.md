@@ -1,9 +1,8 @@
 # ADR 0040: Zustandslose Navigation und revisionsgesicherte Paginierung
 
 - Status: **Angenommen, auf main umgesetzt** (Entscheidungen von Angelo, 25./26.11.2026, festgehalten in #1438 und
-  #1468). Die Abnahme an einem echten SharePoint steht aus, #1438 und #1468 sind deshalb offen. Was im Text
-  mit *vorgeschlagen* gekennzeichnet ist, stammt aus den Antworten des ursprünglichen Chats vom 26.11.2026, 14:21,
-  und gilt erst mit Angelos Bestätigung.
+  #1468). Die Abnahme an einem echten SharePoint steht aus, #1438 und #1468 sind deshalb offen. Die Antworten auf die
+  Rückfragen vom 26.11.2026 (14:21 und 14:41) sind eingearbeitet.
 - Quellen: #1438, #1468 samt Kommentaren, PRs #1455, #1464, #1465, #1469, #1484, Enterprise AI Client #248 bis
   #250; Angelos Zusammenfassung vom 26.11.2026 (Abschnitte 10 und 11) und Klärung vom 26.11.2026, 14:12 (Punkte 5
   und 6).
@@ -53,14 +52,22 @@ stören und setzen eine künstliche Grenze. Angelo hat beides verworfen.
    - eine unvollständige Inventur Löschungen im Bestand auslöst (ADR 0037, Punkt 13).
 
    **Der vollständige Abruf als Rückfall läuft mit sichtbarem Fortschritt und Abbruch, ohne zusätzliche
-   Rückfrage** (*vorgeschlagen*). Wird er abgebrochen oder scheitert er, zeigt der Ordner „unvollständig geladen“,
+   Rückfrage.** Wird er abgebrochen oder scheitert er, zeigt der Ordner „unvollständig geladen“,
    nie „vollständig“, und es folgt keine Löschung aus einer unvollständigen Inventur.
 9. **Keine zugesicherte Snapshot-Konsistenz.** Ändert sich der Ordner auf dem Server während des Blätterns und
    bietet die Quelle keinen Snapshot, ist eine lückenlose Sicht nicht garantiert.
 
-10. **Der Cursor-Schlüssel lebt nur zur Laufzeit** (*vorgeschlagen*). Nach einem Neustart oder bei einer anderen
+10. **Der Cursor-Schlüssel lebt nur zur Laufzeit.** Nach einem Neustart oder bei einer anderen
     Instanz ist ein ausgegebener Cursor ungültig; der Client beginnt neu (Punkte 6 und 7). Ein einstellbarer,
     dauerhafter Schlüssel kommt erst, wenn mehrere Server-Instanzen oder lange lebende Cursor gebraucht werden.
+11. **Auch die Vorschau aus dem Cache ist paginiert** (beschlossen am 26.11.2026, 14:41). Die Grenze von 1000 Kindern
+    je Knoten entfällt als Gesamtgrenze. Cache-Navigation und Live-Navigation nutzen möglichst dieselbe fachliche
+    Paginierung. Der Benutzer erreicht alle lokal bekannten Kinder, auch wenn das Quellsystem gerade nicht
+    erreichbar ist. Einstellbar bleibt nur die Stapelgröße.
+12. **Der Baum wird nach Bedarf und ebenenweise geliefert** (beschlossen am 26.11.2026, 14:41). Weitere Ebenen werden
+    abgefragt, wenn sie gebraucht werden; die Gesamttiefe spielt für die gewöhnliche Navigation keine Rolle mehr.
+    Zyklenerkennung und der Schutz vor unkontrollierten rekursiven Abfragen bleiben. Beim Umbau werden bestehende
+    REST-Verbraucher des Gesamtbaums berücksichtigt.
 
 SharePoint ist die erste Quelle dieser Navigation. Was nur SharePoint betrifft (native Quelle, Anmeldeart,
 Änderungsabgleich), steht in [ADR 0042](0042-native-sharepoint-quelle.md).
@@ -74,7 +81,9 @@ SharePoint ist die erste Quelle dieser Navigation. Was nur SharePoint betrifft (
 | `InvalidNavigationCursorException`, REST 400 `invalid-navigation-cursor` | auf main (#1469) |
 | Explorer: Abgleich nach ID, einmaliger Neuabruf, Erhalt der Ansicht | auf main (#1464, #1469) |
 | Verhalten eines echten SharePoint bei mehr als 100 Dateien | **nicht nachgewiesen** (PowerShell-Test steht aus) |
-| Vollständiger Abruf als Rückfall mit Fortschritt und Abbruch, Zustand „unvollständig geladen“ | nicht nachgesehen, vorgeschlagen (F40-3) |
+| Vollständiger Abruf als Rückfall mit Fortschritt und Abbruch, Zustand „unvollständig geladen“ | nicht nachgesehen, beschlossen (F40-3) |
+| Paginierte Vorschau aus dem Cache (Punkt 11) | **weicht ab:** feste Grenze von 1000 Kindern |
+| Ebenenweiser Baum statt Gesamtbaum mit Tiefengrenze (Punkt 12) | **weicht ab:** der Gesamtbaum wird ab 200 Ebenen abgewiesen; Kinder je Knoten liefert die Navigation bereits |
 
 ## Widersprüche und Auffälligkeiten
 
@@ -86,21 +95,23 @@ SharePoint ist die erste Quelle dieser Navigation. Was nur SharePoint betrifft (
   Rückfall. Ob er bei einem Server ohne Fortsetzungsverweis alle Einträge liefert, ist nur gegen Attrappen getestet.
 - **Die Vorschau aus dem Cache endet nach 1000 Kindern** (`PageNavigation.MAX_CACHED_CHILDREN`). Der Baum zeigt
   zuerst diesen Stand und fragt dann die Quelle. Ob er bei einem größeren Ordner bis dahin erkennbar macht, dass die
-  Vorschau unvollständig ist, habe ich nicht nachgesehen (siehe F40-5).
+  Vorschau unvollständig ist, habe ich nicht nachgesehen. Nach Punkt 11 entfällt die Grenze.
 - **Beim Änderungsabgleich von SharePoint gibt es noch ein Register mit fester Größe** (`SharePointChangePages`,
   vier Schnappschüsse). Das steht in ADR 0042.
 
 ## Geklärt am 26.11.2026
 
-Stand der Antworten: **Beschlossen** gilt. *Vorgeschlagen* ist eine Empfehlung aus dem ursprünglichen Chat und gilt
-erst, wenn Angelo sie bestätigt.
+Alle Punkte sind entschieden. Die Antworten stammen vom 26.11.2026 (14:21, 14:38 und 14:41); Angelo hat sie aus
+dem ursprünglichen Chat übermittelt und am 26.11.2026, 14:41, alle Empfehlungen bestätigt.
 
 | Frage | Antwort | Stand |
 | --- | --- | --- |
-| F40-1: Lebensdauer des Cursor-Schlüssels | Ein Schlüssel nur zur Laufzeit genügt vorerst | *Vorgeschlagen*, in Punkt 10 |
-| F40-2: Exaktes ChangeToken speichern | Ja, wie in #1438 vorgesehen | **Bestätigt** (ursprüngliches Ziel), in ADR 0042, Punkt 5 |
-| F40-3: Vollständiger Abruf als Rückfall | Mit Fortschritt und Abbruch, ohne zusätzliche Rückfrage | *Vorgeschlagen*, in Punkt 8 |
-| F40-4: Eigene ADR für SharePoint | Ja | *Vorgeschlagen*, umgesetzt als ADR 0042 |
+| F40-1: Lebensdauer des Cursor-Schlüssels | Ein Schlüssel nur zur Laufzeit genügt vorerst | **Beschlossen**, in Punkt 10 |
+| F40-2: Exaktes ChangeToken speichern | Ja, wie in #1438 vorgesehen | **Beschlossen**, in ADR 0042, Punkt 5 |
+| F40-3: Vollständiger Abruf als Rückfall | Mit Fortschritt und Abbruch, ohne zusätzliche Rückfrage | **Beschlossen**, in Punkt 8 |
+| F40-4: Eigene ADR für SharePoint | Ja | **Beschlossen**, ADR 0042 |
+| F40-5: Vorschau aus dem Cache mit höchstens 1000 Kindern | Paginieren; die Gesamtgrenze entfällt, nur die Stapelgröße bleibt einstellbar | **Beschlossen**, in Punkt 11 |
+| F40-6: Baum mit höchstens 200 Ebenen | Ebenenweise nach Bedarf liefern; die Gesamttiefe spielt keine Rolle mehr | **Beschlossen**, in Punkt 12 |
 
 ## Grenzen und Limits
 
@@ -115,17 +126,9 @@ Nach ADR 0036, Punkt 12. Stand main `69835ca8`. Keine dieser Grenzen ist eine Ei
 | Baum eines Space: Tiefe, Stapel beim Aufbau | 200 Ebenen, 1000 | **fest im Code** (`PageQueries.MAX_TREE_DEPTH`, `TREE_BATCH`) | nein |
 | Gemerkte Versionsprüfungen | 10 000 | **fest im Code** (`PageQueries.MAX_CHECKED`) | nein |
 
-Stapelgrößen sind nach Punkt 8 nie ein fachliches Limit. Die Tiefe von 200 Ebenen ist eines: Ein tieferer Baum
-wird abgewiesen (`TreeTooLargeException`) und nur der Export liefert ihn.
-
-## Offene Fragen an Angelo
-
-- **F40-5 (zu Punkt 8):** Die Vorschau aus dem Cache zeigt höchstens 1000 Kinder eines Knotens, bevor die Quelle
-  antwortet. Mein Vorschlag: Die Vorschau wird wie die Live-Auflistung paginiert, damit es dort keine feste Grenze
-  mehr braucht. Einverstanden, oder genügt eine Einstellung?
-- **F40-6 (zu „Grenzen und Limits“):** Ein Baum mit mehr als 200 Ebenen wird über REST abgewiesen. Soll das ein
-  einstellbarer Wert werden, oder soll der Baum grundsätzlich ebenenweise geliefert werden, sodass die Grenze
-  entfällt?
+Stapelgrößen sind nach Punkt 8 nie ein fachliches Limit. Zwei Zeilen sind heute eines und entfallen: die
+1000 Kinder der Vorschau (Punkt 11) und die Tiefe von 200 Ebenen (Punkt 12), bei der ein tieferer Baum abgewiesen
+wird (`TreeTooLargeException`) und nur der Export ihn liefert.
 
 ## Folgen
 

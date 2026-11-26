@@ -2,8 +2,7 @@
 
 - Status: **Angenommen** für die Punkte 1 bis 6 (Entscheidungen von Angelo, 25.11.2026, festgehalten in Epic #1461
   Abschnitt C.1 und #1460). Die Agenten-Spur (Punkt 7) ist als Zielbild beschlossen, auch für die Suchleiste, und
-  **nicht umgesetzt**. Was im Text mit *vorgeschlagen* gekennzeichnet ist, stammt aus den Antworten des
-  ursprünglichen Chats vom 26.11.2026, 14:21, und gilt erst mit Angelos Bestätigung.
+  **nicht umgesetzt**. Die Antworten auf die Rückfragen vom 26.11.2026 (14:21 und 14:41) sind eingearbeitet.
 - Schreibt [ADR 0013](0013-suche-ueber-den-cache.md), [ADR 0016](0016-auswahl-beschaffung-hintergrund.md) und
   [ADR 0017](0017-progressive-suche.md) fort. Was dort steht und hier nicht ausdrücklich geändert wird, gilt weiter.
 - Quellen: Epic #1461 (C.1), #1460 (Abschnitt 3), PR #1462; Angelos Zusammenfassung vom 26.11.2026 (Abschnitt 6).
@@ -46,10 +45,10 @@ Zur Wahl standen drei eigenständige Suchmaschinen. Das ist verworfen.
    Öffnen und gezieltes Lesen sind davon getrennt und bleiben möglich. Ein nativer Fund ist nie einem lokalen
    Volltext- oder Vektortreffer gleichgestellt.
 
-   **Das gilt auch für die semantische Suche** (*vorgeschlagen*): Native Funde solcher Quellen erscheinen dort
+   **Das gilt auch für die semantische Suche:** Native Funde solcher Quellen erscheinen dort
    getrennt als vorläufig und nicht semantisch bewertet, mit der Erklärung, dass der Inhalt nicht im semantischen
    Index liegt. Sie werden mit den Vektortreffern nie zu einer Rangfolge vermischt. Das schreibt ADR 0017 (vierter
-   Schritt) fort; bis zur Bestätigung gilt dort der bisherige Wortlaut.
+   Schritt) fort.
 6. **Ehrliche Abdeckung.** Eine native Suche mit anschließender Bewertung einiger Kandidaten ist keine semantische
    Suche über den ganzen Bestand der Quelle. Grenzen und Abdeckung werden ausgewiesen. Indexabdeckung und
    semantische Anreicherung sind verschiedene Zustände (ADR 0039, Punkt 8).
@@ -67,10 +66,19 @@ Zur Wahl standen drei eigenständige Suchmaschinen. Das ist verworfen.
 8. **Bedienung.** Es gibt keine erzwungene Auswahl „Index oder progressiv“, solange Fähigkeiten, Suchoptionen und
    Beschaffungsschalter dasselbe ausdrücken. Bestehende Konfigurationen behalten ohne neue Angaben ihr Verhalten.
 9. **Temporäre Kandidatenbewertung ohne dauerhafte Ablage** (Inhalt kurz lesen, bewerten, verwerfen) bleibt als
-   Erweiterung möglich und wird jetzt nicht gebaut (*vorgeschlagen*). Wird sie später gebaut, gilt: begrenzte
+   Erweiterung möglich und wird jetzt nicht gebaut. Wird sie später gebaut, gilt: begrenzte
    Zahl von Kandidaten, begrenzte Inhalte und Laufzeit, keine dauerhafte Indexierung ohne Beschaffungsfreigabe,
    erkennbar als vorläufig, kein Ersatz für die Berechtigungsprüfung. Alle diese Grenzen sind Einstellungen
    (ADR 0036, Punkt 12).
+10. **Eine laufende progressive Suche ist ein Auftrag mit Zustand, kein Cursor.** Ein Navigationscursor sagt nur,
+    wo eine Auflistung weitergeht, und ist zustandslos (ADR 0040). Eine progressive Suche hat laufende
+    Teilaufgaben, Ergebnisse, Fortschritt und Abbruch. Ihr Register darf deshalb bleiben, mit sauber modelliertem
+    Lebenszyklus:
+    - Zuerst wird geprüft, ob `ProgressiveSearches` in der vorhandenen Auftragsinfrastruktur aufgehen kann.
+    - Getrennt eingestellt werden die Zahl gleichzeitig laufender Suchen, die Zahl wartender Suchen und die
+      Aufbewahrung fertiger Ergebnisse. Keine dieser Grenzen steht fest im Code.
+    - Eine laufende Suche verschwindet nie, weil ein anderer Benutzer eine neue startet. Sind die Ressourcen
+      ausgeschöpft, wartet die neue Suche nachvollziehbar oder wird ausdrücklich abgewiesen.
 
 ## Verhältnis zu ADR 0013, 0016 und 0017
 
@@ -85,7 +93,7 @@ Zur Wahl standen drei eigenständige Suchmaschinen. Das ist verworfen.
 | 0016 Punkt 5: Hintergrundfüllung standardmäßig an | global, je Quelle abschaltbar | **gilt unverändert**; `background-fill` und `prefetch-hits` sind je Quelle unabhängig (ADR 0037) |
 | 0016: `FindingCataloging` merkt Funde als Kopfdaten vor | für jede Quelle | **gilt unverändert für die Kopfdaten**, unabhängig vom Prefetch. Ob der Inhalt später geladen wird, entscheiden die Beschaffungsregeln der Quelle (ADR 0037, Punkt 8). Der Code überspringt das Erfassen heute bei ausgeschaltetem Prefetch; das ist ein bestätigter Fehler. |
 | 0017: `SearchOrchestrator`, Wellen, Freigabe nach Priorität, Qualitätsziel | gilt | **gilt unverändert** und ist Variante 2 |
-| 0017 Schritt 4: „Vorläufige Treffer der Quellen (`found`) gibt es semantisch nicht“ | gilt | *vorgeschlagen:* Für Quellen ohne Beschaffung erscheinen native Funde getrennt als vorläufig und unbewertet (Punkt 5). Für alle anderen Quellen gilt Schritt 4 weiter. |
+| 0017 Schritt 4: „Vorläufige Treffer der Quellen (`found`) gibt es semantisch nicht“ | gilt | **fortgeschrieben:** Für Quellen ohne Beschaffung erscheinen native Funde getrennt als vorläufig und unbewertet (Punkt 5). Für alle anderen Quellen gilt Schritt 4 weiter. |
 | 0017 Punkt 5: Modus `ALL_VARIANTS` „etwa für einen Recherche-Agenten“ | gilt | **gilt unverändert.** Gemeint ist ein Agent als *Verbraucher* von Spur 1 (er wartet auf die fertige Liste). Die Agenten-Recherche aus Punkt 7 ist etwas anderes: Sie ruft Werkzeuge der Live-Dienste auf. |
 
 ## Stand (main `69835ca8`, 26.11.2026)
@@ -95,20 +103,22 @@ Zur Wahl standen drei eigenständige Suchmaschinen. Das ist verworfen.
 | Gemeinsame Pipeline für indexierte und nicht vollständig indexierte Quellen | auf main (bestand, #1462 ergänzt die Regeln je Quelle) |
 | Prefetch je Quelle in `KeywordSearch` und `SemanticPreparation` | auf main (#1462) |
 | Vorläufige native Funde bei ausgeschaltetem Prefetch | auf main (#1462) |
-| Vorläufige native Funde in der semantischen Suche | **nicht umgesetzt**, vorgeschlagen (F38-1) |
+| Vorläufige native Funde in der semantischen Suche | **nicht umgesetzt**, beschlossen (F38-1) |
+| Register laufender progressiver Suchen mit einstellbaren Grenzen (Punkt 10) | **weicht ab:** feste Größe 256 und 5 Minuten. Eine laufende Suche wird schon heute nie verdrängt; ist das Register voll, wird die neue Suche abgewiesen (`CapacityExceededException`) |
 | Temporäre Kandidatenbewertung ohne dauerhafte Ablage | nicht gebaut, bleibt Erweiterung (F38-3) |
 | Agenten-Spur (Freigaben am Verbindungsprofil, eigener Ergebnisblock) | **nicht umgesetzt**, im Code gibt es dafür nichts |
 
 ## Geklärt am 26.11.2026
 
-Stand der Antworten: **Beschlossen** gilt. *Vorgeschlagen* ist eine Empfehlung aus dem ursprünglichen Chat und gilt
-erst, wenn Angelo sie bestätigt.
+Alle Punkte sind entschieden. Die Antworten stammen vom 26.11.2026 (14:21, 14:38 und 14:41); Angelo hat sie aus
+dem ursprünglichen Chat übermittelt und am 26.11.2026, 14:41, alle Empfehlungen bestätigt.
 
 | Frage | Antwort | Stand |
 | --- | --- | --- |
-| F38-1: Semantische Suche über Quellen ohne Beschaffung | Native Funde getrennt als vorläufig, unbewertet, keine Fusion; ADR 0017 wird fortgeschrieben | *Vorgeschlagen*, in Punkt 5 |
+| F38-1: Semantische Suche über Quellen ohne Beschaffung | Native Funde getrennt als vorläufig, unbewertet, keine Fusion; ADR 0017 wird fortgeschrieben | **Beschlossen**, in Punkt 5 |
 | F38-2: Agenten-Recherche in der Suchleiste | Gehört zum Zielbild, standardmäßig aus, eigene Freigabe | **Beschlossen**, in Punkt 7 |
-| F38-3: Temporäre Kandidatenbewertung | Bleibt Erweiterung, wird jetzt nicht gebaut | *Vorgeschlagen*, in Punkt 9 |
+| F38-3: Temporäre Kandidatenbewertung | Bleibt Erweiterung, wird jetzt nicht gebaut | **Beschlossen**, in Punkt 9 |
+| F38-4: Register laufender progressiver Suchen | Bleibt als Auftrag mit Zustand; Auftragsinfrastruktur prüfen; Grenzen einstellbar und getrennt nach laufend, wartend, aufbewahrt | **Beschlossen**, in Punkt 10 |
 
 ## Grenzen und Limits
 
@@ -133,14 +143,6 @@ Nach ADR 0036, Punkt 12. Stand main `69835ca8`. Die Budgets der progressiven Suc
 
 Die Agenten-Spur (Punkt 7) nennt ein Zeit- und Werkzeugbudget. Sie ist nicht gebaut; die Budgets entstehen als
 Einstellungen.
-
-## Offene Fragen an Angelo
-
-- **F38-4 (zum Leitprinzip „zustandslose Navigation“):** Der Server hält laufende progressive Suchen in einem
-  Register mit fester Größe (`ProgressiveSearches`, 256 Suchen, 5 Minuten). Ist es voll und keine Suche fertig,
-  wird eine neue Suche abgewiesen. Das ist kein Cursor-Register, aber eine feste Kapazitätsgrenze derselben Art.
-  Mein Vorschlag: Das Register bleibt (eine laufende Suche ist ein Auftrag und braucht Zustand), Größe und
-  Aufbewahrung werden Einstellungen. Einverstanden, oder soll auch das zustandslos werden?
 
 ## Folgen
 

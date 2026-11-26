@@ -1,7 +1,7 @@
 # ADR 0036: Gemeinsame Systemzugriffsarchitektur von Space Harvester und Command Deck
 
 - Status: **Angenommen als Zielbild** (Entscheidungen von Angelo, 25./26.11.2026, festgehalten in Epic #1461;
-  Antworten auf die Rückfragen vom 26.11.2026, 14:21; Vorgabe zu Grenzen vom 26.11.2026, 14:20). Teilweise
+  Antworten auf die Rückfragen vom 26.11.2026, 14:21 und 14:41; Vorgabe zu Grenzen vom 26.11.2026, 14:20). Teilweise
   umgesetzt, siehe „Stand“. Uhrzeiten der Antworten vom 26.11.2026 in ADR 0036 bis 0042 sind MEZ.
 - Quellen: Epic #1461 (Abschnitte A, B, D, E, F), #1459, #1466, #1475, PRs #1467, #1471, #1477, #1482; Angelos
   Zusammenfassung vom 26.11.2026 (Abschnitte 2 bis 4 und 15).
@@ -23,7 +23,7 @@ eine dritte Ablage für Programmquellen und Analysen.
 
 ## Leitprinzipien
 
-Diese sechs Prinzipien tragen die ADRs 0036 bis 0042 (Zusammenfassung aus dem ursprünglichen Chat, 26.11.2026):
+Diese Prinzipien tragen die ADRs 0036 bis 0042 (26.11.2026):
 
 | Prinzip | Folge |
 | --- | --- |
@@ -33,6 +33,7 @@ Diese sechs Prinzipien tragen die ADRs 0036 bis 0042 (Zusammenfassung aus dem ur
 | Zustandslose Navigation | Keine zentralen Cursor-Register mit willkürlichen Kapazitätsgrenzen |
 | Dokumentbasierte Analyse | Programmcode ist eine spezialisierte Wissensressource |
 | Gemeinsames Fachwissen | Geschäftsregeln werden nicht nach Herkunftssystem getrennt verwaltet |
+| Keine stillen fachlichen Beschränkungen | Technische Grenzen kürzen nie unbemerkt Bestand, Inhalt oder Ergebnis (Punkt 13) |
 
 ## Entscheidung
 
@@ -106,14 +107,40 @@ Diese sechs Prinzipien tragen die ADRs 0036 bis 0042 (Zusammenfassung aus dem ur
     `enterprise-ai-sources` wird nie direkt geändert, Änderungen gehen über den Enterprise AI Client.
 12. **Keine Magic Numbers** (Vorgabe von Angelo, 26.11.2026, 14:20). Jede Grenze, ob Größe, Anzahl, Tiefe, Zeit oder
     Parallelität, ist eine benannte Einstellung mit dokumentiertem Standardwert.
-    - **Mindestmaß** ist eine dokumentierte Property (`space-harvester.*` in `docs/CONFIGURATION.md`), die sich ohne
-      Neubau setzen lässt. **Ziel** ist die Einstellung in der Oberfläche; die Dokumentation sagt, ob sie dort schon
-      steht, damit nichts vergessen wird.
-    - **Größenlimits sind unerwünscht.** Wo es geht, entfällt die Grenze (Standard „ohne Grenze“) oder ein anderes
-      Konzept ersetzt sie: Strom statt Puffer, Paginierung, Fortschritt mit Abbruch. Bleibt eine Grenze nötig, ist
-      sie einstellbar. Ob es bei Größenlimits überhaupt bleibt, hat Angelo offengelassen.
+    - **Es gilt die vorhandene Konfigurationsarchitektur.** Für Grenzen entsteht kein eigener Mechanismus. Eine
+      Grenze ist erreichbar als dokumentierte Property `space-harvester.*` (`docs/CONFIGURATION.md`), über die
+      YAML-Konfiguration, über die vorhandene Unterstützung für JVM-System-Properties und, wo sie für den Benutzer
+      von Belang ist, in der Oberfläche. Die Dokumentation sagt, ob sie dort schon steht, damit nichts vergessen
+      wird.
+    - **Der Fachkern bekommt typisierte Konfigurationsobjekte.** Er ruft nicht an beliebigen Stellen
+      `System.getProperty()` auf.
     - **Jede ADR führt die Grenzen ihres Bereichs** in einem Abschnitt „Grenzen und Limits“: Wert, Einstellung,
       Stand in der Oberfläche. Eine Grenze, die dort mit „fest im Code“ steht, ist eine offene Aufgabe.
+13. **Technische Ressourcenbegrenzungen führen nie zu stillen fachlichen Beschränkungen** (beschlossen am
+    26.11.2026, 14:41). Große Bestände werden abschnittsweise, stapelweise oder bedarfsgerecht verarbeitet. Ein
+    unvollständiges Ergebnis ist ausdrücklich als unvollständig gekennzeichnet. Wo eine technische Grenze nötig ist,
+    wird sie benannt, begründet, dokumentiert und einstellbar gemacht. Unnötige Grenzen werden beseitigt, nicht nur
+    erhöht oder in eine Konfigurationsdatei verschoben.
+
+    | Art der Grenze | Behandlung |
+    | --- | --- |
+    | Künstliche Begrenzung des Dokument- oder Ressourcenbestands | möglichst beseitigen |
+    | Stapel- und Seitengröße | einstellbar |
+    | Speicher- und Ressourcenbudget | einstellbar |
+    | Parallelität | einstellbar |
+    | Wartezeit | einstellbar |
+    | Aufbewahrungsdauer eines Caches | einstellbar |
+    | Modellkontext | aus den Fähigkeiten des Modells ableiten |
+    | Grenze eines fremden Protokolls | dokumentieren und berücksichtigen |
+    | Technische Invariante, mathematische Konstante | bleibt im Code |
+
+    - **Besonders kritisch** sind Grenzen, die unbemerkt zu unvollständigen Suchergebnissen, abgeschnittenen
+      Inhalten, ungültigen Cursorn oder falschen Löschentscheidungen führen.
+    - **Vollerhebung.** Alle festen Grenzen im gesamten Code werden in einem eigenen Epic erhoben, samt der Folge,
+      die das Erreichen der Grenze heute hat. Nicht jede Zahl im Code wird dabei zur Einstellung; maßgeblich ist die
+      Tabelle oben.
+    - **Architekturtest.** Ein Test (etwa mit ArchUnit oder statischer Analyse) erkennt neue, nicht dokumentierte
+      Ressourcengrenzen. Er verbietet nicht pauschal jede numerische Konstante.
 
 ## Stand (main `69835ca8`, 26.11.2026)
 
@@ -142,23 +169,16 @@ Diese sechs Prinzipien tragen die ADRs 0036 bis 0042 (Zusammenfassung aus dem ur
 | --- | --- | --- |
 | F36-1: „Indexieren“ auch im FTP-Bereich des Decks? | Ja. Quellenverwaltung und direkte Aktion ergänzen einander. | **Beschlossen**, in Punkt 5 |
 | F36-2: Darf der Deck-eigene NDV-Cache bleiben? | Nein, er geht im gemeinsamen Bestand auf. Flüchtige Sitzungscaches bleiben erlaubt. | **Beschlossen**, in Punkt 2 |
+| F36-3: Was heißt „Java-Properties“? | Die vorhandene Konfigurationsarchitektur: Property `space-harvester.*`, YAML, vorhandene JVM-System-Properties, Oberfläche wo sinnvoll; typisierte Konfigurationsobjekte im Fachkern | **Beschlossen**, in Punkt 12 |
+| F36-4: Vollerhebung aller festen Grenzen | Ja, als eigenes Epic, mit Folge je Grenze und Architekturtest | **Beschlossen**, in Punkt 13; Epic noch nicht angelegt |
 
 ## Grenzen und Limits
 
 Die UI-unabhängigen Live-Werkzeuge (Punkt 9) sind in der neuen Form noch nicht gebaut. Ihre Grenzen (Ergebniszahl,
-Abrufgröße, Rekursionstiefe, Zeit) entstehen von Anfang an als Einstellungen nach Punkt 12. Die bestehenden
+Abrufgröße, Rekursionstiefe, Zeit) entstehen von Anfang an als Einstellungen nach Punkt 12 und 13. Die bestehenden
 Chat-Werkzeuge des Decks (`DeckChatTools`, `JesChatTools`) habe ich nicht auf feste Grenzen durchgesehen; das gehört
-in die Bestandsaufnahme aus F36-4. Die Grenzen der Quellen, der Suche, der Speicherung, der Navigation und der
+in die Vollerhebung aus Punkt 13. Die Grenzen der Quellen, der Suche, der Speicherung, der Navigation und der
 Programmanalyse stehen in ADR 0037 bis 0042.
-
-## Offene Fragen an Angelo
-
-- **F36-3 (zu Punkt 12):** Mit „Java-Properties“ lese ich: eine dokumentierte Einstellung `space-harvester.*`, die
-  der Server über YAML oder `-D…` und die Desktop-App über ihre Konfigurationsdatei liest, also derselbe Weg wie bei
-  den vorhandenen Einstellungen. Ist das gemeint, oder ausdrücklich JVM-System-Properties (`-D…`) als eigener Weg?
-- **F36-4 (zu Punkt 12):** Die Tabellen in ADR 0037 bis 0042 decken die Grenzen ab, die diese sechs Entscheidungen
-  berühren (Stand main `69835ca8`), nicht den ganzen Code. Soll ein eigener Strang alle festen Grenzen im gesamten
-  Code erheben und zu Einstellungen machen, samt einem Test, der neue feste Grenzen verhindert?
 
 ## Folgen
 
