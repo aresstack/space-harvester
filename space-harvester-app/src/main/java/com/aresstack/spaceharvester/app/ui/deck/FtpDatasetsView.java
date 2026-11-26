@@ -1466,8 +1466,15 @@ final class FtpDatasetsView extends JPanel {
     }
 
     void openRow(int row) {
-        table.getSelectionModel().setSelectionInterval(row, row);
-        open(model.at(row));
+        RemoteEntry entry = model.at(row);
+        // Select where the user would click: the navigation tree when it is shown, otherwise the table.
+        var path = navigatingTree ? navigation.pathFor(entry.path()) : null;
+        if (path != null) {
+            navigation.setSelectionPath(path);
+        } else {
+            table.getSelectionModel().setSelectionInterval(row, row);
+        }
+        open(entry);
     }
 
     FtpNavigationTree navigationTree() {
