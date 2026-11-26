@@ -472,6 +472,34 @@ class AcquisitionSchedulerTest {
     }
 
     @Test
+    void withheldPagesAreSkippedForAutomaticTriggersButOpenOnRequest() throws Exception {
+        // Ausschließen (Angelo 26.11.2026): Suche lädt Ausgeschlossenes nicht, ausdrückliches Lesen schon.
+        var tasks = new java.util.ArrayDeque<Runnable>();
+        var search = new AcquisitionScheduler.Mode(false, false,
+                com.aresstack.spaceharvester.application.changelog.ChangeTrigger.SEARCH);
+        var read = new AcquisitionScheduler.Mode(false, false,
+                com.aresstack.spaceharvester.application.changelog.ChangeTrigger.READ);
+        try (var planner = new AcquisitionScheduler((caller, key, strict) -> started.add(key.pageId()),
+                new AcquisitionScheduler.Limits(2, 1, 2, 50), tasks::add, Duration.ZERO)) {
+            planner.withhold((key, trigger) -> "excluded".equals(key.pageId())
+                    && trigger == com.aresstack.spaceharvester.application.changelog.ChangeTrigger.SEARCH);
+            var automatic = planner.request(APP, key("excluded"), AcquisitionScheduler.Priority.FOREGROUND, search);
+            var other = planner.request(APP, key("other"), AcquisitionScheduler.Priority.FOREGROUND, search);
+            while (!tasks.isEmpty()) {
+                tasks.removeFirst().run();
+            }
+            var opened = planner.request(APP, key("excluded"), AcquisitionScheduler.Priority.FOREGROUND, read);
+            while (!tasks.isEmpty()) {
+                tasks.removeFirst().run();
+            }
+            assertThat(automatic.done().get()).isFalse();
+            assertThat(other.done().get()).isTrue();
+            assertThat(opened.done().get()).isTrue();
+            assertThat(started).containsExactly("other", "excluded");
+        }
+    }
+
+    @Test
     void theBackgroundNeverTakesAUserCredential() {
         AcquisitionScheduler planner = scheduler(1, 1, 1);
 
