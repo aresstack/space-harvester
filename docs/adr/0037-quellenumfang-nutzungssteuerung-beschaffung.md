@@ -169,8 +169,11 @@ die fachliche Suche und das Glossar überlagern und ungefragt vollständig herun
       Quellsystem noch existieren können, aber keinen Erwerbsgrund mehr haben. Vor dem Ausführen zeigt sie die Zahl
       der betroffenen Ressourcen und den Umfang und verlangt eine Bestätigung. Sie entfernt nur aus dem
       Wissensbestand, nie das Original im Quellsystem.
-    - **Bestehende Ressourcen mit unbekanntem Erwerbsgrund werden nicht ungeprüft bereinigt.** Was vor der
-      Einführung des Modells erworben wurde und sich keinem Grund zuordnen lässt, gilt nicht als verwaist.
+    - **Bestehende Ressourcen mit unbekanntem Erwerbsgrund werden nicht ungeprüft bereinigt** (Entscheidung von
+      Angelo, 26.11.2026, 15:58). Was vor der Einführung des Modells erworben wurde und sich keinem Grund zuordnen
+      lässt, erscheint im Dialog „Bereinigen“ als eigene Gruppe „Grund unbekannt“, getrennt von den Ressourcen
+      ohne Erwerbsgrund. Die Gruppe ist nicht angekreuzt und wird nur entfernt, wenn der Benutzer sie ausdrücklich
+      ankreuzt.
     - **Ressourcen außerhalb des Inventurbereichs,** die noch einen Erwerbsgrund haben, bleiben. Sie werden beim
       Öffnen und beim erneuten Besuch ihres Ordners auf Aktualität geprüft. Dafür werden die vorhandenen
       Aktualitäts- und Beschaffungsmechanismen wiederverwendet.
@@ -285,6 +288,7 @@ dem ursprünglichen Chat übermittelt und am 26.11.2026, 14:41, alle Empfehlunge
 | F37-8: Navigationsbefüllung ausschalten | Erworbene Ressourcen bleiben | **Beschlossen**, in Punkt 12 |
 | F37-9: Aktualität nur durch Navigation erworbener Ressourcen | Prüfung beim Öffnen und beim erneuten Besuch, mit den vorhandenen Mechanismen | **Beschlossen** (14:38), in Punkt 12 |
 | F37-10: Nur „Navigationsbefüllung“ speichern | Ja; Inventur abgeleitet, ausdrückliche Indexierung aus den `IndexMarks` | **Beschlossen** (14:38), in Punkt 12 |
+| Altbestand ohne bekannten Erwerbsgrund | Erscheint unter „Bereinigen“ als eigene Gruppe „Grund unbekannt“, nicht angekreuzt; entfernt wird nur nach ausdrücklichem Ankreuzen | **Beschlossen** (15:58), in Punkt 12 |
 | F37-11: Vorgabe „globale Suche“ als Eigenschaft des Adapters | Ja; FTP, NDV, JES und BetaView aus, die übrigen an; eingerichtete Quellen bleiben | **Beschlossen**, in Punkt 2 |
 | F37-12: Navigationsbefüllung standardmäßig aus | Ja, für alle neu angelegten Quellen, auch FTP und NDV | **Beschlossen**, in Punkt 9 |
 
