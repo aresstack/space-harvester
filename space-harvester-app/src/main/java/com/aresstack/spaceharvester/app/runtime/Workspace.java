@@ -710,10 +710,9 @@ public final class Workspace {
     }
 
     /**
-     * Lädt die Lese-Ansichten dieser Seiten im Hintergrund vor, etwa die Kinder eines eben aufgeklappten Knotens
-     * ({@code ReadingViews.prefetch}); kehrt sofort zurück.
+     * Schedule direct native resources through the shared acquisition and index pipeline. Stops at the first failure
+     * of the source itself (refused login, unreachable host), so one visit never repeats a failing login per member.
      */
-    /** Schedule direct native resources through the shared acquisition and index pipeline. */
     public void acquireVisitedResources(String sourceId, java.util.Collection<String> paths) {
         HarvestSource source = sources().stream().filter(candidate -> candidate.id().equals(sourceId))
                 .findFirst().orElse(null);
@@ -722,14 +721,20 @@ public final class Workspace {
         }
         java.util.Set<PageKey> keys = new java.util.LinkedHashSet<>();
         for (String path : paths) {
+            Optional<String> pageId;
             try {
-                source.navigationPageId(path).ifPresent(pageId -> {
-                    access.require(caller, ResourceScope.page(sourceId, sourceId, pageId), AccessKind.CONTENT);
-                    keys.add(new PageKey(sourceId, pageId));
-                });
-            } catch (com.aresstack.spaceharvester.application.sources.SourceAccessException | AccessDeniedException e) {
+                pageId = source.navigationPageId(path);
+            } catch (RuntimeException failure) {
                 org.slf4j.LoggerFactory.getLogger(Workspace.class).warn(
-                        "Navigation acquisition skipped for source {}: {}", sourceId, e.getMessage());
+                        "Navigation acquisition stopped for source {}: {}", sourceId, failure.getMessage());
+                break;
+            }
+            if (pageId.isEmpty()) continue;
+            try {
+                access.require(caller, ResourceScope.page(sourceId, sourceId, pageId.get()), AccessKind.CONTENT);
+                keys.add(new PageKey(sourceId, pageId.get()));
+            } catch (AccessDeniedException e) {
+                // This caller may not read this one page; the source itself is fine.
             }
         }
         if (!keys.isEmpty()) {
@@ -737,6 +742,10 @@ public final class Workspace {
         }
     }
 
+    /**
+     * Lädt die Lese-Ansichten dieser Seiten im Hintergrund vor, etwa die Kinder eines eben aufgeklappten Knotens
+     * ({@code ReadingViews.prefetch}); kehrt sofort zurück.
+     */
     public void prefetchReadingViews(String sourceId, java.util.Collection<String> pageIds) {
         harvester.readingViews().prefetch(caller, sourceId, pageIds);
     }

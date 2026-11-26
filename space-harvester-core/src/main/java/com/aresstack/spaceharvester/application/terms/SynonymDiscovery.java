@@ -652,9 +652,9 @@ public class SynonymDiscovery {
         TermRelations.ProposalRun ai = relations.propose(ACTOR_AI, RelationOrigin.AI, relationScope, PRODUCED,
                 version + stamp, proposals, reconcile);
         try {
-            if (reconcile) {
-                cache.replace(cacheKey(scope), answered);
-            }
+            // The answers are keyed by fingerprint and stay valid in a restricted run too; only the relations are not
+            // reconciled then (#1460), otherwise every run would ask the model the same pairs again.
+            cache.replace(cacheKey(scope), answered);
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Ergebnis-Cache der Synonymerkennung ({0}) nicht geschrieben ({1})",
                     describe(scope), e.getClass().getName());
