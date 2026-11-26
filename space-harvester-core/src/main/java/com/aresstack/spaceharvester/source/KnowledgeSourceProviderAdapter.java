@@ -85,6 +85,8 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
     private final UnaryOperator<OpenedSource> opened;
     /** Vorbelegung neuer Quellen des Typs. */
     private final SourceDefaults defaults;
+    /** Wiederholungen aus {@code jobs.retry} als {@code maxRetries} des Typs, {@code null} für dessen Standard. */
+    private final com.aresstack.spaceharvester.application.jobs.RetrySettings retry;
 
     public KnowledgeSourceProviderAdapter(KnowledgeSourceProvider provider) {
         this.fixed = Objects.requireNonNull(provider, "provider");
@@ -99,19 +101,21 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         this.tokenAuth = false;
         this.opened = UnaryOperator.identity();
         this.defaults = SourceDefaults.STANDARD;
+        this.retry = null;
     }
 
     private KnowledgeSourceProviderAdapter(ConnectedProvider factory, String credentialKey, String titleField) {
         this(factory, Objects.requireNonNull(factory.provider(new Connection(KnowledgeSourceProviderAdapter::none,
                 HttpRoutePort.direct(), null, null)), "provider"), credentialKey, titleField, true, false, false, null, false,
-                UnaryOperator.identity(), SourceDefaults.STANDARD);
+                UnaryOperator.identity(), SourceDefaults.STANDARD, null);
     }
 
     private KnowledgeSourceProviderAdapter(ConnectedProvider factory, KnowledgeSourceProvider unconnected,
                                            String credentialKey, String titleField, boolean tls,
                                            boolean credentialRefPassThrough, boolean needsCredentials,
                                            String displayName, boolean tokenAuth,
-                                           UnaryOperator<OpenedSource> opened, SourceDefaults defaults) {
+                                           UnaryOperator<OpenedSource> opened, SourceDefaults defaults,
+                                           com.aresstack.spaceharvester.application.jobs.RetrySettings retry) {
         this.fixed = null;
         this.factory = Objects.requireNonNull(factory, "factory");
         this.unconnected = unconnected;
@@ -124,6 +128,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         this.tokenAuth = tokenAuth;
         this.opened = Objects.requireNonNull(opened, "opened");
         this.defaults = Objects.requireNonNull(defaults, "defaults");
+        this.retry = retry;
     }
 
     /**
@@ -145,7 +150,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
     public KnowledgeSourceProviderAdapter withoutTls() {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, false,
-                credentialRefPassThrough, needsCredentials, displayName, tokenAuth, opened, defaults);
+                credentialRefPassThrough, needsCredentials, displayName, tokenAuth, opened, defaults, retry);
     }
 
     /**
@@ -159,14 +164,14 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
             throw new IllegalStateException("ohne Anmeldefeld gibt es keinen Verweis");
         }
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls, true,
-                needsCredentials, displayName, tokenAuth, opened, defaults);
+                needsCredentials, displayName, tokenAuth, opened, defaults, retry);
     }
 
     /** Der Typ verlangt Zugangsdaten ({@link SourceAdapter#needsCredentials()}), etwa JES oder NDV. */
     public KnowledgeSourceProviderAdapter requiringCredentials() {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
-                credentialRefPassThrough, true, displayName, tokenAuth, opened, defaults);
+                credentialRefPassThrough, true, displayName, tokenAuth, opened, defaults, retry);
     }
 
     /**
@@ -179,7 +184,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
             throw new IllegalStateException("ohne Anmeldefeld gibt es kein Token");
         }
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
-                credentialRefPassThrough, needsCredentials, displayName, true, opened, defaults);
+                credentialRefPassThrough, needsCredentials, displayName, true, opened, defaults, retry);
     }
 
     /** Eigener Anzeigename für Auswahllisten statt dem des Upstream-Typs. */
@@ -187,7 +192,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
                 credentialRefPassThrough, needsCredentials, Objects.requireNonNull(displayName, "displayName"), tokenAuth,
-                opened, defaults);
+                opened, defaults, retry);
     }
 
     /**
@@ -198,7 +203,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
                 credentialRefPassThrough, needsCredentials, displayName, tokenAuth,
-                Objects.requireNonNull(opened, "opened"), defaults);
+                Objects.requireNonNull(opened, "opened"), defaults, retry);
     }
 
     /** Vorbelegung neuer Quellen dieses Typs, etwa Windows-Anmeldung oder nur gezielte Suche. */
@@ -206,7 +211,20 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
                 credentialRefPassThrough, needsCredentials, displayName, tokenAuth, opened,
-                Objects.requireNonNull(defaults, "defaults"));
+                Objects.requireNonNull(defaults, "defaults"), retry);
+    }
+
+    /**
+     * Wiederholungen aus {@code jobs.retry} (Angelo 26.11.2026, WLAN): {@link
+     * com.aresstack.spaceharvester.application.jobs.RetrySettings#maxAttempts()} geht als {@code maxRetries} an den Typ,
+     * bei SharePoint die Fortsetzungen eines abgerissenen Inhalts ab dem letzten Byte. Was die Quelle selbst angibt,
+     * gilt weiter.
+     */
+    public KnowledgeSourceProviderAdapter withRetry(com.aresstack.spaceharvester.application.jobs.RetrySettings value) {
+        requireConnected();
+        return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
+                credentialRefPassThrough, needsCredentials, displayName, tokenAuth, opened, defaults,
+                Objects.requireNonNull(value, "value"));
     }
 
     @Override
@@ -487,6 +505,9 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
 
     private SourceSettings settings(SourceSettingsConfig config) {
         Map<String, String> values = new LinkedHashMap<>(config.options());
+        if (retry != null) {
+            values.putIfAbsent("maxRetries", Integer.toString(retry.maxAttempts()));
+        }
         if (config.title() != null) {
             values.put(titleKey(), config.title());
         }
