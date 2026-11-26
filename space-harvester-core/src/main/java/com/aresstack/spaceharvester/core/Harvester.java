@@ -1159,6 +1159,7 @@ public final class Harvester implements AutoCloseable {
             this.navigationMarks = new FileNavigationMarks(builder.dataDirectory);
             keywordSearch.exclusions(exclusions);
             findings.exclusions(exclusions);
+            syncs.exclusions(exclusions);
             // Automatische Auslöser laden Ausgeschlossenes nie; ausdrückliches Öffnen, Lesen und Export bleiben möglich.
             Exclusions excluded = this.exclusions;
             acquisition.withhold((key, trigger) -> automatic(trigger)

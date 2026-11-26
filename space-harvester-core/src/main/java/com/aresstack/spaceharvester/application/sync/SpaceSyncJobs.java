@@ -146,6 +146,17 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         }
     }
 
+    /** Was ausgeschlossen ist ({@link Exclusions}): Abgleich und Änderungssuche laden es nie; löscht nichts. */
+    public void exclusions(Exclusions exclusions) {
+        Objects.requireNonNull(exclusions, "exclusions");
+        if (sync != null) {
+            sync.exclusions(exclusions);
+        }
+        if (changeSync != null) {
+            changeSync.exclusions(exclusions);
+        }
+    }
+
     /**
      * Nach wie vielen Inhaltsabrufen nacheinander ohne Verbindung sich Abgleich und Einlesen selbst anhalten
      * ({@code jobs.retry.pause-after-failures}, ADR 0025); ohne Inhaltsabruf wirkungslos.

@@ -230,8 +230,8 @@ die fachliche Suche und das Glossar überlagern und ungefragt vollständig herun
 | Punkt 12: Erwerbsgründe je Ressource, Aktion „Bereinigen“, Aktualitätsprüfung beim Öffnen | **nicht umgesetzt**, zur Umsetzung freigegeben |
 | Punkt 13: Vollständigkeit nach tatsächlichem Ergebnis und je Inventurbereich | **weicht ab**, zur Umsetzung freigegeben |
 | Punkt 15: Ausschließen per Rechtsklick, Übersicht „Ausgeschlossen“, Baum und Suche | auf develop (#1504) |
-| Punkt 15: Fundübernahme und automatische Beschaffung lassen Ausgeschlossenes aus | im Folge-PR |
-| Punkt 15: Abgleich behandelt Ausgeschlossenes als nicht abgedeckt (weder laden noch löschen) | **nicht umgesetzt**; kommt mit dem Haken für die Erwerbsgründe in `SpaceSync`/`SyncPlan` |
+| Punkt 15: Fundübernahme und automatische Beschaffung lassen Ausgeschlossenes aus | auf develop (#1512) |
+| Punkt 15: Abgleich und Änderungssuche behandeln Ausgeschlossenes als nicht abgedeckt (nur Kopfdaten, kein Inhalt, auch nicht unter einer Indexmarke; fehlend = `NOT_SEEN`, nie gelöscht) | im Folge-PR zu #1513 |
 
 ## Prüfung der vorhandenen Mechanismen (zu Punkt 12)
 
