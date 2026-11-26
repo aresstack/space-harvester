@@ -418,13 +418,20 @@ public final class SearchView implements View {
         context.onChange(ignored -> refreshSources());
         refreshSources();
         // Schon die Auswahl eines Treffers zeigt seine Seite im Explorer; ein Doppelklick öffnet sie.
+        // Nachkommende Treffer bauen die Tabelle neu und melden dieselbe Auswahl noch einmal; dieselbe Seite wird dann
+        // nicht erneut im Explorer gezeigt.
+        String[] hinted = {null};
         table.getSelectionModel().addListSelectionListener(e -> {
             int row = table.getSelectedRow();
             if (!e.getValueIsAdjusting() && row >= 0 && table.getSelectedRowCount() == 1) {
                 heading.selected(false);
                 pinned.clearSelection();
                 Hit hit = model.rows.get(table.convertRowIndexToModel(row));
-                context.navigator().hintPage(hit.sourceId(), hit.spaceKey(), hit.pageId());
+                String key = hit.sourceId() + "\u0000" + hit.pageId();
+                if (!key.equals(hinted[0])) {
+                    hinted[0] = key;
+                    context.navigator().hintPage(hit.sourceId(), hit.spaceKey(), hit.pageId());
+                }
             }
         });
         table.addMouseListener(new MouseAdapter() {
