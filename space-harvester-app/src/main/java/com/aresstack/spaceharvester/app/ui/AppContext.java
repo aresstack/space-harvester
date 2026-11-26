@@ -200,6 +200,10 @@ public final class AppContext {
         default void unindex(String sourceId, String spaceKey, String pageId) {
         }
 
+        /** In den Einstellungen wurde etwas ausgeschlossen oder wieder eingeblendet: der Baum lädt die Quelle neu. */
+        default void exclusionsChanged(String sourceId) {
+        }
+
         /**
          * Holt die Änderungen eines Knotens samt Teilbaum aus der Quelle nach (Kreispfeile im Baum, Angelo
          * 16.11.2026): ohne {@code spaceKey} jeden Space der Quelle, mit {@code spaceKey} diesen Space (Nachholen wie

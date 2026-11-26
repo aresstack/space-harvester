@@ -154,6 +154,7 @@ import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SpaceSync;
 import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.application.sync.Exclusions;
 import com.aresstack.spaceharvester.application.sync.Indexing;
 import com.aresstack.spaceharvester.application.sync.SyncBeforeSearch;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
@@ -181,6 +182,7 @@ import com.aresstack.spaceharvester.output.export.EnrichmentImportedAssets;
 import com.aresstack.spaceharvester.output.export.ZipExportPackageReader;
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileReadStates;
+import com.aresstack.spaceharvester.persistence.files.FileExclusionMarks;
 import com.aresstack.spaceharvester.persistence.files.FileIndexMarks;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore;
@@ -368,6 +370,7 @@ public final class Harvester implements AutoCloseable {
     private final com.aresstack.spaceharvester.application.podcast.PagePodcasts pagePodcasts;
     private final SpaceSyncJobs syncs;
     private final Indexing indexing;
+    private final Exclusions exclusions;
     private final ChangeEvents changeEvents;
     private final Reconciliation reconciliation;
     /** Bestandsinventur nach {@code sync.inventory-interval}, nur aus der Konfiguration (ADR 0014/0015). */
@@ -1137,6 +1140,16 @@ public final class Harvester implements AutoCloseable {
             FileIndexMarks indexMarks = new FileIndexMarks(builder.dataDirectory);
             syncs.indexMarks(indexMarks);
             this.indexing = new Indexing(indexMarks, syncs, this::collectIndexedAssets);
+            // Ausschließen (Angelo 26.11.2026): Ausgeschlossenes fehlt in Baum und Suche; löscht nichts.
+            PageNavigation browsing = this.navigation;
+            this.exclusions = new Exclusions(new FileExclusionMarks(builder.dataDirectory),
+                    (sourceId, pageId) -> reader.header(new PageKey(sourceId, pageId))
+                            .map(header -> header.metadata().parentPageId())
+                            .orElseGet(() -> browsing.browsedParent(sourceId, pageId)),
+                    (sourceId, pageId) -> reader.header(new PageKey(sourceId, pageId))
+                            .map(header -> header.metadata().title()).orElse(null));
+            navigation.exclusions(exclusions);
+            keywordSearch.exclusions(exclusions);
             // ADR 0030: Update-Marke je Quelle, sobald keine manuelle Synchronisierung mehr läuft oder angehalten wartet.
             // ADR 0030, CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
             cache.contentDiffer(new TextContentDiffer(pageTexts));
@@ -2828,6 +2841,11 @@ public final class Harvester implements AutoCloseable {
     /** Indexieren: markierte Teilbäume vollständig laden und aktuell halten, samt Bildern und Anhängen. */
     public Indexing indexing() {
         return indexing;
+    }
+
+    /** Ausschließen: was der Benutzer ausgeschlossen hat, fehlt in Baum und Suche und wird nicht indexiert. */
+    public Exclusions exclusions() {
+        return exclusions;
     }
 
     /** Bilder und Anhänge einer markierten Wurzel beschaffen; vor dem Aufbau der Beschaffung nichts. */

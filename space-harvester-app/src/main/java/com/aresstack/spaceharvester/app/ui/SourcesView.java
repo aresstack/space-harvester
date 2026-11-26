@@ -628,6 +628,15 @@ public final class SourcesView implements View {
                     "Globale Suche umschalten; explizite Auswahl bleibt möglich",
                     () -> saveField(entry, d -> d.withUsage(d.showInExplorer(), !d.includeInGlobalSearch()),
                             () -> { }, feedback::problem)));
+            row(EditableProperty.action(ExclusionsDialog.TITLE, "Übersicht …", Comic.INK,
+                    "Ausgeschlossene Ordner ansehen, wieder einblenden oder weitere ausschließen",
+                    () -> ExclusionsDialog.open(root, context, entry.id(),
+                            config.title() == null || config.title().isBlank() ? entry.id() : config.title(), () -> {
+                                AppContext.Navigator navigator = context.navigator();
+                                if (navigator != null) {
+                                    navigator.exclusionsChanged(entry.id());
+                                }
+                            })));
             row(EditableProperty.text("Anzeigename", config.title(), config.title(), "Anzeigenamen ändern",
                     (value, ok, failed) -> saveField(entry, d -> with(d, value, d.baseUrl(), d.directory()), ok,
                             failed)));
