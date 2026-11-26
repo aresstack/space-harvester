@@ -84,7 +84,6 @@ public final class ChatTurn {
     /** Die Fehlermeldung, wenn das Änderungsprotokoll nicht lesbar war; nie ein „nichts geändert“. */
     public static final String CHANGE_LOG_UNREADABLE = "Das Änderungsprotokoll ließ sich nicht lesen.";
     /** Höchstens so viele geänderte Seiten gehen mit Text an das Modell. */
-    static final int CHANGED_PAGES = ChatKnowledge.MAX_SOURCES;
     static final DateTimeFormatter CHANGE_DATE = DateTimeFormatter.ofPattern("d.M.yyyy HH:mm");
 
     /**
@@ -93,6 +92,8 @@ public final class ChatTurn {
      * folgt, wie viel der offenen Seite und jedes Werkzeugergebnisses mitgeht ({@link ChatRoom}). Erst auf dem Thread
      * des Turns bestimmt ({@link #budget()}), weil dafür der Modellkatalog des Dienstes gefragt werden kann.
      */
+    /** Suchauszüge je Frage, beim Anlegen des Turns aus der Einstellung gelesen ({@link ChatKnowledge#sources()}). */
+    private final int sources = ChatKnowledge.sources();
     private java.util.function.Supplier<ModelBudget> budgetSource = () -> null;
     private volatile ModelBudget budget;
     private volatile boolean budgetKnown;
@@ -1254,11 +1255,11 @@ public final class ChatTurn {
         ordered.sort((a, b) -> b.getValue().compareTo(a.getValue()));
         List<ChatKnowledge.Excerpt> excerpts = new ArrayList<>();
         for (Map.Entry<PageKey, Instant> entry : ordered) {
-            if (excerpts.size() >= CHANGED_PAGES) {
+            if (excerpts.size() >= sources) {
                 break;
             }
             ChatKnowledge.Excerpt excerpt = page(entry.getKey().sourceId(), entry.getKey().pageId(), null,
-                    excerptRoom(CHANGED_PAGES));
+                    excerptRoom(sources));
             if (excerpt != null) {
                 excerpts.add(new ChatKnowledge.Excerpt((excerpt.title() == null ? entry.getKey().pageId()
                         : excerpt.title()) + " (geändert am " + date(entry.getValue()) + ")", excerpt.sourceId(),
@@ -1330,7 +1331,7 @@ public final class ChatTurn {
         int listed = 0;
         for (Root root : roots) {
             ChatKnowledge.Excerpt excerpt = page(root.sourceId(), root.pageId(), null,
-                    excerptRoom(ChatKnowledge.MAX_SOURCES));
+                    excerptRoom(sources));
             if (excerpt == null) {
                 continue;
             }
@@ -1342,7 +1343,7 @@ public final class ChatTurn {
                 titles.append('\n');
                 listed++;
             }
-            if (excerpts.size() < ChatKnowledge.MAX_SOURCES - 1) {
+            if (excerpts.size() < sources - 1) {
                 excerpts.add(excerpt);
             }
         }
@@ -1411,12 +1412,12 @@ public final class ChatTurn {
             }
             ChatKnowledge.Excerpt excerpt = passage(hit);
             if (excerpt == null) {
-                excerpt = page(hit.sourceId(), hit.pageId(), hit.snippet(), excerptRoom(ChatKnowledge.MAX_SOURCES));
+                excerpt = page(hit.sourceId(), hit.pageId(), hit.snippet(), excerptRoom(sources));
             }
             if (excerpt != null) {
                 excerpts.add(excerpt);
             }
-            if (excerpts.size() >= ChatKnowledge.MAX_SOURCES) {
+            if (excerpts.size() >= sources) {
                 break;
             }
         }
@@ -1439,7 +1440,7 @@ public final class ChatTurn {
             }
             return text.isEmpty() ? null : new ChatKnowledge.Excerpt(hit.title(), hit.sourceId(),
                     hit.url() == null ? null : hit.url().toString(),
-                    ChatKnowledge.excerpt(text.toString(), excerptRoom(ChatKnowledge.MAX_SOURCES)), hit.pageId());
+                    ChatKnowledge.excerpt(text.toString(), excerptRoom(sources)), hit.pageId());
         } catch (RuntimeException gone) {
             return null;
         }

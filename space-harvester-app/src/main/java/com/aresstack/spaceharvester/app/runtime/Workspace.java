@@ -2213,7 +2213,7 @@ public final class Workspace {
 
     /**
      * Startet „Suchqualität messen“ (Q1) als Auftrag über genau den Suchweg des Chats: so viele Treffer im
-     * Chat-Kontext wie {@link com.aresstack.spaceharvester.app.chat.ChatKnowledge#MAX_SOURCES}, dieselbe Frist wie
+     * Chat-Kontext wie eingestellt ({@link com.aresstack.spaceharvester.app.chat.ChatKnowledge#sources()}), dieselbe Frist wie
      * {@link com.aresstack.spaceharvester.app.chat.ChatTurn#SEARCH_SECONDS}. Ergebnis und Bericht liegen im
      * Unterordner „Suchqualität“ des Ausgabeordners.
      *
@@ -2244,7 +2244,7 @@ public final class Workspace {
                                         boolean synonyms, boolean technicalTerms) {
         JobStatus status = harvester.searchQuality().submit(caller,
                 new com.aresstack.spaceharvester.application.quality.SearchQualityRuns.Request(suite, previous, output,
-                        com.aresstack.spaceharvester.app.chat.ChatKnowledge.MAX_SOURCES,
+                        com.aresstack.spaceharvester.app.chat.ChatKnowledge.sources(),
                         java.time.Duration.ofSeconds(com.aresstack.spaceharvester.app.chat.ChatTurn.SEARCH_SECONDS),
                         version, neighbors, synonyms, technicalTerms));
         activities.remember(status.id());

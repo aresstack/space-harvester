@@ -414,7 +414,7 @@ class ChatPanelTest {
         });
         assertThat(menus).extracting(labels -> labels.get(0).substring(0, labels.get(0).indexOf(':')))
                 .containsExactly(ChatPanel.PARALLEL_TABS, ChatPanel.PARALLEL_AGENTS, ChatPanel.PARALLEL_FILES,
-                        ChatPanel.QUIET_ROUNDS);
+                        ChatPanel.QUIET_ROUNDS, ChatPanel.SEARCH_EXCERPTS);
         assertThat(menus).allSatisfy(labels -> assertThat(labels.subList(1, 8))
                 .containsExactly("1", "2", "4", "8", "16", "32", "64"))
                 .allSatisfy(labels -> assertThat(labels.get(8))

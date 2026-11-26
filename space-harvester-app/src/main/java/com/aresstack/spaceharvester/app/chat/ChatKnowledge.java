@@ -190,8 +190,14 @@ public final class ChatKnowledge {
     static final String BEGIN = "--- KONTEXT ---";
     static final String END = "--- ENDE KONTEXT ---";
 
-    /** Höchstens so viele Auszüge je Frage (Breite der Suche). */
-    public static final int MAX_SOURCES = 8;
+    /**
+     * Wie viele Suchauszüge je Frage höchstens mitgehen (Breite der Suche): einstellbar im Menü am Dreieck der
+     * Chat-Leiste („Suchauszüge je Frage“, {@code app-state.json} unter {@value #SOURCES_KEY}); früher fest 8. Zusammen
+     * nie mehr, als in die Anfrage passt ({@link ChatRoom}).
+     */
+    public static final String SOURCES_KEY = "chat.web.excerpts";
+    /** Vorbelegung von {@link #SOURCES_KEY}. */
+    public static final int SOURCES_DEFAULT = 8;
     /**
      * Längster Auszug eines Treffers in der Quellenliste der Oberfläche (Vorschau einer Quelle, nicht für das Modell;
      * was an das Modell geht, folgt dem Platz in der Anfrage, {@link ChatRoom}).
@@ -253,7 +259,12 @@ public final class ChatKnowledge {
      * 24.000 Zeichen) oder die Höchstzahl erreicht ist; Auszüge ohne Text fallen weg.
      */
     public static Context assemble(List<Excerpt> excerpts, int maxChars) {
-        return assemble(excerpts, maxChars, MAX_SOURCES);
+        return assemble(excerpts, maxChars, sources());
+    }
+
+    /** Die eingestellte Zahl der Suchauszüge je Frage, mindestens 1. */
+    public static int sources() {
+        return com.aresstack.spaceharvester.app.ui.ParallelChoice.stored(SOURCES_KEY, SOURCES_DEFAULT);
     }
 
     static Context assemble(List<Excerpt> excerpts, int maxChars, int maxSources) {
