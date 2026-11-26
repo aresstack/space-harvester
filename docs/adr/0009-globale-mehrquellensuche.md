@@ -1,6 +1,7 @@
 # ADR 0009: Globale Mehrquellensuche im Core
 
-- Status: **Angenommen** (Strang M, 17.10.2026; Auftrag in #114).
+- Status: **Angenommen** (Strang M, 17.10.2026; Auftrag in #114). **Fortgeschrieben** am 26.11.2026, siehe die
+  Fortschreibung am Ende.
 - Bezüge: #28 (Titel-/Metadatensuche), #89 und [ADR 0004](0004-embeddings-und-reranking.md) (Relevanz),
   [ADR 0003](0003-lucene-cache.md) (ein Lucene-Index), [ADR 0006](0006-core-bibliothek-und-server.md) (Core ohne
   Spring), [ADR 0008](0008-desktop-app.md) (Desktop-App).
@@ -72,3 +73,12 @@ liegen aber schon in **einem** Lucene-Index; `sourceId + pageId` (`PageKey`) ist
   nötig wird er erst, wenn Quellen-IDs Nicht-ASCII-Zeichen erlauben.
 - Nicht Teil: Live-Suche bei den Quellen, Volltextindex, Hot-Reload der Quellen, eine Route
   `/sources/{id}/search`.
+
+## Fortschreibung (26.11.2026): Umfang der globalen Suche
+
+[ADR 0037](0037-quellenumfang-nutzungssteuerung-beschaffung.md) ändert, was „global“ heißt. Eine Suche ohne
+`sourceId` umfasst nicht mehr jede aktive Quelle, sondern nur die Quellen mit „In globale Suche einbeziehen“
+(`includeInGlobalSearch`, Vorgabe `true`; `SourceCatalog.globalSearchSources()`). Eine ausgeschlossene Quelle bleibt
+über eine ausdrückliche Auswahl durchsuchbar. Eine Liste aller Quellen, zu der ein Aufrufer die globale Anfrage vorab
+expandiert, zählt nicht als ausdrückliche Auswahl, und eine leere Auswahl heißt nie „alle“. Ein Index, globale
+Generation, globaler Cursor und Rechteprüfung bleiben unverändert.

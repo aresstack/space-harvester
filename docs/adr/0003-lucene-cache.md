@@ -1,6 +1,7 @@
 # ADR 0003: Eingebetteter Lucene-Cache und Ressourcenindex
 
-- Status: **Entschieden** (Strang C, 16.10.2026; Grundsatz „nur Lucene, kein Datenbankserver“ von Angelo)
+- Status: **Entschieden** (Strang C, 16.10.2026; Grundsatz „nur Lucene, kein Datenbankserver“ von Angelo).
+  **Fortgeschrieben** am 26.11.2026, siehe die Fortschreibung am Ende.
 - Issue: [#26](https://github.com/aresstack/space-harvester/issues/26); umgesetzt in #48, #57, #60. Nutzer des Caches:
   #27, #28, #29, #30, #31.
 
@@ -72,3 +73,11 @@ und `rawSha256` reichen dafür als Bezug; heute wird nichts davon angelegt.
   von Corenths getrenntem lexikalischem Register ab und reicht für Titel- und Metadatensuche; eine Volltextsuche
   mit eigenem Analyzer kann das ändern.
 - Ein Prozess je Verzeichnis (`write.lock`).
+
+## Fortschreibung (26.11.2026): Originale lokaler Dateien
+
+[ADR 0039](0039-austauschbare-originalspeicherung-und-portable-wissensbestaende.md) ändert die Aussage, der Cache
+halte die Originalbytes jeder Seite. Für lokale Dateien, die an Ort und Stelle lesbar sind, hält er einen Verweis
+(`local-original-reference/v1`) mit dem SHA-256 des Originals, dazu Extraktion, Index und Analysen, aber keine Kopie.
+Der Hash eines solchen Snapshots ist nicht der Hash des Originals; beide werden getrennt geführt. Für alle anderen
+Quellen gilt diese ADR unverändert. Der Grundsatz „nur Lucene, kein Datenbankserver“ bleibt.
