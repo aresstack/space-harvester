@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.deck.eakte.http;
 
+import com.aresstack.enterpriseai.proasteion.platform.network.ResumableDownload;
 import com.aresstack.spaceharvester.deck.eakte.EakteConnection;
 import com.aresstack.spaceharvester.deck.eakte.EakteEntry;
 import java.io.IOException;
@@ -11,7 +12,8 @@ import java.util.Map;
 /**
  * Eine angemeldete E-Akte-Verbindung über WebDAV, nur lesend ({@code PROPFIND Depth: 0/1} und {@code GET}). Leitet die E-Akte eine Anfrage zur Anmeldung um, wird die
  * SAML-Anforderung mit der bestehenden OpenAM-Sitzung abgeschlossen und die Anfrage einmal wiederholt (so auch das
- * Testprogramm v2.0); ein Kennwort wird dabei nie gesendet.
+ * Testprogramm v2.0); ein Kennwort wird dabei nie gesendet. Reißt ein Dokument beim Laden ab, wird es mit
+ * {@link ResumableDownload} ab dem letzten Byte fortgesetzt, höchstens {@code resumes} Mal (Angelo 26.11.2026, WLAN).
  */
 final class HttpEakteConnection implements EakteConnection {
 
@@ -20,11 +22,18 @@ final class HttpEakteConnection implements EakteConnection {
     private final SsoHttp http;
     private final SamlNavigator navigator;
     private final URI root;
+    private final java.util.function.IntSupplier resumes;
 
     HttpEakteConnection(SsoHttp http, SamlNavigator navigator) {
+        this(http, navigator, () -> 0);
+    }
+
+    /** @param resumes wie oft ein abgerissenes Dokument je Abruf höchstens fortgesetzt wird, 0 für nie */
+    HttpEakteConnection(SsoHttp http, SamlNavigator navigator, java.util.function.IntSupplier resumes) {
         this.http = http;
         this.navigator = navigator;
         this.root = http.profile().webdav();
+        this.resumes = java.util.Objects.requireNonNull(resumes, "resumes");
     }
 
     @Override
@@ -83,10 +92,24 @@ final class HttpEakteConnection implements EakteConnection {
             if (stream.status() / 100 != 2) {
                 throw rejected(stream.head(), "Dokument");
             }
-            long copied = body.transferTo(target);
+            long copied = stream.status() == 200 ? resumed(stream, target) : body.transferTo(target);
             http.trace("Dokument geladen: " + copied + " Byte (" + stream.contentType() + ")");
             return copied;
         }
+    }
+
+    /** Kopiert das Dokument und fordert nach einem Abriss den Rest mit derselben Sitzung ab dem letzten Byte an. */
+    private long resumed(SsoHttp.Stream first, java.io.OutputStream target) throws IOException {
+        final URI at = first.uri();
+        return ResumableDownload.copy(response(first), (from, validator) -> {
+            http.trace("Dokument abgerissen; setze ab Byte " + from + " fort");
+            return response(http.stream(at, ResumableDownload.rangeHeaders(from, validator)));
+        }, ResumableDownload.sink(target), Long.MAX_VALUE, Math.max(0, resumes.getAsInt()));
+    }
+
+    private static ResumableDownload.Response response(SsoHttp.Stream stream) {
+        return ResumableDownload.response(stream.status(),
+                name -> stream.headers().firstValue(name).orElse(null), stream.body());
     }
 
     @Override

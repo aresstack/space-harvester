@@ -24,14 +24,10 @@ public final class DeckChatTools implements ChatToolset {
     public static final String VIEW = "ansicht_lesen";
     public static final String TEXT = "text_lesen";
 
-    /** So viele Zeichen liefert ein Aufruf von {@value #TEXT} höchstens. */
-    static final int TEXT_CHARS = 12_000;
-    /** So viel der Ansicht geht schon mit der Systemnachricht mit („Was ich sehe, sieht der Bot“). */
-    static final int SYSTEM_VIEW_CHARS = 8_000;
-    static final int SYSTEM_BLOCK_CHARS = 2_000;
-    /** So viel der Ansicht liefert {@value #VIEW}. */
-    static final int VIEW_CHARS = 30_000;
-    static final int VIEW_BLOCK_CHARS = 4_000;
+    /** Wie viel ein lesendes Werkzeug je Aufruf liefert, für seine Beschreibung. */
+    static final String PIECE = "je Aufruf so viel, wie in die Anfrage passt, mit ab weiter.";
+    // Wie viel Ansicht und Text ein Aufruf liefert, folgt aus dem Platz in der Anfrage (ChatRoom); früher feste
+    // Zeichengrenzen (TEXT_CHARS, VIEW_CHARS, …, docs/grenzen.md „Modellkontext“).
 
     static final String SWITCHED = "Der Benutzer hat inzwischen einen anderen Bereich gewählt; die Frage galt dem "
             + "vorigen. Er soll sie dort neu stellen.";
@@ -57,9 +53,12 @@ public final class DeckChatTools implements ChatToolset {
         this.extra = extra;
     }
 
-    /** Liest die Ansicht jetzt (beim Senden), für die Systemnachricht; merkt sich ihre Texte für {@value #TEXT}. */
+    /**
+     * Liest die Ansicht jetzt (beim Senden), für die Systemnachricht, so viel, wie in die Anfrage passt
+     * ({@link ChatRoom}); merkt sich ihre Texte für {@value #TEXT}.
+     */
     public String snapshot() {
-        return capture(SYSTEM_VIEW_CHARS, SYSTEM_BLOCK_CHARS);
+        return capture();
     }
 
     /**
@@ -101,8 +100,7 @@ public final class DeckChatTools implements ChatToolset {
         tools.add(new AiChat.Tool(VIEW, "Liest, was der Benutzer im Bereich gerade sieht: Beschriftungen, Felder, "
                 + "Tabellen und Listen mit Auswahl (*), aufgeklappte Bäume und den Anfang jedes Textes (Editor, "
                 + "Spool, Dokument) mit Nummer.", "{\"type\":\"object\",\"properties\":{}}"));
-        tools.add(new AiChat.Tool(TEXT, "Liest einen Text der aktuellen Ansicht ganz, höchstens " + TEXT_CHARS
-                + " Zeichen je Aufruf; mit ab liest du weiter.", "{\"type\":\"object\",\"properties\":{"
+        tools.add(new AiChat.Tool(TEXT, "Liest einen Text der aktuellen Ansicht ganz, " + PIECE, "{\"type\":\"object\",\"properties\":{"
                         + "\"nr\":{\"type\":\"integer\",\"description\":\"Nummer des Textes aus der Ansicht, "
                         + "Vorgabe 1\"},"
                         + "\"ab\":{\"type\":\"integer\",\"description\":\"ab diesem Zeichen, Vorgabe 0\"}}}"));
@@ -147,10 +145,11 @@ public final class DeckChatTools implements ChatToolset {
     }
 
     private String view() {
-        return capture(VIEW_CHARS, VIEW_BLOCK_CHARS);
+        return capture();
     }
 
-    private String capture(int max, int perBlock) {
+    /** Die Ansicht in so vielen Zeichen, wie Platz ist; jeder Text der Ansicht bekommt davon den gleichen Teil. */
+    private String capture() {
         if (!stillShown.getAsBoolean()) return SWITCHED;
         String before = extra == null ? "" : extra.viewIdentity();
         String context = extra == null ? "" : extra.viewContext();
@@ -163,7 +162,14 @@ public final class DeckChatTools implements ChatToolset {
         }
         blocksIdentity = after;
         blocks = screen.blocks();
-        String display = screen.isEmpty() ? "(leer)" : screen.format(max, perBlock);
+        int max = ChatRoom.chars();
+        if (max == 0) {
+            return ChatRoom.FULL;
+        }
+        int room = Math.max(0, max - context.length());
+        int perBlock = screen.blocks().isEmpty() ? room : Math.max(0, room - screen.view().length())
+                / screen.blocks().size();
+        String display = screen.isEmpty() ? "(leer)" : screen.format(room, perBlock);
         return context.isEmpty() ? display : context + "\n\n" + display;
     }
 
@@ -191,8 +197,12 @@ public final class DeckChatTools implements ChatToolset {
 
     /** Ein Abschnitt eines langen Textes mit Angabe, wo es weitergeht. */
     static String page(String name, String text, int from) {
+        int room = ChatRoom.chars();
+        if (room == 0) {
+            return ChatRoom.FULL;
+        }
         int start = Math.max(0, Math.min(from, text.length()));
-        int end = Math.min(text.length(), start + TEXT_CHARS);
+        int end = (int) Math.min(text.length(), (long) start + room);
         StringBuilder b = new StringBuilder(name).append(" (Zeichen ").append(start).append('–').append(end)
                 .append(" von ").append(text.length()).append("):\n").append(text, start, end);
         if (end < text.length()) {

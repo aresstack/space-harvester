@@ -68,6 +68,9 @@ final class BscwWebDavSourceTest {
     /** Ob der Server für readme.txt HTTP-Range beantwortet. */
     private final java.util.concurrent.atomic.AtomicBoolean rangesForText =
             new java.util.concurrent.atomic.AtomicBoolean(true);
+    /** So oft antwortet der Server auf das Stück ab Byte 5 von readme.txt mit 503 (abgerissenes Stück). */
+    private final AtomicInteger failSecondChunk = new AtomicInteger();
+    private final java.util.List<String> textRanges = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
     private String root;
 
     @TempDir
@@ -620,6 +623,44 @@ final class BscwWebDavSourceTest {
         assertThat(downloads).hasValue(1);
     }
 
+    /**
+     * Angelo 26.11.2026 (WLAN): Reißt ein Stück ab, wird genau dieses Stück neu angefordert; die schon geladenen
+     * Stücke bleiben. Ohne Wiederholungen scheitert der Download sichtbar.
+     */
+    @Test
+    void aBrokenChunkIsRequestedAgainWithoutLoadingTheEarlierChunksAgain() throws Exception {
+        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        secrets.put("bscw-test", "reader", "secret");
+        BscwWebDavTransport transport = new BscwWebDavTransport(URI.create(root), "bscw-test", secrets,
+                destination -> HttpRoute.direct("test"), ProxyCredentials.none(), "test-agent", 1024, null);
+        String localId = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                root.replace("/146377797", "/666").getBytes(StandardCharsets.UTF_8));
+        Path target = data.resolve("readme.part");
+        BscwWebDavKnowledgeSource retrying = new BscwWebDavKnowledgeSource(
+                com.aresstack.enterpriseai.astu.knowledge.SourceAddress.of("bscw-test"), URI.create(root), transport, 20,
+                TikaDocumentText.shared(), 5,
+                new com.aresstack.spaceharvester.application.jobs.RetrySettings(2, java.time.Duration.ZERO,
+                        java.time.Duration.ZERO, 1));
+        failSecondChunk.set(1);
+
+        assertThat(retrying.downloadOriginal(localId, target, LocalFilesTextProjector::readable, 0))
+                .hasValue("text/plain");
+
+        assertThat(java.nio.file.Files.readAllBytes(target)).isEqualTo(TEXT_CONTENT);
+        assertThat(textRanges).as("das erste Stück nur einmal, das abgerissene zweimal")
+                .filteredOn(range -> range.startsWith("bytes=0-")).hasSize(1);
+        assertThat(textRanges).filteredOn(range -> range.startsWith("bytes=5-")).hasSize(2);
+
+        BscwWebDavKnowledgeSource once = new BscwWebDavKnowledgeSource(
+                com.aresstack.enterpriseai.astu.knowledge.SourceAddress.of("bscw-test"), URI.create(root), transport, 20,
+                TikaDocumentText.shared(), 5,
+                new com.aresstack.spaceharvester.application.jobs.RetrySettings(0, java.time.Duration.ZERO,
+                        java.time.Duration.ZERO, 1));
+        failSecondChunk.set(1);
+        assertThatThrownBy(() -> once.downloadOriginal(localId, target, LocalFilesTextProjector::readable, 0))
+                .isInstanceOf(KnowledgeSourceException.class);
+    }
+
     @Test
     void genericWebDavMimeDoesNotPreventDownloadingOneNoteForExtraction() throws Exception {
         KnowledgeSourcePort source = open("reader", "secret");
@@ -733,6 +774,12 @@ final class BscwWebDavSourceTest {
                 }
                 if ("/sec/bscw.cgi/666".equals(path)) {
                     String range = exchange.getRequestHeaders().getFirst("Range");
+                    textRanges.add(String.valueOf(range));
+                    if (range != null && range.startsWith("bytes=5-") && failSecondChunk.getAndUpdate(
+                            left -> Math.max(0, left - 1)) > 0) {
+                        respond(exchange, 503, new byte[0], "text/plain");
+                        return;
+                    }
                     java.util.regex.Matcher bytes = range == null ? null
                             : java.util.regex.Pattern.compile("bytes=(\\d+)-(\\d+)").matcher(range);
                     if (bytes != null && bytes.matches() && rangesForText.get()) {

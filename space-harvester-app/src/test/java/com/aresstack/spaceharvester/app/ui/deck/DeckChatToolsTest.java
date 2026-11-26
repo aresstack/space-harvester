@@ -71,9 +71,13 @@ class DeckChatToolsTest {
         AtomicBoolean shown = new AtomicBoolean(true);
         DeckChatTools tools = new DeckChatTools(panel::get, shown::get, null);
 
-        String system = DeckChatTools.systemMessage("Command Deck › NDV", "NDV.", List.of(), tools.snapshot());
-        String view = tools.run(new AiChat.ToolCall("1", DeckChatTools.VIEW, "{}"));
-        String text = tools.run(new AiChat.ToolCall("2", DeckChatTools.TEXT, "{\"nr\":1,\"ab\":12000}"));
+        // Wie viel mitgeht, folgt aus dem Platz in der Anfrage (ChatRoom); hier ein kleines Modell.
+        String system = DeckChatTools.systemMessage("Command Deck › NDV", "NDV.", List.of(),
+                com.aresstack.spaceharvester.app.chat.ChatRoom.within(8_000, tools::snapshot));
+        String view = com.aresstack.spaceharvester.app.chat.ChatRoom.within(30_000,
+                () -> tools.run(new AiChat.ToolCall("1", DeckChatTools.VIEW, "{}")));
+        String text = com.aresstack.spaceharvester.app.chat.ChatRoom.within(12_000,
+                () -> tools.run(new AiChat.ToolCall("2", DeckChatTools.TEXT, "{\"nr\":1,\"ab\":12000}")));
 
         assertThat(system).contains("Bibliothek PROD", "* MAP01 | Map", "  PGM01 | Programm", "DEFINE DATA LOCAL",
                 "ganz mit text_lesen nr=1").doesNotContain("geheim", "Verdeckt");

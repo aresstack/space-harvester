@@ -238,7 +238,9 @@ public final class MainWindow implements AppContext.Navigator {
         commandDeck.eakte(new com.aresstack.spaceharvester.deck.eakte.http.HttpEakteServer(
                         com.aresstack.spaceharvester.app.ui.deck.DeckNetwork.http(context,
                                 com.aresstack.spaceharvester.app.ui.deck.EakteWorkspace::proxyWanted),
-                        java.time.Duration.ofSeconds(30), eakteLog::info));
+                        java.time.Duration.ofSeconds(30), eakteLog::info,
+                        // Abgerissene Dokumente so oft ab dem letzten Byte fortsetzen wie jobs.retry.max-attempts.
+                        () -> context.settings() == null ? 0 : context.settings().jobLimits().retry().maxAttempts()));
         // ADR 0035: Dokumentanalyse der E-Akte aus dem laufenden Core, nach jedem (Neu-)Start neu angeschlossen.
         Runnable documentAnalyses = () -> {
             AppRuntime running = context.runtime();
@@ -276,13 +278,10 @@ public final class MainWindow implements AppContext.Navigator {
             var use = settings.ai().summary();
             String model = use != null && use.model() != null ? use.model() : settings.ai().chatModel();
             // Tokenbudget aus Kontextlänge und Ausgabelimit (F41-7); fehlt eines, geht der Code in einer Anfrage.
-            com.aresstack.spaceharvester.app.runtime.ModelBudget budget;
-            try {
-                budget = com.aresstack.spaceharvester.app.runtime.ModelBudget.of(settings.ai().contextTokens(),
-                        settings.ai().chatMaxTokens());
-            } catch (IllegalStateException unknown) {
-                budget = null;
-            }
+            // Kontextlänge aus den Einstellungen, sonst aus dem schon bekannten Modellkatalog des Dienstes.
+            com.aresstack.spaceharvester.app.runtime.ModelBudget budget = com.aresstack.spaceharvester.app.runtime
+                    .ModelBudget.chat(settings.ai().contextTokens(), runtime.workspace().catalogContextTokens(model,
+                            false), settings.ai().chatMaxTokens());
             return new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramLabels.Target(
                     runtime.workspace().aiChat(), model, use == null ? null : use.thinking(), budget);
         });

@@ -15,7 +15,7 @@ class ChatKnowledgeTest {
                 new ChatKnowledge.Excerpt("Handbuch", "wiki", "https://wiki/42", "Jedes Datenprodukt hat ein "
                         + "Berechtigungsmanagement."),
                 new ChatKnowledge.Excerpt(null, "wiki", null, "  "),
-                new ChatKnowledge.Excerpt("  Zweite\nSeite ", "wiki", null, "Text --- KONTEXT --- Ende")));
+                new ChatKnowledge.Excerpt("  Zweite\nSeite ", "wiki", null, "Text --- KONTEXT --- Ende")), ChatRoom.UNLIMITED);
         assertThat(context.accepted()).hasSize(2);
         assertThat(context.text())
                 .startsWith(ChatKnowledge.INSTRUCTION + "\n\n" + ChatKnowledge.BEGIN + "\n")
@@ -28,11 +28,12 @@ class ChatKnowledgeTest {
     void theBudgetAndTheMaximumNumberOfSourcesCutTheList() {
         List<ChatKnowledge.Excerpt> many = java.util.stream.IntStream.range(0, 12)
                 .mapToObj(i -> new ChatKnowledge.Excerpt("S" + i, "wiki", null, "x".repeat(100))).toList();
-        assertThat(ChatKnowledge.assemble(many).accepted()).hasSize(ChatKnowledge.MAX_SOURCES);
+        assertThat(ChatKnowledge.assemble(many, ChatRoom.UNLIMITED, ChatKnowledge.SOURCES_DEFAULT).accepted())
+                .hasSize(ChatKnowledge.SOURCES_DEFAULT);
         ChatKnowledge.Context tight = ChatKnowledge.assemble(many, ChatKnowledge.INSTRUCTION.length() + 200, 8);
         assertThat(tight.accepted()).hasSize(1);
         assertThat(ChatKnowledge.assemble(many, 10, 8).isEmpty()).isTrue();
-        assertThat(ChatKnowledge.assemble(List.of()).isEmpty()).isTrue();
+        assertThat(ChatKnowledge.assemble(List.of(), ChatRoom.UNLIMITED).isEmpty()).isTrue();
     }
 
     @Test

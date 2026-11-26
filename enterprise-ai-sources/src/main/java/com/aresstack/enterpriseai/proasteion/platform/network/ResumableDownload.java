@@ -1,8 +1,15 @@
 package com.aresstack.enterpriseai.proasteion.platform.network;
 
+import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
+import java.io.OutputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Setzt einen abgerissenen HTTP-Download dort fort, wo er abriss, statt ihn zu verwerfen und von vorn zu beginnen
@@ -192,6 +199,105 @@ public final class ResumableDownload {
                 closeQuietly(current);
             }
         }
+    }
+
+    /** Liest eine Kopfzeile der Antwort, {@code null} wenn sie fehlt; so bleibt der Baustein frei von HTTP-Clients. */
+    public interface Headers {
+
+        String header(String name);
+    }
+
+    /**
+     * Die Antwort für {@link #copy} aus Status und Kopfzeilen: Validator {@code ETag}, sonst {@code Last-Modified};
+     * die Länge aus {@code Content-Length} bei 200. Die eine Stelle, an der jeder Adapter seine Antwort übersetzt.
+     */
+    public static Response response(int status, Headers headers, InputStream body) {
+        String validator = headers.header("ETag");
+        if (validator == null) {
+            validator = headers.header("Last-Modified");
+        }
+        long length = -1;
+        String contentLength = status == 200 ? headers.header("Content-Length") : null;
+        if (contentLength != null) {
+            try {
+                length = Long.parseLong(contentLength.trim());
+            } catch (NumberFormatException e) {
+                length = -1;
+            }
+        }
+        return new Response(status, headers.header("Content-Range"), validator, body, length);
+    }
+
+    /** Die Kopfzeilen einer Folgeanfrage ab Byte {@code from}: {@code Range} und, mit Validator, {@code If-Range}. */
+    public static Map<String, String> rangeHeaders(long from, String validator) {
+        Map<String, String> headers = new LinkedHashMap<String, String>();
+        headers.put("Range", "bytes=" + from + "-");
+        if (validator != null) {
+            headers.put("If-Range", validator);
+        }
+        return headers;
+    }
+
+    /** Ein Puffer im Speicher; ein Neubeginn leert ihn. */
+    public static Sink sink(final ByteArrayOutputStream out) {
+        return new Sink() {
+            @Override
+            public void write(byte[] buffer, int offset, int length) {
+                out.write(buffer, offset, length);
+            }
+
+            @Override
+            public void restart() {
+                out.reset();
+            }
+        };
+    }
+
+    /** Eine Datei; ein Neubeginn kürzt sie auf null. Ein unterbrochener Thread bricht ab. */
+    public static Sink sink(final FileChannel out) {
+        return new Sink() {
+            @Override
+            public void write(byte[] buffer, int offset, int length) throws IOException {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new InterruptedIOException("Download unterbrochen");
+                }
+                ByteBuffer bytes = ByteBuffer.wrap(buffer, offset, length);
+                while (bytes.hasRemaining()) {
+                    out.write(bytes);
+                }
+            }
+
+            @Override
+            public void restart() throws IOException {
+                out.truncate(0);
+                out.position(0);
+            }
+        };
+    }
+
+    /**
+     * Ein Datenstrom des Aufrufers, der sich nicht zurücksetzen lässt: Fortsetzen mit 206 geht, ein Neubeginn nur,
+     * solange nichts geschrieben ist. Hat sich der Inhalt nach den ersten Bytes geändert, scheitert der Abruf, statt
+     * zwei Fassungen zu mischen; der Aufrufer fordert ihn dann als Ganzes neu an.
+     */
+    public static Sink sink(final OutputStream out) {
+        return new Sink() {
+            private long written;
+
+            @Override
+            public void write(byte[] buffer, int offset, int length) throws IOException {
+                out.write(buffer, offset, length);
+                written += length;
+            }
+
+            @Override
+            public void restart() throws IOException {
+                if (written > 0) {
+                    throw new IOException("Inhalt hat sich während des Abrufs geändert, nach " + written
+                            + " Bytes; Fortsetzen nicht möglich");
+                }
+            }
+        };
     }
 
     /** Die Gesamtlänge aus {@code bytes <start>-<end>/<total>}, sonst {@code -1}. */

@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.nlp;
 
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
+import com.aresstack.enterpriseai.proasteion.platform.network.ResumableDownload;
 import com.aresstack.spaceharvester.source.network.ProxyRoutes;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import com.aresstack.spaceharvester.source.network.TrustPolicy;
@@ -32,9 +33,6 @@ import javax.net.ssl.TrustManager;
 public final class HttpModelDownload implements ParserModelInstaller.Download,
         com.aresstack.spaceharvester.app.hf.HuggingFaceClient.Transport {
 
-    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(30);
-    /** Höchstens so lange auf die Antwortköpfe warten; ein hängender Datenstrom endet über „Abbrechen“. */
-    private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(60);
 
     private final ProxySettings proxy;
     private final TrustSettings tls;
@@ -53,7 +51,7 @@ public final class HttpModelDownload implements ParserModelInstaller.Download,
 
     /** Baut den Client erst beim Laden, damit reine Statusabfragen nichts aufbauen. */
     private HttpClient client() {
-        return routed(proxy, tls).followRedirects(HttpClient.Redirect.NORMAL).connectTimeout(CONNECT_TIMEOUT).build();
+        return routed(proxy, tls).followRedirects(HttpClient.Redirect.NORMAL).connectTimeout(com.aresstack.spaceharvester.app.ui.AppTimeouts.shared().get(com.aresstack.spaceharvester.app.ui.AppTimeouts.Value.DOWNLOAD_CONNECT)).build();
     }
 
     /**
@@ -100,11 +98,15 @@ public final class HttpModelDownload implements ParserModelInstaller.Download,
     }
 
     private HttpResponse<InputStream> send(URI target, long rangeFrom) throws IOException {
+        return send(target, rangeFrom > 0 ? ResumableDownload.rangeHeaders(rangeFrom, null) : java.util.Map.of());
+    }
+
+    private HttpResponse<InputStream> send(URI target, java.util.Map<String, String> headers) throws IOException {
         HttpRequest.Builder request = HttpRequest.newBuilder(target).header("User-Agent", userAgent)
-                .timeout(RESPONSE_TIMEOUT).GET();
-        if (rangeFrom > 0) {
-            request.header("Range", "bytes=" + rangeFrom + "-");
-        }
+                // Höchstens so lange auf die Antwortköpfe warten (Einstellungen › Allgemein); ein hängender Datenstrom
+                // endet über „Abbrechen“.
+                .timeout(com.aresstack.spaceharvester.app.ui.AppTimeouts.shared().get(com.aresstack.spaceharvester.app.ui.AppTimeouts.Value.DOWNLOAD_RESPONSE)).GET();
+        headers.forEach(request::header);
         try {
             return client().send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
         } catch (InterruptedException e) {
@@ -123,8 +125,19 @@ public final class HttpModelDownload implements ParserModelInstaller.Download,
             throw new IOException("Download fehlgeschlagen: HTTP " + response.statusCode() + " von "
                     + response.uri().getHost());
         }
-        long length = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
-        return new ParserModelInstaller.Body(response.body(), length);
+        ResumableDownload.Response first = response(response);
+        return new ParserModelInstaller.Body(first.body(), first.length(), first.validator());
+    }
+
+    /** Der Rest ab Byte {@code from}, mit {@code If-Range}, damit eine geänderte Datei von vorn kommt. */
+    @Override
+    public ResumableDownload.Response rest(URI target, long from, String validator) throws IOException {
+        return response(send(target, ResumableDownload.rangeHeaders(from, validator)));
+    }
+
+    private static ResumableDownload.Response response(HttpResponse<InputStream> response) {
+        return ResumableDownload.response(response.statusCode(),
+                name -> response.headers().firstValue(name).orElse(null), response.body());
     }
 
     /** Fragt je Ziel die Proxy-Regel der App. */

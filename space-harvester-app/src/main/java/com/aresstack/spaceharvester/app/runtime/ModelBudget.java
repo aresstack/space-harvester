@@ -44,6 +44,24 @@ public record ModelBudget(int contextTokens, int answerTokens) {
         return new ModelBudget(contextTokens, answerTokens);
     }
 
+    /** Wie {@link #of}, aber {@code null}, wenn Kontextlänge oder Ausgabelimit fehlen (dann gilt keine Grenze). */
+    public static ModelBudget known(Integer contextTokens, Integer answerTokens) {
+        return contextTokens == null || contextTokens < 1 || answerTokens == null || answerTokens < 1 ? null
+                : new ModelBudget(contextTokens, answerTokens);
+    }
+
+    /**
+     * Das Budget des Chat-Modells: Kontextlänge aus den Einstellungen ({@code ai.context-tokens}), sonst wie der
+     * KI-Dienst sie in seinem Modellkatalog meldet; Antwortreserve das Ausgabelimit ({@code ai.chat-max-tokens}), sonst
+     * dessen Vorgabe im Core, mit der auch gesendet wird. {@code null}, wenn keine Kontextlänge bekannt ist.
+     */
+    public static ModelBudget chat(Integer configuredContext, Integer catalogContext, Integer chatMaxTokens) {
+        Integer context = configuredContext != null && configuredContext > 0 ? configuredContext : catalogContext;
+        int answer = chatMaxTokens != null && chatMaxTokens > 0 ? chatMaxTokens
+                : com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS;
+        return known(context, answer);
+    }
+
     /** Vorsichtige Schätzung der Tokens eines Anfrageteils, siehe {@link #CHARACTERS_PER_TOKEN}. */
     public static int tokens(String text) {
         int byLength = (text.length() + CHARACTERS_PER_TOKEN - 1) / CHARACTERS_PER_TOKEN;

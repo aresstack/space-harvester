@@ -190,13 +190,18 @@ public final class ChatKnowledge {
     static final String BEGIN = "--- KONTEXT ---";
     static final String END = "--- ENDE KONTEXT ---";
 
-    /** Zeichenbudget des ganzen Kontextblocks (etwa 6000 Tokens). */
-    public static final int MAX_CONTEXT_CHARS = 24_000;
-    /** Höchstens so viele Auszüge je Frage. */
-    public static final int MAX_SOURCES = 8;
-    /** Längster Auszug einer einzelnen Seite, wenn der Chat ganze Seiten mitgibt. */
-    public static final int MAX_PAGE_CHARS = 12_000;
-    /** Längster Auszug eines Treffers der Suche. */
+    /**
+     * Wie viele Suchauszüge je Frage höchstens mitgehen (Breite der Suche): einstellbar im Menü am Dreieck der
+     * Chat-Leiste („Suchauszüge je Frage“, {@code app-state.json} unter {@value #SOURCES_KEY}); früher fest 8. Zusammen
+     * nie mehr, als in die Anfrage passt ({@link ChatRoom}).
+     */
+    public static final String SOURCES_KEY = "chat.web.excerpts";
+    /** Vorbelegung von {@link #SOURCES_KEY}. */
+    public static final int SOURCES_DEFAULT = 8;
+    /**
+     * Längster Auszug eines Treffers in der Quellenliste der Oberfläche (Vorschau einer Quelle, nicht für das Modell;
+     * was an das Modell geht, folgt dem Platz in der Anfrage, {@link ChatRoom}).
+     */
     public static final int MAX_HIT_CHARS = 3_000;
 
     private ChatKnowledge() {
@@ -249,9 +254,17 @@ public final class ChatKnowledge {
         return text.toString();
     }
 
-    /** Baut den Block aus den Auszügen, bis Budget oder Höchstzahl erreicht sind; Auszüge ohne Text fallen weg. */
-    public static Context assemble(List<Excerpt> excerpts) {
-        return assemble(excerpts, MAX_CONTEXT_CHARS, MAX_SOURCES);
+    /**
+     * Baut den Block aus den Auszügen, bis der Platz in der Anfrage ({@code maxChars}, {@link ChatRoom}; früher fest
+     * 24.000 Zeichen) oder die Höchstzahl erreicht ist; Auszüge ohne Text fallen weg.
+     */
+    public static Context assemble(List<Excerpt> excerpts, int maxChars) {
+        return assemble(excerpts, maxChars, sources());
+    }
+
+    /** Die eingestellte Zahl der Suchauszüge je Frage, mindestens 1. */
+    public static int sources() {
+        return com.aresstack.spaceharvester.app.ui.ParallelChoice.stored(SOURCES_KEY, SOURCES_DEFAULT);
     }
 
     static Context assemble(List<Excerpt> excerpts, int maxChars, int maxSources) {

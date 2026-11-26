@@ -2213,7 +2213,7 @@ public final class Workspace {
 
     /**
      * Startet „Suchqualität messen“ (Q1) als Auftrag über genau den Suchweg des Chats: so viele Treffer im
-     * Chat-Kontext wie {@link com.aresstack.spaceharvester.app.chat.ChatKnowledge#MAX_SOURCES}, dieselbe Frist wie
+     * Chat-Kontext wie eingestellt ({@link com.aresstack.spaceharvester.app.chat.ChatKnowledge#sources()}), dieselbe Frist wie
      * {@link com.aresstack.spaceharvester.app.chat.ChatTurn#SEARCH_SECONDS}. Ergebnis und Bericht liegen im
      * Unterordner „Suchqualität“ des Ausgabeordners.
      *
@@ -2244,7 +2244,7 @@ public final class Workspace {
                                         boolean synonyms, boolean technicalTerms) {
         JobStatus status = harvester.searchQuality().submit(caller,
                 new com.aresstack.spaceharvester.application.quality.SearchQualityRuns.Request(suite, previous, output,
-                        com.aresstack.spaceharvester.app.chat.ChatKnowledge.MAX_SOURCES,
+                        com.aresstack.spaceharvester.app.chat.ChatKnowledge.sources(),
                         java.time.Duration.ofSeconds(com.aresstack.spaceharvester.app.chat.ChatTurn.SEARCH_SECONDS),
                         version, neighbors, synonyms, technicalTerms));
         activities.remember(status.id());
@@ -2308,6 +2308,44 @@ public final class Workspace {
     /** Die Modelle des KI-Dienstes mit den gespeicherten Einstellungen (Modellwahl im Menü am Dreieck); ohne Dienst leer. */
     public List<AiModel> aiModels() {
         return harvester.aiModels();
+    }
+
+    /** Kontextlängen der Modelle laut Katalog des KI-Dienstes; leer, solange nicht gefragt oder nicht abrufbar. */
+    private volatile java.util.Map<String, Integer> catalogContexts;
+
+    /**
+     * Die Kontextlänge eines Modells, wie der KI-Dienst sie in seinem Modellkatalog meldet ({@code context_length}),
+     * oder {@code null}, wenn er keine nennt. Mit {@code fetch} fragt der erste Aufruf den Katalog (Netz, nie auf dem
+     * EDT; gefragt wird nur aus einer Benutzeraktion, etwa dem Senden im Chat), danach gilt die Antwort für diese
+     * Laufzeit; ist der Dienst nicht erreichbar, bleibt es für diese Laufzeit bei „unbekannt“. Ohne {@code fetch} nur,
+     * was schon bekannt ist.
+     */
+    public Integer catalogContextTokens(String model, boolean fetch) {
+        if (model == null || model.isBlank()) {
+            return null;
+        }
+        java.util.Map<String, Integer> known = catalogContexts;
+        if (known == null && fetch) {
+            synchronized (this) {
+                known = catalogContexts;
+                if (known == null) {
+                    java.util.Map<String, Integer> loaded = new java.util.HashMap<>();
+                    try {
+                        for (AiModel listed : aiModels()) {
+                            if (listed.contextTokens() > 0) {
+                                loaded.put(listed.id(), listed.contextTokens());
+                            }
+                        }
+                    } catch (RuntimeException unavailable) {
+                        System.getLogger(Workspace.class.getName()).log(System.Logger.Level.INFO, "Modellkatalog für die Kontextlänge nicht abrufbar: "
+                                + unavailable.getClass().getSimpleName());
+                    }
+                    known = java.util.Map.copyOf(loaded);
+                    catalogContexts = known;
+                }
+            }
+        }
+        return known == null ? null : known.get(model.strip());
     }
 
     /** Misst die Vektordimension eines Embedding-Modells für {@code embedding-dimensions}. */

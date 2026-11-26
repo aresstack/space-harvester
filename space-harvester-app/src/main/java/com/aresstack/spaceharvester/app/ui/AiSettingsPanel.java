@@ -76,11 +76,16 @@ final class AiSettingsPanel {
     static final String OLLAMA_HINT = "Ollama-Server, z. B. " + AiProvider.OLLAMA_DEFAULT_URL
             + "; Chat, Embeddings und Bilder über dessen /v1, ohne API-Key";
     final JTextField baseUrl = Comic.field(32);
-    /** Kontextlänge je Anfrage an Ollama ({@code context-tokens}); leer: Standard des Core. */
+    /**
+     * Kontextlänge des Chat-Modells ({@code context-tokens}): bei Ollama je Anfrage gesendet (leer: Standard des Core),
+     * bei jedem Dienst die Grundlage dafür, wie viel Text der Chat je Anfrage mitgibt (leer: wie der Dienst meldet).
+     */
     final JTextField contextTokens = Comic.field(8);
     static final String CONTEXT_TOKENS_LABEL = "Kontextlänge";
     static final String CONTEXT_TOKENS_HINT = "Tokens je Anfrage (num_ctx); leer: 8192. Größer braucht mehr "
             + "Grafikspeicher, Ollama lädt das Modell dafür neu";
+    static final String CONTEXT_TOKENS_REMOTE_HINT = "Tokens, die das Chat-Modell je Anfrage fasst; daraus folgt, wie "
+            + "viel Text der Chat mitgibt. Leer: wie der KI-Dienst es in seiner Modellliste meldet, sonst keine Grenze";
     /** So viele Sekunden darf Ollama ein Modell laden ({@code load-timeout}); leer: Standard des Core. */
     final JTextField loadTimeout = Comic.field(8);
     static final String LOAD_TIMEOUT_LABEL = "Ladefrist";
@@ -907,7 +912,8 @@ final class AiSettingsPanel {
         rows.visible(access, !ollama);
         rows.visible(entryRow, !ollama && keePassChosen());
         rows.visible(apiKey, !ollama);
-        rows.visible(contextTokens, ollama);
+        // Die Kontextlänge gilt für jeden Dienst: bei Ollama gesendet, sonst nur für die Textmenge des Chats.
+        rows.hint(contextTokens, ollama ? CONTEXT_TOKENS_HINT : CONTEXT_TOKENS_REMOTE_HINT);
         rows.visible(loadTimeout, ollama);
         rows.visible(loadPollInterval, ollama);
         rows.hint(baseUrl, ollama ? OLLAMA_HINT : OPENAI_HINT);

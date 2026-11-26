@@ -746,7 +746,8 @@ public final class RemoteAi {
             for (ModelCategory category : descriptor.categories()) {
                 categories.add(category.key());
             }
-            models.add(new AiModel(descriptor.modelId(), descriptor.displayName(), categories));
+            models.add(new AiModel(descriptor.modelId(), descriptor.displayName(), categories,
+                    descriptor.contextLength()));
         }
         return List.copyOf(models);
     }

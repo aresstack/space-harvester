@@ -68,6 +68,8 @@ class CommandDeckTest {
                 Thread.sleep(50);
             }
             assertThat(session.state()).isEqualTo(SessionState.CONNECTED);
+            // Der Zustand wechselt im Netz-Thread, die Statuszeile folgt danach über die Ereignis-Warteschlange.
+            waitFor(() -> deck.terminal().statusText().contains("Verbunden"), until);
             SwingUtilities.invokeAndWait(() -> {
                 assertThat(deck.terminal().selected()).isSameAs(session);
                 Component screen = session.view(JComponent.class).orElseThrow();

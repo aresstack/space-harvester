@@ -86,8 +86,8 @@ public final class FilesChatTools implements ChatToolset {
                                 + "\"pfad\":{\"type\":\"string\",\"description\":\"Unterordner relativ zum offenen "
                                 + "Ordner, leer für ihn selbst\"}}}"),
                 new AiChat.Tool(READ, "Liest den Text einer Datei im offenen Ordner oder einem Unterordner, auch "
-                        + "PDF, Word, Excel, PowerPoint, OpenDocument und Mails; höchstens "
-                        + DeckChatTools.TEXT_CHARS + " Zeichen je Aufruf, mit ab weiter.",
+                        + "PDF, Word, Excel, PowerPoint, OpenDocument und Mails; "
+                        + DeckChatTools.PIECE,
                         "{\"type\":\"object\",\"properties\":{"
                                 + "\"pfad\":{\"type\":\"string\",\"description\":\"Datei relativ zum offenen "
                                 + "Ordner\"},"

@@ -76,10 +76,10 @@ public final class MvsDiagnosisSettings {
         }
     }
 
-    private final DeckNumbers<Value> numbers;
+    private final com.aresstack.spaceharvester.app.ui.StateNumbers<Value> numbers;
 
     public MvsDiagnosisSettings(AppState state) {
-        this.numbers = new DeckNumbers<>(state, PREFIX, Value.class);
+        this.numbers = new com.aresstack.spaceharvester.app.ui.StateNumbers<>(state, PREFIX, Value.class);
     }
 
     /** Die Werte der laufenden App. */

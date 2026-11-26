@@ -61,10 +61,13 @@ class SourceConfiguration {
         return LocalFilesSourceAdapter.following(manager);
     }
 
-    /** Expose the BSCW Classic WebDAV adapter as a selectable source type. */
+    /**
+     * Quellentyp {@code bscw} (WebDAV), mit {@code space-harvester.jobs.retry}: Ein abgerissenes Download-Stück wird neu
+     * angefordert, die schon geladenen Stücke bleiben.
+     */
     @Bean
-    BscwSourceAdapter bscwSourceAdapter(TikaDocumentText documentText) {
-        return new BscwSourceAdapter(documentText);
+    BscwSourceAdapter bscwSourceAdapter(TikaDocumentText documentText, JobsProperties jobs) {
+        return new BscwSourceAdapter(documentText).withRetry(jobs.retry().toSettings());
     }
 
     /** Quellentyp {@code mediawiki}: Seiten einer MediaWiki-Site über die {@code api.php} (#187). */
@@ -107,8 +110,9 @@ class SourceConfiguration {
 
     /** Quellentyp {@code jira}: Vorgänge von Jira Data Center über die REST-API 2, nur lesend. */
     @Bean
-    SourceAdapter jiraSourceAdapter() {
-        return EacSourceAdapters.jira();
+    SourceAdapter jiraSourceAdapter(JobsProperties jobs) {
+        // jobs.retry.max-attempts als maxRetries: Wiederholungen und Fortsetzen abgerissener Anhänge.
+        return EacSourceAdapters.jira().withRetry(jobs.retry().toSettings());
     }
 
     /**

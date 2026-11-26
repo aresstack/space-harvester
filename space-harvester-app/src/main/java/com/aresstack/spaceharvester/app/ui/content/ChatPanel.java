@@ -18,6 +18,7 @@ import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.chat.ChatKnowledge;
 import com.aresstack.spaceharvester.app.chat.ChatNode;
 import com.aresstack.spaceharvester.app.chat.ChatRecord;
+import com.aresstack.spaceharvester.app.chat.ChatRoom;
 import com.aresstack.spaceharvester.app.chat.ChatStore;
 import com.aresstack.spaceharvester.app.chat.ChatTurn;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
@@ -161,16 +162,12 @@ public final class ChatPanel extends JPanel {
     static final String WEB_ON = "Websuche für diesen Chat ist an (Klick: aus)";
     static final String WEB_UNAVAILABLE = "Websuche nicht verfügbar: Firefox nicht gefunden (Pfad mit "
             + "-Denterpriseai.firefox=... angeben)";
-    static final String WEB_BUDGET_LABEL = "Browser-Budget";
-    static final String WEB_BUDGET_TIP = "Browser-Budget: %d Werkzeugrunden je Antwort, Tabs und Verzögerung";
+    static final String WEB_BUDGET_LABEL = "Browser-Einstellungen";
+    /** Kein Rundenbudget mehr (Angelo 26.11.2026): Der Chat sucht, bis er fertig ist; am Pfeil bleibt der Browser. */
+    static final String WEB_BUDGET_TIP = "Browser-Einstellungen: Profil, Verzögerung, menschliche Eingabe";
     static final String BOTH_ON_WARNING = "Websuche und interne Suche sind gleichzeitig an. "
             + "Inhalte aus Wissensquellen können in Browseraufrufe einfließen.";
     /** Vorgaben wie {@code BrowserBudget} und {@code BrowserLoad} im Enterprise AI Client. */
-    static final int WEB_BUDGET_DEFAULT = 20;
-    static final int WEB_BUDGET_MIN = 1;
-    static final int WEB_BUDGET_MAX = 999;
-    static final int WEB_BUDGET_SLIDER_MIN = 4;
-    static final int WEB_BUDGET_SLIDER_MAX = 60;
     /**
      * Die drei Grenzen der Parallelität im Menü am Dreieck der Chat-Leiste (Angelo 24.11.2026), mit denselben Stufen
      * und „Benutzerdefiniert …“ wie bei den Aufträgen: Tabs der Websuche, Agenten der internen Suche, Dateien und
@@ -188,6 +185,9 @@ public final class ChatPanel extends JPanel {
      * nicht. Vorbelegt wie askai ({@code stagnationRounds} 3), im Menü am Dreieck einstellbar.
      */
     static final String QUIET_ROUNDS = "Runden ohne Neues";
+    /** Menüeintrag und Schlüssel der Suchauszüge je Frage ({@link ChatKnowledge#SOURCES_KEY}). */
+    static final String SEARCH_EXCERPTS = "Suchauszüge je Frage";
+    static final String EXCERPTS = ChatKnowledge.SOURCES_KEY.substring("chat.web.".length());
     static final int QUIET_ROUNDS_DEFAULT = 3;
     /** Die Stufen im Menü; darunter „Benutzerdefiniert …“. */
     static final List<Integer> PARALLEL_STEPS = com.aresstack.spaceharvester.app.ui.ParallelChoice.STEPS;
@@ -1381,7 +1381,7 @@ public final class ChatPanel extends JPanel {
             ToolHints hints = toolHints == null ? null : toolHints.get();
             for (QuickAction action : hints == null ? List.<QuickAction>of() : hints.actions()) {
                 quickActions.add(chip(action.label(), action.tip(), turn == null, () -> {
-                    ToolScope custom = toolScope == null ? null : toolScope.get();
+                    ToolScope custom = currentToolScope(action.question());
                     if (custom != null) {
                         submit(action.question(), null, custom.area(), ChatTurn.Kind.QUESTION, custom);
                     }
@@ -1770,7 +1770,7 @@ public final class ChatPanel extends JPanel {
         webBudget.setEnabled(available);
         web.setEmphasized(webOn);
         web.setToolTipText(!available ? WEB_UNAVAILABLE : webOn ? WEB_ON : WEB);
-        webBudget.setToolTipText(String.format(WEB_BUDGET_TIP, webInt("budget", WEB_BUDGET_DEFAULT)));
+        webBudget.setToolTipText(WEB_BUDGET_TIP);
     }
 
     private static int webInt(String key, int fallback) {
@@ -1802,7 +1802,10 @@ public final class ChatPanel extends JPanel {
                         + "gleichzeitig gelesen werden", "files", FILES_DEFAULT).menu(PARALLEL_FILES),
                 parallelChoice("Runden ohne Neues: nach so vielen Werkzeugrunden ohne neues Ergebnis bittet der "
                         + "Chat die KI, mit dem Gefundenen zu antworten; sonst sucht sie, bis sie fertig ist",
-                        "quiet", QUIET_ROUNDS_DEFAULT).menu(QUIET_ROUNDS));
+                        "quiet", QUIET_ROUNDS_DEFAULT).menu(QUIET_ROUNDS),
+                parallelChoice("Suchauszüge je Frage: so viele Treffer der Suche gehen ohne Werkzeuge als Auszüge "
+                        + "an die KI, zusammen nie mehr, als in die Anfrage passt", EXCERPTS,
+                        ChatKnowledge.SOURCES_DEFAULT).menu(SEARCH_EXCERPTS));
     }
 
     private com.aresstack.spaceharvester.app.ui.ParallelChoice parallelChoice(String tip, String key, int fallback) {
@@ -1815,14 +1818,9 @@ public final class ChatPanel extends JPanel {
         return com.aresstack.spaceharvester.app.ui.ParallelChoice.stored(WEB_KEY + key, fallback);
     }
 
-    /** Öffnet das Menü am Pfeil: Profil, Werkzeugrunden, Verzögerung, Human Emulation, Maus. */
+    /** Öffnet das Menü am Pfeil: Profil, Verzögerung, Human Emulation, Maus. */
     private void openWebPopup() {
         java.util.List<WebSearchPopup.Row> rows = new ArrayList<>();
-        rows.add(new WebSearchPopup.Row(WebSearchPopup.TITLE, webInt("budget", WEB_BUDGET_DEFAULT), WEB_BUDGET_MIN,
-                WEB_BUDGET_MAX, WEB_BUDGET_SLIDER_MIN, WEB_BUDGET_SLIDER_MAX, value -> {
-                    webPut("budget", value);
-                    showWebState();
-                }));
         rows.add(new WebSearchPopup.Row(WebSearchPopup.DELAY_TITLE, webInt("delay", 0), 0, WEB_DELAY_MAX, 0,
                 WEB_DELAY_SLIDER_MAX, value -> webPut("delay", value)));
         java.util.List<WebSearchPopup.Check> checks = new ArrayList<>();
@@ -1863,7 +1861,6 @@ public final class ChatPanel extends JPanel {
         java.util.concurrent.atomic.AtomicLong begun = new java.util.concurrent.atomic.AtomicLong(-1);
         return new ChatTurn.WebSearch(new com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools(
                 browser.tools(chatId), call -> browser.asking(prompt, call)), rules,
-                researchBudget(),
                 () -> begun.set(browser.beginTurn(chatId,
                         progress -> SwingUtilities.invokeLater(() -> card.update(progress)))),
                 () -> {
@@ -2170,13 +2167,59 @@ public final class ChatPanel extends JPanel {
         if (text.isEmpty() || !send.isEnabled()) {
             return;
         }
-        ToolScope custom = toolScope == null ? null : toolScope.get();
+        // Anhänge einmal lesen; ihr Text zählt zum Platz der Anfrage.
+        String asked = withAttachments(text);
+        ToolScope custom = currentToolScope(asked);
         if (custom != null) {
-            submit(withAttachments(text), null, custom.area(), ChatTurn.Kind.QUESTION, custom);
+            submit(asked, null, custom.area(), ChatTurn.Kind.QUESTION, custom);
             return;
         }
-        submit(withAttachments(text), resolved, areaText(selection, resolved == null ? null : resolved.counts()),
+        submit(asked, resolved, areaText(selection, resolved == null ? null : resolved.counts()),
                 ChatTurn.Kind.QUESTION);
+    }
+
+    /**
+     * Die Werkzeuge der Perspektive für {@code question}, gelesen beim Senden: Die Ansicht in der Systemnachricht geht
+     * so weit mit, wie sie neben Verlauf und Frage in die Anfrage passt ({@link ChatRoom}).
+     */
+    private ToolScope currentToolScope(String question) {
+        if (toolScope == null) {
+            return null;
+        }
+        return ChatRoom.within(roomBeside(question), toolScope::get);
+    }
+
+    /** Platz in Zeichen, der neben dem Verlauf des Chats und {@code question} in der Anfrage frei ist. */
+    private int roomBeside(String question) {
+        List<com.aresstack.spaceharvester.ai.AiChat.Message> asked = new ArrayList<>();
+        for (ChatRecord.Message message : chat.messages()) {
+            asked.add(com.aresstack.spaceharvester.ai.AiChat.Message.user(message.text() == null ? ""
+                    : message.text()));
+        }
+        asked.add(com.aresstack.spaceharvester.ai.AiChat.Message.user(question));
+        return ChatRoom.left(chatBudget(), asked, List.of(), 1);
+    }
+
+    /** Tokenbudget des Chat-Modells, ohne den Modellkatalog zu fragen (für den EDT). */
+    private com.aresstack.spaceharvester.app.runtime.ModelBudget chatBudget() {
+        return chatBudget(false);
+    }
+
+    /**
+     * Tokenbudget des Chat-Modells ({@link com.aresstack.spaceharvester.app.runtime.ModelBudget#chat}): Kontextlänge
+     * aus den Einstellungen, sonst aus dem Modellkatalog des Dienstes; mit {@code fetch} fragt der erste Aufruf den
+     * Katalog (nur auf einem Hintergrund-Thread des Turns). {@code null}, wenn keine Kontextlänge bekannt ist.
+     */
+    private com.aresstack.spaceharvester.app.runtime.ModelBudget chatBudget(boolean fetch) {
+        AppSettings settings = context.settings();
+        AppRuntime runtime = context.runtime();
+        if (settings == null || settings.ai() == null) {
+            return null;
+        }
+        Integer catalog = settings.ai().contextTokens() != null || runtime == null ? null
+                : runtime.workspace().catalogContextTokens(settings.ai().chatModel(), fetch);
+        return com.aresstack.spaceharvester.app.runtime.ModelBudget.chat(settings.ai().contextTokens(), catalog,
+                settings.ai().chatMaxTokens());
     }
 
     /**
@@ -2249,7 +2292,7 @@ public final class ChatPanel extends JPanel {
         listener.card = thinking;
         thinking.open();
         turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
-                listener, SwingUtilities::invokeLater);
+                listener, SwingUtilities::invokeLater).budget(() -> chatBudget(true));
         if (custom != null) {
             // #1151: dieselbe Unterhaltung, aber die Werkzeuge der Perspektive (Command Deck: Maskenassistent).
             custom.tools().modelSelected(modelName);
@@ -2330,11 +2373,6 @@ public final class ChatPanel extends JPanel {
         }
     }
 
-    /** Die Werkzeugrunden je Antwort aus dem Menü am Pfeil der Websuche, in den erlaubten Grenzen. */
-    private int researchBudget() {
-        return Math.max(WEB_BUDGET_MIN, Math.min(WEB_BUDGET_MAX, webInt("budget", WEB_BUDGET_DEFAULT)));
-    }
-
     /** {@code low}, {@code medium}, {@code high} aus der Wahl im Composer. */
     private String effortValue() {
         return switch (EFFORTS.indexOf(effortLevel)) {
@@ -2355,6 +2393,9 @@ public final class ChatPanel extends JPanel {
         }
         List<Path> files = List.copyOf(attachments);
         String[] contents = new String[files.size()];
+        // Die Anhänge teilen sich, was neben Verlauf und Frage in die Anfrage passt.
+        int room = roomBeside(text);
+        int each = room == ChatRoom.UNLIMITED ? room : room / files.size();
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(
                 Math.min(parallel("files", FILES_DEFAULT), files.size()), work -> {
                     Thread thread = new Thread(work, "chat-anhang");
@@ -2365,7 +2406,7 @@ public final class ChatPanel extends JPanel {
             List<java.util.concurrent.Future<?>> running = new ArrayList<>();
             for (int i = 0; i < files.size(); i++) {
                 int index = i;
-                running.add(pool.submit(() -> contents[index] = attachmentText(files.get(index))));
+                running.add(pool.submit(() -> contents[index] = attachmentText(files.get(index), each)));
             }
             for (java.util.concurrent.Future<?> future : running) {
                 try {
@@ -2390,15 +2431,21 @@ public final class ChatPanel extends JPanel {
 
     private static final String UNREADABLE = "(nicht als Text lesbar)";
 
-    /** Der Text einer angehängten Datei, auf das Budget einer Seite gekürzt. */
-    private static String attachmentText(Path file) {
+    /**
+     * Der Text einer angehängten Datei, so weit er in die Anfrage passt ({@code room}, {@link ChatRoom}; früher fest
+     * 12.000 Zeichen); was nicht passt, steht als gekürzt da.
+     */
+    private static String attachmentText(Path file, int room) {
         try {
             // Dokumente (PDF, Word, Excel …) wie die Vorschau im Command Deck über den Tika-Adapter des Core.
             String name = file.getFileName() == null ? "" : file.getFileName().toString();
             String content = com.aresstack.spaceharvester.app.deck.DocumentPreviewStore.isDocument(name)
                     ? new com.aresstack.spaceharvester.app.deck.DocumentPreviewStore().load(file.toString()).text()
                     : Files.readString(file, StandardCharsets.UTF_8);
-            return ChatKnowledge.excerpt(content, ChatKnowledge.MAX_PAGE_CHARS);
+            String shown = ChatKnowledge.excerpt(content, room);
+            return shown.length() >= content.strip().length() ? shown
+                    : shown + "\n(gekürzt: Die Anfrage hat für diesen Anhang nur Platz für " + room + " von "
+                    + content.strip().length() + " Zeichen)";
         } catch (java.io.IOException | RuntimeException
                  | com.aresstack.spaceharvester.deck.editor.DocumentException unreadable) {
             return UNREADABLE;

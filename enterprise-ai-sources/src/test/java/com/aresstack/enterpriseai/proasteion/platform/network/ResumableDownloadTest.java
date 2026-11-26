@@ -147,6 +147,50 @@ public class ResumableDownloadTest {
     }
 
     @Test
+    public void aStreamThatCannotResetRefusesANewVersionAfterTheFirstBytes() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try {
+            ResumableDownload.copy(new ResumableDownload.Response(200, null, "\"v1\"", breaking(CONTENT, 0, 10)),
+                    new ResumableDownload.Source() {
+                        @Override
+                        public ResumableDownload.Response open(long from, String validator) {
+                            return new ResumableDownload.Response(200, null, "\"v2\"",
+                                    new ByteArrayInputStream(CONTENT));
+                        }
+                    }, ResumableDownload.sink((java.io.OutputStream) out), Long.MAX_VALUE, 1);
+            fail("Ablehnung erwartet");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("geändert"));
+        }
+        assertEquals(10, out.size());
+    }
+
+    @Test
+    public void responseReadsValidatorLengthAndRangeFromTheHeaders() {
+        final java.util.Map<String, String> headers = new java.util.HashMap<String, String>();
+        headers.put("Last-Modified", "Thu, 26 Nov 2026 10:00:00 GMT");
+        headers.put("Content-Length", "42");
+        ResumableDownload.Headers lookup = new ResumableDownload.Headers() {
+            @Override
+            public String header(String name) {
+                return headers.get(name);
+            }
+        };
+        ResumableDownload.Response response = ResumableDownload.response(200, lookup, null);
+        assertEquals("Thu, 26 Nov 2026 10:00:00 GMT", response.validator());
+        assertEquals(42, response.length());
+
+        headers.put("ETag", "\"e1\"");
+        headers.put("Content-Range", "bytes 10-41/42");
+        ResumableDownload.Response partial = ResumableDownload.response(206, lookup, null);
+        assertEquals("\"e1\"", partial.validator());
+        assertEquals(-1, partial.length());
+        assertEquals("bytes 10-41/42", partial.contentRange());
+        assertEquals("bytes=7-", ResumableDownload.rangeHeaders(7, null).get("Range"));
+        assertEquals("\"e1\"", ResumableDownload.rangeHeaders(7, "\"e1\"").get("If-Range"));
+    }
+
+    @Test
     public void rangeStartIsParsed() {
         assertEquals(10, ResumableDownload.rangeStart("bytes 10-19/20"));
         assertEquals(-1, ResumableDownload.rangeStart(null));

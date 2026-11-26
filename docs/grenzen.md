@@ -76,11 +76,13 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Diagrammtexte (`DiagramLabels`, Zahl ohne Konstante) | 4000 Zeichen Code | der Code wurde vor dem Modellaufruf abgeschnitten (F41-7) | **beseitigt**: zu langer Code wird nach dem Tokenbudget des Modells (`ModelBudget`) an Zeilengrenzen in Teile zerlegt und teilweise beschriftet |
 | Progressive Suchen (`ProgressiveSearches.DEFAULT_MAX_RUNNING`, `DEFAULT_MAX_WAITING`, `DEFAULT_RETENTION`, `DEFAULT_MAX_TIME_BUDGET`) | 256 laufend / 256 wartend / 5 min / 2 min | laufen schon `max-running` Suchen, wartet eine neue (`waiting`) und startet, sobald ein Platz frei wird; erst wenn auch `max-waiting` voll ist, wird sie mit 429 abgewiesen; eine neue verdrängt nie eine andere; ein größeres Zeitbudget wird gekürzt | **einstellbar**: `space-harvester.search.progressive.max-running`, `.max-waiting`, `.retention`, `.max-time-budget` (F38-4, ADR 0038 Punkt 10) |
 | Speicher und Pakete (Desktop-`FileSystemAssetStore.DEFAULT_MAX_TOTAL_BYTES`, `ZipExportPackageReader`, `ImportController.MAX_PACKAGE_BYTES`, `LocalFilesSourceAdapter.MAX_FILE_MEGABYTES`, `BscwSourceAdapter`) | 20 GiB, 256 MiB, 4 GiB, 64 MB, Tiefe 50 | größere Dateien und tiefere Ordner werden nicht geerntet oder importiert | Speicherbudget einstellbar, Bestandsgrenzen beseitigen |
-| KI-Textbudgets (Chat 24.000 Zeichen / 8 Quellen, Podcast, Zusammenfassungen, Fristen 12.000 Zeichen) | fest | Material wird vor dem Modellaufruf gekürzt | aus der Tokenlänge des Modells ableiten |
+| KI-Textbudgets (Podcast, Zusammenfassungen, Fristen 12.000 Zeichen; früher auch Chat 24.000 Zeichen) | fest | Material wird vor dem Modellaufruf gekürzt | aus der Tokenlänge des Modells ableiten. **Chat erledigt:** Kontextblock der Suche (früher `ChatKnowledge.MAX_CONTEXT_CHARS` 24.000), ganze Seiten und Anhänge (früher `MAX_PAGE_CHARS` 12.000), Trefferauszüge (früher 3.000 je Treffer) und die Seite eines Unteragenten (früher `ChatTurn.SUB_AGENT_CHARS`) folgen dem Platz in der Anfrage (`ChatRoom`); ein gekürzter Anhang ist als gekürzt markiert. Die Zahl der Suchauszüge je Frage (früher fest `ChatKnowledge.MAX_SOURCES` 8) ist **einstellbar** im Menü am Dreieck der Chat-Leiste („Suchauszüge je Frage“, `chat.web.excerpts`, vorbelegt 8); „Suchqualität messen“ nimmt denselben Wert |
 | Modellname in der MVS-Diagnose (`MvsDiagnosisTools`) | `gpt-oss-120b` | die Diagnose lief nur mit diesem Modell | **einstellbar** (Angelo 26.11.2026): Zeile „Diagnose“ unter Einstellungen › KI-Dienst › Modelle mit Schalter „Diagnose per KI“ (`ai.diagnosis-enabled`, Standard an) und Modell (`ai.diagnosis-model`, vorbelegt `gpt-oss-120b`, Anbieter-Präfix wie `openai/` egal) |
+| Lesemengen der Chat-Werkzeuge (früher `ChatTools.READ_CHARS`, `ChatTools.PAGE_SIZE`, `ChatTurn.OPEN_PAGE_CHARS`, `DeckChatTools.TEXT_CHARS`, `VIEW_CHARS`, `VIEW_BLOCK_CHARS`, `SYSTEM_VIEW_CHARS`, `SYSTEM_BLOCK_CHARS`) | 12.000 Zeichen je Lesen / 100 Einträge je Blatt / 24.000 Zeichen offene Seite / 12.000 / 30.000 / 4.000 / 8.000 / 2.000 Zeichen | lange Seiten und Texte kamen nur in festen Stücken, auch wenn das Modell viel mehr Platz hatte | **aus dem Modell abgeleitet** (`ChatRoom`): jedes Ergebnis bringt so viel mit, wie in der laufenden Anfrage noch Platz hat (Kontextlänge abzüglich Ausgabelimit, Nachrichten und Werkzeugbeschreibungen; Aufrufe einer Runde teilen sich den Platz). Der Rest kommt mit Versatz (`versatz`, `ab`); die Liste hat statt Blättern den Versatz `ab`. Die Kontextlänge kommt aus Einstellungen › KI-Dienst › „Kontextlänge“ (für jeden Dienst sichtbar), sonst aus dem Modellkatalog des Dienstes (`context_length`, beim ersten Senden einmal je Laufzeit gefragt); ist keine bekannt, gibt es keine Grenze |
 | Fristen im Command Deck außerhalb des Terminals (früher `FtpChatTools.TIMEOUT_SECONDS`, `EakteDocumentContent.TIMEOUT_SECONDS`, `HttpBetaViewServer.TIMEOUT`, `NetUseLogin.TIMEOUT_SECONDS`) | 120 / 120 / 60 / 60 s | langsame Hosts brachen ab | **einstellbar**: `DeckTimeouts` in `app-state.json` (`deck.timeouts.*`), Einstellungen › Mainframe › „Fristen im Command Deck“. Die Fristen des Terminals (Makros, Anmeldung, OpenTerm) bleiben bis zu einer Entscheidung |
 | Fristen je Anfrage einzelner KI-Aufgaben (früher `RemoteAi.SUMMARY_TIMEOUT`, `LABEL_TIMEOUT`, `EXPANSION_TIMEOUT`) | 5 min / 60 s / 90 s | große Modelle oder langsame Dienste brachen ab | **einstellbar**: `ai.summary-timeout`, `ai.label-timeout`, `ai.expansion-timeout` (`AiServiceSettings.Timeouts`), Einstellungen › KI-Dienst › Modelle › „Fristen je Anfrage“ |
 | Netz-Fristen der Quellen (früher `DelegatedConfluenceHttp.TIMEOUT`, `RoutedWebDavHttp.REQUEST_TIMEOUT`, `SourceDiagnostics.PROBE_TIMEOUT`) | 10 s / 90 s / 15 s | langsame Netze oder Proxys brachen Token-Prüfung, BSCW-Abrufe und Verbindungsprüfung ab | **einstellbar**: `network.timeouts.delegated-check`, `webdav-request`, `probe` (`SourceTimeouts`), für alle Quellen wie die Proxy-Frist |
+| Fristen der App (früher `HttpModelDownload.CONNECT_TIMEOUT`/`RESPONSE_TIMEOUT`, `ChatWebBrowser.FIREFOX_START_TIMEOUT_MILLIS`, `DiagramLabels.TIMEOUT_SECONDS`, `VlcPcmAudioDecoder.NO_AUDIO_TIMEOUT_NANOS`) | 30 / 60 / 30 / 30 / 60 s | langsame Netze, Rechner oder Modelle brachen ab | **einstellbar**: `AppTimeouts` in `app-state.json` (`app.timeouts.*`), Einstellungen › Allgemein › „Fristen der App“ |
 | MVS-Binärdiagnose und Hex-Ansicht (früher `BinarySample.MAX_CAPTURE_BYTES`, `MvsDiagnosisTools.BUDGET`, Lesegröße 4096, Frist 120 s) | 8 MiB / 65536 / 4096 Bytes / 120 s | größere Stichproben waren unmöglich, die KI las höchstens 64 KiB | **einstellbar**: `MvsDiagnosisSettings` in `app-state.json` (`deck.ftp.diagnosis.sample-bytes`, `read-bytes`, `budget-bytes`, `timeout-seconds`), Einstellungen › Mainframe › „MVS-Binärdiagnose und Hex-Ansicht“. Das Modell kommt aus der Zeile „Diagnose“ (siehe oben) |
 
 ### Grenzen außerhalb des eigenen Codes
@@ -549,36 +551,18 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `BlockMarkerSpacing.MAX_MARKER_INDENT` | `3` | fest | Protokollgrenze | dokumentieren, berücksichtigen |
 | `BlockMarkerSpacing.MAX_ORDERED_DIGITS` | `9` | fest | Protokollgrenze | dokumentieren, berücksichtigen |
 | `CachingMermaidImageRenderer.DEFAULT_CACHE_SIZE` | `32` | Vorgabe | Cache-Aufbewahrung | einstellbar |
-| `ChatKnowledge.MAX_CONTEXT_CHARS` | `24_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatKnowledge.MAX_HIT_CHARS` | `3_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatKnowledge.MAX_PAGE_CHARS` | `12_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatKnowledge.MAX_SOURCES` | `8` | fest | Modellkontext | aus Modellfähigkeit ableiten |
+| `ChatKnowledge.MAX_HIT_CHARS` | `3_000` | fest | Invariante/Darstellung | im Code belassen: Vorschau einer Quelle in der Quellenliste der Oberfläche; an das Modell geht, was in die Anfrage passt (`ChatRoom`) |
 | `ChatPanel.MAX_NORMAL_EDITOR_HEIGHT` | `400` | fest | Invariante/Darstellung | im Code belassen |
 | `ChatPanel.PARALLEL_MAX` | `com.aresstack.spaceharvester.app.ui.ParallelChoice.CUSTOM_MAX` | fest | Parallelität | einstellbar |
 | `ChatPanel.QUIET_ROUNDS_DEFAULT` | `3` | Vorgabe | Stillstand der Werkzeugrunden (askai `stagnationRounds`) | einstellbar (Menü am Dreieck des Chats) |
-| `ChatPanel.WEB_BUDGET_DEFAULT` | `20` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatPanel.WEB_BUDGET_MAX` | `999` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatPanel.WEB_BUDGET_MIN` | `1` | fest | Invariante/Darstellung | im Code belassen |
-| `ChatPanel.WEB_BUDGET_SLIDER_MAX` | `60` | fest | Invariante/Darstellung | im Code belassen |
-| `ChatPanel.WEB_BUDGET_SLIDER_MIN` | `4` | fest | Invariante/Darstellung | im Code belassen |
 | `ChatPanel.WEB_DELAY_MAX` | `10000` | fest | Timeout | einstellbar |
 | `ChatPanel.WEB_DELAY_SLIDER_MAX` | `2000` | fest | Timeout | einstellbar |
+| `ChatRoom.UNLIMITED` | `Integer.MAX_VALUE` | fest | Invariante/Darstellung | im Code belassen: Kennwert „keine Grenze“ (Kontextlänge unbekannt oder außerhalb eines Turns) |
 | `ChatTools.MAX_TERM_CHARS` | `200` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatTools.PAGE_SIZE` | `100` | fest | Stapel-/Seitengröße | einstellbar |
-| `ChatTools.READ_CHARS` | `12_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatTurn.MAX_QUERY_CHARS` | `500` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatTurn.OPEN_PAGE_CHARS` | `24_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatTurn.SUB_AGENT_CHARS` | `ChatKnowledge.MAX_PAGE_CHARS` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatWebBrowser.FIREFOX_START_TIMEOUT_MILLIS` | `30000L` | fest | Timeout | einstellbar |
+| `ChatTurn.MAX_QUERY_CHARS` | `KeywordSearch.MAX_TEXT_LENGTH` | fest | Invariante/Darstellung | im Code belassen: die Grenze der Suche selbst (früher fest 500; die Suche lehnte über 200 Zeichen ab) |
 | `ComicDivider.GRIP_MAX` | `36` | fest | Invariante/Darstellung | im Code belassen |
-| `DeckChatTools.SYSTEM_BLOCK_CHARS` | `2_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `DeckChatTools.SYSTEM_VIEW_CHARS` | `8_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `DeckChatTools.TEXT_CHARS` | `12_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `DeckChatTools.VIEW_BLOCK_CHARS` | `4_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `DeckChatTools.VIEW_CHARS` | `30_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `DeckHome.MAX_COLUMNS` | `3` | fest | Invariante/Darstellung | im Code belassen |
 | `DiagramLabels.CACHE_SIZE` | `1000` | fest | Cache-Aufbewahrung | einstellbar |
-| `DiagramLabels.TIMEOUT_SECONDS` | `30` | fest | Timeout | einstellbar |
 | `DocumentPane.MAX_PILL` | `28` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_INTERVAL_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_PRESS_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
@@ -595,8 +579,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `FragmentedMp4AudioOnlySource.MAX_READ` | `MediaStreamBridge.CHUNK_BYTES` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `FtpChatTools.MAX_ENTRIES` | `300` | fest | Cache-Aufbewahrung | einstellbar |
 | `GlossaryTab.SNIPPET_CHARS` | `120` | fest | Invariante/Darstellung | im Code belassen |
-| `HttpModelDownload.CONNECT_TIMEOUT` | `Duration.ofSeconds(30)` | fest | Timeout | einstellbar |
-| `HttpModelDownload.RESPONSE_TIMEOUT` | `Duration.ofSeconds(60)` | fest | Timeout | einstellbar |
 | `HuggingFaceClient.MAX_DOWNLOAD_ATTEMPTS` | `5` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `InfoPopup.MAX_HEIGHT` | `600` | fest | Invariante/Darstellung | im Code belassen |
 | `InfoPopup.MAX_WIDTH` | `480` | fest | Invariante/Darstellung | im Code belassen |
@@ -645,7 +627,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `TextToolCalls.ANNOUNCE_MAX_CHARS` | `300` | fest | Invariante/Darstellung (Erkennung eines Werkzeugaufrufs als Text) | im Code belassen |
 | `TextWithPicture.MAX_PICTURE_WIDTH` | `280` | fest | Invariante/Darstellung | im Code belassen |
 | `TiledDiagramRenderer.MAX_TILE_SVG_SIZE` | `800.0` | fest | Invariante/Darstellung | im Code belassen |
-| `VlcPcmAudioDecoder.NO_AUDIO_TIMEOUT_NANOS` | `TimeUnit.SECONDS.toNanos(60)` | fest | Timeout | einstellbar |
 | `VlcPcmAudioDecoder.READ_BYTES` | `64 * 1024` | fest | Stapel-/Seitengröße | einstellbar |
 | `WhisperSpeechTranscriber.READ_BYTES` | `16_000 * 2 * 5` | fest | Stapel-/Seitengröße | einstellbar |
 | `WordDocumentPreview.MAX_PREVIEW_CHARACTERS` | `2_000_000` | fest | Bestandsgrenze | beseitigen |
