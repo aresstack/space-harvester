@@ -373,9 +373,12 @@ class ChatToolsTurnTest {
     }
 
     @Test
-    void theLastRoundGoesWithoutToolsSoThatAnAnswerComes() throws Exception {
+    void everyRoundOffersTheToolsWithoutAFixedRoundLimit() throws Exception {
+        // Angelo 26.11.2026: keine feste Rundengrenze; früher ging nach 8 Runden eine Anfrage still ohne Werkzeuge
+        // hinaus, und das Modell schrieb den nächsten Aufruf als Text in die Antwort.
+        int rounds = 25;
         List<BiConsumer<AiChat.Request, AiChat.Listener>> script = new ArrayList<>();
-        for (int i = 0; i < ChatTurn.MAX_TOOL_ROUNDS; i++) {
+        for (int i = 0; i < rounds; i++) {
             script.add((request, listener) -> listener.toolCalls("", List.of(
                     new AiChat.ToolCall("c", ChatTools.LIST, "{}"))));
         }
@@ -385,11 +388,142 @@ class ChatToolsTurnTest {
 
         new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", space, "Handbuch", events, Runnable::run)
                 .knowledgeByTools(null).start();
+        assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(port.requests).hasSize(rounds + 1);
+        assertThat(port.requests).allSatisfy(request -> assertThat(request.tools()).isNotEmpty());
+        assertThat(events.completed).isEqualTo("Fertig.");
+    }
+
+    @Test
+    void afterTheSetRoundsWithoutAnythingNewTheModelIsAskedOpenlyToAnswerAndKeepsItsTools() throws Exception {
+        // Stillstand wie in askai (ResearchLead.endRule): dieselbe Liste dreimal hintereinander ist nichts Neues.
+        List<BiConsumer<AiChat.Request, AiChat.Listener>> script = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            script.add((request, listener) -> listener.toolCalls("", List.of(
+                    new AiChat.ToolCall("c", ChatTools.LIST, "{}"))));
+        }
+        script.add((request, listener) -> listener.completed("Fertig."));
+        ScriptedChat port = new ScriptedChat(script);
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", space, "Handbuch", events, Runnable::run)
+                .knowledgeByTools(null).quietRounds(2).start();
         assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
 
-        assertThat(port.requests).hasSize(ChatTurn.MAX_TOOL_ROUNDS + 1);
-        assertThat(port.requests.get(ChatTurn.MAX_TOOL_ROUNDS).tools()).isEmpty();
+        assertThat(port.requests).hasSize(4);
+        assertThat(port.requests).allSatisfy(request -> assertThat(request.tools()).isNotEmpty());
+        assertThat(last(port.requests.get(1)).role()).isEqualTo(AiChat.Role.TOOL);
+        assertThat(last(port.requests.get(2)).role()).isEqualTo(AiChat.Role.TOOL);
+        assertThat(last(port.requests.get(3)).text()).isEqualTo(String.format(ChatTurn.STANDSTILL_INSTRUCTION, 2));
         assertThat(events.completed).isEqualTo("Fertig.");
+    }
+
+    private static AiChat.Message last(AiChat.Request request) {
+        return request.messages().get(request.messages().size() - 1);
+    }
+
+    @Test
+    void aToolCallWrittenAsTextRunsAsACallAndNeverShowsInTheBubble() throws Exception {
+        // Angelo 26.11.2026: „We will call the search. {"cmd":["im_bereich_suchen","High Level"]}“ stand als Antwort
+        // da, gesucht wurde nicht. Erfundene Daten: Suche nach „Nachtlauf“.
+        String leaked = "We will call the search.\n{\"cmd\":[\"" + ChatTools.SEARCH + "\",\"Nachtlauf\"]}";
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> {
+                    listener.delta("We will call the search.\n");
+                    listener.delta(leaked.substring("We will call the search.\n".length()));
+                    listener.completed(leaked);
+                },
+                (request, listener) -> {
+                    listener.delta("Der Nachtlauf bricht bei vollem Spool ab [1].");
+                    listener.completed("Der Nachtlauf bricht bei vollem Spool ab [1].");
+                }));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Warum bricht der Nachtlauf ab?", space, "Handbuch",
+                events, Runnable::run).knowledgeByTools(null).releasing(releases()).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(port.requests).hasSize(2);
+        List<AiChat.Message> second = port.requests.get(1).messages();
+        AiChat.Message call = second.get(second.size() - 2);
+        assertThat(call.toolCalls()).singleElement().satisfies(toolCall -> {
+            assertThat(toolCall.name()).isEqualTo(ChatTools.SEARCH);
+            assertThat(toolCall.argumentsJson()).isEqualTo("{\"text\":\"Nachtlauf\"}");
+        });
+        assertThat(call.text()).isEmpty();
+        assertThat(second.get(second.size() - 1).role()).isEqualTo(AiChat.Role.TOOL);
+        assertThat(second.get(second.size() - 1).text()).isNotBlank().isNotEqualTo("Das Werkzeug ist gescheitert.");
+        assertThat(String.join("", events.deltas)).isEqualTo("Der Nachtlauf bricht bei vollem Spool ab [1].");
+        assertThat(events.completed).isEqualTo("Der Nachtlauf bricht bei vollem Spool ab [1].");
+    }
+
+    @Test
+    void aCallThatIsOnlyAnnouncedGetsOneReminderAndStaysOutOfTheBubble() throws Exception {
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> {
+                    listener.delta("We will perform a silent tool call.");
+                    listener.completed("We will perform a silent tool call.");
+                },
+                (request, listener) -> listener.toolCalls("", List.of(
+                        new AiChat.ToolCall("c1", ChatTools.SEARCH, "{\"text\":\"Nachtlauf\"}"))),
+                (request, listener) -> listener.completed("Bei vollem Spool [1].")));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Warum bricht der Nachtlauf ab?", space, "Handbuch",
+                events, Runnable::run).knowledgeByTools(null).releasing(releases()).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(port.requests).hasSize(3);
+        List<AiChat.Message> reminded = port.requests.get(1).messages();
+        assertThat(reminded.get(reminded.size() - 1).text()).isEqualTo(ChatTurn.TOOL_CHANNEL_REMINDER);
+        assertThat(reminded).noneMatch(message -> message.text().contains("silent tool call"));
+        assertThat(port.requests.get(1).tools()).isNotEmpty();
+        assertThat(events.deltas).noneMatch(delta -> delta.contains("tool call"));
+        assertThat(events.completed).isEqualTo("Bei vollem Spool [1].");
+    }
+
+    @Test
+    void anAnswerThatOnlyKeepsAnnouncingEndsWithAReadableMessage() throws Exception {
+        BiConsumer<AiChat.Request, AiChat.Listener> announcing = (request, listener) -> {
+            listener.delta("We need to call the tool correctly.");
+            listener.completed("We need to call the tool correctly.");
+        };
+        ScriptedChat port = new ScriptedChat(List.of(announcing, announcing));
+        Events events = new Events();
+
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Frage", space, "Handbuch", events, Runnable::run)
+                .knowledgeByTools(null).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(port.requests).hasSize(2);
+        assertThat(events.failed).isEqualTo(ChatTurn.TOOL_TEXT_FAILED);
+        assertThat(events.deltas).isEmpty();
+    }
+
+    @Test
+    void earlierAnswersThatWereOnlyToolCallsAsTextDoNotGoBackToTheModel() throws Exception {
+        // Sonst ahmt das Modell sie in jeder folgenden Frage nach.
+        ScriptedChat port = new ScriptedChat(List.of((request, listener) -> listener.completed("Antwort.")));
+        Events events = new Events();
+        List<ChatRecord.Message> history = List.of(
+                ChatRecord.Message.user("Was ist der Plan?", 1),
+                ChatRecord.Message.assistant("Der Plan steht auf der Startseite [1].", false, 2),
+                ChatRecord.Message.user("Und das Ziel?", 3),
+                ChatRecord.Message.assistant("We will call the search.\n{\"cmd\":[\"" + ChatTools.SEARCH
+                        + "\",\"Ziel\"]}", false, 4),
+                ChatRecord.Message.user("Das war kein Aufruf", 5),
+                ChatRecord.Message.assistant("We will perform a silent tool call.", false, 6));
+
+        new ChatTurn(workspace, port, "modell", null, history, "Und jetzt?", space, "Handbuch", events, Runnable::run)
+                .knowledgeByTools(null).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        List<AiChat.Message> sent = port.requests.get(0).messages();
+        assertThat(sent).extracting(AiChat.Message::text).contains("Der Plan steht auf der Startseite [1].")
+                .noneMatch(text -> text.contains("cmd") || text.contains("silent tool call"));
+        assertThat(sent).filteredOn(message -> message.role() == AiChat.Role.USER).extracting(AiChat.Message::text)
+                .containsExactly("Was ist der Plan?", "Und das Ziel?", "Das war kein Aufruf", "Und jetzt?");
     }
 
     @Test
@@ -398,7 +532,7 @@ class ChatToolsTurnTest {
         ScriptedChat port = new ScriptedChat(List.of((request, listener) -> listener.completed("Aus dem Kopf.")));
         Events events = new Events();
         new ChatTurn(workspace, port, "modell", null, List.of(), "Was ist JCL?", null, null, events, Runnable::run)
-                .knowledgeByTools(null).searchAgent(20).releasing(releases()).start();
+                .knowledgeByTools(null).searchAgent().releasing(releases()).start();
         assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
 
         assertThat(port.requests).singleElement().satisfies(request -> {
@@ -409,10 +543,10 @@ class ChatToolsTurnTest {
     }
 
     @Test
-    void withoutAreaTheInternalSearchAgentOnlySearchesAndReadsAndKeepsGoingForItsBudget() throws Exception {
-        // Ohne Bereich keine Bereichswerkzeuge (keine langsame Suche im Bereich); die interne Suche recherchiert über
-        // das Budget hinaus, das ein normaler Chat hat.
-        int budget = ChatTurn.MAX_TOOL_ROUNDS + 4;
+    void withoutAreaTheInternalSearchAgentOnlySearchesAndReadsAndKeepsGoingUntilItIsDone() throws Exception {
+        // Ohne Bereich keine Bereichswerkzeuge (keine langsame Suche im Bereich); die interne Suche recherchiert, bis
+        // sie fertig ist.
+        int budget = 12;
         List<BiConsumer<AiChat.Request, AiChat.Listener>> script = new ArrayList<>();
         for (int i = 0; i < budget; i++) {
             script.add((request, listener) -> listener.toolCalls("", List.of(new AiChat.ToolCall("c",
@@ -423,7 +557,7 @@ class ChatToolsTurnTest {
         Events events = new Events();
         new ChatTurn(workspace, port, "modell", null, List.of(), "Warum bricht der Nachtlauf ab?", null, null,
                 events, Runnable::run).knowledgeByTools(null).appSearch(() -> java.util.Set.of("handbuch"))
-                .searchAgent(budget).releasing(releases()).start();
+                .searchAgent().releasing(releases()).start();
         assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
 
         AiChat.Request first = port.requests.get(0);
@@ -433,7 +567,7 @@ class ChatToolsTurnTest {
                 .contains(ChatKnowledge.AGENT_APP_SEARCH_PROMPT).contains(ChatKnowledge.ATTACHMENTS_PROMPT)
                 .doesNotContain(ChatKnowledge.AGENT_AREA_PROMPT);
         assertThat(port.requests).hasSize(budget + 1);
-        assertThat(port.requests.get(budget).tools()).isEmpty();
+        assertThat(port.requests).allSatisfy(request -> assertThat(request.tools()).isNotEmpty());
         assertThat(events.completed).isEqualTo("Gefunden.");
     }
 
@@ -471,7 +605,7 @@ class ChatToolsTurnTest {
         Events events = new Events();
 
         new ChatTurn(workspace, port, "modell", null, List.of(), "Warum bricht der Nachtlauf ab?", space, "Handbuch",
-                events, Runnable::run).knowledgeByTools(null).searchAgent(5).parallelAgents(4)
+                events, Runnable::run).knowledgeByTools(null).searchAgent().parallelAgents(4)
                 .releasing(releases()).start();
         assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
 

@@ -177,6 +177,13 @@ public final class ChatPanel extends JPanel {
     static final int WEB_TABS_DEFAULT = 16;
     static final int AGENTS_DEFAULT = 32;
     static final int FILES_DEFAULT = 8;
+    /**
+     * Stillstand (Angelo 26.11.2026, Verfahren aus askai {@code ResearchLead.endRule}): Nach so vielen Werkzeugrunden
+     * ohne neues Ergebnis bittet der Chat das Modell, mit dem Gefundenen zu antworten; eine feste Rundengrenze gibt es
+     * nicht. Vorbelegt wie askai ({@code stagnationRounds} 3), im Menü am Dreieck einstellbar.
+     */
+    static final String QUIET_ROUNDS = "Runden ohne Neues";
+    static final int QUIET_ROUNDS_DEFAULT = 3;
     /** Die Stufen im Menü; darunter „Benutzerdefiniert …“. */
     static final List<Integer> PARALLEL_STEPS = com.aresstack.spaceharvester.app.ui.ParallelChoice.STEPS;
     /** Größte freie Eingabe unter „Benutzerdefiniert …“ (das Feld nimmt vier Ziffern). */
@@ -1737,7 +1744,10 @@ public final class ChatPanel extends JPanel {
                 parallelChoice("Parallele Agenten (intern): wie viele Agenten Treffer der internen "
                         + "Suche gleichzeitig lesen und auswerten", "agents", AGENTS_DEFAULT).menu(PARALLEL_AGENTS),
                 parallelChoice("Parallele Dateien: wie viele lokale Dateien und Anhänge (auch PDF) "
-                        + "gleichzeitig gelesen werden", "files", FILES_DEFAULT).menu(PARALLEL_FILES));
+                        + "gleichzeitig gelesen werden", "files", FILES_DEFAULT).menu(PARALLEL_FILES),
+                parallelChoice("Runden ohne Neues: nach so vielen Werkzeugrunden ohne neues Ergebnis bittet der "
+                        + "Chat die KI, mit dem Gefundenen zu antworten; sonst sucht sie, bis sie fertig ist",
+                        "quiet", QUIET_ROUNDS_DEFAULT).menu(QUIET_ROUNDS));
     }
 
     private com.aresstack.spaceharvester.app.ui.ParallelChoice parallelChoice(String tip, String key, int fallback) {
@@ -2217,13 +2227,14 @@ public final class ChatPanel extends JPanel {
             // K5a: ebenso der Suchmethode „Synonyme der Fachbegriffe“.
             turn.searchingGlossarySynonyms(
                     com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms());
-            // Angelo 24.11.2026: In der Suche, und ohne Auswahl überhaupt, recherchiert der Chat als Suchagent über
-            // mehrere Runden mit dem Budget aus dem Menü am Pfeil; anderswo bleibt er, wie er ist.
+            // Angelo 24.11.2026: In der Suche, und ohne Auswahl überhaupt, recherchiert der Chat als Suchagent, bis er
+            // fertig ist; anderswo bleibt er, wie er ist.
             if (searchFront || open == null) {
-                turn.searchAgent(researchBudget());
+                turn.searchAgent();
             }
             turn.parallelAgents(parallel("agents", AGENTS_DEFAULT));
         }
+        turn.quietRounds(parallel("quiet", QUIET_ROUNDS_DEFAULT));
         // Websuche (Composer-Knopf): die Browser-Werkzeuge des Chats dazu, mit Karte „Browserrecherche“.
         WebSearchCard card = new WebSearchCard(body -> addActivity(WebSearchCard.TITLE, body));
         ChatTurn.WebSearch web = webSearchFor(chat.id(), card, listener);
@@ -2636,6 +2647,19 @@ public final class ChatPanel extends JPanel {
             text.append(delta);
             if (!detached) {
                 scrollDown();
+            }
+        }
+
+        @Override
+        public void replaced(String now) {
+            // Ein Werkzeugaufruf als Text fällt aus der Blase (ChatTurn, TextToolCalls); weitere Deltas hängen sich an.
+            text.setLength(0);
+            text.append(now);
+            MarkdownMessageView view = bubble.view();
+            view.setMarkdown(now);
+            if (!now.isEmpty()) {
+                view.startStreaming();
+                view.appendMarkdownDelta(now);
             }
         }
 

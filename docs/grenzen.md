@@ -554,6 +554,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ChatKnowledge.MAX_SOURCES` | `8` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatPanel.MAX_NORMAL_EDITOR_HEIGHT` | `400` | fest | Invariante/Darstellung | im Code belassen |
 | `ChatPanel.PARALLEL_MAX` | `com.aresstack.spaceharvester.app.ui.ParallelChoice.CUSTOM_MAX` | fest | Parallelität | einstellbar |
+| `ChatPanel.QUIET_ROUNDS_DEFAULT` | `3` | Vorgabe | Stillstand der Werkzeugrunden (askai `stagnationRounds`) | einstellbar (Menü am Dreieck des Chats) |
 | `ChatPanel.WEB_BUDGET_DEFAULT` | `20` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatPanel.WEB_BUDGET_MAX` | `999` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatPanel.WEB_BUDGET_MIN` | `1` | fest | Invariante/Darstellung | im Code belassen |
@@ -565,7 +566,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ChatTools.PAGE_SIZE` | `100` | fest | Stapel-/Seitengröße | einstellbar |
 | `ChatTools.READ_CHARS` | `12_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatTurn.MAX_QUERY_CHARS` | `500` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatTurn.MAX_TOOL_ROUNDS` | `8` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatTurn.OPEN_PAGE_CHARS` | `24_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatTurn.SUB_AGENT_CHARS` | `ChatKnowledge.MAX_PAGE_CHARS` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatWebBrowser.FIREFOX_START_TIMEOUT_MILLIS` | `30000L` | fest | Timeout | einstellbar |
@@ -643,6 +643,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `TermGraphView.PARALLEL_GAP` | `22` | fest | Parallelität | einstellbar |
 | `TermGraphView.WORK_BUDGET` | `24_000_000L` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `TermsTab.REMEMBERED` | `200` | fest | Cache-Aufbewahrung | einstellbar |
+| `TextToolCalls.ANNOUNCE_MAX_CHARS` | `300` | fest | Invariante/Darstellung (Erkennung eines Werkzeugaufrufs als Text) | im Code belassen |
 | `TextWithPicture.MAX_PICTURE_WIDTH` | `280` | fest | Invariante/Darstellung | im Code belassen |
 | `TiledDiagramRenderer.MAX_TILE_SVG_SIZE` | `800.0` | fest | Invariante/Darstellung | im Code belassen |
 | `VlcPcmAudioDecoder.NO_AUDIO_TIMEOUT_NANOS` | `TimeUnit.SECONDS.toNanos(60)` | fest | Timeout | einstellbar |
