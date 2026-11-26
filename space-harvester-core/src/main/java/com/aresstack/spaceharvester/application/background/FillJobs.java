@@ -536,15 +536,7 @@ public final class FillJobs implements BackgroundFill.Observer, AutoCloseable {
     }
 
     private static String reason(Throwable failure) {
-        for (Throwable current = failure; current != null; current = current.getCause()) {
-            if (current instanceof SourceAccessException access) {
-                return access.reason().name();
-            }
-            if (current.getCause() == current) {
-                break;
-            }
-        }
-        return failure == null ? "unbekannt" : failure.getClass().getSimpleName();
+        return PageFailures.reason(failure);
     }
 
     @Override
