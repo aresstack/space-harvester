@@ -22,6 +22,10 @@ final class FtpSessionPool<S extends FtpSessionPool.Session> {
     interface Session {
         /** Trennt die Verbindung; mehrfacher Aufruf ist erlaubt. */
         void close();
+
+        default boolean usable() {
+            return true;
+        }
     }
 
     /** Ein Vorgang auf der angemeldeten Sitzung. */
@@ -58,6 +62,9 @@ final class FtpSessionPool<S extends FtpSessionPool.Session> {
 
     synchronized <T> T run(Operation<S, T> operation) throws KnowledgeSourceException {
         for (int attempt = 0; ; attempt++) {
+            if (session != null && !session.usable()) {
+                closeSession();
+            }
             if (session == null) {
                 session = connect();
             }

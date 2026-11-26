@@ -21,6 +21,12 @@ interface FtpClientSession extends FtpSessionPool.Session {
     /** Inhalt als Text (Satzstruktur, Füllbytes und Zeichensatz aufgelöst). */
     String readText(String path) throws IOException;
 
+    /** Read a bounded prefix for program recognition. */
+    String sampleText(String path) throws IOException;
+
+    /** Confirm a physical sequential dataset without mistaking an empty PDS or qualifier for a file. */
+    boolean isSequentialDataset(String path) throws IOException;
+
     /** Trennt die Verbindung; mehrfacher Aufruf ist erlaubt. */
     @Override
     void close();
