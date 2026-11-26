@@ -1197,11 +1197,13 @@ class ConfigFileEditorTest {
                 .withUses(new AiDraft.Use(null, "65536", "low"), new AiDraft.Use("plan-modell", null, "high"),
                         new AiDraft.Use("podcast-modell", "8192", null))
                 .withImagePlan(new AiDraft.Use("schaubild-plan", "32768", "none"))
-                .withDeadline(new AiDraft.Use("fristen-modell", "4096", "low"));
+                .withDeadline(new AiDraft.Use("fristen-modell", "4096", "low"))
+                .withDiagnosis(false, new AiDraft.Use("diagnose-modell", "2048", "high"));
 
         editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
 
-        assertThat(Files.readString(file)).contains("summary-max-tokens: 65536", "summary-thinking: low",
+        assertThat(Files.readString(file)).contains("diagnosis-enabled: false",
+                "diagnosis-model: \"diagnose-modell\"", "diagnosis-max-tokens: 2048", "diagnosis-thinking: high","summary-max-tokens: 65536", "summary-thinking: low",
                 "summary-plan-model: \"plan-modell\"", "summary-plan-thinking: high",
                 "podcast-model: \"podcast-modell\"", "podcast-max-tokens: 8192",
                 "image-plan-model: \"schaubild-plan\"", "image-plan-max-tokens: 32768", "image-plan-thinking: none",
@@ -1217,7 +1219,10 @@ class ConfigFileEditorTest {
                 new com.aresstack.spaceharvester.ai.AiServiceSettings.ModelUse("schaubild-plan", 32768, "none"));
         assertThat(settings.ai().deadline()).isEqualTo(
                 new com.aresstack.spaceharvester.ai.AiServiceSettings.ModelUse("fristen-modell", 4096, "low"));
+        assertThat(settings.ai().diagnosis().on()).isFalse();
+        assertThat(settings.ai().diagnosis().model()).isEqualTo("diagnose-modell");
         assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
+        assertThat(ai.withDiagnosis(true, AiDraft.Use.EMPTY).yaml("")).doesNotContain("diagnosis-");
         assertThat(ai.withUses(new AiDraft.Use(null, "viel", null), null, null).problems())
                 .anyMatch(p -> p.contains("„Zusammenfassung“"));
         assertThat(ai.withUses(null, null, new AiDraft.Use(null, null, "gründlich")).problems())

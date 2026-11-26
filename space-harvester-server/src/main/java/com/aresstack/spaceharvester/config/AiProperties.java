@@ -57,6 +57,10 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param podcastPauseMillis  Pause zwischen zwei Beiträgen des Podcasts in ms; leer: Vorgabe des Core
  * @param podcastSpeechAttempts Versuche je Stück beim Vertonen des Podcasts; leer: Vorgabe des Core
  * @param podcastSpeechWorkers gleichzeitige Synthesen je Beitrag des Podcasts; leer: Vorgabe des Core
+ * @param diagnosisEnabled    Schalter „Diagnose per KI“; leer: eingeschaltet
+ * @param diagnosisModel      Modell der Diagnose; leer: gpt-oss-120b
+ * @param diagnosisMaxTokens  Tokenlänge der Diagnose; leer: die des Chats
+ * @param diagnosisThinking   Nachdenken der Diagnose; leer: das des Chats
  */
 @ConfigurationProperties("space-harvester.ai")
 public record AiProperties(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
@@ -77,7 +81,8 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                            Integer deadlineMaxTokens, String deadlineThinking, String podcastSpeechModel,
                            String podcastVoiceHost, String podcastVoiceCohost, String readAloudModel,
                            String readAloudVoice, Integer podcastPauseMillis, Integer podcastSpeechAttempts,
-                           Integer podcastSpeechWorkers) {
+                           Integer podcastSpeechWorkers, Boolean diagnosisEnabled, String diagnosisModel,
+                           Integer diagnosisMaxTokens, String diagnosisThinking) {
 
     AiServiceSettings toSettings() {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout,
@@ -91,7 +96,9 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                 new AiServiceSettings.ModelUse(deadlineModel, deadlineMaxTokens, deadlineThinking),
                 new AiServiceSettings.Speech(podcastSpeechModel, podcastVoiceHost, podcastVoiceCohost,
                         readAloudModel, readAloudVoice, podcastPauseMillis, podcastSpeechAttempts,
-                        podcastSpeechWorkers));
+                        podcastSpeechWorkers),
+                new AiServiceSettings.Diagnosis(diagnosisEnabled,
+                        new AiServiceSettings.ModelUse(diagnosisModel, diagnosisMaxTokens, diagnosisThinking)));
     }
 
     /** Ohne API-Key. */

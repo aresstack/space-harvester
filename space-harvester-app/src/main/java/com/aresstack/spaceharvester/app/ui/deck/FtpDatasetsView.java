@@ -733,7 +733,11 @@ final class FtpDatasetsView extends JPanel {
         if (mvs) {
             menu.add(item("Binär herunterladen …", connected && readable(single), () -> downloadBinary(single)));
             menu.add(item("Hex-Ansicht …", connected && readable(single), () -> showHex(single)));
-            menu.add(item("Binärdiagnose für MCP freigeben …", connected && readable(single), () -> armDiagnosis(single)));
+            // Nur mit „Diagnose per KI“ (Einstellungen › KI-Dienst › Modelle, Angelo 26.11.2026).
+            if (com.aresstack.spaceharvester.app.chat.AiDiagnosis.on()) {
+                menu.add(item("Binärdiagnose für MCP freigeben …", connected && readable(single),
+                        () -> armDiagnosis(single)));
+            }
             menu.add(item("Binärdiagnose beenden", diagnosis != null, this::revokeDiagnosis));
         }
         menu.add(item("Als Job einreichen", readable(single), this::submit));
@@ -753,10 +757,13 @@ final class FtpDatasetsView extends JPanel {
 
     void armDiagnosis(RemoteEntry entry) {
         if (!connected || !owner.session().mvs() || !readable(entry)
-                || selectedAll().size() != 1 || !entry.path().equals(selected().path())) return;
+                || selectedAll().size() != 1 || !entry.path().equals(selected().path())
+                || !com.aresstack.spaceharvester.app.chat.AiDiagnosis.on()) return;
         MvsDiagnosisSettings diagnosisSettings = MvsDiagnosisSettings.shared();
         if (!confirm.test("MCP-Binärdiagnose", "Originalbytes von " + entry.path()
-                + " für gpt-oss-120b am konfigurierten KI-Endpunkt freigeben? "
+                + " für " + com.aresstack.spaceharvester.app.chat.AiDiagnosis.settings().model()
+                + " am konfigurierten KI-Endpunkt freigeben (Modell der Diagnose, Einstellungen › KI-Dienst › "
+                + "Modelle)? "
                 + "Der Chat kann bis zu " + diagnosisSettings.get(MvsDiagnosisSettings.Value.BUDGET_BYTES)
                 + " Bytes aus einer Stichprobe von " + diagnosisSettings.get(MvsDiagnosisSettings.Value.SAMPLE_BYTES)
                 + " Bytes abrufen (Einstellungen › Mainframe). "

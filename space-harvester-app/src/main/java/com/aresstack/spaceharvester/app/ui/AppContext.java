@@ -1105,6 +1105,8 @@ public final class AppContext {
             // Vorschauen außerhalb der Quellen (Deck, Chat) lesen Dokumente mit denselben Grenzen.
             if (settings != null) {
                 com.aresstack.spaceharvester.app.deck.DocumentTexts.limits(settings.storage().extraction());
+                // Diagnose per KI: Schalter und Modell für Kontextmenü und Chat-Werkzeuge der Diagnose.
+                com.aresstack.spaceharvester.app.chat.AiDiagnosis.settings(settings.ai().diagnosis());
             }
             runtime = started.runtime();
             if (runtime != null) {
