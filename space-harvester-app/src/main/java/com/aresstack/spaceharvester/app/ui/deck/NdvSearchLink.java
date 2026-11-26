@@ -64,6 +64,10 @@ public interface NdvSearchLink {
     /** Die Wissensquelle vom Typ {@code ndv} für diesen Server (gleicher Host und Port), falls eine besteht. */
     Optional<Rule> rule(NdvProfile profile);
 
+    default Optional<Rule> rule(NdvProfile profile, String account) {
+        return rule(profile);
+    }
+
     /** Ob Regeln angelegt werden können (die App mit Wissensquellen läuft). */
     boolean available();
 

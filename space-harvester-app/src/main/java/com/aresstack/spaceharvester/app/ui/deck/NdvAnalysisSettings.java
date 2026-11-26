@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui.deck;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.ui.AppState;
 import com.aresstack.spaceharvester.deck.ndv.analysis.NdvAccessRules;
+import com.aresstack.spaceharvester.deck.ndv.NdvSession;
 import com.aresstack.spaceharvester.deck.ndv.analysis.NdvAnalysis;
 import com.aresstack.spaceharvester.deck.ndv.analysis.NdvLibraryResolver;
 import com.aresstack.spaceharvester.deck.ndv.analysis.NdvSourceCache;
@@ -94,10 +95,25 @@ public final class NdvAnalysisSettings {
         return new NdvLibraryResolver(searchOrder(), stepLibs());
     }
 
-    /** Zwischenspeicher und Analyse eines Servers ({@code host:port}); bleiben für die Laufzeit der App. */
-    public static NdvAnalysis analysis(String server) {
-        return ANALYSES.computeIfAbsent(server, key -> new NdvAnalysis(new NdvSourceCache(key,
+    /** Isolate cached content by endpoint, selected credential and authenticated principal. */
+    public static NdvAnalysis analysis(NdvSession session) {
+        String namespace = cacheNamespace(session.profile().label(), session.account(), session.user(), session.id());
+        return ANALYSES.computeIfAbsent(namespace, key -> new NdvAnalysis(new NdvSourceCache(key,
                 new FileNdvSourceStore(cacheFolder()), RULES)));
+    }
+
+    static String cacheNamespace(String endpoint, String account, String user, String sessionId) {
+        String identity = endpoint.toLowerCase(java.util.Locale.ROOT) + "\u0000" + account
+                + "\u0000" + user.toUpperCase(java.util.Locale.ROOT);
+        if (account.isBlank() || user.isBlank()) {
+            identity += "\u0000" + sessionId;
+        }
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 fehlt", impossible);
+        }
     }
 
     static Path cacheFolder() {

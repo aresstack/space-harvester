@@ -26,7 +26,12 @@ public final class NdvSourceCache {
     static final long PAUSE_MILLIS = 50;
 
     /** Ein zwischengespeicherter Quelltext mit Größe und Datum, wie der Server sie beim Laden meldete. */
-    public record Entry(String library, String name, String extension, String source, int size, String date) {
+    public record Entry(String library, String name, String extension, String source, int size, String date,
+                        int databaseId, int fileNumber) {
+
+        public Entry(String library, String name, String extension, String source, int size, String date) {
+            this(library, name, extension, source, size, date, 0, 0);
+        }
 
         public Entry {
             library = upper(library);
@@ -37,12 +42,33 @@ public final class NdvSourceCache {
         }
 
         public String key() {
-            return library + "/" + name;
+            return library + "/" + objectKey();
+        }
+
+        public String objectKey() {
+            return identity(name, extension, databaseId, fileNumber);
         }
     }
 
+    private static String identity(String name, String extension, int databaseId, int fileNumber) {
+        return upper(name) + "." + upper(extension) + "@" + databaseId + "-" + fileNumber;
+    }
+
+    private static String identity(NdvObject object) {
+        return identity(object.displayName(), object.type().extension(),
+                object.location().databaseId(), object.location().fileNumber());
+    }
+
     /** Ein Treffer der Suche im Quelltext: Objekt, Zeile (ab 1) und die Zeile selbst. */
-    public record Hit(String library, String name, String extension, int line, String text) {
+    public record Hit(String library, String name, String extension, int line, String text,
+                      int databaseId, int fileNumber) {
+
+        public boolean matches(NdvObject object) {
+            return library.equalsIgnoreCase(object.library())
+                    && name.equalsIgnoreCase(object.displayName())
+                    && extension.equalsIgnoreCase(object.type().extension())
+                    && databaseId == object.location().databaseId() && fileNumber == object.location().fileNumber();
+        }
     }
 
     /** Dauerhafte Ablage (Port); {@code server} ist {@code host:port}. */
@@ -105,14 +131,25 @@ public final class NdvSourceCache {
 
     /** Der Eintrag, falls zwischengespeichert und nach den aktuellen Regeln erlaubt. */
     public Optional<Entry> entry(String library, String name) {
-        return stored(library, name).filter(this::allowed);
-    }
-
-    /** Der Eintrag ohne Blick auf die Regeln (nur intern, etwa für „unverändert“). */
-    private Optional<Entry> stored(String library, String name) {
         lock.lock();
         try {
-            return Optional.ofNullable(library(library).get(upper(name)));
+            List<Entry> matches = library(library).values().stream()
+                    .filter(entry -> entry.name().equals(upper(name))).filter(this::allowed).toList();
+            return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public Optional<Entry> entry(NdvObject object) {
+        return stored(object).filter(this::allowed);
+    }
+
+    /** Resolve an exact object rather than guessing from an untyped name. */
+    private Optional<Entry> stored(NdvObject object) {
+        lock.lock();
+        try {
+            return Optional.ofNullable(library(object.library()).get(identity(object)));
         } finally {
             lock.unlock();
         }
@@ -139,14 +176,14 @@ public final class NdvSourceCache {
             return false;
         }
         Entry entry = new Entry(object.library(), object.displayName(), object.type().extension(), source,
-                object.sourceSize(), object.changed());
+                object.sourceSize(), object.changed(), object.location().databaseId(), object.location().fileNumber());
         lock.lock();
         try {
             if (generation >= 0 && generation(entry.library()) != generation) {
                 return false;
             }
-            library(entry.library()).put(entry.name(), entry);
             store.put(server, entry);
+            library(entry.library()).put(entry.objectKey(), entry);
         } finally {
             lock.unlock();
         }
@@ -164,11 +201,13 @@ public final class NdvSourceCache {
         lock.lock();
         try {
             Map<String, String> result = new LinkedHashMap<>();
-            library(library).forEach((name, entry) -> {
-                if (allowed(entry)) {
-                    result.put(name, entry.source());
+            Set<String> ambiguous = new java.util.HashSet<>();
+            library(library).values().stream().filter(this::allowed).forEach(entry -> {
+                if (result.putIfAbsent(entry.name(), entry.source()) != null) {
+                    ambiguous.add(entry.name());
                 }
             });
+            ambiguous.forEach(result::remove);
             return result;
         } finally {
             lock.unlock();
@@ -242,7 +281,7 @@ public final class NdvSourceCache {
                     blocked++;
                     continue;
                 }
-                Optional<Entry> known = stored(lib, object.displayName());
+                Optional<Entry> known = stored(object);
                 if (known.isPresent() && unchanged(known.get(), object)) {
                     unchanged++;
                     continue;
@@ -261,7 +300,7 @@ public final class NdvSourceCache {
                     Thread.currentThread().interrupt();
                     break;
                 } catch (Exception e) {
-                    failed.put(object.displayName(), e.getMessage() == null ? e.getClass().getSimpleName()
+                    failed.put(identity(object), e.getMessage() == null ? e.getClass().getSimpleName()
                             : e.getMessage());
                 }
             }
@@ -275,16 +314,10 @@ public final class NdvSourceCache {
         return result;
     }
 
-    /**
-     * Unverändert wie in MainframeMate: Größe gleich (oder vom Server unbekannt) und Datum gleich (beide leer zählt
-     * als gleich, nur eins leer als geändert).
-     */
+    /** Require reliable matching metadata before skipping a download. */
     static boolean unchanged(Entry cached, NdvObject object) {
-        boolean sizeMatch = object.sourceSize() <= 0 || object.sourceSize() == cached.size();
-        String serverDate = object.changed() == null ? "" : object.changed();
-        boolean dateMatch = serverDate.isEmpty() == cached.date().isEmpty()
-                && (serverDate.isEmpty() || serverDate.equals(cached.date()));
-        return sizeMatch && dateMatch;
+        return object.sourceSize() > 0 && object.sourceSize() == cached.size()
+                && !object.changed().isBlank() && object.changed().equals(cached.date());
     }
 
     /** „Cache leeren“: Quelltexte der Bibliothek im Speicher und in der Ablage. */
@@ -324,7 +357,8 @@ public final class NdvSourceCache {
             String[] lines = entry.source().split("\r?\n", -1);
             for (int i = 0; i < lines.length && hits.size() < limit; i++) {
                 if (lines[i].toLowerCase(Locale.ROOT).contains(needle)) {
-                    hits.add(new Hit(entry.library(), entry.name(), entry.extension(), i + 1, lines[i].strip()));
+                    hits.add(new Hit(entry.library(), entry.name(), entry.extension(), i + 1, lines[i].strip(),
+                            entry.databaseId(), entry.fileNumber()));
                 }
             }
             if (hits.size() >= limit) {
@@ -362,7 +396,7 @@ public final class NdvSourceCache {
         String lib = upper(library);
         return libraries.computeIfAbsent(lib, k -> {
             Map<String, Entry> loaded = new LinkedHashMap<>();
-            store.load(server, k).values().forEach(entry -> loaded.put(entry.name(), entry));
+            store.load(server, k).values().forEach(entry -> loaded.put(entry.objectKey(), entry));
             return loaded;
         });
     }
