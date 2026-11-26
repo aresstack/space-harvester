@@ -86,8 +86,8 @@ public final class LargeFileTexts {
 
     private Optional<String> extract(HarvestSource source, Path file, PageMetadata metadata, String mediaType) {
         ExtractionLimits current = limits.get();
-        Collector text = new Collector(current.maxChars() > 0 ? current.maxChars()
-                : TikaDocumentText.DEFAULT_MAX_CHARS);
+        // Ohne assets.extraction.max-chars der ganze Text (F39-10), keine feste Ersatzgrenze.
+        Collector text = new Collector(current.maxChars() > 0 ? current.maxChars() : Long.MAX_VALUE);
         try {
             structure.extract(file, metadata.title(), mediaType, current, text);
         } catch (RuntimeException e) {

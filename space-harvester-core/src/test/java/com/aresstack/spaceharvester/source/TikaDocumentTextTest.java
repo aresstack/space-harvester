@@ -79,6 +79,21 @@ class TikaDocumentTextTest {
     }
 
     @Test
+    void withoutACharacterBudgetTheWholeTextStays() {
+        // F39-10: früher endete der Text nach 1 Mio. Zeichen ohne Hinweis.
+        // Fortlaufende Zahlen statt eines wiederholten Worts: sonst hält POI die stark gepackte Datei für eine Zip-Bombe.
+        String longText = "Anfang " + java.util.stream.IntStream.range(0, 200_000).mapToObj(Integer::toString)
+                .collect(java.util.stream.Collectors.joining(" ")) + " Schlusswort";
+
+        DocumentText.Extracted extracted = documents.extract("lang.docx", DocumentFixtures.DOCX,
+                DocumentFixtures.docx(longText));
+
+        assertThat(extracted.text().length()).isGreaterThan(1_000_000);
+        assertThat(extracted.text()).startsWith("Anfang").endsWith("Schlusswort");
+        assertThat(extracted.truncated()).isFalse();
+    }
+
+    @Test
     void longTextsAreCutAtTheCharacterLimit() {
         TikaDocumentText shortTexts = new TikaDocumentText(TikaDocumentText.DEFAULT_MAX_BYTES, 10,
                 Duration.ofSeconds(30));

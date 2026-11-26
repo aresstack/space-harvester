@@ -272,9 +272,9 @@ space-harvester:
   `ConfluenceHttpResponse` aus dem Enterprise AI Client für Antworten im Speicher (Konstruktor und `body()`;
   Vorschlag als Upstream-Patch 08).
 - **Textextraktion:** Tika liest nur Anhänge bis 20 MiB (`TikaDocumentText.DEFAULT_MAX_BYTES`), größere bekommen
-  keinen Text. Die Textlänge wird erst nach der Extraktion auf `maxChars` (1 Mio. Zeichen) gekürzt, weil der
-  Extraktor aus dem Enterprise AI Client den ganzen Text als String liefert; eine Grenze schon beim Schreiben des
-  Textes bräuchte eine Änderung dort.
+  keinen Text. Die Textlänge ist nicht begrenzt (F39-10, `docs/grenzen.md`): der Extraktor aus dem Enterprise AI
+  Client liefert den ganzen Text ohnehin als String, ein Kürzen danach hätte nur Text verloren und keinen Speicher
+  gespart.
 
 ## Reihenfolge der Quellen
 
