@@ -139,7 +139,8 @@ class SourceConfiguration {
         ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(
                 properties.sources().stream().map(SpaceHarvesterProperties.Source::toSettings).toList(), userAgent,
                 trustBundles, properties.network().proxy().toSettings(),
-                properties.network().asyncTransport(), adapters.orderedStream().toList());
+                properties.network().asyncTransport(), adapters.orderedStream().toList(), null,
+                properties.network().timeouts().toSettings());
         live.listen(change -> {
             if (!change.networkChanged()) {
                 return ConfigurationListener.Preparation.NOTHING;

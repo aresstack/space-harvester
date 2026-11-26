@@ -31,13 +31,20 @@ final class BscwWebDavTransport {
     BscwWebDavTransport(URI root, String sourceId, ConfiguredSecrets secrets, HttpRoutePort routes,
                         ProxyCredentials proxyCredentials, String userAgent, int maxFileBytes,
                         X509TrustManager trustManager) {
+        this(root, sourceId, secrets, routes, proxyCredentials, userAgent, maxFileBytes, trustManager,
+                com.aresstack.spaceharvester.source.network.SourceTimeouts.DEFAULT_WEBDAV_REQUEST);
+    }
+
+    BscwWebDavTransport(URI root, String sourceId, ConfiguredSecrets secrets, HttpRoutePort routes,
+                        ProxyCredentials proxyCredentials, String userAgent, int maxFileBytes,
+                        X509TrustManager trustManager, java.time.Duration requestTimeout) {
         this.root = root;
         this.secrets = secrets;
         this.secretRef = ConfiguredSecrets.refFor(sourceId);
         this.userAgent = userAgent;
         this.maxFileBytes = maxFileBytes;
         this.http = new RoutedWebDavHttp(routes, proxyCredentials, trustManager,
-                Math.max(MAX_METADATA_BYTES, maxFileBytes));
+                Math.max(MAX_METADATA_BYTES, maxFileBytes), requestTimeout);
     }
 
     byte[] properties(URI resource, int depth) throws KnowledgeSourceException {

@@ -16,13 +16,12 @@ import java.util.concurrent.CompletionStage;
  *     anderen Host geht.</li>
  *     <li>Gesendet werden genau {@code Authorization: Bearer …} und {@code Accept: application/json}: kein Körper,
  *     keine Cookies, keine Weiterleitungen (3xx kommt als Antwort mit {@code location()}).</li>
- *     <li>Feste Zeitgrenze und Körpergrenze; 4xx/5xx sind normale Antworten, die Zuordnung macht der Aufrufer.</li>
+ *     <li>Zeitgrenze ({@code network.timeouts.delegated-check}) und Körpergrenze; 4xx/5xx sind normale Antworten, die Zuordnung macht der Aufrufer.</li>
  *     <li>Das Token steht nie in Logs, {@link #toString()}, Fehlermeldungen oder Pool-Schlüsseln.</li>
  * </ul>
  */
 public final class DelegatedConfluenceHttp implements AutoCloseable {
 
-    static final Duration TIMEOUT = Duration.ofSeconds(10);
     static final int MAX_BYTES = 1024 * 1024;
 
     private final URI base;

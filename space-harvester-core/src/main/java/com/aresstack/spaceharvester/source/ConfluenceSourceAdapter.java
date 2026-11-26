@@ -217,7 +217,8 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
             DelegatedConfluenceHttp delegated = ConfluenceSources.delegatedHttp(config.baseUrl(), secrets,
                     context.routes(), context.userAgent(), trust, thumbprint,
                     certificate.enabled() ? certificate.alias().trim() : null, pkcs12 ? certificate.path() : null,
-                    pkcs12 ? ConfiguredSecrets.certificateRefFor(config.id()) : null, context.proxyCredentials());
+                    pkcs12 ? ConfiguredSecrets.certificateRefFor(config.id()) : null, context.proxyCredentials(),
+                    context.timeouts().delegatedCheck());
             // Startpunkte und Tiefe wie beim Indexieren im Client gelten auch beim Abgleich; ohne eigene Startpunkte
             // (Standard alle Spaces) bleibt die Auflistung je Space unverändert.
             SourceScope scope = provider.scope(settings);

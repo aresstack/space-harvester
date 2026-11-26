@@ -498,7 +498,7 @@ public final class Harvester implements AutoCloseable {
                     : TrustBundles.withDefault(builder.trustBundles, TrustPolicy.defaultTrust(builder.trust));
             ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(builder.sources, builder.userAgent,
                     trustBundles, builder.proxy, builder.asyncTransport, builder.adapters(),
-                    builder.secretProvider);
+                    builder.secretProvider, builder.sourceTimeouts);
             opened.add(catalog);
             this.catalog = catalog;
             start.step("Quellen");
@@ -3602,6 +3602,7 @@ public final class Harvester implements AutoCloseable {
         private Duration checkTimeout = PageFreshness.DEFAULT_TIMEOUT;
         private Duration largeFileTimeout = PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT;
         private int maxTreeNodes = 50_000;
+        private com.aresstack.spaceharvester.source.network.SourceTimeouts sourceTimeouts = com.aresstack.spaceharvester.source.network.SourceTimeouts.DEFAULTS;
         private com.aresstack.spaceharvester.application.query.QueryLimits queryLimits =
                 com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULTS;
         private int maxPageBytes = LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES;
@@ -4128,6 +4129,12 @@ public final class Harvester implements AutoCloseable {
 
         public Builder maxTreeNodes(int maxTreeNodes) {
             this.maxTreeNodes = maxTreeNodes;
+            return this;
+        }
+
+        /** Netz-Fristen der Quellen ({@code space-harvester.network.timeouts.*}). */
+        public Builder sourceTimeouts(com.aresstack.spaceharvester.source.network.SourceTimeouts sourceTimeouts) {
+            this.sourceTimeouts = java.util.Objects.requireNonNull(sourceTimeouts, "sourceTimeouts");
             return this;
         }
 

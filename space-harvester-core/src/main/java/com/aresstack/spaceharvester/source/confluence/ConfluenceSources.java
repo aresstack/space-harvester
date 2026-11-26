@@ -119,11 +119,20 @@ public final class ConfluenceSources {
                 ProxyCredentials.none());
     }
 
-    /** Wie oben, mit Anmeldung am Proxy (#189). */
+    /** Wie oben, mit Anmeldung am Proxy (#189) und der Vorgabe der Frist. */
     public static DelegatedConfluenceHttp delegatedHttp(URI baseUrl, SecretProvider secrets, HttpRoutePort routes,
                                                         String userAgent, X509TrustManager trust, String thumbprint,
                                                         String alias, Path keyStoreFile, SecretRef passwordRef,
                                                         ProxyCredentials proxyCredentials) {
+        return delegatedHttp(baseUrl, secrets, routes, userAgent, trust, thumbprint, alias, keyStoreFile, passwordRef,
+                proxyCredentials, com.aresstack.spaceharvester.source.network.SourceTimeouts.DEFAULT_DELEGATED_CHECK);
+    }
+
+    /** Wie oben, mit eigener Frist je Anfrage ({@code network.timeouts.delegated-check}). */
+    public static DelegatedConfluenceHttp delegatedHttp(URI baseUrl, SecretProvider secrets, HttpRoutePort routes,
+                                                        String userAgent, X509TrustManager trust, String thumbprint,
+                                                        String alias, Path keyStoreFile, SecretRef passwordRef,
+                                                        ProxyCredentials proxyCredentials, java.time.Duration timeout) {
         if (routes == null) {
             throw new IllegalArgumentException("routes must not be null");
         }
@@ -138,7 +147,7 @@ public final class ConfluenceSources {
                 .userAgent(userAgent)
                 .proxyCredentials(proxyCredentials)
                 .build();
-        return new DelegatedConfluenceHttp(baseUrl, transport, DelegatedConfluenceHttp.TIMEOUT);
+        return new DelegatedConfluenceHttp(baseUrl, transport, timeout);
     }
 
     /** {@code true}, wenn der Fingerabdruck 40 (SHA-1) oder 64 (SHA-256) Hex-Zeichen hat; Trenner sind erlaubt. */

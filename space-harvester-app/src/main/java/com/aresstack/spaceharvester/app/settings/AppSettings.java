@@ -627,12 +627,14 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param largeFileTimeout dieselbe Frist für eine Datei, deren Textauszug das ganze Original braucht
      *                        ({@code cache.large-file-timeout})
      * @param queryLimits     Stapelgrößen der Abfragen ({@code query.max-page-limit}, {@code query.max-term-scan})
+     * @param sourceTimeouts  Netz-Fristen der Quellen ({@code network.timeouts.*})
      */
     public record Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
                           long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
                           Path pdfFont, ExtractionLimits extraction, long maxPageBytes, long maxTextFileBytes,
                           Duration checkTimeout, Duration largeFileTimeout,
-                          com.aresstack.spaceharvester.application.query.QueryLimits queryLimits) {
+                          com.aresstack.spaceharvester.application.query.QueryLimits queryLimits,
+                          com.aresstack.spaceharvester.source.network.SourceTimeouts sourceTimeouts) {
 
         /** Vorgabe für {@link #checkTimeout}, wie im Core. */
         public static final Duration DEFAULT_CHECK_TIMEOUT =
@@ -665,6 +667,18 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                     ? DEFAULT_LARGE_FILE_TIMEOUT : largeFileTimeout;
             queryLimits = queryLimits == null
                     ? com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULTS : queryLimits;
+            sourceTimeouts = sourceTimeouts == null ? com.aresstack.spaceharvester.source.network.SourceTimeouts.DEFAULTS : sourceTimeouts;
+        }
+
+        /** Mit den Vorgaben der Netz-Fristen der Quellen. */
+        public Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
+                       long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
+                       Path pdfFont, ExtractionLimits extraction, long maxPageBytes, long maxTextFileBytes,
+                       Duration checkTimeout, Duration largeFileTimeout,
+                       com.aresstack.spaceharvester.application.query.QueryLimits queryLimits) {
+            this(dataDirectory, exportDirectory, assetDirectory, maxAssetBytes, largeAssetBytes, maxLargeAssets,
+                    searchTimeout, maxTreeNodes, pdfFont, extraction, maxPageBytes, maxTextFileBytes, checkTimeout,
+                    largeFileTimeout, queryLimits, null);
         }
 
         /** Mit den Vorgaben der Stapelgrößen ({@code query.max-page-limit}, {@code max-term-scan}). */
@@ -674,7 +688,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                        Duration checkTimeout, Duration largeFileTimeout) {
             this(dataDirectory, exportDirectory, assetDirectory, maxAssetBytes, largeAssetBytes, maxLargeAssets,
                     searchTimeout, maxTreeNodes, pdfFont, extraction, maxPageBytes, maxTextFileBytes, checkTimeout,
-                    largeFileTimeout, null);
+                    largeFileTimeout, null, null);
         }
 
         /** Mit den Vorgaben für die größte Datei im Cache und den Textauszug. */

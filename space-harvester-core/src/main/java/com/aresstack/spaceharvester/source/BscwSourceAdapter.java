@@ -145,7 +145,7 @@ public final class BscwSourceAdapter implements SourceAdapter {
         int maxBytes = number(config, "maxFileMegabytes", DEFAULT_FILE_MEGABYTES) * 1024 * 1024;
         BscwWebDavTransport transport = new BscwWebDavTransport(root, config.id(), context.secrets(),
                 context.routes(), context.proxyCredentials(), context.userAgent(), maxBytes,
-                context.trustBundles().defaultTrust());
+                context.trustBundles().defaultTrust(), context.timeouts().webDavRequest());
         // Ein Stück je Abruf passt immer in die Antwortgrenze des Transports (maxFileMegabytes).
         int chunk = Math.min(number(config, "chunkMegabytes", DEFAULT_CHUNK_MEGABYTES) * 1024 * 1024, maxBytes);
         BscwWebDavKnowledgeSource port = new BscwWebDavKnowledgeSource(SourceAddress.of(config.id()), root,
