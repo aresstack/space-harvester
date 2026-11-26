@@ -177,7 +177,9 @@ public final class JiraSourceProvider implements KnowledgeSourceProvider, Addres
         UrlConnectionJiraTransport.Builder transport = UrlConnectionJiraTransport.builder()
                 .routes(routes)
                 .connectTimeoutMillis(timeouts[0])
-                .readTimeoutMillis(timeouts[1]);
+                .readTimeoutMillis(timeouts[1])
+                // Abgerissene Antworten so oft ab dem letzten Byte fortsetzen, wie die Quelle Wiederholungen erlaubt.
+                .resumes(config.maxRetries());
         if (userAgent != null) {
             transport.userAgent(userAgent);
         }

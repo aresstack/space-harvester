@@ -1,6 +1,7 @@
 package com.aresstack.enterpriseai.proasteion.emporion.holkas.jira;
 
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
+import com.aresstack.enterpriseai.proasteion.platform.network.ResumableDownload;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLSocketFactory;
@@ -20,6 +21,9 @@ import java.util.Map;
  * Client-Zertifikat. Der Adapter liest keine globalen Proxy-Einstellungen und setzt nichts prozessweit.
  * Weiterleitungen werden nicht verfolgt, damit ein {@code Authorization}-Header nie an ein anderes Ziel geht; Jira
  * leitet nicht angemeldete Zugriffe auf die Anmeldeseite um, das meldet der Adapter als verweigerten Zugriff.
+ *
+ * <p>Reißt eine Antwort (etwa ein Anhang) beim Lesen ab, setzt der Transport sie mit {@link ResumableDownload} ab dem
+ * letzten Byte fort, höchstens {@link Builder#resumes(int)} Mal je Abruf (Angelo 26.11.2026, WLAN).
  */
 public final class UrlConnectionJiraTransport implements JiraHttpTransport {
 
@@ -28,6 +32,7 @@ public final class UrlConnectionJiraTransport implements JiraHttpTransport {
     private final String userAgent;
     private final int connectTimeoutMillis;
     private final int readTimeoutMillis;
+    private final int resumes;
 
     private UrlConnectionJiraTransport(Builder builder) {
         this.routes = builder.routes;
@@ -35,6 +40,7 @@ public final class UrlConnectionJiraTransport implements JiraHttpTransport {
         this.userAgent = builder.userAgent;
         this.connectTimeoutMillis = builder.connectTimeoutMillis;
         this.readTimeoutMillis = builder.readTimeoutMillis;
+        this.resumes = builder.resumes;
     }
 
     public static Builder builder() {
@@ -47,23 +53,81 @@ public final class UrlConnectionJiraTransport implements JiraHttpTransport {
         if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)) {
             throw new IOException("nur http/https unterstützt: " + scheme);
         }
-        HttpURLConnection connection = open(uri);
+        HttpURLConnection connection = prepared(uri, headers);
         try {
-            connection.setRequestMethod("GET");
-            connection.setInstanceFollowRedirects(false);
-            connection.setConnectTimeout(connectTimeoutMillis);
-            connection.setReadTimeout(readTimeoutMillis);
-            connection.setUseCaches(false);
-            for (Map.Entry<String, String> header : headers.entrySet()) {
-                connection.setRequestProperty(header.getKey(), header.getValue());
-            }
             int status = connection.getResponseCode();
             InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-            byte[] received = stream == null ? new byte[0] : readLimited(stream, maxBytes);
+            byte[] received = stream == null ? new byte[0]
+                    : status == 200 ? resumed(connection, stream, uri, headers, maxBytes)
+                    : readLimited(stream, maxBytes);
             return new JiraHttpResponse(status, connection.getContentType(), received);
         } finally {
             connection.disconnect();
         }
+    }
+
+    private HttpURLConnection prepared(URI uri, Map<String, String> headers) throws IOException {
+        HttpURLConnection connection = open(uri);
+        connection.setRequestMethod("GET");
+        connection.setInstanceFollowRedirects(false);
+        connection.setConnectTimeout(connectTimeoutMillis);
+        connection.setReadTimeout(readTimeoutMillis);
+        connection.setUseCaches(false);
+        for (Map.Entry<String, String> header : headers.entrySet()) {
+            connection.setRequestProperty(header.getKey(), header.getValue());
+        }
+        return connection;
+    }
+
+    /** Liest die Antwort und fordert nach einem Abriss den Rest mit denselben Kopfzeilen ab dem letzten Byte an. */
+    private byte[] resumed(HttpURLConnection connection, InputStream stream, final URI uri,
+                           final Map<String, String> headers, int maxBytes) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try {
+            ResumableDownload.copy(response(connection, stream), new ResumableDownload.Source() {
+                @Override
+                public ResumableDownload.Response open(long from, String validator) throws IOException {
+                    final HttpURLConnection rest = prepared(uri, headers);
+                    for (Map.Entry<String, String> header
+                            : ResumableDownload.rangeHeaders(from, validator).entrySet()) {
+                        rest.setRequestProperty(header.getKey(), header.getValue());
+                    }
+                    int status;
+                    try {
+                        status = rest.getResponseCode();
+                    } catch (IOException e) {
+                        rest.disconnect();
+                        throw e;
+                    }
+                    InputStream body = status >= 400 ? rest.getErrorStream() : rest.getInputStream();
+                    ResumableDownload.Response response = response(rest, body);
+                    return new ResumableDownload.Response(response.status(), response.contentRange(),
+                            response.validator(), response.body(), response.length()) {
+                        @Override
+                        public void close() throws IOException {
+                            try {
+                                super.close();
+                            } finally {
+                                rest.disconnect();
+                            }
+                        }
+                    };
+                }
+            }, ResumableDownload.sink(out), maxBytes, resumes);
+        } catch (ResumableDownload.TooLargeException e) {
+            throw new JiraResponseTooLargeException(maxBytes);
+        }
+        return out.toByteArray();
+    }
+
+    private static ResumableDownload.Response response(final HttpURLConnection connection, InputStream body)
+            throws IOException {
+        return ResumableDownload.response(connection.getResponseCode(), new ResumableDownload.Headers() {
+            @Override
+            public String header(String name) {
+                return connection.getHeaderField(name);
+            }
+        }, body);
     }
 
     @Override
@@ -142,6 +206,7 @@ public final class UrlConnectionJiraTransport implements JiraHttpTransport {
         private String userAgent;
         private int connectTimeoutMillis = 15000;
         private int readTimeoutMillis = 60000;
+        private int resumes;
 
         private Builder() {
         }
@@ -171,6 +236,15 @@ public final class UrlConnectionJiraTransport implements JiraHttpTransport {
 
         public Builder readTimeoutMillis(int value) {
             this.readTimeoutMillis = positive(value, "readTimeoutMillis");
+            return this;
+        }
+
+        /** Wie oft eine abgerissene Antwort je Abruf höchstens fortgesetzt wird; 0 (Standard) für nie. */
+        public Builder resumes(int value) {
+            if (value < 0) {
+                throw new IllegalArgumentException("resumes darf nicht negativ sein");
+            }
+            this.resumes = value;
             return this;
         }
 
