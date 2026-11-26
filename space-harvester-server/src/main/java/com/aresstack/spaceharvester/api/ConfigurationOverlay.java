@@ -59,7 +59,8 @@ public final class ConfigurationOverlay {
             "ai." + AiServiceSettings.PODCAST_PAUSE_MILLIS, "ai." + AiServiceSettings.PODCAST_SPEECH_ATTEMPTS,
             "ai." + AiServiceSettings.PODCAST_SPEECH_WORKERS, "ai." + AiServiceSettings.DIAGNOSIS_ENABLED,
             "ai." + AiServiceSettings.DIAGNOSIS_MODEL, "ai." + AiServiceSettings.DIAGNOSIS_MAX_TOKENS,
-            "ai." + AiServiceSettings.DIAGNOSIS_THINKING,
+            "ai." + AiServiceSettings.DIAGNOSIS_THINKING, "ai." + AiServiceSettings.SUMMARY_TIMEOUT,
+            "ai." + AiServiceSettings.LABEL_TIMEOUT, "ai." + AiServiceSettings.EXPANSION_TIMEOUT,
             SearchSettings.SEMANTIC, SearchSettings.RERANK, SearchSettings.PREFETCH_HITS,
             SearchSettings.CACHE_MAX_AGE, SearchSettings.CACHE_VERSION_CHECK, SearchSettings.CACHE_REFRESH_STRATEGY,
             SyncSettings.EVENTS, SyncSettings.INTERVAL, SyncSettings.SPACES, SyncSettings.BEFORE_SEARCH,
@@ -161,6 +162,9 @@ public final class ConfigurationOverlay {
         put(properties, "ai." + AiServiceSettings.DIAGNOSIS_MODEL, ai.diagnosis().use().model());
         put(properties, "ai." + AiServiceSettings.DIAGNOSIS_MAX_TOKENS, ai.diagnosis().use().maxTokens());
         put(properties, "ai." + AiServiceSettings.DIAGNOSIS_THINKING, ai.diagnosis().use().thinking());
+        put(properties, "ai." + AiServiceSettings.SUMMARY_TIMEOUT, ai.timeouts().summary());
+        put(properties, "ai." + AiServiceSettings.LABEL_TIMEOUT, ai.timeouts().label());
+        put(properties, "ai." + AiServiceSettings.EXPANSION_TIMEOUT, ai.timeouts().expansion());
         SearchSettings search = configuration.search();
         put(properties, SearchSettings.SEMANTIC, search.semantic());
         put(properties, SearchSettings.RERANK, search.rerank());

@@ -79,6 +79,7 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | KI-Textbudgets (Chat 24.000 Zeichen / 8 Quellen, Podcast, Zusammenfassungen, Fristen 12.000 Zeichen) | fest | Material wird vor dem Modellaufruf gekürzt | aus der Tokenlänge des Modells ableiten |
 | Modellname in der MVS-Diagnose (`MvsDiagnosisTools`) | `gpt-oss-120b` | die Diagnose lief nur mit diesem Modell | **einstellbar** (Angelo 26.11.2026): Zeile „Diagnose“ unter Einstellungen › KI-Dienst › Modelle mit Schalter „Diagnose per KI“ (`ai.diagnosis-enabled`, Standard an) und Modell (`ai.diagnosis-model`, vorbelegt `gpt-oss-120b`, Anbieter-Präfix wie `openai/` egal) |
 | Fristen im Command Deck außerhalb des Terminals (früher `FtpChatTools.TIMEOUT_SECONDS`, `EakteDocumentContent.TIMEOUT_SECONDS`, `HttpBetaViewServer.TIMEOUT`, `NetUseLogin.TIMEOUT_SECONDS`) | 120 / 120 / 60 / 60 s | langsame Hosts brachen ab | **einstellbar**: `DeckTimeouts` in `app-state.json` (`deck.timeouts.*`), Einstellungen › Mainframe › „Fristen im Command Deck“. Die Fristen des Terminals (Makros, Anmeldung, OpenTerm) bleiben bis zu einer Entscheidung |
+| Fristen je Anfrage einzelner KI-Aufgaben (früher `RemoteAi.SUMMARY_TIMEOUT`, `LABEL_TIMEOUT`, `EXPANSION_TIMEOUT`) | 5 min / 60 s / 90 s | große Modelle oder langsame Dienste brachen ab | **einstellbar**: `ai.summary-timeout`, `ai.label-timeout`, `ai.expansion-timeout` (`AiServiceSettings.Timeouts`), Einstellungen › KI-Dienst › Modelle › „Fristen je Anfrage“ |
 | MVS-Binärdiagnose und Hex-Ansicht (früher `BinarySample.MAX_CAPTURE_BYTES`, `MvsDiagnosisTools.BUDGET`, Lesegröße 4096, Frist 120 s) | 8 MiB / 65536 / 4096 Bytes / 120 s | größere Stichproben waren unmöglich, die KI las höchstens 64 KiB | **einstellbar**: `MvsDiagnosisSettings` in `app-state.json` (`deck.ftp.diagnosis.sample-bytes`, `read-bytes`, `budget-bytes`, `timeout-seconds`), Einstellungen › Mainframe › „MVS-Binärdiagnose und Hex-Ansicht“. Das Modell kommt aus der Zeile „Diagnose“ (siehe oben) |
 
 ### Grenzen außerhalb des eigenen Codes
@@ -143,6 +144,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `AiServiceSettings.MAX_CHAT_MAX_TOKENS` | `1_000_000` | fest | Obergrenze einer Einstellung | prüfen: entfallen oder einstellbar |
 | `AiServiceSettings.MAX_CONTEXT_TOKENS` | `1_048_576` | fest | Obergrenze einer Einstellung | prüfen: entfallen oder einstellbar |
 | `AiServiceSettings.MAX_LOAD_TIMEOUT` | `Duration.ofHours(1)` | fest | Timeout | einstellbar |
+| `AiServiceSettings.MAX_TASK_TIMEOUT` | `Duration.ofMillis(Integer.MAX_VALUE)` | fest | Protokollgrenze | bleibt: Socket-Timeouts sind `int`-Millisekunden (etwa 24 Tage) |
 | `AiServiceSettings.MAX_PARALLEL` | `32` | fest | Parallelität | einstellbar |
 | `AiServiceSettings.MAX_PODCAST_ATTEMPTS` | `5` | fest | Obergrenze einer Einstellung | prüfen: entfallen oder einstellbar |
 | `AiServiceSettings.MAX_PODCAST_PAUSE_MILLIS` | `5000` | fest | Timeout | einstellbar |
@@ -382,9 +384,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `RelevanceSearch.MAX_TEXT_LENGTH` | `500` | fest | Invariante/Darstellung | im Code belassen |
 | `RelevanceSearch.PARALLEL_CHECKS` | `6` | fest | Parallelität | einstellbar |
 | `RemoteAi.CATALOG_ATTEMPTS` | `4` | fest | Speicher-/Ressourcenbudget | einstellbar |
-| `RemoteAi.EXPANSION_TIMEOUT` | `Duration.ofSeconds(90)` | fest | Timeout | einstellbar |
-| `RemoteAi.LABEL_TIMEOUT` | `Duration.ofSeconds(60)` | fest | Timeout | einstellbar |
-| `RemoteAi.SUMMARY_TIMEOUT` | `Duration.ofMinutes(5)` | fest | Timeout | einstellbar |
 | `RequestRoute.MAX_DEPTH` | `12` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `Reranking.MAX_WINDOW` | `100` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `RestJson.LIST_LIMIT` | `100` | fest | Stapel-/Seitengröße | einstellbar |
@@ -536,6 +535,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `AiSettingsPanel.MAX_SIMPLIFY_PARALLEL` | `16` | fest | Parallelität | einstellbar |
 | `AnalysisView.MAX_STEP_ROWS` | `10` | fest | Invariante/Darstellung | im Code belassen |
 | `AppExit.DEFAULT_TIMEOUT` | `Duration.ofSeconds(40)` | Vorgabe | Timeout | einstellbar |
+| `AiSettingsPanel.TIMEOUT_MAX_AMOUNT` | `999` | fest | Invariante/Darstellung | im Code belassen: größte Zahl im Feld, die Einheit (bis Tage) wählt der Benutzer |
 | `AppSettings.DEFAULT_CHECK_TIMEOUT` | `com.aresstack.spaceharvester.application.sync.PageFreshness.DEFAULT_TIMEOUT` | Vorgabe | Timeout | einstellbar |
 | `AppSettings.DEFAULT_LARGE_FILE_TIMEOUT` | `com.aresstack.spaceharvester.application.sync.PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT` | Vorgabe | Timeout | einstellbar |
 | `AppSettings.DEFAULT_MAX_PAGE_BYTES` | `com.aresstack.spaceharvester.persistence.lucene.LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
