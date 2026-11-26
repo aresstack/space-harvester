@@ -603,6 +603,18 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
      * Ziel. Ob es die Seite gibt, klärt erst das Laden.
      */
     @Override
+    public List<String> libraries() {
+        if (!(port instanceof com.aresstack.enterpriseai.source.api.LibraryListingSource catalog)) {
+            return List.of();
+        }
+        try {
+            return catalog.libraries();
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+    }
+
+    @Override
     public Optional<String> navigationPageId(String nativePath) {
         if (!(port instanceof com.aresstack.enterpriseai.source.api.NavigationResourceSource navigation)) {
             return Optional.empty();
@@ -743,6 +755,14 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     @Override
     public boolean inventoryCovers(String pageId) {
+        if (port instanceof com.aresstack.enterpriseai.source.api.InventoryCoverageSource coverage) {
+            try {
+                KnowledgeResourceId resourceId = resourceIdOf(pageId);
+                return ownResource(resourceId.value()).isPresent() && coverage.inventoryCovers(resourceId);
+            } catch (SourceAccessException e) {
+                return false;
+            }
+        }
         if (!"ftp".equals(type) || scope == null) {
             return true;
         }

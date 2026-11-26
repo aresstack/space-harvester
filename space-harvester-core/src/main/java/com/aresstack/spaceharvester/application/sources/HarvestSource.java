@@ -276,6 +276,10 @@ public interface HarvestSource {
      *                               {@link #partitions()}
      */
     /** Resolve a directly visited native resource without extending the configured inventory. */
+    default List<String> libraries() {
+        return List.of();
+    }
+
     default Optional<String> navigationPageId(String nativePath) {
         return Optional.empty();
     }

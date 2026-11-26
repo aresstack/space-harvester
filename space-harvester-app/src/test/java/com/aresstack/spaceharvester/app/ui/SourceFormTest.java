@@ -80,6 +80,11 @@ class SourceFormTest {
             assertThat(((JTextField) f.fields.input("host")).getText()).isEqualTo("ndv.example.test");
             assertThat(((JTextField) f.fields.input("port")).getText()).isEqualTo("8011");
             assertThat(((JTextField) f.fields.input("startPoints")).getText()).isEqualTo("LAGER");
+            assertThat(((JTextField) f.fields.input("startPoints")).isEditable()).isFalse();
+            ((javax.swing.JCheckBox) f.fields.input("allLibraries")).setSelected(true);
+            ((javax.swing.JCheckBox) f.fields.input("navigationFill")).setSelected(true);
+            assertThat(f.draft().extraOptions()).containsEntry("allLibraries", "true")
+                    .containsEntry("navigationFill", "true").containsEntry("startPoints", "LAGER");
             assertThat(f.kind.isEnabled()).as("eine neue Quelle, alles änderbar").isTrue();
         });
     }

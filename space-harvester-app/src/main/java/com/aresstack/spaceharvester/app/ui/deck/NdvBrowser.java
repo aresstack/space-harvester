@@ -679,6 +679,8 @@ final class NdvBrowser extends JPanel {
                     : objects.getRowCount() + " Objekte in " + current, false);
             openPending();
             // Wie in MainframeMate: nach dem Auflisten Abhängigkeiten aufbauen und Quelltexte vorab laden.
+            NdvAnalysisSettings.searchLink().visited(session.profile(), session.account(),
+                    navigationPaths(current, objects.rows));
             startAnalysis(current, List.copyOf(objects.rows), false);
         }, error -> {
             if (listing.get() != generation) {
@@ -1145,6 +1147,14 @@ final class NdvBrowser extends JPanel {
      * geändert hat (nur Erlaubtes); danach wird der Graph neu gebaut. Mit {@code explicit} auch ohne Änderung der
      * Sperrliste erneut.
      */
+    List<String> navigationPaths(String lib, List<NdvObject> listed) {
+        return listed.stream().filter(NdvObject::source)
+                .filter(object -> !object.location().ddm())
+                .filter(object -> lib.equalsIgnoreCase(object.library()))
+                .filter(object -> rules.isAllowed(NdvAccessRules.path(lib, object.displayName())))
+                .map(NdvObject::path).distinct().toList();
+    }
+
     private void startAnalysis(String lib, List<NdvObject> listed, boolean explicit) {
         if (lib == null || listed.isEmpty()) {
             return;

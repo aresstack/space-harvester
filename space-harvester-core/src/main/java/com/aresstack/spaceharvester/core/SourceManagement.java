@@ -84,6 +84,10 @@ public final class SourceManagement {
      * „Verbindung testen“: öffnet die Einstellungen nur für diesen Test und listet die sichtbaren Partitionen (Spaces)
      * live, ohne etwas abzulegen. Die Meldung nennt die Art des Fehlers, nie Werte der Einstellungen.
      */
+    public List<String> libraries(SourceSettingsConfig draft, boolean replacing) {
+        return catalog.probe(draft, replacing, source -> source.libraries());
+    }
+
     public ConnectionCheck test(SourceSettingsConfig draft, boolean replacing) {
         try {
             List<Partition> partitions = catalog.probe(draft, replacing, source -> source.partitions());

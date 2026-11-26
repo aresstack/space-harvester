@@ -89,6 +89,36 @@ class NdvAnalysisUiTest {
     }
 
     @Test
+    void visitedLibraryReportsOnlyDirectSourceObjectsForAcquisition() throws Exception {
+        var previous = NdvAnalysisSettings.searchLink();
+        var visited = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        NdvAnalysisSettings.searchLink(new NdvSearchLink() {
+            public java.util.Optional<Rule> rule(com.aresstack.spaceharvester.deck.ndv.NdvProfile profile) {
+                return java.util.Optional.empty();
+            }
+            public boolean available() { return true; }
+            public void createRule(java.awt.Component parent,
+                    com.aresstack.spaceharvester.deck.ndv.NdvProfile profile, String account,
+                    List<String> libraries, java.util.function.Consumer<String> saved) { }
+            public String indexNow(String sourceId) { return ""; }
+            public void observe(Runnable changed) { }
+            public void visited(com.aresstack.spaceharvester.deck.ndv.NdvProfile profile,
+                    String account, List<String> paths) {
+                visited.addAll(paths);
+            }
+        });
+        try {
+            connect();
+            flush();
+            assertThat(visited).isNotEmpty();
+            assertThat(visited).allMatch(path -> path.startsWith("LAGER/") && path.contains(".NS"));
+            assertThat(visited).doesNotHaveDuplicates();
+        } finally {
+            NdvAnalysisSettings.searchLink(previous);
+        }
+    }
+
+    @Test
     void besideTheSourceThereIsNothingTheRelationsAreTabsOfTheSideBarWithItsOneSearch() throws Exception {
         NdvBrowser browser = connect();
         SwingUtilities.invokeAndWait(() -> {
