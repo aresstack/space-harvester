@@ -38,8 +38,29 @@ public final class StoredCobolSearch {
         return collector.result();
     }
 
+    public record Origin(PageKey key, String rawSha256) { }
+
     public record Snapshot(CobolSearch search, String sourceId, int programs, int partial,
-                           int missingAnalysis, int missingContent, int candidates) {
+                           int missingAnalysis, int missingContent, int candidates,
+                           Map<String, List<Origin>> evidence) {
+        public Snapshot {
+            evidence = Map.copyOf(evidence);
+        }
+
+        /** Include the program, its COPY dependencies and every displayed hierarchy candidate. */
+        public List<Origin> evidenceFor(CobolSearch.Fact fact) {
+            var origins = new java.util.LinkedHashSet<Origin>();
+            origins.addAll(evidence.getOrDefault(fact.member(), List.of()));
+            origins.addAll(evidence.getOrDefault(fact.source(), List.of()));
+            for (String field : List.of("ROOT_SELECTOR", "HIERARCHY_FROM", "CALLER_CANDIDATES", "TARGET_CANDIDATES")) {
+                String selectors = fact.attributes().getOrDefault(field, "");
+                for (String selector : selectors.split(", ")) {
+                    origins.addAll(evidence.getOrDefault(selector, List.of()));
+                }
+            }
+            return List.copyOf(origins);
+        }
+
         public String coverage() {
             return programs + " Programme mit aktueller Analyse · " + partial + " Teilanalysen · "
                     + missingAnalysis + " Programme ohne aktuelle lesbare Analyse · "
@@ -53,6 +74,7 @@ public final class StoredCobolSearch {
         private final List<String> syslib;
         private final BooleanSupplier cancelled;
         private final List<CobolSearch.Fact> facts = new ArrayList<>();
+        private final Map<String, List<Origin>> evidence = new LinkedHashMap<>();
         private int programs, partial, missingAnalysis, missingContent, candidates;
 
         Collector(String sourceId, List<String> syslib, BooleanSupplier cancelled) {
@@ -83,6 +105,7 @@ public final class StoredCobolSearch {
                 addProgram(page, verified.get());
             } else if (syslib.contains(member.group(1))) {
                 facts.add(copybook(member.group(2), page, CobolSearch.Kind.COPYBOOK_CANDIDATE));
+                remember(path, List.of(origin(page)));
                 candidates++;
             }
         }
@@ -106,7 +129,15 @@ public final class StoredCobolSearch {
                 missingAnalysis++;
                 return;
             }
-            programFacts.forEach(fact -> facts.add(withOrigin(fact, origins, page)));
+            List<Origin> programEvidence = origins.values().stream().map(StoredCobolSearch::origin).distinct().toList();
+            remember(source.name(), programEvidence);
+            origins.forEach((path, document) -> remember(path, List.of(origin(document))));
+            for (var fact : programFacts) {
+                if (fact.kind() == CobolSearch.Kind.PROGRAM) {
+                    remember(fact.member() + "#" + fact.name() + "@" + fact.line(), programEvidence);
+                }
+                facts.add(withOrigin(fact, origins, page));
+            }
             // Preserve real identities for resolved copybooks instead of creating synthetic search hits.
             for (var fact : programFacts) {
                 if (fact.kind() != CobolSearch.Kind.COPY_USAGE) continue;
@@ -158,8 +189,13 @@ public final class StoredCobolSearch {
             if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) throw new CancellationException();
         }
 
+        private void remember(String selector, List<Origin> origins) {
+            evidence.merge(selector, List.copyOf(origins), (left, right) ->
+                    java.util.stream.Stream.concat(left.stream(), right.stream()).distinct().toList());
+        }
+
         private Snapshot result() {
-            return new Snapshot(new CobolSearch(facts), sourceId, programs, partial, missingAnalysis, missingContent, candidates);
+            return new Snapshot(new CobolSearch(facts), sourceId, programs, partial, missingAnalysis, missingContent, candidates, evidence);
         }
     }
 
@@ -181,6 +217,10 @@ public final class StoredCobolSearch {
                 : "Gespeichertes SYSLIB-Member; nicht einzeln klassifiziert");
         return new CobolSearch.Fact(kind, name, "", "", page.snapshot().metadata().attributes().get("ftp.path"),
                 0, page.snapshot().revision(), attributes, false);
+    }
+
+    private static Origin origin(DeliveredPage page) {
+        return new Origin(page.header().key(), page.snapshot().payload().rawSha256());
     }
 
     private static void identify(Map<String, String> attributes, DeliveredPage page) {

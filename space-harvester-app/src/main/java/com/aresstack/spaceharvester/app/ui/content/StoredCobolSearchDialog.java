@@ -15,7 +15,7 @@ import javax.swing.*;
 import javax.swing.table.AbstractTableModel;
 
 /** Search one stored knowledge source without acquiring or analyzing any new program. */
-final class StoredCobolSearchDialog {
+public final class StoredCobolSearchDialog {
     private static final int PAGE_SIZE = 300;
     private final StoredCobolSearch.Snapshot snapshot;
     private final JComboBox<CobolSearch.Mode> modes = new JComboBox<>(CobolSearch.Mode.values());
@@ -30,11 +30,11 @@ final class StoredCobolSearchDialog {
     private int generation;
     private Future<?> running;
 
-    StoredCobolSearchDialog(StoredCobolSearch.Snapshot snapshot) {
+    public StoredCobolSearchDialog(StoredCobolSearch.Snapshot snapshot) {
         this.snapshot = snapshot;
     }
 
-    Optional<CobolSearch.Fact> show(Component parent) {
+    public Optional<CobolSearch.Fact> show(Component parent) {
         modes.setRenderer(new DefaultListCellRenderer() {
             @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index,
                     boolean selected, boolean focus) {

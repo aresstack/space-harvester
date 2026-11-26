@@ -218,13 +218,17 @@ final class ChatTools {
     List<AiChat.Tool> toolDefinitions() {
         if (scope == null) {
             // Ohne Bereich (Angelo 24.11.2026): nur die interne Suche samt Lesen ihrer Treffer, wenn sie an ist.
-            return appSources == null ? List.of() : List.of(readDefinition(), appSearchDefinition());
+            if (appSources == null) return List.of();
+            List<AiChat.Tool> all = new ArrayList<>(List.of(readDefinition(), appSearchDefinition()));
+            if (storedCobolTool().availableForChat()) all.add(StoredCobolChatTool.definition());
+            return List.copyOf(all);
         }
         if (appSources == null) {
             return definitions(nodes != null);
         }
         List<AiChat.Tool> all = new ArrayList<>(definitions(nodes != null));
         all.add(appSearchDefinition());
+        if (storedCobolTool().availableForChat()) all.add(StoredCobolChatTool.definition());
         return List.copyOf(all);
     }
 
@@ -325,6 +329,7 @@ final class ChatTools {
             case READ -> "Liest eine Seite";
             case TERM -> "Schlägt einen Fachbegriff nach";
             case APP_SEARCH -> "Durchsucht die Wissensquellen";
+            case StoredCobolChatTool.NAME -> "Durchsucht gespeicherte COBOL-Analysen";
             default -> "Werkzeug";
         };
     }
@@ -356,6 +361,7 @@ final class ChatTools {
                         .asInt(0)));
                 case TERM -> term(arguments.path("begriff").asString(""));
                 case APP_SEARCH -> appSearch(arguments);
+                case StoredCobolChatTool.NAME -> cobolSearch(arguments);
                 default -> "Unbekanntes Werkzeug.";
             };
         } catch (CancellationException e) {
@@ -975,6 +981,19 @@ final class ChatTools {
      * Vorab-Entscheidung, ob gesucht wird. Treffer werden lesbar ({@link #granted}); Text geht erst mit {@value #READ}
      * an das Modell und wird dort freigegeben.
      */
+    private String cobolSearch(JsonNode arguments) {
+        if (explicitAppSources == null) return "Unbekanntes Werkzeug.";
+        return storedCobolTool().run(arguments);
+    }
+
+    private StoredCobolChatTool storedCobolTool() {
+        return new StoredCobolChatTool(workspace, explicitAppSources, () -> cancelled,
+                (spaceKey, key) -> {
+                    release(spaceKey, key);
+                    granted.add(key);
+                });
+    }
+
     String appSearch(JsonNode arguments) {
         if (appSources == null) {
             return "Unbekanntes Werkzeug.";

@@ -2715,7 +2715,6 @@ public final class PageDetailPanel extends JPanel {
             feedback.info("Keine verifizierte Quellposition verfügbar", null);
             return;
         }
-        var focus = new ProgramFocus(new PageKey(source, id), hash, fact.line());
         Background.run(() -> runtime.workspace().cachedPage(source, id)
                 .filter(stored -> hash.equals(stored.snapshot().payload().rawSha256())).isPresent(), valid -> {
             if (current != request || context.runtime() != runtime) return;
@@ -2723,11 +2722,15 @@ public final class PageDetailPanel extends JPanel {
                 feedback.warning("Fundstelle nicht mehr aktuell", "COBOL-Suche erneut öffnen.");
                 return;
             }
-            pendingProgramFocus = focus;
-            context.navigator().openPage(source, id);
+            context.navigator().openProgram(source, id, hash, fact.line());
         }, error -> {
             if (current == request && context.runtime() == runtime) feedback.problem(error);
         });
+    }
+
+    void openProgram(String source, String id, String rawSha256, int line) {
+        pendingProgramFocus = new ProgramFocus(new PageKey(source, id), rawSha256, line);
+        load(source, id, false);
     }
 
     private void showStoredProgram(PageSnapshot snapshot) {
