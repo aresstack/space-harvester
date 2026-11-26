@@ -80,6 +80,20 @@ public class MarkdownTablePanelTest {
     }
 
     @Test
+    public void listAtTheEndOfACellLeavesNoEmptyLineBelow() throws Exception {
+        String markdown = "| A | B |\n|---|---|\n| 1 | <ul><li>neu</li><li>geändert</li></ul> |\n";
+        MarkdownTheme theme = MarkdownTheme.forSurface(Color.WHITE);
+        Container rendered = new FlexmarkSwingRenderer(theme, url -> { }, null).render(markdown, true);
+        JTable table = find(rendered, JTable.class);
+        assertNotNull(table);
+        MarkdownTablePanel.RichCell cell = (MarkdownTablePanel.RichCell) table.getValueAt(0, 1);
+        StyledDocument document = cell.pane.getStyledDocument();
+        assertEquals("• neu\n• geändert", document.getText(0, document.getLength()));
+        int lineHeight = cell.pane.getFontMetrics(cell.pane.getFont()).getHeight();
+        assertTrue(cell.pane.heightForWidth(300) < 3 * lineHeight, "Zwei Listenpunkte, zwei Zeilen");
+    }
+
+    @Test
     public void inlineHtmlInParagraphIsFormattedNotShownAsSource() throws BadLocationException {
         MarkdownTheme theme = MarkdownTheme.forBubble(Color.WHITE, Color.BLACK);
         Container rendered = new FlexmarkSwingRenderer(theme, DesktopLinkOpener.systemDefault(), null)

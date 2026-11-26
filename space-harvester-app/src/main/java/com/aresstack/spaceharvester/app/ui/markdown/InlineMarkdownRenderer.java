@@ -44,8 +44,29 @@ final class InlineMarkdownRenderer {
     WrappingTextPane render(Node container, Font font) {
         WrappingTextPane pane = pane(font);
         renderChildren(container, pane.getStyledDocument(), attributes(font));
+        trimTrailingBlank(pane.getStyledDocument());
         installLinkHandling(pane);
         return pane;
+    }
+
+    /**
+     * Entfernt Umbrüche und Leerzeichen am Ende: nach einer Liste ({@code </ul>}) oder einem {@code <br>} am Ende
+     * einer Tabellenzelle zeigte die Textfläche sonst eine leere Zeile, und die Tabellenzeile war eine Zeile zu hoch.
+     */
+    private static void trimTrailingBlank(StyledDocument document) {
+        try {
+            int end = document.getLength();
+            String text = document.getText(0, end);
+            int keep = end;
+            while (keep > 0 && Character.isWhitespace(text.charAt(keep - 1))) {
+                keep--;
+            }
+            if (keep < end) {
+                document.remove(keep, end - keep);
+            }
+        } catch (BadLocationException ignored) {
+            // Ohne lesbaren Text bleibt das Dokument, wie es ist.
+        }
     }
 
     /** Unformatierter Text (unbekannte Blöcke wie HTML), umbrochen wie ein Absatz; nie als HTML gedeutet. */
