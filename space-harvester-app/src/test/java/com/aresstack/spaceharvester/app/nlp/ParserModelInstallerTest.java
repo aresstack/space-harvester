@@ -140,6 +140,69 @@ class ParserModelInstallerTest {
         assertThat(leftovers()).isEmpty();
     }
 
+    /** Angelo 26.11.2026 (WLAN): Ein abgerissener Download geht ab dem letzten Byte weiter, die Prüfsumme stimmt. */
+    @Test
+    void aBrokenDownloadContinuesFromTheLastByte() throws Exception {
+        byte[] zip = zip("model-manifest.json", "{}", "maltparser-de-gsd.mco", "mco");
+        int cut = zip.length / 2;
+        List<String> rests = new ArrayList<>();
+        GermanParserModelPin.Release release = new GermanParserModelPin.Release("aresstack/space-harvester",
+                "maltparser-de-gsd-v1.0.0", "maltparser-de-gsd-v1.0.0.zip", sha(zip));
+        ParserModelInstaller installer = new ParserModelInstaller(
+                data.resolve("nlp-model").resolve("maltparser-de-gsd-v1.0.0"), release,
+                new ParserModelInstaller.Download() {
+                    @Override
+                    public ParserModelInstaller.Body open(URI target) {
+                        return new ParserModelInstaller.Body(breaking(zip, cut), zip.length, "\"erfunden\"");
+                    }
+
+                    @Override
+                    public com.aresstack.enterpriseai.proasteion.platform.network.ResumableDownload.Response rest(
+                            URI target, long from, String validator) {
+                        rests.add(from + " " + validator);
+                        return new com.aresstack.enterpriseai.proasteion.platform.network.ResumableDownload.Response(
+                                206, "bytes " + from + "-" + (zip.length - 1) + "/" + zip.length, validator,
+                                new ByteArrayInputStream(zip, (int) from, zip.length - (int) from));
+                    }
+                }, 2);
+
+        installer.install(progress((d, t) -> { }), () -> false);
+
+        assertThat(installer.installed()).isTrue();
+        assertThat(rests).containsExactly(cut + " \"erfunden\"");
+        assertThat(leftovers()).isEmpty();
+    }
+
+    @Test
+    void withoutResumesABrokenDownloadInstallsNothing() throws Exception {
+        byte[] zip = zip("model-manifest.json", "{}", "maltparser-de-gsd.mco", "mco");
+        GermanParserModelPin.Release release = new GermanParserModelPin.Release("aresstack/space-harvester",
+                "maltparser-de-gsd-v1.0.0", "maltparser-de-gsd-v1.0.0.zip", sha(zip));
+        ParserModelInstaller installer = new ParserModelInstaller(
+                data.resolve("nlp-model").resolve("maltparser-de-gsd-v1.0.0"), release,
+                target -> new ParserModelInstaller.Body(breaking(zip, zip.length / 2), zip.length));
+
+        assertThatThrownBy(() -> installer.install(progress((d, t) -> { }), () -> false))
+                .isInstanceOf(IOException.class);
+        assertThat(installer.installed()).isFalse();
+        assertThat(leftovers()).isEmpty();
+    }
+
+    /** Liefert {@code bytes} bis {@code cut}, dann einen Abriss. */
+    private static java.io.InputStream breaking(byte[] bytes, int cut) {
+        return new java.io.InputStream() {
+            private int position;
+
+            @Override
+            public int read() throws IOException {
+                if (position >= cut) {
+                    throw new IOException("erfunden: Verbindung abgerissen");
+                }
+                return bytes[position++] & 0xff;
+            }
+        };
+    }
+
     @Test
     void reinstallReplacesTheModel() throws Exception {
         byte[] zip = zip("model-manifest.json", "{}", "maltparser-de-gsd.mco", "new");
