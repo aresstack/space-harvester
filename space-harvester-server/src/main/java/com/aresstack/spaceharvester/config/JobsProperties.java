@@ -17,17 +17,23 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param parallelDownloads    Bilder- und Anhängeaufträge, die gleichzeitig laden (Standard 4; 0 bereitet nur vor)
  * @param downloadConnections  Verbindungen aller ladenden Bilder- und Anhängeaufträge zusammen (Standard 8, 0 bis 64;
  *                             0 lädt keine Bilder und Anhänge)
+ * @param maxOpenBackground    höchstens zugleich offene Hintergrundaufträge (Standard 1000)
+ * @param maxWaitingPrefetches wartende Anhänge je Space beim Vorabladen (Standard 5000; wirkt nur in der App)
  */
 @ConfigurationProperties("space-harvester.jobs")
 public record JobsProperties(Integer maxQueued, Duration maxRunTime, Duration retention,
         Integer maxOpenPerOwner, Retry retry, Integer parallelPreparations, Integer parallelDownloads,
-        Integer downloadConnections) {
+        Integer downloadConnections, Integer maxOpenBackground,
+        Integer maxWaitingPrefetches) {
 
     public JobsProperties {
-        maxQueued = maxQueued == null ? 20 : maxQueued;
-        maxRunTime = maxRunTime == null ? Duration.ofHours(6) : maxRunTime;
+        maxQueued = maxQueued == null ? JobLimits.DEFAULT_MAX_QUEUED : maxQueued;
+        maxRunTime = maxRunTime == null ? JobLimits.DEFAULT_MAX_RUN_TIME : maxRunTime;
         retention = retention == null ? JobLimits.DEFAULT_RETENTION : retention;
-        maxOpenPerOwner = maxOpenPerOwner == null ? 4 : maxOpenPerOwner;
+        maxOpenPerOwner = maxOpenPerOwner == null ? JobLimits.DEFAULT_MAX_OPEN_PER_OWNER : maxOpenPerOwner;
+        maxOpenBackground = maxOpenBackground == null ? JobLimits.DEFAULT_MAX_OPEN_BACKGROUND : maxOpenBackground;
+        maxWaitingPrefetches = maxWaitingPrefetches == null ? JobLimits.DEFAULT_MAX_WAITING_PREFETCHES
+                : maxWaitingPrefetches;
         retry = retry == null ? new Retry(null, null, null, null, null, null) : retry;
         parallelPreparations = JobLimits.requirePreparations(parallelPreparations == null
                 ? JobLimits.DEFAULT_PARALLEL_PREPARATIONS : parallelPreparations);
@@ -40,7 +46,8 @@ public record JobsProperties(Integer maxQueued, Duration maxRunTime, Duration re
     /** Die Auftragsgrenzen für {@link com.aresstack.spaceharvester.application.jobs.Jobs}. */
     public JobLimits toLimits() {
         return new JobLimits(maxQueued, maxRunTime, retention, maxOpenPerOwner, retry.toSettings(),
-                parallelPreparations, parallelDownloads, downloadConnections);
+                parallelPreparations, parallelDownloads, downloadConnections, maxOpenBackground,
+                maxWaitingPrefetches);
     }
 
     /**

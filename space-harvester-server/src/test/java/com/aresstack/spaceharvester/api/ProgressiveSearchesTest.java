@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.progressive.HitScorer;
+import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult;
 import com.aresstack.spaceharvester.application.query.progressive.RuleBasedExpansion;
 import com.aresstack.spaceharvester.application.query.progressive.SearchOrchestrator;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
@@ -19,8 +20,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * F38-4: Laufende Suchen sind getrennt von der Aufbewahrung beendeter begrenzt, beides einstellbar; eine neue Suche
- * verdrängt nie eine andere, sondern wird ausdrücklich abgewiesen.
+ * F38-4, ADR 0038 Punkt 10: laufende, wartende und beendete Suchen sind getrennt begrenzt, alles einstellbar; eine neue
+ * Suche verdrängt nie eine andere, sondern wartet oder wird ausdrücklich abgewiesen.
  */
 class ProgressiveSearchesTest {
 
@@ -38,28 +39,61 @@ class ProgressiveSearchesTest {
     }
 
     @Test
-    void aFullRegisterRejectsANewSearchAndKeepsTheRunningAndFinishedOnes() throws Exception {
-        ProgressiveSearches searches = searches(new ProgressiveSearches.Limits(1, Duration.ofMinutes(5)));
-        var finished = searches.start(caller, KeywordSearch.Query.of("schnell"), SearchProfile.defaults());
-        finished.search().result().get(10, TimeUnit.SECONDS);
+    void aSearchWithoutAFreeSlotWaitsAndStartsWhenOneEnds() throws Exception {
+        ProgressiveSearches searches = searches(limits(1, 1, Duration.ofMinutes(5)));
         var running = searches.start(caller, KeywordSearch.Query.of("langsam"), SearchProfile.defaults());
+        var waiting = searches.start(caller, KeywordSearch.Query.of("danach"), SearchProfile.defaults());
+
+        assertThat(waiting.snapshot().waiting()).isTrue();
+        assertThat(waiting.snapshot().done()).isFalse();
+        release.countDown();
+        running.result().get(10, TimeUnit.SECONDS);
+        assertThat(waiting.result().get(10, TimeUnit.SECONDS).reason())
+                .isNotEqualTo(ProgressiveResult.Completion.CANCELLED);
+        assertThat(waiting.snapshot().done()).isTrue();
+    }
+
+    @Test
+    void aFullRegisterRejectsANewSearchAndKeepsAllOthers() throws Exception {
+        ProgressiveSearches searches = searches(limits(1, 1, Duration.ofMinutes(5)));
+        var finished = searches.start(caller, KeywordSearch.Query.of("schnell"), SearchProfile.defaults());
+        finished.result().get(10, TimeUnit.SECONDS);
+        var running = searches.start(caller, KeywordSearch.Query.of("langsam"), SearchProfile.defaults());
+        var waiting = searches.start(caller, KeywordSearch.Query.of("danach"), SearchProfile.defaults());
 
         assertThatThrownBy(() -> searches.start(caller, KeywordSearch.Query.of("noch eine"),
                 SearchProfile.defaults())).isInstanceOf(ProgressiveSearches.CapacityExceededException.class);
-        assertThat(searches.find(caller, finished.search().id())).isPresent();
-        assertThat(searches.find(caller, running.search().id())).isPresent();
+        assertThat(searches.find(caller, finished.id())).isPresent();
+        assertThat(searches.find(caller, running.id())).isPresent();
+        assertThat(searches.find(caller, waiting.id())).isPresent();
+    }
+
+    @Test
+    void cancellingAWaitingSearchEndsItWithoutHits() throws Exception {
+        ProgressiveSearches searches = searches(limits(1, 1, Duration.ofMinutes(5)));
+        searches.start(caller, KeywordSearch.Query.of("langsam"), SearchProfile.defaults());
+        var waiting = searches.start(caller, KeywordSearch.Query.of("danach"), SearchProfile.defaults());
+
+        assertThat(searches.cancel(caller, waiting.id())).isTrue();
+        assertThat(waiting.result().get(1, TimeUnit.SECONDS).reason())
+                .isEqualTo(ProgressiveResult.Completion.CANCELLED);
+        assertThat(waiting.snapshot().hits()).isEmpty();
     }
 
     @Test
     void aFinishedSearchStaysForTheConfiguredRetention() throws Exception {
-        ProgressiveSearches searches = searches(new ProgressiveSearches.Limits(4, Duration.ofSeconds(30)));
+        ProgressiveSearches searches = searches(limits(4, 0, Duration.ofSeconds(30)));
         var finished = searches.start(caller, KeywordSearch.Query.of("schnell"), SearchProfile.defaults());
-        finished.search().result().get(10, TimeUnit.SECONDS);
+        finished.result().get(10, TimeUnit.SECONDS);
 
         now.addAndGet(Duration.ofSeconds(29).toNanos());
-        assertThat(searches.find(caller, finished.search().id())).isPresent();
+        assertThat(searches.find(caller, finished.id())).isPresent();
         now.addAndGet(Duration.ofSeconds(2).toNanos());
-        assertThat(searches.find(caller, finished.search().id())).isEmpty();
+        assertThat(searches.find(caller, finished.id())).isEmpty();
+    }
+
+    private static ProgressiveSearches.Limits limits(int running, int waiting, Duration retention) {
+        return new ProgressiveSearches.Limits(running, waiting, retention, ProgressiveSearches.DEFAULT_MAX_TIME_BUDGET);
     }
 
     private ProgressiveSearches searches(ProgressiveSearches.Limits limits) {

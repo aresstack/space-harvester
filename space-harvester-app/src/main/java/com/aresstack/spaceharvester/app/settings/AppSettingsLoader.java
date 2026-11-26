@@ -1142,9 +1142,14 @@ public final class AppSettingsLoader {
     }
 
     private JobLimits jobLimits(Map<?, ?> jobs, List<String> problems) {
-        int queued = integer(get(jobs, "max-queued"), 20, "space-harvester.jobs.max-queued", problems);
-        Duration runTime = duration(get(jobs, "max-run-time"), Duration.ofHours(6), "space-harvester.jobs.max-run-time",
+        int queued = integer(get(jobs, "max-queued"), JobLimits.DEFAULT_MAX_QUEUED, "space-harvester.jobs.max-queued",
                 problems);
+        Duration runTime = duration(get(jobs, "max-run-time"), JobLimits.DEFAULT_MAX_RUN_TIME,
+                "space-harvester.jobs.max-run-time", problems);
+        int background = integer(get(jobs, "max-open-background"), JobLimits.DEFAULT_MAX_OPEN_BACKGROUND,
+                "space-harvester.jobs.max-open-background", problems);
+        int waitingPrefetches = integer(get(jobs, "max-waiting-prefetches"), JobLimits.DEFAULT_MAX_WAITING_PREFETCHES,
+                "space-harvester.jobs.max-waiting-prefetches", problems);
         Duration retention = duration(get(jobs, "retention"), JobLimits.DEFAULT_RETENTION,
                 "space-harvester.jobs.retention", problems);
         RetrySettings retry = retry(map(get(jobs, "retry")), problems);
@@ -1157,10 +1162,11 @@ public final class AppSettingsLoader {
         // Ein Bediener: die Grenze je Auslöser ist die Gesamtgrenze.
         try {
             return new JobLimits(preparations, queued, runTime, retention).withRetry(retry)
-                    .withParallel(preparations, downloads).withConnections(connections);
+                    .withParallel(preparations, downloads).withConnections(connections).withBackground(background)
+                    .withWaitingPrefetches(waitingPrefetches);
         } catch (IllegalArgumentException e) {
             problems.add("space-harvester.jobs: " + e.getMessage() + "; es gelten die Standards");
-            return new JobLimits(2, 20, Duration.ofHours(6)).withRetry(retry).withParallel(preparations, downloads)
+            return JobLimits.DEFAULTS.withRetry(retry).withParallel(preparations, downloads)
                     .withConnections(connections);
         }
     }
