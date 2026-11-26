@@ -13,7 +13,9 @@ final class AssistantMessageFooter extends JPanel implements WidthAwareHeight {
 
     private static final int ROW_GAP = 4;
     /** Abstände der Reihe und Innenrand des ersten Knopfs: so viel rückt die Reihe nach links, bündig zum Text. */
-    private static final int LEAD = 9;
+    private static final int LEAD = 5;
+    /** Abstand zwischen dem allein stehenden Kopierknopf und den übrigen Knöpfen (zusätzlich zum Reihenabstand). */
+    static final int COPY_GAP = 8;
 
     private final JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 3, 0));
     private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
@@ -21,6 +23,7 @@ final class AssistantMessageFooter extends JPanel implements WidthAwareHeight {
     private final javax.swing.JLabel failure = new javax.swing.JLabel("Fehler");
     private JComponent qr;
     private JComponent copy;
+    private final java.awt.Component copyGap = javax.swing.Box.createHorizontalStrut(COPY_GAP);
     private JComponent sources;
 
     AssistantMessageFooter(java.awt.Color foreground) {
@@ -58,21 +61,26 @@ final class AssistantMessageFooter extends JPanel implements WidthAwareHeight {
         order();
     }
 
-    /** Der Kopierknopf: immer ganz rechts in der Reihe, hinter Uhrzeit und QR-Knopf, wie bei der Frage. */
+    /**
+     * Der Kopierknopf steht für sich an der äußeren Kante, hier links am Textanfang, mit Abstand zum Rest (Angelo,
+     * 26.11.2026): Er ist die häufigste Aktion und soll nicht neben dem QR-Knopf liegen, wo man sich verklickt.
+     */
     void setCopyAction(JComponent accessory) {
         if (copy != null) {
             controls.remove(copy);
+            controls.remove(copyGap);
         }
         copy = accessory;
-        order();
+        if (copy != null) {
+            controls.add(copy, 0);
+            controls.add(copyGap, 1);
+        }
+        refresh();
     }
 
     private void order() {
         if (qr != null) {
             controls.add(qr);
-        }
-        if (copy != null) {
-            controls.add(copy);
         }
         refresh();
     }

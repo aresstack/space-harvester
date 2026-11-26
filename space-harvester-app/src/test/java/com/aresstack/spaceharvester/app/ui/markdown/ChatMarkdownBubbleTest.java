@@ -92,8 +92,10 @@ class ChatMarkdownBubbleTest {
                 assertThat(controls.y + controls.height).isLessThanOrEqualTo(footer.getHeight());
                 assertThat(qr.getParent().getComponent(qr.getParent().getComponentZOrder(qr) - 1))
                         .isInstanceOf(MessageTimestamp.class);
-                // Der Kopierknopf steht ganz außen, hinter Uhrzeit und QR-Knopf.
-                assertThat(qr.getParent().getComponent(qr.getParent().getComponentCount() - 1)).isSameAs(copy);
+                // Der Kopierknopf steht für sich ganz links, mit einer Lücke zum Rest; der QR-Knopf am Ende.
+                assertThat(qr.getParent().getComponent(0)).isSameAs(copy);
+                assertThat(qr.getParent().getComponent(1)).isInstanceOf(javax.swing.Box.Filler.class);
+                assertThat(qr.getParent().getComponent(qr.getParent().getComponentCount() - 1)).isSameAs(qr);
             }
         });
     }

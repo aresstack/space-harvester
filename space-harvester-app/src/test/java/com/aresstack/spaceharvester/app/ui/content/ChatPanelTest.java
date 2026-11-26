@@ -147,7 +147,8 @@ class ChatPanelTest {
             copies.get(1).doClick();
             assertThat(copied).containsExactly("Frühere Frage", "Frühere Antwort");
             assertThat(copies.get(1).copiedShown()).isTrue();
-            // Angelo, 26.11.2026: bei Frage und Antwort dieselbe Reihenfolge, Uhrzeit, QR-Knopf, ganz außen Kopieren.
+            // Angelo, 26.11.2026: Uhrzeit vor dem QR-Knopf; Kopieren steht für sich an der äußeren Kante, mit einer
+            // Lücke zum Rest: bei der Frage ganz rechts, bei der Antwort ganz links.
             java.util.List<com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton> qrs = new java.util.ArrayList<>();
             collect(panel[0], com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton.class, qrs);
             assertThat(qrs).hasSize(5);
@@ -157,8 +158,19 @@ class ChatPanelTest {
                 assertThat(index).isPositive();
                 assertThat(controls.getComponent(index - 1))
                         .isInstanceOf(com.aresstack.spaceharvester.app.ui.markdown.MessageTimestamp.class);
-                assertThat(controls.getComponent(index + 1)).isSameAs(copies.get(i));
-                assertThat(controls.getComponentCount()).isEqualTo(index + 2);
+                assertThat(copies.get(i).getParent()).isSameAs(controls);
+                int copyIndex = controls.getComponentZOrder(copies.get(i));
+                boolean question = javax.swing.SwingUtilities.getAncestorOfClass(
+                        com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel.class, controls) != null;
+                if (question) {
+                    assertThat(copyIndex).isEqualTo(controls.getComponentCount() - 1);
+                    assertThat(controls.getComponent(copyIndex - 1)).isInstanceOf(javax.swing.Box.Filler.class);
+                    assertThat(controls.getComponent(copyIndex - 2)).isSameAs(qrs.get(i));
+                } else {
+                    assertThat(copyIndex).isZero();
+                    assertThat(controls.getComponent(1)).isInstanceOf(javax.swing.Box.Filler.class);
+                    assertThat(index).isEqualTo(controls.getComponentCount() - 1);
+                }
             }
             // Ein Export-Menü; die Quellen allein sind sein letzter Eintrag, kein eigenes Menü daneben.
             java.util.List<javax.swing.JMenuItem> menus = panel[0].exportMenus();

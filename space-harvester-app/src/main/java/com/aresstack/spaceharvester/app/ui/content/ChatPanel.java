@@ -2819,8 +2819,8 @@ public final class ChatPanel extends JPanel {
     }
 
     /**
-     * Uhrzeit, QR-Knopf und ganz außen der Kopierknopf: dieselbe Reihenfolge bei Frage und Antwort (Angelo,
-     * 26.11.2026).
+     * Uhrzeit, QR-Knopf und, mit Abstand für sich an der äußeren Kante, der Kopierknopf (Angelo, 26.11.2026): bei
+     * der Frage rechts außen, bei der Antwort links außen am Textanfang. So liegt er nie direkt neben dem QR-Knopf.
      */
     private JComponent userMessageActions(Color foreground, String name, java.util.function.Supplier<String> text, long at) {
         JPanel controls = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 3, 0));
@@ -2830,23 +2830,29 @@ public final class ChatPanel extends JPanel {
         timestamp.setTime(at);
         controls.add(timestamp);
         controls.add(qrAction(foreground, name, text));
+        controls.add(javax.swing.Box.createHorizontalStrut(COPY_GAP));
         controls.add(copyAction(foreground, text));
         return controls;
     }
+
+    /** Abstand zwischen dem allein stehenden Kopierknopf und den übrigen Knöpfen einer Nachricht. */
+    static final int COPY_GAP = 8;
 
     /** Der Kopierknopf einer Nachricht: das Kopieren-Symbol der App (zwei Blätter), klein und in der Tinte der Zeile. */
     private com.aresstack.spaceharvester.app.ui.controls.CopyButton copyAction(Color foreground,
             java.util.function.Supplier<String> text) {
         com.aresstack.spaceharvester.app.ui.controls.CopyButton copy =
                 new com.aresstack.spaceharvester.app.ui.controls.CopyButton(text, value -> clipboard.accept(value))
-                        .compact().on(messageInk(foreground));
+                        .flat(messageInk(foreground));
         copy.setName("transcript.copyMessage");
-        copy.setRequestFocusEnabled(false);
         return copy;
     }
 
     private MessageQrButton qrAction(Color foreground, String name, java.util.function.Supplier<String> text) {
-        return new MessageQrButton(messageInk(foreground), () -> qrCodes.accept(name, text.get()));
+        MessageQrButton qr = new MessageQrButton(messageInk(foreground), () -> qrCodes.accept(name, text.get()));
+        // Derselbe flache Stil wie Kopieren und Export daneben (Angelos Proxy-Programm).
+        com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.style(qr);
+        return qr;
     }
 
     private static Color messageInk(Color foreground) {
@@ -2917,7 +2923,8 @@ public final class ChatPanel extends JPanel {
 
     private void addExportButton(JPanel buttons, javax.swing.Icon icon, String label, ChatRecord snapshot,
             ChatRecord.Message answer, com.aresstack.spaceharvester.app.chat.ChatExport.Scope scope) {
-        IconButton button = new IconButton(icon, label).compact();
+        com.aresstack.spaceharvester.app.ui.controls.FlatIconButton button =
+                new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(icon, label);
         button.setForeground(MarkdownTheme.forSurface(transcriptScroll.getViewport().getBackground()).getMutedForeground());
         javax.swing.JMenu formats = exportMenu(label, snapshot, answer, scope);
         button.setEnabled(formats.isEnabled());
