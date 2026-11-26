@@ -190,6 +190,23 @@ die fachliche Suche und das Glossar überlagern und ungefragt vollständig herun
 14. **Operative Live-Dienste brauchen keinen Wissensquellen-Eintrag.** BetaView, JES und freie Recherche werden über
     Verbindungs- und Werkzeugfreigaben gesteuert (ADR 0036, Punkt 9), nicht über ein Live-only-Preset. Der frühere
     verpflichtende Live-only-Preset aus der ersten Fassung von #1460 ist verworfen.
+15. **Ausschließen gilt für alle Quellen gleich** (Angelo, 26.11.2026, Strang „Ordner in allen Quellen
+    ausschließen“). Nur ausschließen, keine Einschlussliste: Neu hinzukommende Ordner bleiben so sichtbar.
+    - Ausgeschlossen werden ein Ordner oder eine Seite samt allem darunter oder ein ganzer Bereich (Space,
+      Bibliothek). Ausgeschlossenes erscheint nicht im Wissensbaum und nicht in der Suche, und es wird nicht
+      indexiert: Abgleich, Suchtreffer-Nachladen, Fundübernahme und Hintergrundfüllung lassen es aus.
+    - Der schnellste Weg ist „Ausschließen“ im Kontextmenü des Baums. Wieder eingeblendet wird **nur** in den
+      Einstellungen der Quelle (Wissensquellen › „Ausgeschlossen“). Dort steht die Übersicht aller Ausschlüsse, und
+      die oberste Ebene der Quelle wird vom Server abgefragt und lässt sich per Häkchen ausschließen.
+    - **Ausschließen ändert nur den Umfang** (Punkt 3). Es löscht nichts, ist nie ein Löschbeleg und ändert keine
+      Rechte. Es nimmt den Erwerbsgrund „Inventur“ weg; `IndexMarks` und Navigationsmarkierungen darunter zählen
+      nicht. Was schon im Bestand ist, wird höchstens Kandidat für „Bereinigen“ (Punkt 12).
+    - Ausdrückliches Öffnen, Lesen und Exportieren einer Seite bleiben möglich. Gesperrt sind nur automatische
+      Auslöser (Suche, Hintergrundfüllung, Start, Zeitplan, Ereignis).
+    - **Eine Entscheidungsstelle:** `Exclusions` im Kern, abgelegt wie die Indexier-Markierungen
+      (`exclusion-marks.properties` über `SpaceMarksFile`). Baum, Suche, Abgleich und Beschaffung fragen dort; keine
+      Quelle und kein Adapter prüft selbst. Die vorhandenen „abgehakten Spaces“ (`SourceScope.excludedPartitions`)
+      bleiben ein Filter der Quelle für Anfragen; sie sind keine zweite Einstellung.
 
 ## Stand (main `69835ca8`, 26.11.2026)
 
@@ -209,6 +226,9 @@ die fachliche Suche und das Glossar überlagern und ungefragt vollständig herun
 | Punkt 11: gemeinsame Eignungsprüfung in der FTP-Navigationsbefüllung | **weicht ab**; Korrektur beauftragt |
 | Punkt 12: Erwerbsgründe je Ressource, Aktion „Bereinigen“, Aktualitätsprüfung beim Öffnen | **nicht umgesetzt**, zur Umsetzung freigegeben |
 | Punkt 13: Vollständigkeit nach tatsächlichem Ergebnis und je Inventurbereich | **weicht ab**, zur Umsetzung freigegeben |
+| Punkt 15: Ausschließen per Rechtsklick, Übersicht „Ausgeschlossen“, Baum und Suche | auf develop (#1504) |
+| Punkt 15: Fundübernahme und automatische Beschaffung lassen Ausgeschlossenes aus | im Folge-PR |
+| Punkt 15: Abgleich behandelt Ausgeschlossenes als nicht abgedeckt (weder laden noch löschen) | **nicht umgesetzt**; kommt mit dem Haken für die Erwerbsgründe in `SpaceSync`/`SyncPlan` |
 
 ## Prüfung der vorhandenen Mechanismen (zu Punkt 12)
 

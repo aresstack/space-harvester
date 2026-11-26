@@ -1150,6 +1150,11 @@ public final class Harvester implements AutoCloseable {
                             .map(header -> header.metadata().title()).orElse(null));
             navigation.exclusions(exclusions);
             keywordSearch.exclusions(exclusions);
+            findings.exclusions(exclusions);
+            // Automatische Auslöser laden Ausgeschlossenes nie; ausdrückliches Öffnen, Lesen und Export bleiben möglich.
+            Exclusions excluded = this.exclusions;
+            acquisition.withhold((key, trigger) -> automatic(trigger)
+                    && excluded.excluded(key.sourceId(), null, key.pageId()));
             // ADR 0030: Update-Marke je Quelle, sobald keine manuelle Synchronisierung mehr läuft oder angehalten wartet.
             // ADR 0030, CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
             cache.contentDiffer(new TextContentDiffer(pageTexts));
@@ -2841,6 +2846,13 @@ public final class Harvester implements AutoCloseable {
     /** Indexieren: markierte Teilbäume vollständig laden und aktuell halten, samt Bildern und Anhängen. */
     public Indexing indexing() {
         return indexing;
+    }
+
+    /** Auslöser ohne ausdrücklichen Klick auf genau diese Seite (ADR 0037, Punkt 10). */
+    private static boolean automatic(ChangeTrigger trigger) {
+        return trigger == ChangeTrigger.SEARCH || trigger == ChangeTrigger.BACKGROUND
+                || trigger == ChangeTrigger.STARTUP || trigger == ChangeTrigger.SCHEDULE
+                || trigger == ChangeTrigger.EVENT;
     }
 
     /** Ausschließen: was der Benutzer ausgeschlossen hat, fehlt in Baum und Suche und wird nicht indexiert. */
