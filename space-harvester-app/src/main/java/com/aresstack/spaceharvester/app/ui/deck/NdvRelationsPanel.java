@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.controls.NavigationTreeIcons;
 import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
 import com.aresstack.spaceharvester.deck.ndv.analysis.NaturalDependencyGraph;
 import com.aresstack.spaceharvester.deck.ndv.analysis.NaturalDependencyService;
@@ -71,7 +72,19 @@ final class NdvRelationsPanel extends JPanel {
         tree.setRootVisible(false);
         tree.setShowsRootHandles(true);
         tree.setFont(Comic.regular(12.5f));
-        tree.putClientProperty("html.disable", Boolean.TRUE);
+        tree.setCellRenderer(new javax.swing.tree.DefaultTreeCellRenderer() {
+            @Override
+            public java.awt.Component getTreeCellRendererComponent(JTree tree, Object value, boolean selected,
+                    boolean expanded, boolean leaf, int row, boolean focus) {
+                super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, focus);
+                String label = String.valueOf(((DefaultMutableTreeNode) value).getUserObject());
+                setText(NavigationTreeIcons.plainLabel(label));
+                setIcon(NavigationTreeIcons.legacyIcon(label,
+                        leaf ? NavigationTreeIcons.PAGE : NavigationTreeIcons.FOLDER));
+                putClientProperty("html.disable", Boolean.TRUE);
+                return this;
+            }
+        });
         tree.getAccessibleContext().setAccessibleName("Beziehungen");
         tree.addMouseListener(new MouseAdapter() {
             @Override

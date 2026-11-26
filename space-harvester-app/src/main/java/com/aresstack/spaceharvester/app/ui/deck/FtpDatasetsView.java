@@ -108,6 +108,10 @@ final class FtpDatasetsView extends JPanel {
     static final String GROUP_KEY = "deck.ftp.group";
     private static final String LIST = "list";
     private static final String TREE = "tree";
+    private static final String NAVIGATION = "navigation";
+    private final FtpNavigationTree navigation = new FtpNavigationTree(target -> navigate(target, true));
+    private boolean navigatingTree;
+    private long navigationTicket;
     private static final String MESSAGE = "message";
     private final CardLayout listCards = new CardLayout();
     private final JPanel listArea = new JPanel(listCards);
@@ -115,7 +119,7 @@ final class FtpDatasetsView extends JPanel {
     private final javax.swing.tree.DefaultMutableTreeNode treeRoot = new javax.swing.tree.DefaultMutableTreeNode();
     private final javax.swing.JTree tree = new javax.swing.JTree(treeRoot);
     private final IconButton sortButton = new IconButton(new DrawnIcon(true), "Sortieren …");
-    private final IconButton detailsButton = new IconButton(Glyph.TABLE, "Details zeigen (Größe, Datum, RECFM/LRECL)");
+    private final IconButton detailsButton = new IconButton(Glyph.TABLE, "Detailtabelle statt Navigationsbaum (Größe, Datum, RECFM/LRECL)");
     private final IconButton groupButton = new IconButton(new DrawnIcon(false), "Nach Endung gruppieren");
     private final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Gruppen aufklappen");
     private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Gruppen zuklappen");
@@ -320,6 +324,29 @@ final class FtpDatasetsView extends JPanel {
         listArea.setOpaque(false);
         listArea.add(Comic.scroll(table), LIST);
         listArea.add(Comic.scroll(tree), TREE);
+        listArea.add(Comic.scroll(navigation), NAVIGATION);
+        navigation.addTreeSelectionListener(e -> enableActions());
+        navigation.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (event.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(event)) {
+                    open(navigation.selectedEntry());
+                }
+            }
+
+            @Override
+            public void mousePressed(MouseEvent event) {
+                navigationPopup(event);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent event) {
+                navigationPopup(event);
+            }
+        });
+        bind(navigation, "ENTER", "ftp-open-tree", () -> open(navigation.selectedEntry()));
+        bind(navigation, "DELETE", "ftp-delete-tree", this::delete);
+        bind(navigation, "ctrl A", "ftp-select-tree", navigation::selectCurrentChildren);
         JPanel messagePanel = new JPanel(new BorderLayout());
         messagePanel.setBackground(Comic.SURFACE);
         messagePanel.add(listMessage, BorderLayout.CENTER);
@@ -417,17 +444,23 @@ final class FtpDatasetsView extends JPanel {
         boolean withDetails = details;
         boolean acquire = owner.navigationEnabled();
         owner.status("Liste " + resolved + " …", false);
-        if (model.all.isEmpty() || !resolved.equals(current)) {
+        if (!navigatingTree && (model.all.isEmpty() || !resolved.equals(current))) {
             message("Lade Einträge …", false);
         }
         String from = current;
+        long ticket = ++navigationTicket;
         owner.session().files(files -> files.list(resolved, withDetails || acquire)).whenComplete((list, error) ->
                 SwingUtilities.invokeLater(() -> {
+                    if (ticket != navigationTicket) {
+                        return;
+                    }
                     if (error != null) {
                         Throwable cause = error instanceof java.util.concurrent.CompletionException
                                 && error.getCause() != null ? error.getCause() : error;
                         owner.status("Liste von " + resolved + " nicht geladen – " + FtpWorkspace.describe(cause), true);
-                        message("Fehler: " + FtpWorkspace.describe(cause), true);
+                        if (!navigatingTree) {
+                            message("Fehler: " + FtpWorkspace.describe(cause), true);
+                        }
                         return;
                     }
                     if (!from.isEmpty() && !from.equals(resolved)) {
@@ -502,7 +535,11 @@ final class FtpDatasetsView extends JPanel {
         int total = model.all.size();
         int shown = model.shown.size();
         boolean groupable = !owner.session().mvs();
-        if (total == 0) {
+        navigatingTree = !details && !(grouped && groupable) && !current.isEmpty();
+        if (navigatingTree) {
+            navigation.showPath(current, owner.session().mvs(), EntryList.sorted(model.all, sort), model.shown);
+            listCards.show(listArea, NAVIGATION);
+        } else if (total == 0) {
             message("Keine Einträge gefunden", false);
         } else if (grouped && groupable) {
             rebuildTree();
@@ -517,8 +554,8 @@ final class FtpDatasetsView extends JPanel {
         groupButton.setVisible(groupable);
         groupButton.marked(grouped);
         enableActions();
-        expandAll.setVisible(groupable && grouped);
-        collapseAll.setVisible(groupable && grouped);
+        expandAll.setVisible(navigatingTree || groupable && grouped);
+        collapseAll.setVisible(navigatingTree || groupable && grouped);
         updateDiagnosisTitle();
         sortButton.marked(sort != EntryList.Sort.NAME_ASC);
     }
@@ -578,6 +615,10 @@ final class FtpDatasetsView extends JPanel {
     }
 
     private void expandTree(boolean open) {
+        if (navigatingTree) {
+            navigation.expandLoaded(open);
+            return;
+        }
         for (int row = tree.getRowCount() - 1; row >= 0; row--) {
             if (open) {
                 tree.expandRow(row);
@@ -642,6 +683,10 @@ final class FtpDatasetsView extends JPanel {
     }
 
     private void intoList() {
+        if (navigatingTree) {
+            navigation.requestFocusInWindow();
+            return;
+        }
         if (table.getRowCount() > 0) {
             if (table.getSelectedRow() < 0) {
                 table.getSelectionModel().setSelectionInterval(0, 0);
@@ -661,13 +706,28 @@ final class FtpDatasetsView extends JPanel {
         contextMenu().show(table, event.getX(), event.getY());
     }
 
+    private void navigationPopup(MouseEvent event) {
+        if (!event.isPopupTrigger()) {
+            return;
+        }
+        var selection = navigation.getPathForLocation(event.getX(), event.getY());
+        if (selection == null) {
+            return;
+        }
+        if (!navigation.isPathSelected(selection)) {
+            navigation.setSelectionPath(selection);
+        }
+        contextMenu().show(navigation, event.getX(), event.getY());
+    }
+
     /** Kontextmenü der Liste wie MainframeMate. */
     javax.swing.JPopupMenu contextMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
         List<RemoteEntry> chosen = selectedAll();
         boolean mvs = owner.session().mvs();
         RemoteEntry single = chosen.size() == 1 ? chosen.get(0) : null;
-        menu.add(item("Öffnen", single != null, () -> open(single)));
+        RemoteEntry openTarget = navigatingTree ? navigation.selectedEntry() : single;
+        menu.add(item("Öffnen", openTarget != null, () -> open(openTarget)));
         menu.addSeparator();
         menu.add(item("Herunterladen …", readable(single), this::download));
         if (mvs) {
@@ -682,8 +742,10 @@ final class FtpDatasetsView extends JPanel {
                 () -> askNew(true)));
         menu.add(item(mvs ? "Neues Member …" : "Neue Datei …", newMember.isEnabled(), () -> askNew(false)));
         menu.addSeparator();
-        menu.add(item("Alles auswählen", table.getRowCount() > 0, table::selectAll));
-        menu.add(item("Nichts auswählen", !chosen.isEmpty(), table::clearSelection));
+        menu.add(item("Alles auswählen", table.getRowCount() > 0,
+                navigatingTree ? navigation::selectCurrentChildren : table::selectAll));
+        menu.add(item("Nichts auswählen", !chosen.isEmpty(),
+                navigatingTree ? navigation::clearSelection : table::clearSelection));
         menu.addSeparator();
         menu.add(item("Löschen (" + chosen.size() + ") …", connected && !chosen.isEmpty(), this::delete));
         return menu;
@@ -717,7 +779,7 @@ final class FtpDatasetsView extends JPanel {
 
     private void updateDiagnosisTitle() {
         detailsButton.marked(details || diagnosis != null);
-        detailsButton.setToolTipText(diagnosis == null ? "Details zeigen (Größe, Datum, RECFM/LRECL)"
+        detailsButton.setToolTipText(diagnosis == null ? "Detailtabelle statt Navigationsbaum (Größe, Datum, RECFM/LRECL)"
                 : "MCP-Binärdiagnose freigegeben: " + diagnosis.path() + " (Kontextmenü zum Beenden)");
     }
 
@@ -951,6 +1013,9 @@ final class FtpDatasetsView extends JPanel {
 
     /** Der eine gewählte Eintrag; bei Mehrfachauswahl der zuletzt angeklickte. */
     private RemoteEntry selected() {
+        if (navigatingTree) {
+            return navigation.selectedListedEntry();
+        }
         if (grouped && !owner.session().mvs() && treeEntry() != null) {
             return treeEntry();
         }
@@ -963,6 +1028,9 @@ final class FtpDatasetsView extends JPanel {
 
     /** Alle gewählten Einträge (Mehrfachauswahl). */
     List<RemoteEntry> selectedAll() {
+        if (navigatingTree) {
+            return navigation.selectedEntries();
+        }
         if (grouped && !owner.session().mvs()) {
             RemoteEntry entry = treeEntry();
             return entry == null ? List.of() : List.of(entry);
@@ -1104,20 +1172,21 @@ final class FtpDatasetsView extends JPanel {
         owner.status("Lösche " + chosen.size() + (chosen.size() == 1 ? " Eintrag" : " Einträge") + " …", false);
         owner.run(owner.session().filesOnce(files -> {
             List<String> failures = new ArrayList<>();
-            int done = 0;
+            List<RemoteEntry> deleted = new ArrayList<>();
             for (RemoteEntry entry : chosen) {
                 try {
                     files.delete(entry.path());
-                    done++;
+                    deleted.add(entry);
                 } catch (com.aresstack.spaceharvester.deck.ftp.FtpReplyException refused) {
                     failures.add("• " + entry.name() + " – " + refused.getMessage());
                 }
             }
-            return new DeleteResult(done, failures);
+            return new DeleteResult(List.copyOf(deleted), failures);
         }), "Löschen fehlgeschlagen", result -> {
             boolean failed = !result.failures().isEmpty();
             String status = failed ? result.done() + " gelöscht, " + result.failures().size() + " fehlgeschlagen"
                     : result.done() == 1 ? "Gelöscht: " + chosen.get(0).name() : result.done() + " gelöscht";
+            navigation.removed(result.deleted());
             // Preserve the operation result when the asynchronous refresh completes.
             navigate(current, Move.STAY, () -> owner.status(status, failed));
             owner.status(status, failed);
@@ -1127,7 +1196,10 @@ final class FtpDatasetsView extends JPanel {
         });
     }
 
-    private record DeleteResult(int done, List<String> failures) {
+    private record DeleteResult(List<RemoteEntry> deleted, List<String> failures) {
+        int done() {
+            return deleted.size();
+        }
     }
 
     /** „Neues Dataset anlegen“ mit Anlageparametern (Dialog wie MainframeMate). */
@@ -1395,7 +1467,11 @@ final class FtpDatasetsView extends JPanel {
 
     void openRow(int row) {
         table.getSelectionModel().setSelectionInterval(row, row);
-        open(selected());
+        open(model.at(row));
+    }
+
+    FtpNavigationTree navigationTree() {
+        return navigation;
     }
 
     /** Die Einträge mit Sortierung und Filter; Spalten je nach MVS und Details. */
