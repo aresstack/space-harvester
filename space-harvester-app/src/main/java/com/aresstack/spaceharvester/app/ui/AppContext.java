@@ -115,6 +115,14 @@ public final class AppContext {
             openPage(sourceId, pageId);
         }
 
+        /**
+         * Klick auf einen Knoten ohne eigenen Inhalt im Explorer (ein Ordner, {@link
+         * com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode.Kind#hasOwnContent()}): Die Mitte
+         * zeigt ihn statt der vorher geöffneten Seite, außer in der Suche; ohne eigene Umsetzung nichts.
+         */
+        default void openContainerFromTree(String sourceId, String spaceKey, String pageId, String title) {
+        }
+
         /** Zeigt die Quellenseite einer Wissensquelle mit ihren Updates (ADR 0030); ohne eigene Umsetzung nichts. */
         default void openSource(String sourceId, String title) {
         }

@@ -118,6 +118,47 @@ class ExplorerTest {
         });
     }
 
+    /**
+     * Regression (Angelo 26.11.2026): Ein Klick auf einen Ordner (SharePoint-Ordner sind Gruppen, BSCW- und lokale
+     * Ordner Ordner) klappte nur auf und meldete nichts, also blieb die vorher geöffnete Seite stehen. Jeder Knoten ohne
+     * eigenen Inhalt meldet sich jetzt als Ordner, jeder mit Inhalt öffnet wie bisher seine Seite.
+     */
+    @Test
+    void aClickOnAFolderOpensTheFolderSoThePreviousPageNeverStays() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: "
+                + home.resolve("data").toString().replace('\\', '/') + "\n");
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        List<String> containers = new java.util.ArrayList<>();
+        List<String> pages = new java.util.ArrayList<>();
+        context.setNavigator((AppContext.Navigator) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[] {AppContext.Navigator.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("openContainerFromTree")) {
+                        containers.add(args[2] + "=" + args[3]);
+                    } else if (method.getName().equals("openFromTree")) {
+                        pages.add((String) args[1]);
+                    }
+                    return null;
+                }));
+        SwingUtilities.invokeAndWait(() -> {
+            Explorer explorer = new Explorer(context);
+            javax.swing.tree.DefaultTreeModel model = (javax.swing.tree.DefaultTreeModel) explorer.tree().getModel();
+            javax.swing.tree.DefaultMutableTreeNode root = (javax.swing.tree.DefaultMutableTreeNode) model.getRoot();
+            for (HarvestSource.PageNode.Kind kind : HarvestSource.PageNode.Kind.values()) {
+                Explorer.Node node = new Explorer.Node(new Explorer.PageItem("source", "space", kind.name(),
+                        "Knoten " + kind, kind != HarvestSource.PageNode.Kind.FILE, kind));
+                root.add(node);
+                explorer.activate(new javax.swing.tree.TreePath(node.getPath()));
+            }
+        });
+        assertThat(containers).containsExactly("FOLDER=Knoten FOLDER", "GROUP=Knoten GROUP");
+        assertThat(pages).containsExactly("PAGE", "FILE");
+    }
+
     @Test
     void confirmedFileReplacesAnUnknownCachedNodeWithoutAnExpandHandle() throws Exception {
         Path config = home.resolve("app.yml");

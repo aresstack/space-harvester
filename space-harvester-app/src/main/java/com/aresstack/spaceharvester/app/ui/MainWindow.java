@@ -1329,6 +1329,16 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     @Override
+    public void openContainerFromTree(String sourceId, String spaceKey, String pageId, String title) {
+        // Wie eine Seite: In der Suche filtert die Auswahl links nur.
+        if (current == AppContext.Section.SEARCH) {
+            return;
+        }
+        showSection(AppContext.Section.CONTENT);
+        content.openContainer(sourceId, spaceKey, pageId, title);
+    }
+
+    @Override
     public void openSource(String sourceId, String title) {
         showSection(AppContext.Section.CONTENT);
         content.openSource(sourceId, title);

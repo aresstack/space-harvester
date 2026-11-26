@@ -1269,6 +1269,16 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
+     * Ein Knoten ohne eigenen Inhalt, etwa ein Ordner in SharePoint, BSCW oder lokalen Dateien (Angelo 26.11.2026): Die
+     * Mitte wird leer und trägt seinen Namen, statt die vorher geöffnete Seite stehen zu lassen.
+     */
+    public void showContainer(String title) {
+        clear();
+        this.title.setText(title == null || title.isBlank() ? " " : title);
+        empty.setText(EMPTY_SOURCE);
+    }
+
+    /**
      * „Wissensquellen“ im Explorer (Angelo 17.11.2026): die Seitenreiter zeigen leer statt einer vorher gezeigten
      * Seite oder Quelle, der Reiter Eigenschaften die Gesamtsicht über alle Quellen.
      */
