@@ -60,17 +60,26 @@ class HarvesterScopeTest {
         }
     }
 
+    /**
+     * ADR 0037, Punkt 12 (Angelo 26.11.2026): Einen Umfang zu verkleinern beweist keine Löschung. Seiten jenseits der
+     * neuen Startpunkte und Tiefe bleiben unverändert im Bestand, auch über weitere Abgleiche; nur „Bereinigen“ entfernt
+     * sie. Bis zum 26.11. fielen sie wie gelöschte aus dem Katalog.
+     */
     @Test
-    void pagesBeyondTheStartPointsAndDepthLeaveTheCatalog() throws Exception {
+    void pagesBeyondTheStartPointsAndDepthStayUntilTheyAreCleanedUp() throws Exception {
         try (Harvester harvester = harvester(Map.of())) {
             assertThat(sync(harvester).generation()).isNotNull();
         }
         try (Harvester harvester = harvester(Map.of("startPoints", "page:100", "maxDepth", "1"))) {
             SyncSummary summary = sync(harvester);
-            assertThat(summary.removed()).isEqualTo(1);
+            assertThat(summary.removed()).isZero();
             assertThat(summary.withheld()).isZero();
             assertThat(summary.generation()).isNotNull();
-            assertThat(pageIds(harvester)).containsExactlyInAnyOrder("100", "102");
+            assertThat(pageIds(harvester)).containsExactlyInAnyOrder("100", "102", "103");
+            SyncSummary again = sync(harvester);
+            assertThat(again.removed()).isZero();
+            assertThat(again.generation()).isNotNull();
+            assertThat(pageIds(harvester)).containsExactlyInAnyOrder("100", "102", "103");
         }
     }
 

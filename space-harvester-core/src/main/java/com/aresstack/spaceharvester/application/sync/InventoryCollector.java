@@ -37,8 +37,14 @@ public class InventoryCollector {
         this.batchSize = batchSize;
     }
 
+    /**
+     * Ob das Fehlen der Seite in einer bestätigten Inventur etwas über sie aussagt: Sie liegt im eingestellten Umfang
+     * ({@link com.aresstack.spaceharvester.application.sources.HarvestSource#outsideScope}) und in einem vollständig
+     * inventarisierten Bereich ({@link com.aresstack.spaceharvester.application.sources.HarvestSource#inventoryCovers}).
+     * Einen Umfang zu verkleinern, beweist keine Löschung (ADR 0037, Punkt 12).
+     */
     boolean covers(String sourceId, String pageId) {
-        return queries.inventoryCovers(sourceId, pageId);
+        return !queries.outsideScope(sourceId, pageId) && queries.inventoryCovers(sourceId, pageId);
     }
 
     public Inventory collect(String sourceId, String spaceKey) {
