@@ -6,9 +6,13 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.ParityFtp;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.background.PageLoads;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -41,6 +45,34 @@ class NavigationReasonTest {
             try (Harvester restarted = harvester(server)) {
                 assertThat(restarted.navigationMarks().pages("ftp-test", "ftp-test")).containsExactly(readme);
             }
+        }
+    }
+
+    @Test
+    void revisitingAFolderChecksStoredResourcesForFreshnessAndStoresTheChangedVersion() throws Exception {
+        try (ParityFtp server = ParityFtp.start(); Harvester harvester = harvester(server)) {
+            String readme = harvester.sources().sources().stream().filter(source -> source.id().equals("ftp-test"))
+                    .findFirst().orElseThrow().navigationPageId("/parity/README.txt").orElseThrow();
+            Workspace workspace = new Workspace(harvester, new AccessGuard((context, scope, kind) ->
+                    AccessDecision.ALLOW), new ActivityLog(data.resolve("aktivitaet.txt")));
+
+            awaitLoads(harvester, workspace.acquireVisitedResources("ftp-test", List.of("/parity/README.txt")));
+            String first = harvester.pages().cached(harvester.caller(), "ftp-test", readme).orElseThrow()
+                    .snapshot().payload().rawSha256();
+
+            server.change("/parity/README.txt", "Satz Delta nach der Aenderung im Wurzelordner.\n");
+            awaitLoads(harvester, workspace.acquireVisitedResources("ftp-test", List.of("/parity/README.txt")));
+
+            assertThat(harvester.pages().cached(harvester.caller(), "ftp-test", readme).orElseThrow()
+                    .snapshot().payload().rawSha256()).isNotEqualTo(first);
+        }
+    }
+
+    private static void awaitLoads(Harvester harvester, PageLoads.Joined loads) throws Exception {
+        assertThat(loads).isNotNull();
+        for (String jobId : loads.started().orElseThrow().jobIds()) {
+            JobStatus status = harvester.await(jobId, Duration.ofSeconds(60));
+            assertThat(status.state()).as("Laden: %s", status.error()).isEqualTo(JobState.COMPLETED);
         }
     }
 

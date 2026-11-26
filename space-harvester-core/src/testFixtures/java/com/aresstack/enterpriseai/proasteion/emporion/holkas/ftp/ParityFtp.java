@@ -62,6 +62,8 @@ public final class ParityFtp implements AutoCloseable {
 
     private static final Charset ENCODING = Charset.forName("ISO-8859-1");
     private static final String TIME = "Oct 01  2026";
+    /** Änderungszeit einer per {@link #change} geänderten Datei. */
+    private static final String CHANGED_TIME = "Nov 02  2026";
 
     static {
         Map<String, String> files = new LinkedHashMap<String, String>();
@@ -72,6 +74,7 @@ public final class ParityFtp implements AutoCloseable {
     }
 
     private final ServerSocket control;
+    private final Map<String, String> changed = new java.util.concurrent.ConcurrentHashMap<String, String>();
     private final Thread acceptor;
 
     private ParityFtp(int port) throws IOException {
@@ -98,6 +101,22 @@ public final class ParityFtp implements AutoCloseable {
 
     public int port() {
         return control.getLocalPort();
+    }
+
+    /**
+     * Ändert den Inhalt einer vorhandenen Datei aus {@link #DOCUMENTS}; die Listung nennt danach Größe und Zeit der neuen
+     * Fassung, wie ein Host nach einer Änderung.
+     */
+    public void change(String path, String content) {
+        if (!FILES.containsKey(path)) {
+            throw new IllegalArgumentException("Keine Datei des Testservers: " + path);
+        }
+        changed.put(path, content);
+    }
+
+    private String content(String path) {
+        String override = changed.get(path);
+        return override != null ? override : FILES.get(path);
     }
 
     @Override
@@ -206,7 +225,7 @@ public final class ParityFtp implements AutoCloseable {
                     transfer(out, passive, body.toString().getBytes(ENCODING));
                     passive = null;
                 } else if ("RETR".equals(command)) {
-                    String content = FILES.get(absolute(cwd, argument));
+                    String content = content(absolute(cwd, argument));
                     if (content == null) {
                         reply(out, "550 Nicht gefunden");
                         continue;
@@ -298,9 +317,9 @@ public final class ParityFtp implements AutoCloseable {
     }
 
     /** Unix-Zeilen der Kinder; eine Datei listet sich selbst; {@code null}, wenn es den Pfad nicht gibt. */
-    private static List<String> list(String path) {
+    private List<String> list(String path) {
         if (FILES.containsKey(path)) {
-            return Collections.singletonList(fileLine(name(path), FILES.get(path)));
+            return Collections.singletonList(fileLine(path, name(path)));
         }
         if (!isDirectory(path)) {
             return null;
@@ -308,7 +327,7 @@ public final class ParityFtp implements AutoCloseable {
         List<String> lines = new ArrayList<String>();
         for (String child : children(path)) {
             String full = ("/".equals(path) ? "" : path) + "/" + child;
-            lines.add(FILES.containsKey(full) ? fileLine(child, FILES.get(full))
+            lines.add(FILES.containsKey(full) ? fileLine(full, child)
                     : "drwxr-xr-x   2 paritaet paritaet     4096 " + TIME + " " + child);
         }
         return lines;
@@ -337,9 +356,10 @@ public final class ParityFtp implements AutoCloseable {
         return children;
     }
 
-    private static String fileLine(String name, String content) {
-        int size = content.replace("\n", "\r\n").getBytes(ENCODING).length;
-        return String.format("-rw-r--r--   1 paritaet paritaet %8d %s %s", size, TIME, name);
+    private String fileLine(String path, String name) {
+        int size = content(path).replace("\n", "\r\n").getBytes(ENCODING).length;
+        return String.format("-rw-r--r--   1 paritaet paritaet %8d %s %s", size,
+                changed.containsKey(path) ? CHANGED_TIME : TIME, name);
     }
 
     private static String name(String path) {
