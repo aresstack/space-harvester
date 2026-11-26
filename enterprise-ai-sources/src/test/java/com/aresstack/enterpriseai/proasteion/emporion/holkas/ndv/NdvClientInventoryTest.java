@@ -41,7 +41,7 @@ public class NdvClientInventoryTest {
     }
 
     @Test
-    public void paginationLimitDoesNotReturnAnApparentlyCompleteInventory() throws Exception {
+    public void nonProgressingPaginationDoesNotReturnAnApparentlyCompleteInventory() throws Exception {
         AtomicInteger requests = new AtomicInteger();
         IPalTransactions pal = (IPalTransactions) Proxy.newProxyInstance(
                 IPalTransactions.class.getClassLoader(), new Class<?>[] {IPalTransactions.class},
@@ -58,8 +58,8 @@ public class NdvClientInventoryTest {
                 client.listObjects(client.getDefaultSystemFile(), "LIB", "*", ObjectKind.SOURCE, 0);
                 fail("Expected incomplete listing to fail");
             } catch (NdvException expected) {
-                assertTrue(expected.getMessage().contains("page limit"));
-                assertEquals(1001, requests.get());
+                assertTrue(expected.getMessage().contains("no progress"));
+                assertEquals(1, requests.get());
             }
         }
     }

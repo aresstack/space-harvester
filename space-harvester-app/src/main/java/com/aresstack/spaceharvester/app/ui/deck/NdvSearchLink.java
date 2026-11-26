@@ -21,7 +21,11 @@ public interface NdvSearchLink {
      *
      * @param libraries Bibliotheken in Großbuchstaben, ohne Filter ({@code LIB/PREFIX*} ergibt {@code LIB})
      */
-    record Rule(String sourceId, String title, List<String> libraries) {
+    record Rule(String sourceId, String title, List<String> libraries, boolean allLibraries) {
+
+        public Rule(String sourceId, String title, List<String> libraries) {
+            this(sourceId, title, libraries, false);
+        }
 
         public Rule {
             libraries = List.copyOf(libraries);
@@ -29,7 +33,7 @@ public interface NdvSearchLink {
 
         /** Ob die Regel diese Bibliothek indiziert. */
         public boolean covers(String library) {
-            return library != null && libraries.contains(library.strip().toUpperCase(Locale.ROOT));
+            return library != null && (allLibraries || libraries.contains(library.strip().toUpperCase(Locale.ROOT)));
         }
     }
 
@@ -70,6 +74,10 @@ public interface NdvSearchLink {
 
     /** Ob Regeln angelegt werden können (die App mit Wissensquellen läuft). */
     boolean available();
+
+    /** Acquire directly displayed source objects via the configured knowledge source. */
+    default void visited(NdvProfile profile, String account, List<String> paths) {
+    }
 
     /**
      * „Indexieren (Regel anlegen)“: Gibt es für den Server schon eine Wissensquelle, öffnet das Quellenformular sie mit

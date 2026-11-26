@@ -159,6 +159,24 @@ public final class AppRuntime implements AutoCloseable {
         }
     }
 
+    public static List<String> probeLibraries(AppSettings settings, String sourceId,
+                                                         SessionSecrets sessionSecrets, String version, Path scratch) {
+        SourceSettingsConfig source = config(settings, sourceId, sessionSecrets);
+        AppSettings.Storage storage = new AppSettings.Storage(scratch.resolve("data"), scratch.resolve("exports"),
+                scratch.resolve("assets"), settings.storage().maxAssetBytes(), settings.storage().largeAssetBytes(),
+                settings.storage().maxLargeAssets(), settings.storage().searchTimeout(),
+                settings.storage().maxTreeNodes(), null, settings.storage().extraction(),
+                settings.storage().maxPageBytes(), settings.storage().maxTextFileBytes(),
+                settings.storage().checkTimeout(), settings.storage().largeFileTimeout());
+        AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
+        try (Harvester harvester = builder(settings, storage, List.of(), policy, version, sessionSecrets, false)
+                .build()) {
+            return harvester.sourceManagement().libraries(source, false);
+        } finally {
+            deleteQuietly(scratch);
+        }
+    }
+
     /**
      * Die Einstellungen einer Quelle aus {@code settings} mit dem Passwort bzw. Token der Sitzung.
      *

@@ -309,6 +309,8 @@ final class SourceForm {
         form.row("Technische Kennung", id, "Wird automatisch vergeben; nur ändern, wenn nötig");
         form.row("Platzhalter", variable, "Name in der Datei (${NAME}); die App setzt den Wert selbst");
         fields = new SourceFieldsEditor(form, mainFields, form.reserve(SourceFieldsEditor.ROWS), this::derive);
+        fields.libraryChooser(key -> "ndv".equals(typeId()) && "startPoints".equals(key),
+                this::chooseNdvLibraries);
         fields.shareAdvanced(open -> {
             if (open != sourceAdvancedOpen) {
                 sourceAdvanced(open);
@@ -984,6 +986,41 @@ final class SourceForm {
     }
 
     /** Testet die Verbindung mit den Eingaben, ohne etwas zu speichern. */
+    private void chooseNdvLibraries(JTextField field, JComponent anchor) {
+        SourceDraft source = draft();
+        String account = keePassTitle();
+        Map<String, String> options = new java.util.TreeMap<>(source.extraOptions());
+        options.put("allLibraries", "true");
+        SourceDraft probe = source.withOptions(options);
+        ConfigFileEditor.Draft settings;
+        try {
+            settings = write(probe);
+        } catch (IOException | RuntimeException failure) {
+            feedback.problem(failure);
+            return;
+        }
+        AppRuntime.SessionSecrets secrets = sessionSecrets(probe);
+        anchor.setEnabled(false);
+        feedback.working("Bibliotheken werden geladen …");
+        Background.run(() -> AppRuntime.probeLibraries(settings.settings(), probe.id(), secrets, context.version(),
+                        Files.createTempDirectory("space-harvester-ndv-libraries")),
+                names -> {
+                    anchor.setEnabled(true);
+                    if (!"ndv".equals(typeId()) || !anchor.isShowing()
+                            || !account.equals(keePassTitle())
+                            || !source.extraOptions().equals(draft().extraOptions())
+                            || !java.util.Objects.equals(source.username(), draft().username())
+                            || !java.util.Objects.equals(source.id(), draft().id())) {
+                        return;
+                    }
+                    feedback.success(names.size() + " Bibliotheken gefunden");
+                    NdvLibrarySelection.show(anchor, field, names);
+                }, failure -> {
+                    anchor.setEnabled(true);
+                    feedback.problem(failure);
+                });
+    }
+
     void test(Runnable done) {
         if (!validateInput()) {
             done.run();

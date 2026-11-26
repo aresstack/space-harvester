@@ -46,6 +46,17 @@ class NdvSourceRulesTest {
     }
 
     @Test
+    void allLibraryRuleCoversNewlyDiscoveredLibrariesAndPreservesLegacySelections() {
+        var rule = new com.aresstack.spaceharvester.app.ui.deck.NdvSearchLink.Rule(
+                "natural", "Natural", List.of(), true);
+        assertThat(rule.covers("NEWLIB")).isTrue();
+        assertThat(new com.aresstack.spaceharvester.app.ui.deck.NdvSearchLink.Rule(
+                "natural", "Natural", List.of("LAGER")).covers("NEWLIB")).isFalse();
+        assertThat(NdvLibrarySelection.selections("LAGER; kasse/KA*, FDDM:\nLAGER"))
+                .containsExactly("LAGER", "KASSE/KA*", "FDDM:");
+    }
+
+    @Test
     void anExistingSourceIsExtendedAndKeepsEverythingElse() {
         SourceDraft draft = new SourceDraft("natural", "ndv", "NDV Lager", null, null, null,
                 SourceSettingsConfig.AuthType.BASIC, "PILOT", "NATURAL_PASSWORD", null, null, null, null, null, null,

@@ -37,13 +37,19 @@ public final class NdvSourceProvider implements KnowledgeSourceProvider {
             .field(SourceSettingField.of("credentialRef", SourceSettingField.Kind.SECRET_REF,
                     "KeePass-Eintrag", "Eintrag mit Benutzer, Passwort und Adresse des NDV-Servers").required())
             .field(SourceSettingField.text("startPoints", "Bibliotheken",
-                    "Kommagetrennt: MYLIB, MYLIB/CUST*; FDDM: für DDMs").required())
+                    "Bibliotheken auswählen; bestehende Namensfilter und FDDM: bleiben unterstützt"))
+            .field(SourceSettingField.of("allLibraries", SourceSettingField.Kind.FLAG,
+                    "Alle Bibliotheken synchronisieren", "Ermittle die verfügbaren Bibliotheken bei jedem Abgleich")
+                    .withDefault("false"))
+            .field(SourceSettingField.of("navigationFill", SourceSettingField.Kind.FLAG,
+                    "Beim Navigieren befüllen", "Besuchte Natural-Objekte in den gemeinsamen Wissensbestand aufnehmen")
+                    .withDefault("false"))
             .field(SourceSettingField.of("maxResources", SourceSettingField.Kind.NUMBER,
-                    "Höchstzahl Objekte (optional)", "Inventur bricht bei Überschreitung ab; leer = 5000").advanced())
+                    "Höchstzahl Objekte (optional)", "Inventur bricht bei Überschreitung ab; leer = unbegrenzt").advanced())
             .build();
 
     private static final int DEFAULT_PORT = 8011;
-    private static final int DEFAULT_MAX_RESOURCES = 5000;
+    private static final int DEFAULT_MAX_RESOURCES = Integer.MAX_VALUE;
 
     private final SecretProvider secrets;
 
@@ -86,10 +92,13 @@ public final class NdvSourceProvider implements KnowledgeSourceProvider {
         String host = host(reader);
         int port = reader.integer("port", DEFAULT_PORT, 1, 65535);
         SecretRef credentialRef = credentialRef(reader);
+        SourceScope scope = scope(reader);
+        boolean allLibraries = reader.bool("allLibraries", false);
+        boolean navigationFill = reader.bool("navigationFill", false);
         if (reader.hasProblems() || host == null || credentialRef == null) {
             throw new IllegalArgumentException("NDV-Quelle " + sourceId + " ist fehlerhaft: " + reader.problems());
         }
-        boolean ddmsEnabled = scope(reader).startPoints().stream().anyMatch(NdvDdmScope::isStartPoint);
+        boolean ddmsEnabled = scope.startPoints().stream().anyMatch(NdvDdmScope::isStartPoint);
         return new NdvKnowledgeSource(sourceId, host, port, credentialRef, secrets, (h, p, user, password) -> {
             NdvClient client = new NdvClient();
             try {
@@ -98,7 +107,7 @@ public final class NdvSourceProvider implements KnowledgeSourceProvider {
                 throw new NdvKnowledgeSource.NdvLoginException(e.getMessage(), e);
             }
             return client;
-        }, ddmsEnabled, System::nanoTime);
+        }, ddmsEnabled, allLibraries, navigationFill, System::nanoTime);
     }
 
     /** {@code host:port} des NDV-Servers, klein ({@code ndv:host:8011/LIB/OBJ.NSP}). */
@@ -127,6 +136,18 @@ public final class NdvSourceProvider implements KnowledgeSourceProvider {
     }
 
     private static SourceScope scope(SourceSettingsReader r) {
-        return r.scope(null, 0, DEFAULT_MAX_RESOURCES);
+        boolean allLibraries = r.bool("allLibraries", false);
+        boolean navigationFill = r.bool("navigationFill", false);
+        java.util.List<String> points = new java.util.ArrayList<String>();
+        for (String entry : r.text("startPoints", "").split("[;,\\r\\n]+")) {
+            if (!entry.trim().isEmpty()) {
+                points.add(entry.trim());
+            }
+        }
+        if (points.isEmpty() && !allLibraries && !navigationFill) {
+            r.problem("startPoints", "Bibliotheken auswählen oder eine automatische Befüllung aktivieren");
+        }
+        return SourceScope.builder().automaticStartPoints().startPoints(points).maxDepth(0)
+                .maxResources(r.integer("maxResources", DEFAULT_MAX_RESOURCES, 1, Integer.MAX_VALUE)).build();
     }
 }

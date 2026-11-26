@@ -14,6 +14,9 @@ import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.LibraryListingSource;
+import com.aresstack.enterpriseai.source.api.InventoryCoverageSource;
+import com.aresstack.enterpriseai.source.api.NavigationResourceSource;
 import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourceScope;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.pal.core.api.IPalTypeSystemFile;
@@ -48,7 +51,7 @@ import java.util.function.LongSupplier;
  * {@code NdvService.findObject}, {@code NdvClient.readSource}). Eine Verbindung je Quelle wird wiederverwendet;
  * Benutzer und Passwort kommen nur beim (Wieder-)Verbinden über den {@link SecretProvider}.
  */
-final class NdvKnowledgeSource implements KnowledgeSourcePort {
+final class NdvKnowledgeSource implements KnowledgeSourcePort, LibraryListingSource, NavigationResourceSource, InventoryCoverageSource {
 
     static final String SCHEME = "ndv";
 
@@ -82,6 +85,9 @@ final class NdvKnowledgeSource implements KnowledgeSourcePort {
     private IPalTypeSystemFile listing;
     private final NdvInventoryMetadata inventory;
     private final boolean ddmsEnabled;
+    private final boolean allLibraries;
+    private final boolean navigationFill;
+    private volatile NdvInventoryCoverage coverage = NdvInventoryCoverage.empty();
 
     // Bound the reuse to one recent inventory and one download per object.
     private static final int MAX_INVENTORY_METADATA = 10000;
@@ -99,7 +105,15 @@ final class NdvKnowledgeSource implements KnowledgeSourcePort {
 
     NdvKnowledgeSource(SourceAddress sourceId, String host, int port, SecretRef credentialRef,
                        SecretProvider secrets, Connector connector, boolean ddmsEnabled, LongSupplier nanoTime) {
+        this(sourceId, host, port, credentialRef, secrets, connector, ddmsEnabled, false, false, nanoTime);
+    }
+
+    NdvKnowledgeSource(SourceAddress sourceId, String host, int port, SecretRef credentialRef,
+                       SecretProvider secrets, Connector connector, boolean ddmsEnabled,
+                       boolean allLibraries, boolean navigationFill, LongSupplier nanoTime) {
         this.ddmsEnabled = ddmsEnabled;
+        this.allLibraries = allLibraries;
+        this.navigationFill = navigationFill;
         this.inventory = new NdvInventoryMetadata(MAX_INVENTORY_METADATA, METADATA_AGE_NANOS, nanoTime);
         if (sourceId == null || host == null || credentialRef == null || secrets == null || connector == null) {
             throw new IllegalArgumentException("sourceId, host, credentialRef, secrets and connector are required");
@@ -119,11 +133,67 @@ final class NdvKnowledgeSource implements KnowledgeSourcePort {
     }
 
     @Override
+    public List<String> libraries() throws KnowledgeSourceException {
+        return run(this::listLibraries);
+    }
+
+    private List<String> listLibraries(NdvClient client) throws IOException, NdvException {
+        java.util.Set<String> names = new java.util.TreeSet<String>();
+        for (String name : client.listLibraries(listingSystemFile(client), "*")) {
+            if (name != null && !name.trim().isEmpty()) {
+                names.add(name.trim().toUpperCase(Locale.ROOT));
+            }
+        }
+        return new ArrayList<String>(names);
+    }
+
+    @Override
+    public KnowledgeResourceId navigationResource(String nativePath) throws KnowledgeSourceException {
+        if (!navigationFill || nativePath == null) {
+            return null;
+        }
+        String path = nativePath.trim().toUpperCase(Locale.ROOT);
+        int slash = path.indexOf('/');
+        int dot = path.lastIndexOf('.');
+        if (slash <= 0 || slash != path.lastIndexOf('/') || dot <= slash + 1
+                || dot == path.length() - 1 || path.indexOf('*') >= 0 || path.indexOf('?') >= 0
+                || path.indexOf('\\') >= 0 || path.indexOf(':') >= 0
+                || path.contains("..")) {
+            return null;
+        }
+        String extension = path.substring(dot + 1);
+        if (ObjectType.DDM_EXT.equalsIgnoreCase(extension)
+                || !(extension.startsWith("NS") || extension.equals("NAT"))) {
+            return null;
+        }
+        // Resolve the identity without an extra per-object listing; load checks access and resolves metadata.
+        return KnowledgeResourceId.of(SCHEME, locator + "/" + path);
+    }
+
+    @Override
     public List<KnowledgeResource> discover(final SourceScope scope) throws KnowledgeSourceException {
+        coverage = NdvInventoryCoverage.empty();
+        if (!allLibraries && scope.startPoints().isEmpty()) {
+            return Collections.emptyList();
+        }
         return run(client -> {
             inventory.clear();
             Map<String, KnowledgeResource> found = new LinkedHashMap<String, KnowledgeResource>();
-            for (String startPoint : scope.startPoints()) {
+            java.util.Set<String> startPoints = new java.util.LinkedHashSet<String>();
+            if (allLibraries) {
+                startPoints.addAll(listLibraries(client));
+                for (String point : scope.startPoints()) {
+                    if (NdvDdmScope.isStartPoint(point)) {
+                        startPoints.add(point);
+                    }
+                }
+            } else {
+                startPoints.addAll(scope.startPoints());
+            }
+            for (String startPoint : startPoints) {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new java.util.concurrent.CancellationException("NDV inventory interrupted");
+                }
                 if (NdvDdmScope.isStartPoint(startPoint)) {
                     if (!ddmsEnabled) {
                         throw new KnowledgeSourceException(Kind.ACCESS_DENIED, "FDDM ist nicht für diese Quelle konfiguriert");
@@ -146,8 +216,18 @@ final class NdvKnowledgeSource implements KnowledgeSourcePort {
                     addResource(scope, found, library, object);
                 }
             }
+            coverage = new NdvInventoryCoverage(startPoints);
             return new ArrayList<KnowledgeResource>(found.values());
         });
+    }
+
+    @Override
+    public boolean inventoryCovers(KnowledgeResourceId resourceId) {
+        try {
+            return coverage.covers(pathOf(resourceId));
+        } catch (KnowledgeSourceException e) {
+            return false;
+        }
     }
 
     private void discoverDdms(NdvClient client, SourceScope scope, Map<String, KnowledgeResource> found)

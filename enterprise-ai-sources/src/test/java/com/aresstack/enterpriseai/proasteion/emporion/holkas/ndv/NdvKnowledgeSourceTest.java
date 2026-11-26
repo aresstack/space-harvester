@@ -33,6 +33,13 @@ public class NdvKnowledgeSourceTest {
             "host", 8011, SecretRef.of("test"), ref -> new SecretMaterial(ref, "user", new char[0]),
             (host, port, user, password) -> connections++ == 0 ? first : second, clock::get);
 
+    private NdvKnowledgeSource configured(boolean all, boolean nav) {
+        return new NdvKnowledgeSource(SourceAddress.of("ndv", "host:8011"),
+            "host", 8011, SecretRef.of("test"), ref -> new SecretMaterial(ref, "user", new char[0]),
+            (host, port, user, password) -> connections++ == 0 ? first : second, false, all, nav, clock::get);
+    }
+
+
     @Test
     public void inventoryMetadataEliminatesPerObjectListingsAndLogons() throws Exception {
         for (int i = 0; i < 100; i++) {
@@ -162,6 +169,36 @@ public class NdvKnowledgeSourceTest {
         }
     }
 
+    @Test
+    public void fullInventoryUsesTheFreshLibraryListAndRetainsCoverage() throws Exception {
+        first.libraries.addAll(Arrays.asList("ALPHA", "BETA", "ALPHA"));
+        for (int i = 0; i < 3001; i++) {
+            first.objects.add(object("P" + i, "NSP", "date", 20));
+        }
+        NdvKnowledgeSource all = configured(true, true);
+        SourceScope scope = SourceScope.builder().automaticStartPoints().maxResources(Integer.MAX_VALUE).build();
+        assertEquals(Arrays.asList("ALPHA", "BETA"), all.libraries());
+        assertEquals(6002, all.discover(scope).size());
+        assertTrue(all.inventoryCovers(all.navigationResource("ALPHA/P0.NSP")));
+        assertFalse(all.inventoryCovers(all.navigationResource("OTHER/P0.NSP")));
+        first.libraries.remove("BETA");
+        assertEquals(3001, all.discover(scope).size());
+        assertFalse(all.inventoryCovers(all.navigationResource("BETA/P0.NSP")));
+    }
+
+    @Test
+    public void navigationOnlyDoesNotConnectOrInventoriseUntilLoad() throws Exception {
+        NdvKnowledgeSource nav = configured(false, true);
+        assertTrue(nav.discover(SourceScope.builder().automaticStartPoints().build()).isEmpty());
+        assertEquals("ndv:host:8011/LIB/BOOK.NSP", nav.navigationResource("lib/book.nsp").value());
+        assertNull(nav.navigationResource("LIB/*"));
+        assertNull(nav.navigationResource("LIB/BOOK.NSD"));
+        assertNull(source.navigationResource("LIB/BOOK.NSP"));
+        assertEquals(0, connections);
+        first.objects.add(object("BOOK", "NSP", "date", 20));
+        assertTrue(nav.load(nav.navigationResource("LIB/BOOK.NSP")).text().contains("BOOK.NSP"));
+    }
+
     private static NdvObjectInfo object(String name, String extension, String date, int size) {
         return new NdvObjectInfo(name, "", ObjectKind.SOURCE, 1, extension, extension, size,
                 "USER", date, 11, 22);
@@ -172,6 +209,7 @@ public class NdvKnowledgeSourceTest {
         private final List<NdvObjectInfo> ddms = new ArrayList<>();
         private final List<String> read = new ArrayList<>();
         private String library;
+        private final List<String> libraries = new ArrayList<String>();
         private int logons;
         private int systemFiles;
         private int listings;
@@ -198,6 +236,11 @@ public class NdvKnowledgeSourceTest {
                 throw new NdvException("denied");
             }
             this.library = library;
+        }
+
+        @Override
+        public List<String> listLibraries(IPalTypeSystemFile file, String filter) {
+            return new ArrayList<String>(libraries);
         }
 
         @Override

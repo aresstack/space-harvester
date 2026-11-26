@@ -58,6 +58,8 @@ final class SourceFieldsEditor {
     private ComposerButton certificateChoose;
     private String addressKey;
     private String vaultLocation;
+    private java.util.function.Predicate<String> libraryField = key -> false;
+    private java.util.function.BiConsumer<JTextField, JComponent> chooseLibraries = (field, anchor) -> { };
 
     /**
      * @param mainStart      reservierter Bereich für die Hauptfelder ({@link SourceForm.Form#reserve})
@@ -154,9 +156,24 @@ final class SourceFieldsEditor {
         specs.put(field.key(), field);
     }
 
+    void libraryChooser(java.util.function.Predicate<String> field,
+                        java.util.function.BiConsumer<JTextField, JComponent> chooser) {
+        libraryField = field;
+        chooseLibraries = chooser;
+    }
+
     private JComponent input(SourceFieldSpec field, String value, boolean advanced) {
         String label = field.label() + (field.required() ? " *" : "");
         String hint = field.hint().isEmpty() ? null : field.hint();
+        if (libraryField.test(field.key())) {
+            JTextField text = Comic.field(28);
+            text.setText(value);
+            text.setEditable(false);
+            ComposerButton choose = Comic.button("Bibliotheken auswählen ▾", null);
+            choose.addActionListener(event -> chooseLibraries.accept(text, choose));
+            add(label, Comic.fieldWithButton(text, choose), hint, advanced);
+            return text;
+        }
         switch (field.kind()) {
             case FLAG -> {
                 JCheckBox box = checkBox(field.label());
