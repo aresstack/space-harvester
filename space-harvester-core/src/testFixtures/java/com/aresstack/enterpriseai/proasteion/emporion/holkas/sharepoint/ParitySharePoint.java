@@ -71,8 +71,9 @@ public final class ParitySharePoint implements AutoCloseable {
     }
 
     private final HttpServer server;
-    private final Map<String, byte[]> documents;
-    private int pageSize = Integer.MAX_VALUE;
+    private volatile Map<String, byte[]> documents;
+    private volatile int pageSize = Integer.MAX_VALUE;
+    private final java.util.concurrent.atomic.AtomicInteger fileRequestFailureAfter = new java.util.concurrent.atomic.AtomicInteger(-1);
     private final java.util.concurrent.atomic.AtomicInteger continuationRequests = new java.util.concurrent.atomic.AtomicInteger();
 
     private ParitySharePoint(int port) throws IOException {
@@ -117,6 +118,22 @@ public final class ParitySharePoint implements AutoCloseable {
         ParitySharePoint site = new ParitySharePoint(0, documents);
         site.pageSize = pageSize;
         return site;
+    }
+
+    public void failFileRequestAfter(int successfulRequests) {
+        fileRequestFailureAfter.set(successfulRequests);
+    }
+
+    public void removeFile(String name) {
+        Map<String, byte[]> updated = new LinkedHashMap<>(documents);
+        updated.remove(LIBRARY + "/" + name);
+        documents = updated;
+    }
+
+    public void addFile(String name) {
+        Map<String, byte[]> updated = new LinkedHashMap<>(documents);
+        updated.put(LIBRARY + "/" + name, "Sample text".getBytes(UTF_8));
+        documents = updated;
     }
 
     public int continuationRequests() {
@@ -216,6 +233,10 @@ public final class ParitySharePoint implements AutoCloseable {
     }
 
     private void folder(HttpExchange exchange, String path, boolean files) throws IOException {
+        if (files && fileRequestFailureAfter.getAndUpdate(value -> value < 0 ? -1 : value - 1) == 0) {
+            send(exchange, 503, "application/json", new byte[0]);
+            return;
+        }
         String prefix = path + "/";
         TreeSet<String> names = new TreeSet<String>();
         boolean exists = false;

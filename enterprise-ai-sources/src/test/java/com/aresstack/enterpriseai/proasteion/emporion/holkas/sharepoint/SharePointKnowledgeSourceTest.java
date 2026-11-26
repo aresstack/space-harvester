@@ -101,6 +101,11 @@ public class SharePointKnowledgeSourceTest {
         json.put(fileApi + "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel",
                 "{\"d\":" + file("/sites/team/Dokumente/IAR Handbuch.txt", 5) + "}");
         files.put(fileApi + "/$value", "Hallo".getBytes(StandardCharsets.UTF_8));
+        for (Map.Entry<String, String> entry : new java.util.HashMap<String, String>(json).entrySet()) {
+            if (entry.getKey().contains("/Folders?$select=") || entry.getKey().contains("/Files?$select=")) {
+                json.put(entry.getKey() + "&$top=100", entry.getValue());
+            }
+        }
         return new SharePointKnowledgeSource(SourceAddress.of("sharepoint://sp.example.test/sites/team"), URI.create(SITE),
                 new SharePointCredentialsProvider() {
                     @Override
@@ -329,9 +334,9 @@ public class SharePointKnowledgeSourceTest {
                 com.aresstack.enterpriseai.source.api.NavigationNode.root("root", "root", "root",
                         com.aresstack.enterpriseai.source.api.NavigationNode.Children.UNKNOWN);
         com.aresstack.enterpriseai.source.api.NavigationNode library = source.children(root, "").nodes().get(0);
-        String folders = API + "GetFolderByServerRelativeUrl('/sites/team/Dokumente')/Folders?$select=Name,ServerRelativeUrl";
+        String folders = API + "GetFolderByServerRelativeUrl('/sites/team/Dokumente')/Folders?$select=Name,ServerRelativeUrl&$top=100";
         String files = API + "GetFolderByServerRelativeUrl('/sites/team/Dokumente')/Files"
-                + "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel";
+                + "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel&$top=100";
         String nextFolders = folders + "&$skiptoken=2";
         String nextFiles = files + "&$skiptoken=250";
         json.put(folders, "{\"d\":{\"results\":[{\"Name\":\"Unter\",\"ServerRelativeUrl\":\"/sites/team/Dokumente/Unter\"}],\"__next\":\""
@@ -384,7 +389,7 @@ public class SharePointKnowledgeSourceTest {
                         com.aresstack.enterpriseai.source.api.NavigationNode.Children.UNKNOWN);
         com.aresstack.enterpriseai.source.api.NavigationNode library = source.children(root, "").nodes().get(0);
         String files = API + "GetFolderByServerRelativeUrl('/sites/team/Dokumente')/Files"
-                + "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel";
+                + "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel&$top=100";
         String next = files + "&$skiptoken=2";
         json.put(files, "{\"d\":{\"results\":[" + file("/sites/team/Dokumente/first.txt", 5)
                 + "],\"__next\":\"" + next + "\"}}");

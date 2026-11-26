@@ -34,6 +34,11 @@ class SourceErrorHandler {
         return problem;
     }
 
+    @ExceptionHandler(com.aresstack.spaceharvester.application.sources.InvalidNavigationCursorException.class)
+    ProblemDetail invalidNavigationCursor(com.aresstack.spaceharvester.application.sources.InvalidNavigationCursorException e) {
+        return problem(HttpStatus.BAD_REQUEST, "invalid-navigation-cursor", "Ungültiger Navigationscursor", e.getMessage());
+    }
+
     @ExceptionHandler(InvalidQueryException.class)
     ProblemDetail invalidQuery(InvalidQueryException e) {
         // Die Meldung stammt aus der eigenen Validierung, nicht aus der Quelle.

@@ -1392,6 +1392,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             NavigationChildren batch = navigation.children(parent, decodeCursor(cursor));
             return new ChildPages(partition, batch.nodes().stream().map(node -> node(node, partition)).toList(),
                     batch.complete() ? null : encodeCursor(batch.nextCursor()));
+        } catch (com.aresstack.enterpriseai.source.api.InvalidNavigationCursorException invalid) {
+            throw new com.aresstack.spaceharvester.application.sources.InvalidNavigationCursorException();
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
@@ -1479,7 +1481,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         } catch (IllegalArgumentException e) {
             // unten: ungültig
         }
-        throw new InvalidQueryException("Cursor gehört nicht zu diesem Knoten");
+        throw new com.aresstack.spaceharvester.application.sources.InvalidNavigationCursorException();
     }
 
     @Override

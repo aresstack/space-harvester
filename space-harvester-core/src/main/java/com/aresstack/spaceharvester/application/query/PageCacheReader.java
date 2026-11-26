@@ -82,6 +82,31 @@ public interface PageCacheReader {
                                     List<String> pageIds) {
     }
 
+    /** Read the order and its revision together; return empty if revisioned writes are unsupported. */
+    default Optional<ChildOrderState> childOrderState(String sourceId, String spaceKey, String parentPageId) {
+        return Optional.empty();
+    }
+
+    /** Replace an order only if its revision still matches; return the new revision on success. */
+    default Optional<String> compareAndSetChildOrder(String sourceId, String spaceKey, String parentPageId,
+                                                     String expectedRevision, List<String> pageIds) {
+        return Optional.empty();
+    }
+
+    /** Treat a missing revision as a legacy or absent order. */
+    final class ChildOrderState {
+        private final String revision;
+        private final List<String> pageIds;
+
+        public ChildOrderState(String revision, List<String> pageIds) {
+            this.revision = revision;
+            this.pageIds = java.util.Collections.unmodifiableList(new java.util.ArrayList<>(pageIds));
+        }
+
+        public String revision() { return revision; }
+        public List<String> pageIds() { return pageIds; }
+    }
+
     /** Ein Cache, der nicht eingerichtet ist: jede Abfrage scheitert mit {@link CacheUnavailableException}. */
     static PageCacheReader unavailable() {
         return new PageCacheReader() {

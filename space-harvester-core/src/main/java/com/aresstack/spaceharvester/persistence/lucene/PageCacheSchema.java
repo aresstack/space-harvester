@@ -134,6 +134,7 @@ public final class PageCacheSchema {
     static final String WITHHELD = "withheld";
     /** Reihenfolge der Kinder eines Knotens, wie die Quelle sie zuletzt lieferte. */
     static final String CHILD_ORDER = "childOrder";
+    private static final String CHILD_ORDER_REVISION = "childOrderRevision";
     static final String CHILD_ORDER_PAGE = CHILD_ORDER + ".pageId";
 
     /** Gespeicherte Felder der aktuellen Kopfdaten und des Payload-Hashs, damit Listen die Bytes nicht laden. */
@@ -217,14 +218,20 @@ public final class PageCacheSchema {
     }
 
     /** Seiten-IDs der Kinder in der Reihenfolge der Quelle, nur gespeichert; Lucene behält die Reihenfolge der Werte. */
-    static Document childOrder(String sourceId, String spaceKey, String parentPageId, List<String> pageIds) {
+    static Document childOrder(String sourceId, String spaceKey, String parentPageId, List<String> pageIds,
+                               String revision) {
         Document doc = new Document();
         doc.add(new StringField(TYPE, CHILD_ORDER, Field.Store.NO));
         doc.add(new StringField(ID, childOrderTerm(sourceId, spaceKey, parentPageId).text(), Field.Store.NO));
+        doc.add(new StoredField(CHILD_ORDER_REVISION, revision));
         for (String pageId : pageIds) {
             doc.add(new StoredField(CHILD_ORDER_PAGE, pageId));
         }
         return doc;
+    }
+
+    static String childOrderRevision(Document doc) {
+        return doc.get(CHILD_ORDER_REVISION);
     }
 
     static List<String> childOrder(Document doc) {

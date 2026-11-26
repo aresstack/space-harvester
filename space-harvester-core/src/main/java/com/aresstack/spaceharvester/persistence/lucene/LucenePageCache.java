@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.persistence.lucene;
 
 import static com.aresstack.spaceharvester.persistence.lucene.PageCacheSchema.HEADER_FIELDS;
 
+import com.aresstack.spaceharvester.application.query.PageCacheReader.ChildOrderState;
 import com.aresstack.spaceharvester.application.acquisition.FindingCataloging;
 import com.aresstack.spaceharvester.application.changelog.ChangeEntry;
 import com.aresstack.spaceharvester.application.changelog.ChangeEntries;
@@ -566,30 +567,60 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
      * @param parentPageId Elternseite oder {@code null} für die Wurzelseiten von {@code spaceKey}
      */
     public List<String> childOrder(String sourceId, String spaceKey, String parentPageId) {
+        return childOrderState(sourceId, spaceKey, parentPageId).pageIds();
+    }
+
+    public ChildOrderState childOrderState(
+            String sourceId, String spaceKey, String parentPageId) {
         Objects.requireNonNull(sourceId, "sourceId");
         Term term = PageCacheSchema.childOrderTerm(sourceId, spaceKey, parentPageId);
         return read(searcher -> {
             TopDocs top = searcher.search(new TermQuery(term), 1);
-            return top.scoreDocs.length == 0 ? List.<String>of()
-                    : PageCacheSchema.childOrder(searcher.storedFields().document(top.scoreDocs[0].doc));
+            if (top.scoreDocs.length == 0) {
+                return new ChildOrderState(null, java.util.Collections.emptyList());
+            }
+            Document document = searcher.storedFields().document(top.scoreDocs[0].doc);
+            return new ChildOrderState(
+                    PageCacheSchema.childOrderRevision(document), PageCacheSchema.childOrder(document));
         });
     }
 
-    /**
-     * Merkt sich die Reihenfolge der Kinder in einem eigenen Commit und ersetzt die vorige. Nur ein Hinweis für die
-     * Anzeige: kein Seitenstand, keine Protokollzeile, keine neue Suchgeneration.
-     */
+    /** Replace the display hint without affecting the search generation. */
     public void saveChildOrder(String sourceId, String spaceKey, String parentPageId, List<String> pageIds) {
-        Objects.requireNonNull(sourceId, "sourceId");
-        Objects.requireNonNull(pageIds, "pageIds");
-        Term term = PageCacheSchema.childOrderTerm(sourceId, spaceKey, parentPageId);
         try (Batch batch = begin()) {
-            batch.dirty = true;
-            write(() -> writer.updateDocument(term,
-                    PageCacheSchema.childOrder(sourceId, spaceKey, parentPageId, pageIds)));
-            batch.commit();
+            writeChildOrder(batch, sourceId, spaceKey, parentPageId, pageIds);
         }
     }
+
+    /** Compare and update under the same write lock. */
+    public Optional<String> compareAndSetChildOrder(String sourceId, String spaceKey, String parentPageId,
+                                                     String expectedRevision, List<String> pageIds) {
+        // Do not wait for an unrelated inventory write just to persist a display hint.
+        if (!writeLock.tryLock()) {
+            return Optional.empty();
+        }
+        try (Batch batch = begin()) {
+            if (!Objects.equals(expectedRevision, childOrderState(sourceId, spaceKey, parentPageId).revision())) {
+                return Optional.empty();
+            }
+            return Optional.of(writeChildOrder(batch, sourceId, spaceKey, parentPageId, pageIds));
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    private String writeChildOrder(Batch batch, String sourceId, String spaceKey, String parentPageId,
+                                   List<String> pageIds) {
+        Objects.requireNonNull(pageIds, "pageIds");
+        Term term = PageCacheSchema.childOrderTerm(sourceId, spaceKey, parentPageId);
+        String revision = java.util.UUID.randomUUID().toString();
+        batch.dirty = true;
+        write(() -> writer.updateDocument(term,
+                PageCacheSchema.childOrder(sourceId, spaceKey, parentPageId, pageIds, revision)));
+        batch.commit();
+        return revision;
+    }
+
 
     /** Seiten eines Space ohne Elternseite nach aktuellen Kopfdaten, nach Seiten-ID; ohne Payload. */
     public List<CachedPageHeader> rootPages(String sourceId, String spaceKey, int limit) {
