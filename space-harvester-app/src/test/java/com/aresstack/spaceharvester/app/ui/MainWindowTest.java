@@ -42,9 +42,15 @@ class MainWindowTest {
     private AppContext context;
 
     @AfterEach
-    void shutdown() {
+    void shutdown() throws Exception {
         if (context != null) {
-            context.shutdown();
+            try {
+                SwingUtilities.invokeAndWait(() -> { });
+                Background.awaitIdle(java.time.Duration.ofSeconds(30));
+            } finally {
+                context.shutdown();
+            }
+            Background.awaitIdle(java.time.Duration.ofSeconds(30));
         }
     }
 

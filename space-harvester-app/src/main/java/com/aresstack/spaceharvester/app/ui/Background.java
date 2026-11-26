@@ -17,6 +17,9 @@ public final class Background {
     private static final ExecutorService EXECUTOR = Executors.newThreadPerTaskExecutor(
             Thread.ofVirtual().name("ui-task-", 0).factory());
 
+    private static final Object IDLE_MONITOR = new Object();
+    private static int pending;
+
     private Background() {
     }
 
@@ -29,14 +32,17 @@ public final class Background {
      * ihren Thread). Eine abgebrochene Arbeit meldet sich, wenn überhaupt, als Fehler.
      */
     public static <T> Future<?> start(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
-        return EXECUTOR.submit(() -> {
+        var task = new java.util.concurrent.FutureTask<Void>(() -> {
             try {
                 T result = work.call();
-                SwingUtilities.invokeLater(() -> onSuccess.accept(result));
+                deliver(() -> onSuccess.accept(result));
             } catch (Throwable e) {
-                SwingUtilities.invokeLater(() -> onFailure.accept(e));
+                deliver(() -> onFailure.accept(e));
             }
+            return null;
         });
+        executeTracked(task);
+        return task;
     }
 
     /**
@@ -44,7 +50,64 @@ public final class Background {
      * (etwa in Tests von Hand ausgeführt).
      */
     public static java.util.concurrent.Executor executor() {
-        return EXECUTOR;
+        return Background::executeTracked;
+    }
+
+    private static void executeTracked(Runnable task) {
+        started();
+        try {
+            EXECUTOR.execute(() -> {
+                try {
+                    task.run();
+                } finally {
+                    finished();
+                }
+            });
+        } catch (RuntimeException failure) {
+            finished();
+            throw failure;
+        }
+    }
+
+    private static void deliver(Runnable callback) {
+        started();
+        SwingUtilities.invokeLater(() -> {
+            try {
+                callback.run();
+            } finally {
+                finished();
+            }
+        });
+    }
+
+    private static void started() {
+        synchronized (IDLE_MONITOR) {
+            pending++;
+        }
+    }
+
+    private static void finished() {
+        synchronized (IDLE_MONITOR) {
+            pending--;
+            IDLE_MONITOR.notifyAll();
+        }
+    }
+
+    /** Wait for actual worker completion and EDT delivery, including follow-up work. */
+    static void awaitIdle(java.time.Duration timeout) throws InterruptedException {
+        if (SwingUtilities.isEventDispatchThread()) {
+            throw new IllegalStateException("Cannot await background tasks on the EDT");
+        }
+        long deadline = System.nanoTime() + timeout.toNanos();
+        synchronized (IDLE_MONITOR) {
+            while (pending != 0) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    throw new IllegalStateException("Background tasks still running: " + pending);
+                }
+                java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(IDLE_MONITOR, remaining);
+            }
+        }
     }
 
     /** Wie {@link #run}, für Arbeit ohne Ergebnis. */
