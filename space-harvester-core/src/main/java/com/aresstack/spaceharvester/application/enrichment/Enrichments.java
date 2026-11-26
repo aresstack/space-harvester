@@ -145,6 +145,11 @@ public class Enrichments {
         LocalReaderAnalyses reader = localReader;
         return reader == null ? Optional.empty() : reader.read(snapshot);
     }
+
+    public Optional<LocalReadingText.Reading> localReadingText(PageSnapshot snapshot) {
+        LocalReaderAnalyses reader = localReader;
+        return reader == null ? Optional.empty() : reader.reading(snapshot);
+    }
     private final Map<String, EnrichmentProcessor> processors = new LinkedHashMap<>();
     private final EnrichmentStore store;
     private final Clock clock;
@@ -543,6 +548,37 @@ public class Enrichments {
             views.add(new View(enrichment, freshness));
         }
         return new Inspection(input, views, applicable);
+    }
+
+    /** Inspect the stored local section results without treating them as whole-page analyses. */
+    public List<View> localInspection(PageSnapshot snapshot) {
+        List<View> views = new ArrayList<>();
+        if (com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.recognizes(snapshot.payload())) {
+            Optional<LocalReadingText.Reading> reading = localReadingText(snapshot);
+            for (Enrichment enrichment : store.findDocuments(snapshot.key())) {
+                if (!enrichment.document().localOriginal()) {
+                    continue;
+                }
+                EnrichmentProcessor processor = processors.get(enrichment.processorId());
+                String expectedVersion = processor == null ? null : processor.version();
+                Enrichment.Freshness freshness = Enrichment.Freshness.STALE;
+                if (reading.isPresent() && enrichment.extraction() != null
+                        && enrichment.extraction().startsWith(DocumentEnrichments.basis(reading.get().extraction()) + "|")
+                        && !outdated(enrichment)) {
+                    var slice = reading.get().slices().stream()
+                            .filter(s -> s.document().equals(enrichment.document()) && s.section() == enrichment.section())
+                            .findFirst();
+                    if (slice.isPresent()) {
+                        freshness = enrichment.freshness(slice.get().text().inputSha256(), expectedVersion);
+                    } else if (enrichment.processorVersion().equals(expectedVersion)) {
+                        // The completed extraction can include sections outside the bounded reader.
+                        freshness = Enrichment.Freshness.CURRENT;
+                    }
+                }
+                views.add(new View(enrichment, freshness));
+            }
+        }
+        return List.copyOf(views);
     }
 
     /** Die aktuellen Prozessoren mit ihrer Version in Ausführungsreihenfolge. */

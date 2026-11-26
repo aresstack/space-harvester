@@ -172,6 +172,10 @@ public final class FileFactEditStore implements FactEditStore {
         origin.put("inputSha256", provenance.inputSha256());
         origin.put("revision", provenance.revision());
         origin.put("computedAt", provenance.computedAt().toString());
+        if (provenance.localSection() != null) {
+            origin.put("localSection", provenance.localSection());
+            origin.put("localPartId", provenance.localPartId());
+        }
         if (fact.anchor() == null) {
             node.putNull("anchor");
         } else {
@@ -203,7 +207,8 @@ public final class FileFactEditStore implements FactEditStore {
                 node.path("payload").asString(), arguments, new MetadataFact.Provenance(
                         provenance.path("processorId").asString(), provenance.path("processorVersion").asString(),
                         provenance.path("inputSha256").asString(), text(provenance, "revision"),
-                        Instant.parse(provenance.path("computedAt").asString())),
+                        Instant.parse(provenance.path("computedAt").asString()),
+                        text(provenance, "localPartId"), integer(provenance, "localSection")),
                 anchor.isObject() ? new MetadataFact.Anchor(text(anchor, "section"), integer(anchor, "charStart"),
                         integer(anchor, "charEnd")) : null,
                 FactOrigin.valueOf(node.path("origin").asString()), FactReview.valueOf(node.path("review").asString()));

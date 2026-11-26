@@ -59,7 +59,7 @@ public record TermPosting(PageKey page, TermKind kind, String term, String norma
 
     /** Ob der Eintrag aus einem Anhang oder einer enthaltenen Datei stammt. */
     public boolean ofDocument() {
-        return !document.isPage();
+        return !document.isPage() && !document.localOriginal();
     }
 
     /** Art und Suchwert: die Gruppe, unter der die globale Begriffsliste zusammenfasst. */

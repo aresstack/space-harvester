@@ -37,6 +37,10 @@ public final class LocalReaderAnalyses {
         return reading.read(snapshot).map(text -> combine(snapshot, text));
     }
 
+    public Optional<LocalReadingText.Reading> reading(PageSnapshot snapshot) {
+        return reading.read(snapshot);
+    }
+
     private Result combine(PageSnapshot snapshot, LocalReadingText.Reading reading) {
         String basis = DocumentEnrichments.basis(reading.extraction()) + "|";
         Map<DocumentKey, List<Enrichment>> documents = new HashMap<>();

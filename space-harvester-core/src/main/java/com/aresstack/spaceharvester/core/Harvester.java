@@ -833,7 +833,8 @@ public final class Harvester implements AutoCloseable {
                     new FileTermRelationStore(builder.dataDirectory.resolve("term-relations")), access,
                     cache::findHeader, clock, enrichmentStore, termProcessor.version());
             this.acronymRelationRule = new AcronymRelationRule(catalog, enrichmentStore, access, cache::findHeader,
-                    termRelations, termProcessor.version(), clock);
+                    termRelations, termProcessor.version(), clock, cache::find,
+                    new com.aresstack.spaceharvester.application.enrichment.LocalReadingText(structuredDocuments));
             // #122: KI-Akronymauflösung über das Chat-Modell der wirksamen Konfiguration, nur für freigegebene Quellen.
             ChatAcronymExpansionModel chatModel = new ChatAcronymExpansionModel(
                     () -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles, builder.userAgent);
@@ -1011,9 +1012,9 @@ public final class Harvester implements AutoCloseable {
             SemanticPreparation preparation = embedding == null || prefetch == null ? null
                     : new SemanticPreparation(keywordSearch, key -> reader.page(key).map(CachedPage::snapshot),
                     enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT, jobs,
-                    (snapshot, processorId) -> {
+                    (snapshot, processorId, deadline) -> {
                         DocumentEnrichments sections = sectionTexts.get();
-                        return sections != null && sections.prepareLocal(snapshot, processorId);
+                        return sections != null && sections.awaitLocal(snapshot, processorId, deadline);
                     });
             // Angelo 24.11.2026: Aufträge „Suchtreffer vorbereiten“ entstehen nicht mehr; unterbrochene alte entfallen.
             SemanticPreparation.forgetInterrupted(jobs);
@@ -1086,6 +1087,8 @@ public final class Harvester implements AutoCloseable {
                     : cache.knownPages(sourceId, spaceKey).keySet());
             documentEnrichments.network(network);
             documentEnrichments.localDocuments(cache::find, structuredDocuments);
+            terms.localOriginals(documentEnrichments::currentLocalExtraction, enrichments::localReadingText);
+            relevance.localOriginals(documentEnrichments::currentLocalExtraction);
             opened.add(documentEnrichments);
             sectionTexts.set(documentEnrichments);
             pageRecomputation.localDocuments(documentEnrichments);

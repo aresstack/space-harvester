@@ -108,9 +108,12 @@ public final class PageFacts {
         if (enrichments != null) {
             Enrichments.Inspection inspection = enrichments.inspect(page.snapshot());
             input = inspection.inputSha256();
-            for (Enrichments.View view : inspection.stored()) {
-                freshness.put(view.enrichment().processorId() + '\u0000' + view.enrichment().inputSha256(),
-                        view.freshness());
+            List<Enrichments.View> views = new ArrayList<>(inspection.stored());
+            views.addAll(enrichments.localInspection(page.snapshot()));
+            for (Enrichments.View view : views) {
+                for (MetadataFact fact : EnrichmentFacts.of(view.enrichment())) {
+                    freshness.put(fact.id(), view.freshness());
+                }
                 if (EnrichmentFacts.truncated(view.enrichment())) {
                     truncated.add(view.enrichment().processorId());
                 }
@@ -124,8 +127,7 @@ public final class PageFacts {
                 Enrichment.Freshness current = fact.origin() == FactOrigin.MANUAL
                         ? input != null && input.equals(fact.provenance().inputSha256())
                         ? Enrichment.Freshness.CURRENT : Enrichment.Freshness.STALE
-                        : freshness.getOrDefault(fact.provenance().processorId() + '\u0000'
-                        + fact.provenance().inputSha256(), Enrichment.Freshness.STALE);
+                        : freshness.getOrDefault(fact.id(), Enrichment.Freshness.STALE);
                 long revision = edits == null ? 0 : edits.find(fact.id()).map(FactEdit::revision).orElse(0L);
                 entries.add(new Entry(fact, current, revision));
             }
