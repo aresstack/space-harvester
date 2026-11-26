@@ -33,6 +33,9 @@ public final class FtpSourceProvider implements KnowledgeSourceProvider {
 
     public static final String TYPE_ID = "ftp";
 
+    /** UTF-8 text after FTP transport and record decoding, without a Markdown envelope. */
+    public static final String SOURCE_TEXT_FORMAT = "ftp-decoded-text/v1";
+
     private static final KnowledgeSourceType TYPE = KnowledgeSourceType.builder(TYPE_ID, FtpKnowledgeSource.SCHEME,
                     "FTP (Mainframe)")
             .description("COBOL- und andere Textquellen aus MVS-Datasets (PDS-Member) oder Dateien eines FTP-Servers")

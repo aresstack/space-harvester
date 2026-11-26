@@ -89,6 +89,25 @@ class ProgramAnalysisTabsTest {
     }
 
     @Test
+    void nativeSourcePreservesColumnsAndRejectsMismatchedRevision() throws Exception {
+        String code = CODE.replace("DEMO.\n", "DEMO.  \n000300* e\u0301 ```  \n\n");
+        var legacy = snapshot("ftp", code, code);
+        var nativeSource = PageSnapshot.of("ftp", legacy.metadata(),
+                new NativePayload(code.getBytes(StandardCharsets.UTF_8), "text/plain",
+                        com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider.SOURCE_TEXT_FORMAT),
+                Instant.now());
+        assertThat(StoredCobolSource.read(nativeSource)).hasValueSatisfying(source ->
+                assertThat(source.content()).isEqualTo(code));
+        assertThat(StoredCobolSource.read(legacy)).hasValueSatisfying(source ->
+                assertThat(source.content()).isEqualTo(code));
+        assertThat(nativeSource.key()).isEqualTo(legacy.key());
+        var altered = PageSnapshot.of("ftp", nativeSource.metadata(), new NativePayload(
+                (code + " ").getBytes(StandardCharsets.UTF_8), "text/plain", nativeSource.payload().nativeFormat()),
+                Instant.now());
+        assertThat(StoredCobolSource.verified(altered)).isEmpty();
+    }
+
+    @Test
     void rejectsAlteredPayloadAndNonProgramSource() throws Exception {
         assertThat(StoredCobolSource.read(snapshot("ftp", CODE.replace("BOOKING", "PAYMENT"), CODE))).isEmpty();
         PageSnapshot jcl = snapshot("ftp", "//JOB JOB\n//STEP EXEC PGM=DEMO\n", "//JOB JOB\n//STEP EXEC PGM=DEMO\n");

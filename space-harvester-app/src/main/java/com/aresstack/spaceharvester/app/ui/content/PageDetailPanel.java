@@ -2738,9 +2738,12 @@ public final class PageDetailPanel extends JPanel {
         pendingProgramFocus = null;
         boolean matching = focus != null && focus.key().equals(snapshot.key())
                 && focus.rawSha256().equals(snapshot.payload().rawSha256());
-        var code = matching
-                ? com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.verified(snapshot)
-                : com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot);
+        boolean nativeFtp = com.aresstack.spaceharvester.app.runtime.program.StoredFtpText.nativeFormat(snapshot.payload());
+        java.util.Optional<String> code = matching || nativeFtp
+                ? com.aresstack.spaceharvester.app.runtime.program.StoredFtpText.read(snapshot)
+                    .map(com.aresstack.spaceharvester.app.runtime.program.StoredFtpText::content)
+                : com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot)
+                    .map(com.aresstack.spaceharvester.mainframe.cobol.CobolSource::content);
         code.ifPresent(source -> showOriginalProgram(source, matching ? focus.line() : 0));
         if (matching && code.isPresent()) tabs.select(READING);
         if (focus != null && (!matching || code.isEmpty())) {
@@ -2748,12 +2751,18 @@ public final class PageDetailPanel extends JPanel {
         }
     }
 
-    private void showOriginalProgram(com.aresstack.spaceharvester.mainframe.cobol.CobolSource source, int line) {
+    private void showOriginalProgram(String source, int line) {
         com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.register();
         var editor = new org.fife.ui.rsyntaxtextarea.RSyntaxTextArea();
-        editor.setSyntaxEditingStyle(com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.COBOL);
+        String syntax = switch (com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpProgramClassifier
+                .classify(source)) {
+            case COBOL, COPYBOOK -> com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.COBOL;
+            case JCL -> com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.JCL;
+            case UNKNOWN -> org.fife.ui.rsyntaxtextarea.SyntaxConstants.SYNTAX_STYLE_NONE;
+        };
+        editor.setSyntaxEditingStyle(syntax);
         editor.setEditable(false);
-        editor.setText(source.content());
+        editor.setText(source);
         editor.setCaretPosition(0);
         fileContent.add(new org.fife.ui.rtextarea.RTextScrollPane(editor), BorderLayout.CENTER);
         originalProgramShown = true;

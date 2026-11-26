@@ -162,8 +162,8 @@ class StoredCopybooksTest {
                 .digest(code.getBytes(StandardCharsets.UTF_8)));
         PageMetadata metadata = new PageMetadata(id, resource, path, source, null, revision,
                 null, null, PageMetadata.sorted(Map.of("ftp.path", path)));
-        String payload = "# " + path + "\n\n```\n" + code + "\n```";
-        return PageSnapshot.of(source, metadata, new NativePayload(payload.getBytes(StandardCharsets.UTF_8),
-                "text/markdown", NativePayload.DOCUMENT_TEXT), Instant.now());
+        return PageSnapshot.of(source, metadata, new NativePayload(code.getBytes(StandardCharsets.UTF_8),
+                "text/plain", com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider.SOURCE_TEXT_FORMAT),
+                Instant.now());
     }
 }
