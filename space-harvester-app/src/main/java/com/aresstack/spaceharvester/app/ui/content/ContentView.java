@@ -191,6 +191,18 @@ public final class ContentView implements View {
     }
 
     /**
+     * Öffnet einen Knoten ohne eigenen Inhalt (einen Ordner) aus dem Explorer: die Mitte leer mit seinem Namen, nie die
+     * vorher gezeigte Seite (Angelo 26.11.2026).
+     */
+    public void openContainer(String sourceId, String spaceKey, String pageId, String title) {
+        allSources = false;
+        detail.showContainer(title == null || title.isBlank() ? pageId : title);
+        this.sourceId = sourceId;
+        this.spaceKey = spaceKey == null || spaceKey.isBlank() ? null : spaceKey;
+        renderCrumbs();
+    }
+
+    /**
      * Öffnet einen Absatz über seine stabile Passage-ID (#452): seine Seite im zuletzt gewählten Reiter, der Absatz markiert.
      * {@code sourceId} ist die Quelle des Aufrufers (z. B. eines Suchtreffers); maßgeblich ist die ID selbst.
      */

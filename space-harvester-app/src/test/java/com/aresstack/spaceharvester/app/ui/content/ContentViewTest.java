@@ -282,6 +282,41 @@ class ContentViewTest {
         assertThat(onEdt(view::crumbs)).isEqualTo("notizen › " + other);
     }
 
+    /**
+     * Regression (Angelo 26.11.2026, schon einmal bemängelt): Ein Ordner ohne eigenen Inhalt in derselben Quelle, etwa in
+     * SharePoint oder BSCW, ließ die vorher geöffnete Seite stehen. Die Mitte muss leer werden und den Ordner nennen,
+     * auch wenn die Seite noch lädt.
+     */
+    @Test
+    void aFolderOfTheSameSourceShowsAnEmptyPageInsteadOfTheOpenOne() throws Exception {
+        String space = space("handbuch");
+        String page = firstPage("handbuch", space);
+        onEdt(() -> {
+            view.openPage("handbuch", page);
+            return null;
+        });
+        await(() -> view.detail().shownPage() != null);
+
+        onEdt(() -> {
+            view.openContainer("handbuch", space, "ordner", "Projektordner");
+            return null;
+        });
+        assertThat(onEdt(() -> view.detail().isEmpty())).isTrue();
+        assertThat(onEdt(() -> view.detail().shownPage())).isNull();
+        assertThat(onEdt(() -> view.detail().titleLabel().getText())).isEqualTo("Projektordner");
+        assertThat(onEdt(view::chosenSource)).isEqualTo("handbuch");
+
+        // Noch ladend gewechselt: die alte Seite erscheint auch nachträglich nicht.
+        onEdt(() -> {
+            view.openPage("handbuch", page);
+            view.openContainer("handbuch", space, "ordner", "Projektordner");
+            return null;
+        });
+        Thread.sleep(1500);
+        assertThat(onEdt(() -> view.detail().shownPage())).isNull();
+        assertThat(onEdt(() -> view.detail().isEmpty())).isTrue();
+    }
+
     @Test
     void aPageStillLoadingFromTheOldSpaceNeverShowsUp() throws Exception {
         String space = space("handbuch");
