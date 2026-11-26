@@ -41,10 +41,14 @@ public enum CheckScope {
         throw new IllegalArgumentException("Erwartet uncertain-and-stage oder all");
     }
 
-    /** Ob eine Aussage zu dieser Auswahl gehört (nach der Stufe des Parsers). */
+    /**
+     * Ob eine Aussage zu dieser Auswahl gehört (nach der Stufe des Parsers). Aussagen der Programmanalyse nie: Ihr
+     * Beleg ist eine Quellstelle, kein Satz, den das Modell mit der Aussage vergleichen könnte (ADR 0041, Punkt 7).
+     */
     public boolean includes(ParsedStatements.Statement statement) {
         ParsedStatements.Origin origin = statement.derivation().origin();
-        if (statement.quality() == ParsedStatements.Quality.INVALID || origin == ParsedStatements.Origin.MODELL) {
+        if (statement.quality() == ParsedStatements.Quality.INVALID || origin == ParsedStatements.Origin.MODELL
+                || origin == ParsedStatements.Origin.PROGRAMM) {
             return false;
         }
         return this == ALL || statement.quality() != ParsedStatements.Quality.PLAUSIBLE

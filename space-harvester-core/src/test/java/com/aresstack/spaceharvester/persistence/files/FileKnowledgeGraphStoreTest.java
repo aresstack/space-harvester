@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.assets.PartId;
+import com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence;
 import com.aresstack.spaceharvester.application.knowledge.PageStatementAnalysis;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -230,6 +231,47 @@ class FileKnowledgeGraphStoreTest {
         assertThat(read).containsExactly(checked, correction);
         assertThat(read.get(0).check().corrected()).isTrue();
         assertThat(read.get(1).derivation().corrects()).isEqualTo(s.id());
+    }
+
+    @Test
+    void statementsOfTheProgramAnalysisKeepTheirSourceLocationAcrossARestart() throws IOException {
+        // ADR 0041, Punkt 7: Beleg einer Aussage aus Programmcode ist der Quellstellenbeleg, nie der Hypothesensatz
+        DocumentKey program = DocumentKey.page(new PageKey("ftp-test", "TEST.COBOL(ANTRAG01)"));
+        DocumentKey copybook = DocumentKey.page(new PageKey("ftp-test", "TEST.COPY(ANTRAGCP)"));
+        SourceLocationEvidence source = new SourceLocationEvidence(program, "p1",
+                List.of(new SourceLocationEvidence.CodeSite(program, "p1", 120, 130),
+                        new SourceLocationEvidence.CodeSite(copybook, "c1", 12, 12)),
+                List.of(new SourceLocationEvidence.ParserFact("CONTROL", "IF KZ-STATUS = 'A'", 0, 125, 125)),
+                List.of(SourceLocationEvidence.Dependency.resolved("ANTRAGCP", copybook, "c1"),
+                        SourceLocationEvidence.Dependency.missing("DATUMCP")), "cobol-program@3");
+        PageStatementAnalysis base = analysis("ftp-test", "TEST.COBOL(ANTRAG01)", "Antrag");
+        ParsedStatements.Statement hypothesis = base.result().statements().get(0).withDerivation(
+                ParsedStatements.Derivation.programm("Der Sachbearbeiter schließt den Antrag ab.", source));
+        new FileKnowledgeGraphStore(directory).replace(base.withResult(withStatements(base.result(),
+                List.of(hypothesis))));
+
+        List<ParsedStatements.Statement> read = new FileKnowledgeGraphStore(directory).find(base.key())
+                .orElseThrow().result().statements();
+
+        assertThat(read).containsExactly(hypothesis);
+        assertThat(read.get(0).derivation().source().fingerprint()).isEqualTo(source.fingerprint());
+    }
+
+    @Test
+    void aProgramStatementWithoutReadableSourceLocationIsSkipped() throws IOException {
+        PageStatementAnalysis base = analysis("wiki", "1", "Beleg");
+        new FileKnowledgeGraphStore(directory).replace(base);
+        Path file;
+        try (Stream<Path> files = Files.list(directory.resolve(FileKnowledgeGraphStore.PAGES))) {
+            file = files.findFirst().orElseThrow();
+        }
+        String json = Files.readString(file, StandardCharsets.UTF_8);
+        Files.writeString(file, json.replace("\"review\"", "\"origin\" : \"PROGRAMM\", "
+                + "\"simplifiedSentence\" : \"Der Sachbearbeiter prüft den Beleg.\", \"review\""),
+                StandardCharsets.UTF_8);
+
+        assertThat(new FileKnowledgeGraphStore(directory).find(base.key()).orElseThrow().result().statements())
+                .isEmpty();
     }
 
     @Test
