@@ -1019,7 +1019,7 @@ public final class Workspace {
 
     /** Run only by an explicit request; no remote source fetch or implicit AI release. */
     public Enrichments.Run recomputeCobolBusiness(PageKey key, String rawSha256, String model,
-            com.aresstack.spaceharvester.app.runtime.program.CobolBusinessAnalysis.Budget budget,
+            ModelBudget budget,
             java.util.function.BooleanSupplier modelUnchanged, java.util.function.Consumer<com.aresstack.spaceharvester.application.jobs.JobState> state) {
         var page = cachedPage(key.sourceId(), key.pageId())
                 .orElseThrow(() -> new IllegalStateException("Programm nicht im Wissensbestand verfügbar."));

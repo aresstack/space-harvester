@@ -28,7 +28,7 @@ class DiagramLabelsTest {
             listener.completed("„Kundendaten\nprüfen“");
             return () -> { };
         };
-        DiagramLabels labels = new DiagramLabels(() -> new DiagramLabels.Target(chat, "gemma4:12b", "none"));
+        DiagramLabels labels = new DiagramLabels(() -> new DiagramLabels.Target(chat, "gemma4:12b", "none", null));
 
         assertThat(labels.enabled()).isFalse();
         AppState.shared().put(DiagramLabels.ENABLED_KEY, true);
@@ -55,17 +55,50 @@ class DiagramLabelsTest {
             return () -> { };
         };
         AppState.shared().put(DiagramLabels.ENABLED_KEY, true);
-        DiagramLabels labels = new DiagramLabels(() -> new DiagramLabels.Target(chat, "m", null));
+        DiagramLabels labels = new DiagramLabels(() -> new DiagramLabels.Target(chat, "m", null, null));
 
         assertThat(labels.summarize("MOVE 1 TO #A", 60, "x")).isNull();
         assertThat(labels.takeProblem()).contains("503");
         assertThat(labels.takeProblem()).isNull();
     }
 
+    /** F41-7: Langer Code wird nicht abgeschnitten, sondern in Teilen beschriftet; jede Zeile kommt beim Modell an. */
+    @Test
+    void longCodeIsLabelledInPartsWithoutLosingALine() {
+        List<AiChat.Request> requests = new ArrayList<>();
+        AiChat chat = (request, listener) -> {
+            requests.add(request);
+            listener.completed("Teil " + requests.size());
+            return () -> { };
+        };
+        StringBuilder code = new StringBuilder();
+        for (int i = 0; i < 2000; i++) {
+            code.append("MOVE #FELD-").append(i).append(" TO #ZIEL-").append(i).append('\n');
+        }
+        com.aresstack.spaceharvester.app.runtime.ModelBudget budget =
+                new com.aresstack.spaceharvester.app.runtime.ModelBudget(4096, 512);
+        DiagramLabels labels = new DiagramLabels(() -> new DiagramLabels.Target(chat, "m", null, budget));
+
+        String label = labels.summarize(code.toString(), 60, "UML-Zusammenfassung");
+
+        assertThat(label).isNotBlank();
+        assertThat(requests.size()).isGreaterThan(2);
+        String sent = requests.subList(0, requests.size() - 1).stream()
+                .map(request -> request.messages().get(1).text()).reduce("", String::concat);
+        assertThat(sent).contains("#FELD-0 ", "#FELD-1999 ");
+        for (AiChat.Request request : requests) {
+            int tokens = com.aresstack.spaceharvester.app.runtime.ModelBudget.tokens(DiagramLabels.SYSTEM_PROMPT)
+                    + com.aresstack.spaceharvester.app.runtime.ModelBudget.tokens(request.messages().get(1).text());
+            assertThat(tokens).isLessThanOrEqualTo(budget.contextTokens() - budget.answerTokens());
+        }
+        assertThat(DiagramLabels.parts("MOVE 1 TO #A", 60, "x", budget)).hasSize(1);
+        assertThat(DiagramLabels.parts(code.toString(), 60, "x", null)).hasSize(1);
+    }
+
     @Test
     void offWithoutModel() {
         AppState.shared().put(DiagramLabels.ENABLED_KEY, true);
         assertThat(new DiagramLabels(() -> null).enabled()).isFalse();
-        assertThat(new DiagramLabels(() -> new DiagramLabels.Target(null, "m", null)).enabled()).isFalse();
+        assertThat(new DiagramLabels(() -> new DiagramLabels.Target(null, "m", null, null)).enabled()).isFalse();
     }
 }
