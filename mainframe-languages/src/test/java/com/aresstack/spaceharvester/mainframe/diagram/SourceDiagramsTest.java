@@ -94,6 +94,47 @@ class SourceDiagramsTest {
     }
 
     @Test
+    void cobolDoesNotInventExecutionOrderOrStopRun() {
+        String cobol = """
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       PROCEDURE DIVISION.
+                       MAIN-PARA.
+                           PERFORM WORK-PARA.
+                           GOBACK.
+                       UNUSED-PARA.
+                           DISPLAY 'UNUSED'.
+                       WORK-PARA.
+                           CALL 'BOOKING'.
+                           EXIT.
+                """;
+        // The flowchart is the parser's static control flow: GOBACK terminates, UNUSED-PARA is not reached from MAIN-PARA.
+        var flow = SourceDiagrams.generate(cobol, "DEMO.cbl", Optional.of(SourceLanguage.COBOL),
+                DiagramType.FLOWCHART, 0, false, false, null);
+        assertThat(flow.type()).isEqualTo(DiagramType.FLOWCHART);
+        assertThat(flow.mermaid().orElseThrow()).startsWith("flowchart TD").contains("PERFORM_CALL", "TERMINATE")
+                .doesNotContain("STOP RUN");
+        // Without a complete graph (unresolved COPY) the structure is shown instead of an invented order.
+        var unresolved = SourceDiagrams.generate(cobol.replace("GOBACK.", "COPY MISSING.\n               GOBACK."),
+                "DEMO.cbl", Optional.of(SourceLanguage.COBOL), DiagramType.FLOWCHART, 0, false, false, null);
+        assertThat(unresolved.type()).isEqualTo(DiagramType.STRUCTURE);
+        for (DiagramType type : new DiagramType[]{DiagramType.STRUCTURE, DiagramType.SEQUENCE}) {
+            for (boolean compact : new boolean[]{false, true}) {
+                var diagram = SourceDiagrams.generate(cobol, "DEMO.cbl", Optional.of(SourceLanguage.COBOL),
+                        type, 0, compact, false, null);
+                assertThat(diagram.type()).isEqualTo(DiagramType.STRUCTURE);
+                String mermaid = diagram.mermaid().orElseThrow();
+                assertThat(mermaid).doesNotContain("STOP RUN", "PARA_MAIN_PARA --> PARA_UNUSED_PARA",
+                        "PARA_UNUSED_PARA --> PARA_WORK_PARA", "sequenceDiagram");
+                if (!compact) {
+                    assertThat(mermaid).contains("PARA_MAIN_PARA -.->|PERFORM| PARA_WORK_PARA",
+                            "PARA_WORK_PARA ==>|CALL| CALL_BOOKING");
+                }
+            }
+        }
+    }
+
+    @Test
     void explicitDetailsOverrideAutomaticCollapse() {
         StringBuilder jcl = new StringBuilder("//BIG      JOB (ACCT),'BAU',CLASS=A\n");
         for (int i = 1; i <= 40; i++) {

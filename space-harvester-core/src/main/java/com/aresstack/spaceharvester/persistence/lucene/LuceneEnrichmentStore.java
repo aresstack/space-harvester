@@ -344,13 +344,21 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
 
     @Override
     public List<PageKey> pagesWith(String processorId) {
+        return pagesWith(null, processorId);
+    }
+
+    @Override
+    public List<PageKey> pagesWith(String sourceId, String processorId) {
         Objects.requireNonNull(processorId, "processorId");
         requireOpen();
         try {
             IndexSearcher searcher = searchers.acquire();
             try {
                 // Alle Ergebnisse von Seiten (nur sie tragen PAGE), dann nach Prozessor gefiltert.
-                org.apache.lucene.search.Query pages = TermRangeQuery.newStringRange(PAGE, null, null, true, true);
+                org.apache.lucene.search.Query pages = sourceId == null
+                        ? TermRangeQuery.newStringRange(PAGE, null, null, true, true)
+                        : new org.apache.lucene.search.PrefixQuery(new org.apache.lucene.index.Term(PAGE,
+                                sourceId + SEPARATOR));
                 int count = searcher.count(pages);
                 if (count == 0) {
                     return List.of();

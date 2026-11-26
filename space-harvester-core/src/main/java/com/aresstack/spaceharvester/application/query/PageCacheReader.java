@@ -32,6 +32,12 @@ public interface PageCacheReader {
      */
     List<ListedPage> pages(String sourceId, String spaceKey, String generationId, String afterPageId, int limit);
 
+    /** Read a page-ID ordered batch of source headers from the local cache only. */
+    default List<com.aresstack.spaceharvester.application.snapshot.PageHeader> sourceHeaders(
+            String sourceId, String afterPageId, int limit) {
+        throw new UnsupportedOperationException("Source header enumeration is not supported");
+    }
+
     /**
      * Eine Seite mit aktuellen Kopfdaten und nativer Payload, unabhängig vom Space (eine verschobene Seite behält
      * ihre {@code pageId}).

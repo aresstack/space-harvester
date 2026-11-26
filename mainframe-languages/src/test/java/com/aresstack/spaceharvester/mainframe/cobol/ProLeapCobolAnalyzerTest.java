@@ -495,6 +495,11 @@ class ProLeapCobolAnalyzerTest {
         assertThat(result.diagnostics()).isEmpty();
         assertThat(result.semanticAnalysisComplete()).isTrue();
         assertThat(result.references()).hasSizeGreaterThanOrEqualTo(49992);
+        assertThat(result.dataFlow().readSites()).hasSize(49992);
+        var read = result.dataFlow().readSites().stream().max(java.util.Comparator.comparingInt(
+                site -> site.operand().span().start().line())).orElseThrow();
+        assertThat(CobolReachingDefinitions.candidates(result, read)).singleElement().satisfies(definition ->
+                assertThat(definition.span().start().line()).isEqualTo(49997));
         assertThat(result.calls().getFirst().span().start().line()).isEqualTo(49999);
     }
 

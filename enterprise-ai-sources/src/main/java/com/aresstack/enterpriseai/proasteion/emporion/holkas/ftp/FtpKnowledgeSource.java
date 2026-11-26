@@ -13,6 +13,9 @@ import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.NavigationResourceSource;
 import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourceScope;
+import com.aresstack.enterpriseai.source.api.StoredContent;
+import com.aresstack.enterpriseai.source.api.StoredContentSource;
+import java.util.Base64;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -34,11 +37,11 @@ import java.util.Map;
  *       bzw. auf anderen Servern absolute Pfade. Ein PDS liefert seine Member; Datasets darunter werden bis
  *       {@code maxDepth} Ebenen verfolgt ({@code 0} = nur die Member/Dateien direkt im Startpunkt).</li>
  *   <li>IDs: {@code ftp:<Quell-ID>/<Datasetname bzw. Pfad ohne führenden />}.</li>
- *   <li>Inhalt: Text im ASCII-Modus mit Satzstruktur wie MainframeMate, als Codeblock unter dem Datasetnamen.</li>
+ *   <li>Inhalt: dekodierter Text im ASCII-Modus; native Ablage ohne Markdown, Lesetext als Codeblock.</li>
  *   <li>Revision: Änderungszeit, falls der Server sie meldet, beim Laden zusätzlich der SHA-256 des Texts.</li>
  * </ul>
  */
-final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourceSource {
+final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourceSource, StoredContentSource {
 
     static final String SCHEME = "ftp";
 
@@ -94,14 +97,56 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourc
 
     @Override
     public KnowledgeDocument load(KnowledgeResourceId resourceId) throws KnowledgeSourceException {
+        LoadedText loaded = readContent(resourceId);
+        return KnowledgeDocument.of(loaded.content.resource(), "# " + loaded.displayPath + "\n\n```\n"
+                + new String(loaded.content.payload(), StandardCharsets.UTF_8) + "\n```");
+    }
+
+    @Override
+    public String localId(KnowledgeResourceId resourceId) {
+        try {
+            pathOf(resourceId);
+            return Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(resourceId.value().getBytes(StandardCharsets.UTF_8));
+        } catch (KnowledgeSourceException invalid) {
+            return null;
+        }
+    }
+
+    @Override
+    public StoredContent storedContent(String localId) throws KnowledgeSourceException {
+        KnowledgeResourceId resourceId;
+        try {
+            resourceId = KnowledgeResourceId.of(new String(Base64.getUrlDecoder().decode(localId),
+                    StandardCharsets.UTF_8));
+            if (!localId.equals(localId(resourceId))) throw new IllegalArgumentException("Invalid resource ID");
+        } catch (IllegalArgumentException | NullPointerException invalid) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Invalid FTP resource ID");
+        }
+        return readContent(resourceId).content;
+    }
+
+    private LoadedText readContent(KnowledgeResourceId resourceId) throws KnowledgeSourceException {
         final String path = pathOf(resourceId);
         return sessions.run(session -> {
             String remote = session.mvs() ? path : "/" + path;
-            String text = session.readText(remote);
+            String text = session.readSourceText(remote);
             KnowledgeResource resource = resource(path, lastSegment(session, remote), 0L)
                     .toBuilder().revision(KnowledgeRevision.version(sha256(text))).build();
-            return KnowledgeDocument.of(resource, "# " + (session.mvs() ? path : remote) + "\n\n```\n" + text + "\n```");
+            StoredContent content = new StoredContent(resource, text.getBytes(StandardCharsets.UTF_8), "text/plain",
+                    FtpSourceProvider.SOURCE_TEXT_FORMAT, Instant.now());
+            return new LoadedText(content, remote);
         });
+    }
+
+    private static final class LoadedText {
+        private final StoredContent content;
+        private final String displayPath;
+
+        private LoadedText(StoredContent content, String displayPath) {
+            this.content = content;
+            this.displayPath = displayPath;
+        }
     }
 
     @Override

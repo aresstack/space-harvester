@@ -157,6 +157,12 @@ public final class OutlineToMermaidConverter {
 
         Set<String> sysFuncs = loadSystemFunctionNames();
 
+        // Do not present source order as execution order without a control-flow model.
+        if (model.getLanguage() == JclOutlineModel.Language.COBOL
+                && (type == DiagramType.FLOWCHART || type == DiagramType.SEQUENCE)) {
+            return null;
+        }
+
         if (collapsed) {
             switch (type) {
                 case FLOWCHART:   return convertFlowchartCollapsed(model, sysFuncs);
@@ -420,18 +426,10 @@ public final class OutlineToMermaidConverter {
 
         // Sections and Paragraphs in Procedure Division
         List<JclElement> paragraphs = model.getParagraphs();
-        String prevParaId = null;
         for (JclElement para : paragraphs) {
             String paraId = safeId("PARA_" + para.getName(), usedIds);
             sb.append("    ").append(paraId).append("[\"").append(esc(para.getName())).append("\"]\n");
-
-            if (prevParaId != null) {
-                sb.append("    ").append(prevParaId).append(" --> ").append(paraId).append("\n");
-            } else {
-                // Link first paragraph to Procedure Division
-                sb.append("    ").append(rootId).append(" --> ").append(paraId).append("\n");
-            }
-            prevParaId = paraId;
+            sb.append("    ").append(rootId).append(" -->|enthält| ").append(paraId).append("\n");
         }
 
         // PERFORM / CALL edges
@@ -589,7 +587,7 @@ public final class OutlineToMermaidConverter {
     private static String convertFlowchart(JclOutlineModel model, Set<String> sysFuncs) {
         switch (model.getLanguage()) {
             case JCL:     return convertJclFlowchart(model, sysFuncs);
-            case COBOL:   return convertCobolFlowchart(model, sysFuncs);
+            case COBOL:   return null;
             case NATURAL: return convertNaturalFlowchart(model, sysFuncs);
             default:      return convertJclFlowchart(model, sysFuncs);
         }
@@ -760,76 +758,6 @@ public final class OutlineToMermaidConverter {
         return prevId;
     }
 
-    private static String convertCobolFlowchart(JclOutlineModel model, Set<String> sysFuncs) {
-        StringBuilder sb = new StringBuilder("flowchart TD\n");
-        Set<String> usedIds = new HashSet<String>();
-        List<JclElement> all = model.getElements();
-
-        // Program root
-        String progName = "PROGRAM";
-        for (JclElement e : all) {
-            if (e.getType() == JclElementType.PROGRAM_ID && e.getName() != null) {
-                progName = e.getName();
-                break;
-            }
-        }
-        String startId = safeId("START", usedIds);
-        sb.append("    ").append(startId).append("([\"").append(esc(progName)).append("\"])\n");
-
-        // Paragraphs as main flow
-        String prevId = startId;
-        for (JclElement para : model.getParagraphs()) {
-            String paraId = safeId("PARA_" + para.getName(), usedIds);
-            sb.append("    ").append(paraId).append("[\"").append(esc(para.getName())).append("\"]\n");
-            sb.append("    ").append(prevId).append(" --> ").append(paraId).append("\n");
-            prevId = paraId;
-        }
-
-        // PERFORM edges (loops / internal calls)
-        for (JclElement e : all) {
-            if (e.getType() == JclElementType.PERFORM_STMT) {
-                String target = e.getParameter("TARGET");
-                if (target == null) continue;
-                String sourceParent = findParentParagraph(e, all);
-                String fromId = sourceParent != null ? findIdForName("PARA_" + sourceParent, usedIds) : startId;
-                String toId = findIdForName("PARA_" + target, usedIds);
-                if (fromId != null && toId != null) {
-                    sb.append("    ").append(fromId).append(" -.->|PERFORM| ").append(toId).append("\n");
-                }
-            }
-        }
-
-        // CALL edges (external programs — highlighted)
-        for (JclElement e : all) {
-            if (e.getType() == JclElementType.CALL_STMT) {
-                String target = e.getParameter("TARGET");
-                if (target == null) continue;
-                String sourceParent = findParentParagraph(e, all);
-                String fromId = sourceParent != null ? findIdForName("PARA_" + sourceParent, usedIds) : startId;
-
-                String extId = safeId("EXT_" + target, usedIds);
-                sb.append("    ").append(extId).append(">\"").append(esc(target))
-                        .append("\\n(externes Programm)\"]\n");
-                // System functions → IBM Blue; others → orange highlight
-                if (isSysFunc(target, sysFuncs)) {
-                    styleSysFunc(sb, extId);
-                } else {
-                    sb.append("    style ").append(extId).append(" fill:#ffe0b2,stroke:#e65100,stroke-width:2px\n");
-                }
-                if (fromId != null) {
-                    sb.append("    ").append(fromId).append(" ==>|CALL| ").append(extId).append("\n");
-                }
-            }
-        }
-
-        // End node
-        String endId = safeId("END", usedIds);
-        sb.append("    ").append(endId).append("([\"STOP RUN\"])\n");
-        sb.append("    ").append(prevId).append(" --> ").append(endId).append("\n");
-
-        return sb.toString();
-    }
-
     private static String convertNaturalFlowchart(JclOutlineModel model, Set<String> sysFuncs) {
         StringBuilder sb = new StringBuilder("flowchart TD\n");
         Set<String> usedIds = new HashSet<String>();
@@ -946,7 +874,7 @@ public final class OutlineToMermaidConverter {
     private static String convertSequence(JclOutlineModel model, Set<String> sysFuncs) {
         switch (model.getLanguage()) {
             case JCL:     return convertJclSequence(model, sysFuncs);
-            case COBOL:   return convertCobolSequence(model, sysFuncs);
+            case COBOL:   return null;
             case NATURAL: return convertNaturalSequence(model, sysFuncs);
             default:      return convertJclSequence(model, sysFuncs);
         }
@@ -1006,60 +934,6 @@ public final class OutlineToMermaidConverter {
                         .append(truncate(join(dds, ", "), 30)).append("\n");
             }
             prev = safe;
-        }
-
-        return sb.toString();
-    }
-
-    private static String convertCobolSequence(JclOutlineModel model, Set<String> sysFuncs) {
-        StringBuilder sb = new StringBuilder("sequenceDiagram\n");
-        List<JclElement> all = model.getElements();
-
-        // Find program ID
-        String progName = "PROGRAM";
-        for (JclElement e : all) {
-            if (e.getType() == JclElementType.PROGRAM_ID && e.getName() != null) {
-                progName = e.getName();
-                break;
-            }
-        }
-        sb.append("    participant ").append(safeParticipant(progName)).append("\n");
-
-        // Declare paragraphs as participants
-        List<JclElement> paras = model.getParagraphs();
-        Set<String> declared = new LinkedHashSet<String>();
-        for (JclElement p : paras) {
-            String safe = safeParticipant(p.getName());
-            if (declared.add(safe)) {
-                sb.append("    participant ").append(safe).append("\n");
-            }
-        }
-
-        // Main flow: program → first paragraph → next → ...
-        String prev = safeParticipant(progName);
-        for (JclElement p : paras) {
-            String safe = safeParticipant(p.getName());
-            sb.append("    ").append(prev).append("->>").append(safe).append(": ").append("Abschnitt").append("\n");
-            prev = safe;
-        }
-
-        // PERFORM / CALL as dashed arrows
-        for (JclElement e : all) {
-            String target = e.getParameter("TARGET");
-            if (target == null) continue;
-            String sourceParent = findParentParagraph(e, all);
-            String from = sourceParent != null ? safeParticipant(sourceParent) : safeParticipant(progName);
-
-            if (e.getType() == JclElementType.PERFORM_STMT) {
-                String to = safeParticipant(target);
-                sb.append("    ").append(from).append("-->>").append(to).append(": PERFORM\n");
-            } else if (e.getType() == JclElementType.CALL_STMT) {
-                String to = safeParticipant(target);
-                if (declared.add(to)) {
-                    sb.append("    participant ").append(to).append("\n");
-                }
-                sb.append("    ").append(from).append("->>").append(to).append(": CALL\n");
-            }
         }
 
         return sb.toString();

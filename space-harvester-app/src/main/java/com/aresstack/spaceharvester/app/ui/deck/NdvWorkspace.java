@@ -36,6 +36,7 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
      * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
      * ({@code StatusNote.Tone.ERROR}). Lange Texte kürzt das Label selbst, der volle Text steht im Tooltip.
      */
+    private final javax.swing.JButton storedProgramSearch = new javax.swing.JButton("Programmsuche");
     private final com.aresstack.spaceharvester.app.ui.controls.StatusLabel statusInfo =
             new com.aresstack.spaceharvester.app.ui.controls.StatusLabel();
 
@@ -110,6 +111,15 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
     private volatile List<com.aresstack.spaceharvester.deck.ndv.analysis.NdvAnalysis> analyses = List.of();
 
     /** @param editors der gemeinsame Editor des Command Deck; NDV öffnet seine Quelltexte darin */
+    void storedProgramSearch(com.aresstack.spaceharvester.app.ui.AppContext context,
+                             java.util.function.BooleanSupplier active) {
+        var action = new StoredProgramSearchAction(context, this, active,
+                busy -> storedProgramSearch.setText(busy ? "Suche abbrechen" : "Programmsuche"));
+        storedProgramSearch.setVisible(true);
+        storedProgramSearch.setToolTipText("Gespeicherte COBOL-, JCL- und Natural-Analysen durchsuchen");
+        storedProgramSearch.addActionListener(event -> action.open());
+    }
+
     public NdvWorkspace(NdvSessions sessions, ServerAccounts accounts, EditorSessions editors) {
         this(sessions, accounts, editors, com.aresstack.spaceharvester.app.ui.Background.executor());
     }
@@ -144,6 +154,8 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
         JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 2, 0));
         east.setOpaque(false);
         east.add(tools);
+        storedProgramSearch.setVisible(false);
+        east.add(storedProgramSearch);
         east.add(DeckCredentials.button(this::editCredentials));
         JPanel head = DeckBars.head(pills, east);
 

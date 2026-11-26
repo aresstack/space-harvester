@@ -54,6 +54,11 @@ public interface EnrichmentStore {
      */
     List<PageKey> pagesWith(String processorId);
 
+    /** Restrict dependency maintenance to the changed knowledge source. */
+    default List<PageKey> pagesWith(String sourceId, String processorId) {
+        return pagesWith(processorId).stream().filter(key -> sourceId.equals(key.sourceId())).toList();
+    }
+
     /** Macht die bisherigen Änderungen dauerhaft, wenn die Ablage sie bündelt. */
     default void flush() {
     }

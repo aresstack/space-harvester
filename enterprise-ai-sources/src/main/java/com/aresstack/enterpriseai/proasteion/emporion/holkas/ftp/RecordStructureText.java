@@ -35,6 +35,19 @@ final class RecordStructureText {
         return stripTrailingWhitespacePerLine(new String(transformed, charset));
     }
 
+    /** Preserve source columns and empty records; remove only transport framing. */
+    static String decodeSource(byte[] remoteBytes, Charset charset, boolean recordStructure)
+            throws java.nio.charset.CharacterCodingException {
+        byte[] content = remoteBytes;
+        if (recordStructure) {
+            if (endsWith(content, END_MARKER)) {
+                content = Arrays.copyOf(content, content.length - END_MARKER.length);
+            }
+            content = replace(content, RECORD_MARKER, "\n".getBytes(charset));
+        }
+        return charset.newDecoder().decode(java.nio.ByteBuffer.wrap(content)).toString().replace("\r\n", "\n");
+    }
+
     private static byte[] replace(byte[] input, byte[] target, byte[] replacement) {
         ByteArrayOutputStream out = new ByteArrayOutputStream(input.length);
         int i = 0;

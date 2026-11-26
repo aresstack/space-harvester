@@ -416,7 +416,11 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
                 }
                 diagram.setMermaidSource(result.mermaid().get());
                 String labelProblem = VisualAction.takeLabelProblem();
-                if (labelProblem != null) {
+                if (result.type() != wanted && language.orElse(null) == SourceLanguage.COBOL
+                        && (wanted == DiagramType.FLOWCHART || wanted == DiagramType.SEQUENCE)) {
+                    plate.show("COBOL: Statische Struktur und Aufrufbeziehungen – der tatsächliche Ablauf "
+                            + "ist noch nicht vollständig analysiert.", null, null);
+                } else if (labelProblem != null) {
                     plate.show("KI-Kurzbeschriftung nicht möglich (" + labelProblem
                             + ") – die Blöcke tragen die einfache Beschriftung.", null, null);
                 }
