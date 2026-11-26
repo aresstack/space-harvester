@@ -76,6 +76,18 @@ public final class SpaceMarksFile {
         }
     }
 
+    /** Markiert mehrere Seiten auf einmal; schreibt die Datei höchstens einmal. */
+    public synchronized void addAll(String sourceId, String spaceKey, java.util.Collection<String> pageIds) {
+        Set<String> ids = new LinkedHashSet<>(ids(sourceId, spaceKey));
+        boolean changed = false;
+        for (String pageId : pageIds) {
+            changed |= ids.add(id(Objects.requireNonNull(pageId, "pageId")));
+        }
+        if (changed) {
+            store(sourceId, spaceKey, ids);
+        }
+    }
+
     /** Hebt genau diese Markierung auf. */
     public synchronized void remove(String sourceId, String spaceKey, String pageId) {
         Set<String> ids = new LinkedHashSet<>(ids(sourceId, spaceKey));
