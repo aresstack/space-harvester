@@ -86,6 +86,15 @@ public final class CobolProgramEnrichment implements EnrichmentProcessor {
         }
     }
 
+    @Override
+    public List<PageKey> evidence(Enrichment stored) {
+        try {
+            return StoredCopybooks.resolved(stored.key().sourceId(), read(stored.payloadJson()).probes());
+        } catch (RuntimeException invalid) {
+            return List.of();
+        }
+    }
+
     public static Artifact read(String json) {
         return JSON.readValue(json, Artifact.class);
     }

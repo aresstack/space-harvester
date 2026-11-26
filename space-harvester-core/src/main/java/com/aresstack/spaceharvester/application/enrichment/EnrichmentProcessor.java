@@ -101,6 +101,14 @@ public interface EnrichmentProcessor {
     }
 
     /**
+     * Other stored pages whose content went into this result, for example resolved COBOL copybooks. Whoever shows or
+     * exports the result must be allowed to read each of them; the page of the result itself is not listed.
+     */
+    default java.util.List<com.aresstack.spaceharvester.application.snapshot.PageKey> evidence(Enrichment stored) {
+        return java.util.List.of();
+    }
+
+    /**
      * Ob ein gespeicherter Stand mit gleichem Text und gleicher Version für diesen Abschnitt an dieser Stelle gilt;
      * Vorgabe: wenn er nicht {@link #outdated(Enrichment)} ist.
      */

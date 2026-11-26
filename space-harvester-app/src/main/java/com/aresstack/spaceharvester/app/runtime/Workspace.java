@@ -572,18 +572,31 @@ public final class Workspace {
                 .map(source -> source.id()).sorted().toList();
     }
 
+    /**
+     * Whether a search result may still be shown or opened as current (#1486): its source is still a readable program
+     * source, the location has the same content, and every origin passes {@link #programAnalyses()}, including the
+     * exact analysis the result was built from. Fails closed.
+     */
     public boolean programFactCurrent(com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch.Fact fact) {
-        var location = fact.location();
         var available = new java.util.HashSet<>(programSearchSources());
-        if (!available.contains(location.key().sourceId())) return false;
-        if (cachedPage(location.key().sourceId(), location.key().pageId())
-                .filter(page -> location.rawSha256().equals(page.snapshot().payload().rawSha256())).isEmpty()) return false;
-        for (var origin : fact.evidence()) {
-            if (!available.contains(origin.key().sourceId())
-                    || cachedPage(origin.key().sourceId(), origin.key().pageId())
-                    .filter(page -> origin.rawSha256().equals(page.snapshot().payload().rawSha256())).isEmpty()) return false;
-        }
-        return true;
+        var location = fact.location();
+        if (!available.contains(location.key().sourceId())
+                || fact.evidence().stream().anyMatch(origin -> !available.contains(origin.key().sourceId()))) return false;
+        var access = programAnalyses();
+        return access.current(new com.aresstack.spaceharvester.app.runtime.program.StoredCobolSearch.Origin(
+                location.key(), location.rawSha256())) && access.current(fact.evidence());
+    }
+
+    /**
+     * The single gate for stored program analyses of this caller: viewer, program search and chat tools read them
+     * only through it, so authorization and currency of all evidence documents are checked the same way (#1486).
+     */
+    public com.aresstack.spaceharvester.app.runtime.program.ProgramAnalysisAccess programAnalyses() {
+        return new com.aresstack.spaceharvester.app.runtime.program.ProgramAnalysisAccess(
+                key -> cachedPage(key.sourceId(), key.pageId()),
+                page -> harvester.enrichments().view(page.snapshot()),
+                harvester.enrichments()::evidence,
+                (page, business, views) -> cobolBusiness().visible(page, business, views));
     }
 
     /** Combine authorized, already stored program analyses across the requested sources. */
@@ -946,19 +959,8 @@ public final class Workspace {
 
     /** Anreicherungen einer gelieferten Seite ({@code view=extended}); das Lesen der Seite hat CONTENT geprüft. */
     public List<Enrichments.View> enrichments(DeliveredPage page) {
-        var views = harvester.enrichments().view(page.snapshot());
-        return views.stream().map(view -> {
-            if (!com.aresstack.spaceharvester.app.runtime.program.CobolBusinessEnrichment.ID
-                    .equals(view.enrichment().processorId())) return view;
-            if (view.freshness() == Enrichment.Freshness.CURRENT
-                    && cobolBusiness().visible(page, view.enrichment(), views)) return view;
-            // Conceal stale or inaccessible evidence, including the derived hypothesis text.
-            var previous = view.enrichment();
-            var concealed = new Enrichment(previous.key(), previous.processorId(), previous.processorVersion(),
-                    previous.inputSha256(), previous.revision(), Enrichment.Status.OK, "{}", List.of(), null,
-                    previous.computedAt());
-            return new Enrichments.View(concealed, Enrichment.Freshness.STALE);
-        }).toList();
+        // Program analyses only through the common gate (#1486); other results unchanged.
+        return programAnalyses().visible(page);
     }
 
     private com.aresstack.spaceharvester.app.runtime.program.CobolBusinessUseCase cobolBusiness() {

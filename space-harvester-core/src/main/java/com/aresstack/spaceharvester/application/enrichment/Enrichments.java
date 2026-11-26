@@ -343,6 +343,18 @@ public class Enrichments {
     }
 
     /**
+     * Pages other than its own that a stored result was derived from ({@link EnrichmentProcessor#evidence}); results
+     * of unknown processors yield none, since nobody can show them as current.
+     */
+    public List<PageKey> evidence(Enrichment stored) {
+        EnrichmentProcessor processor = processors.get(stored.processorId());
+        if (processor == null) {
+            return List.of();
+        }
+        return processor.evidence(stored).stream().filter(key -> !key.equals(stored.key())).distinct().toList();
+    }
+
+    /**
      * Berechnet für einen Abschnitt eines Anhangs oder einer enthaltenen Datei die Ergebnisse, die fehlen oder veraltet
      * sind (ADR 0026, AP9a), im aufrufenden Thread: Der Auftrag der Anreicherung ist hier selbst der Hintergrund. Nur
      * Prozessoren mit {@link EnrichmentProcessor#documents()}, nur solange sie die Seite des Dokuments bearbeiten.

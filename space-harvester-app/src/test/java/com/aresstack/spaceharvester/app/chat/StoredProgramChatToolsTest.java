@@ -2,7 +2,9 @@ package com.aresstack.spaceharvester.app.chat;
 
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.app.runtime.program.NaturalProgramEnrichment;
+import com.aresstack.spaceharvester.app.runtime.program.ProgramAnalysisAccess;
 import com.aresstack.spaceharvester.app.runtime.program.ProgramMcpTools;
+import com.aresstack.spaceharvester.app.runtime.program.StoredCobolSearch;
 import com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
@@ -55,6 +57,7 @@ class StoredProgramChatToolsTest {
             var denied = new AtomicBoolean();
             var released = new ArrayList<PageKey>();
             var searches = new AtomicInteger();
+            var changed = new AtomicBoolean();
             var holdings = new ProgramMcpTools.Holdings() {
                 @Override public Set<String> sources() { return Set.of("ndv", "secret"); }
                 @Override public StoredProgramSearch.Snapshot search(Set<String> sources, BooleanSupplier cancelled) {
@@ -72,6 +75,10 @@ class StoredProgramChatToolsTest {
                     return enrichments.view(page.snapshot());
                 }
                 @Override public void authorize(DeliveredPage page) { released.add(page.header().key()); }
+                @Override public boolean current(java.util.Collection<StoredCobolSearch.Origin> origins) {
+                    return !changed.get() && new ProgramAnalysisAccess(this::page, this::analyses,
+                            enrichments::evidence, (page, business, views) -> false).current(origins);
+                }
             };
             var tools = new StoredProgramChatTools(holdings, allowed::get, stopped::get);
             assertThat(tools.definitions()).extracting(AiChat.Tool::name)
@@ -83,6 +90,12 @@ class StoredProgramChatToolsTest {
                     "{\"language\":\"NATURAL\",\"mode\":\"CALLERS\",\"query\":\"BOOKING\"}")));
             assertThat(response.path("total").asInt()).isEqualTo(1);
             assertThat(released).containsExactly(program.key());
+            // An analysis that changes between snapshot and delivery is never returned as current (#1486).
+            changed.set(true);
+            assertThat(tools.run("program_search", JSON.readTree(
+                    "{\"language\":\"NATURAL\",\"mode\":\"CALLERS\",\"query\":\"BOOKING\"}")))
+                    .isEqualTo(StoredProgramChatTools.STALE);
+            changed.set(false);
             var args = JSON.valueToTree(Map.of("source", "ndv", "pageId", program.key().pageId(),
                     "rawSha256", program.payload().rawSha256(), "section", "dependencies"));
             assertThat(tools.run("program_analysis", args)).contains("BOOKING").doesNotContain("HIDDEN");

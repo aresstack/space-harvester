@@ -187,8 +187,9 @@ public final class StoredProgramSearch {
             if (ndv) {
                 var code = StoredNaturalSource.read(page.snapshot());
                 if (code.isEmpty()) { counts[2]++; return; }
-                var artifact = current(page, NaturalProgramEnrichment.ID, NaturalProgramEnrichment.VERSION,
+                var analysis = current(page, NaturalProgramEnrichment.ID, NaturalProgramEnrichment.VERSION,
                         NaturalProgramEnrichment::read);
+                var artifact = analysis.map(Stored::artifact);
                 if (artifact.isEmpty() || !page.snapshot().payload().rawSha256().equals(artifact.get().rawSha256())
                         || !code.get().library().equals(artifact.get().analysis().library())
                         || !code.get().name().equals(artifact.get().analysis().name())
@@ -196,17 +197,18 @@ public final class StoredProgramSearch {
                     counts[1]++;
                     return;
                 }
-                natural(page, artifact.get().analysis());
+                natural(page, artifact.get().analysis(), analysis.get().identity());
             } else {
                 var code = JclProgramEnrichment.source(page.snapshot());
                 if (code.isEmpty()) return;
-                var artifact = current(page, JclProgramEnrichment.ID, JclProgramEnrichment.VERSION, JclProgramEnrichment::read);
+                var analysis = current(page, JclProgramEnrichment.ID, JclProgramEnrichment.VERSION, JclProgramEnrichment::read);
+                var artifact = analysis.map(Stored::artifact);
                 if (artifact.isEmpty() || !page.snapshot().payload().rawSha256().equals(artifact.get().rawSha256())
                         || !code.get().path().equals(artifact.get().analysis().source())) {
                     counts[1]++;
                     return;
                 }
-                jcl(page, artifact.get().analysis());
+                jcl(page, artifact.get().analysis(), analysis.get().identity());
             }
             counts[0]++;
         });
@@ -216,20 +218,23 @@ public final class StoredProgramSearch {
                 + " nicht verfügbare oder nicht unterstützte Objekte");
     }
 
-    private <T> Optional<T> current(DeliveredPage page, String processor, String version, Function<String, T> decode) {
+    private record Stored<T>(T artifact, String identity) { }
+
+    private <T> Optional<Stored<T>> current(DeliveredPage page, String processor, String version, Function<String, T> decode) {
         var stored = analyses.apply(page).stream().filter(view -> processor.equals(view.enrichment().processorId())
                 && view.freshness() == Enrichment.Freshness.CURRENT
                 && view.enrichment().status() == Enrichment.Status.OK
                 && version.equals(view.enrichment().processorVersion())
                 && page.snapshot().key().equals(view.enrichment().key())).findFirst();
         try {
-            return stored.map(view -> decode.apply(view.enrichment().payloadJson()));
+            return stored.map(view -> new Stored<>(decode.apply(view.enrichment().payloadJson()),
+                    ProgramAnalysisAccess.identity(view.enrichment())));
         } catch (RuntimeException invalid) {
             return Optional.empty();
         }
     }
 
-    private void natural(DeliveredPage page, NaturalAnalysis analysis) {
+    private void natural(DeliveredPage page, NaturalAnalysis analysis, String identity) {
         String path = analysis.library() + "/" + analysis.name() + "." + analysis.extension();
         Target declared = switch (analysis.extension()) {
             case "NSP" -> Target.NATURAL_PROGRAM;
@@ -241,10 +246,10 @@ public final class StoredProgramSearch {
             case "NSD" -> Target.NATURAL_DDM;
             default -> Target.NONE;
         };
-        add(page, Language.NATURAL, Kind.OBJECT, analysis.name(), path, analysis.extension(), path, 0, declared, Target.NONE, true);
+        add(page, identity, Language.NATURAL, Kind.OBJECT, analysis.name(), path, analysis.extension(), path, 0, declared, Target.NONE, true);
         for (var element : analysis.elements()) {
             if (element.kind().startsWith("NAT_DATA_") || element.kind().equals("DDM_FIELD")) {
-                add(page, Language.NATURAL, Kind.DATA, element.name(), path, element.attributes().toString(), path, element.line(),
+                add(page, identity, Language.NATURAL, Kind.DATA, element.name(), path, element.attributes().toString(), path, element.line(),
                         Target.NONE, Target.NONE, true);
             }
         }
@@ -266,17 +271,17 @@ public final class StoredProgramSearch {
                 case DDM -> explicit ? Target.NATURAL_DDM : Target.NONE;
                 default -> Target.NONE;
             };
-            add(page, Language.NATURAL, kind, dep.target(), path, dep.kind() + " · " + dep.resolution() + " · " + dep.detail(),
+            add(page, identity, Language.NATURAL, kind, dep.target(), path, dep.kind() + " · " + dep.resolution() + " · " + dep.detail(),
                     path, dep.line(), Target.NONE, target, true);
         }
     }
 
-    private void jcl(DeliveredPage page, JclAnalysis analysis) {
+    private void jcl(DeliveredPage page, JclAnalysis analysis, String identity) {
         String path = analysis.source();
-        add(page, Language.JCL, Kind.OBJECT, path, path, "JCL", path, 0, Target.NONE, Target.NONE, analysis.partial());
+        add(page, identity, Language.JCL, Kind.OBJECT, path, path, "JCL", path, 0, Target.NONE, Target.NONE, analysis.partial());
         for (var statement : analysis.statements()) {
             if (statement.complete() && Set.of("JOB", "PROC", "EXEC").contains(statement.operation()) && !statement.name().isBlank()) {
-                add(page, Language.JCL, Kind.OBJECT, statement.name(), path, statement.operation() + " " + statement.operands(),
+                add(page, identity, Language.JCL, Kind.OBJECT, statement.name(), path, statement.operation() + " " + statement.operands(),
                         path, statement.line(), statement.operation().equals("PROC") ? Target.JCL_PROCEDURE : Target.NONE,
                         Target.NONE, analysis.partial());
             }
@@ -291,18 +296,18 @@ public final class StoredProgramSearch {
                 case PROCEDURE -> Target.JCL_PROCEDURE;
                 default -> Target.NONE;
             } : Target.NONE;
-            add(page, Language.JCL, kind, dep.target(), path,
+            add(page, identity, Language.JCL, kind, dep.target(), path,
                     dep.kind() + " · " + dep.resolution() + " · DD " + dep.ddName() + " · DISP " + dep.disposition(),
                     path, dep.line(), Target.NONE, target, analysis.partial());
         }
     }
 
-    private void add(DeliveredPage page, Language language, Kind kind, String name, String owner, String detail,
-                     String path, int line, Target declared, Target target, boolean partial) {
+    private void add(DeliveredPage page, String identity, Language language, Kind kind, String name, String owner,
+                     String detail, String path, int line, Target declared, Target target, boolean partial) {
         var key = page.snapshot().key();
         String hash = page.snapshot().payload().rawSha256();
         facts.add(new Fact(language, kind, name, owner, detail, new Location(key, hash, line, path),
-                List.of(new StoredCobolSearch.Origin(key, hash)), declared, target, partial));
+                List.of(new StoredCobolSearch.Origin(key, hash, identity)), declared, target, partial));
     }
 
     public Snapshot snapshot() { return new Snapshot(facts, cobol, coverage); }

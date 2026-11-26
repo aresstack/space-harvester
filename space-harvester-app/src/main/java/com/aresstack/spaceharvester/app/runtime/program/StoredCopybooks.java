@@ -90,6 +90,12 @@ public final class StoredCopybooks implements CopybookResolver {
     }
 
     public List<Probe> probes() { return List.copyOf(probes.values()); }
+
+    /** Stored copybooks a result was derived from: successful probes only, in resolution order. */
+    public static List<PageKey> resolved(String sourceId, List<Probe> probes) {
+        return probes.stream().filter(probe -> probe.rawSha256() != null)
+                .map(probe -> new PageKey(sourceId, probe.pageId())).distinct().toList();
+    }
     public List<String> warnings() { return List.copyOf(warnings); }
 
     /** Record unsuccessful probes as well as successful ones so newly acquired members invalidate the analysis. */

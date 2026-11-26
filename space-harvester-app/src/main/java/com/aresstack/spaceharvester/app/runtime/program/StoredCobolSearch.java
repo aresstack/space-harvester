@@ -38,7 +38,17 @@ public final class StoredCobolSearch {
         return collector.result();
     }
 
-    public record Origin(PageKey key, String rawSha256) { }
+    /**
+     * A document a search result rests on.
+     *
+     * @param analysis {@link ProgramAnalysisAccess#identity} of the stored analysis the facts came from, or
+     *                 {@code null} when only the document content itself is evidence (for example a copybook)
+     */
+    public record Origin(PageKey key, String rawSha256, String analysis) {
+        public Origin(PageKey key, String rawSha256) {
+            this(key, rawSha256, null);
+        }
+    }
 
     public record Snapshot(CobolSearch search, String sourceId, int programs, int partial,
                            int missingAnalysis, int missingContent, int candidates,
@@ -111,12 +121,14 @@ public final class StoredCobolSearch {
         }
 
         private void addProgram(DeliveredPage page, CobolSource source) {
-            var artifact = current(page, source);
-            if (artifact.isEmpty()) {
+            var stored = current(page, source);
+            if (stored.isEmpty()) {
                 missingAnalysis++;
                 return;
             }
-            var value = artifact.get();
+            var value = stored.get().artifact();
+            var programOrigin = new Origin(page.header().key(), page.snapshot().payload().rawSha256(),
+                    stored.get().identity());
             var dependencies = readableDependencies(value);
             if (dependencies.isEmpty()) {
                 missingAnalysis++;
@@ -129,9 +141,12 @@ public final class StoredCobolSearch {
                 missingAnalysis++;
                 return;
             }
-            List<Origin> programEvidence = origins.values().stream().map(StoredCobolSearch::origin).distinct().toList();
+            List<Origin> programEvidence = java.util.stream.Stream.concat(java.util.stream.Stream.of(programOrigin),
+                    origins.values().stream().filter(document -> document != page).map(StoredCobolSearch::origin))
+                    .distinct().toList();
             remember(source.name(), programEvidence);
-            origins.forEach((path, document) -> remember(path, List.of(origin(document))));
+            origins.forEach((path, document) -> remember(path,
+                    List.of(document == page ? programOrigin : origin(document))));
             for (var fact : programFacts) {
                 if (fact.kind() == CobolSearch.Kind.PROGRAM) {
                     remember(fact.member() + "#" + fact.name() + "@" + fact.line(), programEvidence);
@@ -150,7 +165,9 @@ public final class StoredCobolSearch {
             if (value.analysis().isPartial()) partial++;
         }
 
-        private Optional<CobolProgramEnrichment.Artifact> current(DeliveredPage page, CobolSource source) {
+        private record Current(CobolProgramEnrichment.Artifact artifact, String identity) { }
+
+        private Optional<Current> current(DeliveredPage page, CobolSource source) {
             var view = analyses.apply(page).stream().filter(item ->
                     CobolProgramEnrichment.ID.equals(item.enrichment().processorId())).findFirst().orElse(null);
             if (view == null || !page.snapshot().key().equals(view.enrichment().key())
@@ -161,7 +178,8 @@ public final class StoredCobolSearch {
                 var artifact = CobolProgramEnrichment.read(view.enrichment().payloadJson());
                 return page.snapshot().payload().rawSha256().equals(artifact.rawSha256())
                         && source.name().equals(artifact.source()) && syslib.equals(artifact.syslib())
-                        ? Optional.of(artifact) : Optional.empty();
+                        ? Optional.of(new Current(artifact, ProgramAnalysisAccess.identity(view.enrichment())))
+                        : Optional.empty();
             } catch (RuntimeException invalid) {
                 return Optional.empty();
             }

@@ -32,6 +32,15 @@ public final class ProgramMcpTools {
         Optional<DeliveredPage> page(PageKey key);
         List<Enrichments.View> analyses(DeliveredPage page);
         void authorize(DeliveredPage page);
+        /** Revalidate origins of a result through {@link ProgramAnalysisAccess#current(java.util.Collection)}. */
+        boolean current(java.util.Collection<StoredCobolSearch.Origin> origins);
+    }
+
+    /** A search result rested on an analysis that changed or became unreadable after the snapshot was taken. */
+    public static final class StaleResultException extends IllegalStateException {
+        StaleResultException() {
+            super("Stored analyses changed during the request");
+        }
     }
 
     private final Holdings holdings;
@@ -124,6 +133,9 @@ public final class ProgramMcpTools {
         var response = Map.of("coverage", snapshot.coverage(), "total", result.total(), "offset", offset,
                 "limit", limit, "hits", result.hits(), "candidateMeaning", "Possible target only; not a verified runtime binding.");
         authorize(origins, scope, cancelled);
+        // Fail closed: never deliver hits, candidates or hierarchy steps whose analysis is no longer current.
+        if (!holdings.current(origins)) throw new StaleResultException();
+        checkpoint(cancelled);
         return response;
     }
 
@@ -232,8 +244,10 @@ public final class ProgramMcpTools {
     }
 
     private void authorize(Set<StoredCobolSearch.Origin> origins, Set<String> scope, BooleanSupplier cancelled) {
-        // Never create persistent page grants from a temporary MCP source selection.
-        for (var origin : origins) { checkpoint(cancelled); holdings.authorize(readable(origin, scope)); }
+        // One grant per document, even if it is evidence both as content and as analysis.
+        var documents = new LinkedHashMap<PageKey, StoredCobolSearch.Origin>();
+        for (var origin : origins) documents.putIfAbsent(origin.key(), origin);
+        for (var origin : documents.values()) { checkpoint(cancelled); holdings.authorize(readable(origin, scope)); }
         for (var origin : origins) { checkpoint(cancelled); readable(origin, scope); }
         checkpoint(cancelled);
     }

@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.chat;
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.runtime.program.ProgramMcpTools;
+import com.aresstack.spaceharvester.app.runtime.program.StoredCobolSearch;
 import com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
@@ -24,6 +25,7 @@ public final class StoredProgramChatTools {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final int RESPONSE_CHARS = 18000;
     private static final String UNAVAILABLE = "Keine aktuelle freigegebene Programmanalyse verfügbar.";
+    static final String STALE = "Gespeicherte Analysen haben sich während der Suche geändert; Suche wiederholen.";
     public static final String SOURCES = "program_sources";
     public static final String SEARCH = "program_search";
     public static final String ANALYSIS = "program_analysis";
@@ -49,6 +51,9 @@ public final class StoredProgramChatTools {
             @Override public void authorize(DeliveredPage page) {
                 release.accept(page.header().metadata().partitionKey(), page.header().key());
             }
+            @Override public boolean current(java.util.Collection<StoredCobolSearch.Origin> origins) {
+                return workspace.programAnalyses().current(origins);
+            }
         }, allowedSources, cancelled);
     }
 
@@ -69,6 +74,9 @@ public final class StoredProgramChatTools {
             @Override public Optional<DeliveredPage> page(PageKey key) { return holdings.page(key); }
             @Override public List<Enrichments.View> analyses(DeliveredPage page) { return holdings.analyses(page); }
             @Override public void authorize(DeliveredPage page) { holdings.authorize(page); }
+            @Override public boolean current(java.util.Collection<StoredCobolSearch.Origin> origins) {
+                return holdings.current(origins);
+            }
         }, selected);
     }
 
@@ -96,6 +104,8 @@ public final class StoredProgramChatTools {
             return answer;
         } catch (CancellationException stoppedException) {
             return "Abgebrochen oder Freigabe entzogen.";
+        } catch (ProgramMcpTools.StaleResultException changed) {
+            return STALE;
         } catch (IllegalArgumentException invalid) {
             return "Ungültige Argumente oder nicht verfügbarer Analyseabschnitt.";
         } catch (RuntimeException unavailable) {
