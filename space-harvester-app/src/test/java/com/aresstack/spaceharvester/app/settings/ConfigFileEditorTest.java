@@ -58,6 +58,41 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void sourceUsageSurvivesEditingAndDefaultsToExistingBehavior() throws Exception {
+        Path file = home.resolve("usage.yml");
+        editor.save(file, editor.draft(file, files("handbuch", "/tmp/a").withUsage(false, false)));
+        var config = loader.load(file).sources().getFirst().config();
+        assertThat(config.showInExplorer()).isFalse();
+        assertThat(config.includeInGlobalSearch()).isFalse();
+
+        SourceDraft original = editor.editable(file, "handbuch").draft();
+        assertThat(original.showInExplorer()).isFalse();
+        assertThat(original.includeInGlobalSearch()).isFalse();
+        editor.save(file, editor.replace(file, original.withUsage(true, false)));
+        assertThat(loader.load(file).sources().getFirst().config().showInExplorer()).isTrue();
+        assertThat(loader.load(file).sources().getFirst().config().includeInGlobalSearch()).isFalse();
+
+        editor.save(file, editor.draft(file, files("normal", "/tmp/b")));
+        var defaults = loader.load(file).sources().get(1).config();
+        assertThat(defaults.showInExplorer()).isTrue();
+        assertThat(defaults.includeInGlobalSearch()).isTrue();
+    }
+
+    @Test
+    void sourcePrefetchOverrideRoundTripsIndependentlyOfBackgroundFill() throws Exception {
+        Path file = home.resolve("prefetch.yml");
+        editor.save(file, editor.draft(file, files("handbuch", "/tmp/a")));
+        var rule = new com.aresstack.spaceharvester.application.configuration.SourceSyncOverride(
+                null, null, null, null, null, null, null, null, null, true, false);
+        editor.save(file, editor.withSyncRule(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                "handbuch", rule));
+        var restored = loader.load(file).syncRule("handbuch");
+        assertThat(restored).isEqualTo(rule);
+        assertThat(restored.effectivePrefetch(true)).isFalse();
+        assertThat(restored.backgroundFill()).isTrue();
+    }
+
+    @Test
     void createsAMissingFile() throws Exception {
         Path file = home.resolve("neu").resolve("app.yml");
         editor.save(file, editor.draft(file, files("handbuch", "C:\\Daten\\Hand \"buch\"")));

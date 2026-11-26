@@ -276,6 +276,16 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         return opened.values().stream().filter(Opened::enabled).map(Opened::source).toList();
     }
 
+    @Override
+    public boolean showInExplorer(String sourceId) {
+        return active(sourceId).map(source -> source.config().showInExplorer()).orElse(false);
+    }
+
+    @Override
+    public boolean includeInGlobalSearch(String sourceId) {
+        return active(sourceId).map(source -> source.config().includeInGlobalSearch()).orElse(false);
+    }
+
     /** Leer für unbekannte und abgeschaltete Quellen. */
     @Override
     public Optional<HarvestSource> find(String sourceId) {

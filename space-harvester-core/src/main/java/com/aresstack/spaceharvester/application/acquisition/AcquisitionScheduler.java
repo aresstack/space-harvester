@@ -138,6 +138,7 @@ public final class AcquisitionScheduler implements AutoCloseable {
     }
 
     private final Load load;
+    private final java.util.function.BiPredicate<String, ChangeTrigger> allowed;
     private volatile Limits limits;
     private final long resumeDelayNanos;
     /** Letzte Aktion des Vordergrunds ({@link System#nanoTime()}), anfangs lange her. */
@@ -198,6 +199,12 @@ public final class AcquisitionScheduler implements AutoCloseable {
      * @param resumeDelay so lange nach der letzten Aktion des Vordergrunds bleibt der Hintergrund still
      */
     public AcquisitionScheduler(Load load, Limits limits, Executor executor, Duration resumeDelay) {
+        this(load, limits, executor, resumeDelay, (source, trigger) -> true);
+    }
+
+    public AcquisitionScheduler(Load load, Limits limits, Executor executor, Duration resumeDelay,
+                                java.util.function.BiPredicate<String, ChangeTrigger> allowed) {
+        this.allowed = Objects.requireNonNull(allowed, "allowed");
         this.load = Objects.requireNonNull(load, "load");
         this.limits = Objects.requireNonNull(limits, "limits");
         if (resumeDelay == null || resumeDelay.isNegative()) {
@@ -298,21 +305,13 @@ public final class AcquisitionScheduler implements AutoCloseable {
                 entry.queued = Priority.FOREGROUND;
                 promoted++;
             }
-            ticket = new Ticket(entry, priority, priority == Priority.FOREGROUND && mode.deferred());
-            if (!entry.running) {
-                entry.refresh |= mode.refresh();
-                if (entry.trigger == null) {
-                    entry.trigger = mode.trigger();
-                }
-            }
+            ticket = new Ticket(entry, priority, priority == Priority.FOREGROUND && mode.deferred(), mode,
+                    priority == Priority.BACKGROUND ? caller : null);
             if (priority == Priority.FOREGROUND) {
                 lastForeground = System.nanoTime();
                 entry.foreground.put(ticket, caller);
             } else {
                 entry.background.add(ticket);
-                if (entry.technical == null) {
-                    entry.technical = caller;
-                }
             }
         } finally {
             lock.unlock();
@@ -627,23 +626,49 @@ public final class AcquisitionScheduler implements AutoCloseable {
     private void begin(Entry entry, Priority slot) {
         entry.running = true;
         entry.slot = slot;
-        // Technisch vor delegiert: so bleibt keine Benutzeranmeldung länger als nötig im Spiel.
-        entry.caller = entry.technical != null ? entry.technical : entry.foreground.values().iterator().next();
-        entry.strict = !entry.background.isEmpty() || entry.refresh;
         entry.deferredSlot = slot == Priority.FOREGROUND && entry.deferred();
         count(entry, 1);
+    }
+
+    private record Start(AccessContext caller, boolean strict, ChangeTrigger trigger) {
+    }
+
+    /** Recheck each request rather than the shared entry's original trigger. */
+    private Start authorizedStart(Entry entry) {
+        lock.lock();
+        try {
+            String source = entry.key.sourceId();
+            List<Ticket> permitted = entry.tickets().stream()
+                    .filter(ticket -> allowed.test(source, ticket.mode.trigger())).toList();
+            if (permitted.isEmpty()) {
+                // Detach the denied entry before releasing the lock so a new explicit request can start independently.
+                entries.remove(entry.key, entry);
+                return null;
+            }
+            List<Ticket> background = permitted.stream().filter(ticket -> ticket.priority == Priority.BACKGROUND)
+                    .toList();
+            AccessContext caller = background.isEmpty()
+                    ? entry.foreground.get(permitted.getFirst()) : background.getFirst().technicalCaller;
+            boolean strict = !background.isEmpty() || permitted.stream().anyMatch(ticket -> ticket.mode.refresh());
+            ChangeTrigger trigger = permitted.stream().map(ticket -> ticket.mode.trigger())
+                    .filter(Objects::nonNull).findFirst().orElse(null);
+            return new Start(caller, strict, trigger);
+        } finally {
+            lock.unlock();
+        }
     }
 
     private void run(Entry entry) {
         boolean stored = false;
         RuntimeException failure = null;
         try {
-            AccessContext caller = entry.caller;
-            boolean strict = entry.strict;
-            Runnable call = () -> load.load(caller, entry.key, strict);
-            if (entry.trigger != null) {
-                // Der Anlass der Anfrage, ausdrücklich durchgereicht (Abnahme #1080), nie aus dem Platz geraten.
-                entry.trigger.run(call);
+            Start start = authorizedStart(entry);
+            if (start == null) {
+                return;
+            }
+            Runnable call = () -> load.load(start.caller(), entry.key, start.strict());
+            if (start.trigger() != null) {
+                start.trigger().run(call);
             } else {
                 call.run();
             }
@@ -667,7 +692,6 @@ public final class AcquisitionScheduler implements AutoCloseable {
                 lastForeground = System.nanoTime();
             }
             count(entry, -1);
-            entry.caller = null;
             tickets = entry.tickets();
             entry.foreground.clear();
             entry.background.clear();
@@ -737,16 +761,6 @@ public final class AcquisitionScheduler implements AutoCloseable {
         private boolean running;
         /** Auf welchem Platz sie lädt. */
         private Priority slot;
-        /** Der Aufrufer des laufenden Abrufs; danach {@code null}. */
-        private AccessContext caller;
-        /** Der technische Aufrufer des Hintergrunds, wenn der die Seite auch braucht. */
-        private AccessContext technical;
-        /** Ob der laufende Abruf für den Hintergrund zählt ({@link Load}). */
-        private boolean strict;
-        /** Ob eine wartende Anfrage den strengen Abruf verlangt ({@link Mode#refresh()}). */
-        private boolean refresh;
-        /** Der Anlass der ersten Anfrage, die einen nennt ({@link Mode#trigger()}). */
-        private ChangeTrigger trigger;
         /** Ob der laufende Abruf einen Platz für Nachladen belegt ({@link Mode#deferred()}). */
         private boolean deferredSlot;
         private final Map<Ticket, AccessContext> foreground = new LinkedHashMap<>();
@@ -789,11 +803,15 @@ public final class AcquisitionScheduler implements AutoCloseable {
         private volatile RuntimeException failure;
 
         private final boolean deferred;
+        private final Mode mode;
+        private final AccessContext technicalCaller;
 
-        private Ticket(Entry entry, Priority priority, boolean deferred) {
+        private Ticket(Entry entry, Priority priority, boolean deferred, Mode mode, AccessContext technicalCaller) {
             this.entry = entry;
             this.priority = priority;
             this.deferred = deferred;
+            this.mode = mode;
+            this.technicalCaller = technicalCaller;
         }
 
         public CompletableFuture<Boolean> done() {
@@ -841,9 +859,6 @@ public final class AcquisitionScheduler implements AutoCloseable {
                     entry.foreground.remove(this);
                 } else {
                     entry.background.remove(this);
-                    if (entry.background.isEmpty()) {
-                        entry.technical = null;
-                    }
                 }
                 if (!entry.running && entries.get(entry.key) == entry) {
                     if (entry.foreground.isEmpty() && entry.background.isEmpty()) {

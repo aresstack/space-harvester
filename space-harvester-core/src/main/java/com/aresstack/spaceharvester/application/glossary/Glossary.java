@@ -161,7 +161,7 @@ public class Glossary {
         String q = blank(search.q()) ? null : TermText.normalize(search.q());
         String startsWith = blank(search.startsWith()) ? null : TermText.normalize(search.startsWith());
         String after = search.cursor() == null ? null : decode(search.cursor());
-        Visibility visibility = new Visibility(caller);
+        Visibility visibility = new Visibility(caller, search.sourceId());
         List<GlossaryEntry> sorted = new ArrayList<>(store.all());
         sorted.sort(Comparator.comparing(Glossary::sortKey, TermIndex.ORDER));
         List<GlossaryEntry> found = new ArrayList<>();
@@ -213,7 +213,7 @@ public class Glossary {
      */
     public Set<String> confirmedTerms(AccessContext caller, RelationScope scope) {
         Objects.requireNonNull(scope, "scope");
-        Visibility visibility = new Visibility(caller);
+        Visibility visibility = new Visibility(caller, scope.sourceId());
         Set<String> found = new HashSet<>();
         for (GlossaryEntry entry : store.all()) {
             if (confirmedIn(entry, scope) && visibility.visible(entry).isPresent()) {
@@ -917,11 +917,18 @@ public class Glossary {
     private final class Visibility {
 
         private final AccessContext caller;
+        private final java.util.function.Predicate<String> included;
         private final Map<RelationScope, Boolean> scopes = new HashMap<>();
         private final Map<PageKey, Boolean> pages = new HashMap<>();
 
         Visibility(AccessContext caller) {
             this.caller = caller;
+            this.included = id -> true;
+        }
+
+        Visibility(AccessContext caller, String explicitSource) {
+            this.caller = caller;
+            this.included = id -> id.equals(explicitSource) || catalog.includeInGlobalSearch(id);
         }
 
         Optional<GlossaryEntry> visible(GlossaryEntry entry) {
@@ -951,7 +958,7 @@ public class Glossary {
             if (scope.global()) {
                 return caller != null;
             }
-            if (catalog.find(scope.sourceId()).isEmpty()) {
+            if (!included.test(scope.sourceId()) || catalog.find(scope.sourceId()).isEmpty()) {
                 return false;
             }
             return access.permits(caller, scope.spaceKey() == null ? ResourceScope.source(scope.sourceId())
@@ -960,7 +967,8 @@ public class Glossary {
 
         private boolean readable(RelationEvidence evidence) {
             PageKey key = new PageKey(evidence.sourceId(), evidence.pageId());
-            return pages.computeIfAbsent(key, page -> catalog.find(page.sourceId()).isPresent() && headers.apply(page)
+            return pages.computeIfAbsent(key, page -> included.test(page.sourceId())
+                    && catalog.find(page.sourceId()).isPresent() && headers.apply(page)
                     .map(header -> access.canRead(caller, page.sourceId(), header.metadata().partitionKey(),
                             page.pageId()))
                     .orElse(false));

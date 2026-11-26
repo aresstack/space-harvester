@@ -64,7 +64,7 @@ class ChangeLogConfiguration {
                         // Plan vorab (Angelo 22.11.2026), Zeile „Zusammenfassung – Plan“.
                         planner.getIfAvailable() == null ? null : planner.getIfAvailable().model()))
                 // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Servers.
-                .perDay(java.time.ZoneId.systemDefault());
+                .perDay(java.time.ZoneId.systemDefault()).globalSources(catalog::includeInGlobalSearch);
     }
 
     @Bean(destroyMethod = "close")

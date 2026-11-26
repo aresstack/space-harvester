@@ -465,7 +465,8 @@ public final class SourcesView implements View {
         SourceSyncOverride rule = settings.syncRule(entry.id());
         SyncSettings effective = settings.effectiveSync(entry.id());
         syncFacts.add("Erkennung", "Wie erfährt die App von neuen und geänderten Seiten?", Comic.MUTED)
-                .add("Über die Suche", "immer: gefundene Seiten kommen in den Cache")
+                .add("Suchtreffer nachladen", (rule.prefetchHits() == null ? "Wie global"
+                        : onOff(rule.prefetchHits())) + origin(rule.prefetchHits()), tone(rule.prefetchHits()))
                 .add(SettingDialogs.CHANGE_SEARCH_TITLE, interval(effective.interval(), "CQL, ohne "
                         + "Administratorrechte") + origin(rule.changeSearchInterval()), tone(rule.changeSearchInterval()))
                 .add(SettingDialogs.INVENTORY_TITLE, interval(effective.inventoryInterval(), "nur Seitenmetadaten")
@@ -618,6 +619,15 @@ public final class SourcesView implements View {
             SourceSettingsConfig config = entry.config();
             boolean confluence = SourceDraft.CONFLUENCE.equals(config.type());
             row(EditableProperty.view("Typ", Texts.sourceType(config.type()), Comic.INK));
+            row(EditableProperty.action("Im Wissensbaum anzeigen", config.showInExplorer() ? "Ja" : "Nein",
+                    Comic.INK, "Sichtbarkeit umschalten; die Quelle bleibt eingerichtet",
+                    () -> saveField(entry, d -> d.withUsage(!d.showInExplorer(), d.includeInGlobalSearch()),
+                            () -> { }, feedback::problem)));
+            row(EditableProperty.action("In globale Suche einbeziehen",
+                    config.includeInGlobalSearch() ? "Ja" : "Nur gezielte Suche", Comic.INK,
+                    "Globale Suche umschalten; explizite Auswahl bleibt möglich",
+                    () -> saveField(entry, d -> d.withUsage(d.showInExplorer(), !d.includeInGlobalSearch()),
+                            () -> { }, feedback::problem)));
             row(EditableProperty.text("Anzeigename", config.title(), config.title(), "Anzeigenamen ändern",
                     (value, ok, failed) -> saveField(entry, d -> with(d, value, d.baseUrl(), d.directory()), ok,
                             failed)));
@@ -739,7 +749,8 @@ public final class SourcesView implements View {
     private static SourceDraft with(SourceDraft d, String title, String baseUrl, String directory) {
         return new SourceDraft(d.id(), d.type(), title, baseUrl, directory, d.include(), d.authType(), d.username(),
                 d.secretVariable(), d.certificateType(), d.certificatePath(), d.certificatePasswordVariable(),
-                d.certificateAlias(), d.thumbprint(), d.trustBundle(), d.extraOptions(), d.baseUrlType());
+                d.certificateAlias(), d.thumbprint(), d.trustBundle(), d.extraOptions(), d.baseUrlType(),
+                d.showInExplorer(), d.includeInGlobalSearch());
     }
 
     /**
@@ -1796,7 +1807,10 @@ public final class SourcesView implements View {
             name.setText(config.title() == null ? config.id() : config.title());
             name.setFont(Comic.semiBold(13.5f));
             name.setForeground(Comic.INK);
-            where.setText(Texts.sourceType(config.type()) + " · " + where(config));
+            where.setText(Texts.sourceType(config.type()) + " · " + where(config)
+                    + (config.showInExplorer() ? "" : " · Im Baum ausgeblendet")
+                    + (config.includeInGlobalSearch() ? "" : " · Nur gezielte Suche"));
+            setToolTipText(config.includeInGlobalSearch() ? null : "Nur gezielte Suche – nicht in der globalen Suche");
             where.setForeground(Comic.MUTED);
             where.setFont(Comic.regular(12f));
             state.setFont(Comic.regular(12f));
@@ -1922,7 +1936,8 @@ public final class SourcesView implements View {
             boolean chosen = entry.id().equals(selected);
             setBackground(chosen ? Comic.YELLOW : Comic.SURFACE);
             setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(chosen ? Comic.INK : Comic.LINE, chosen ? 2 : 1, true),
+                    BorderFactory.createLineBorder(chosen ? Comic.INK : entry.config().includeInGlobalSearch()
+                            ? Comic.LINE : new Color(181, 137, 45), chosen ? 2 : 1, true),
                     BorderFactory.createEmptyBorder(chosen ? 7 : 8, chosen ? 7 : 8, chosen ? 5 : 6, chosen ? 7 : 8)));
             AppContext.Connection connection = context.connection(entry.id());
             boolean waiting = context.runtime() != null && context.runtime().waitingForSecret().contains(entry.id());

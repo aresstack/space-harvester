@@ -56,8 +56,12 @@ public record SearchScope(String sourceId, Set<String> sourceIds) {
             return new SearchScope(sourceId, Set.of(sourceId));
         }
         Set<String> visible = new TreeSet<>();
-        for (HarvestSource source : catalog.all()) {
+        boolean implicit = query.sourceIds().isEmpty() && query.pages() == null;
+        for (HarvestSource source : implicit ? catalog.globalSearchSources() : catalog.all()) {
             String id = source.id();
+            if (query.pages() != null && !query.pages().sourceIds().contains(id)) {
+                continue;
+            }
             if (!query.sourceIds().isEmpty() && !query.sourceIds().contains(id)) {
                 continue;
             }

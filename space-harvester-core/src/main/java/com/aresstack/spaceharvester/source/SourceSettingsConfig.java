@@ -19,7 +19,13 @@ import java.util.Map;
  */
 public record SourceSettingsConfig(String id, String type, String title, URI baseUrl, Auth auth,
                                    Map<String, String> options, ClientCertificate clientCertificate,
-                                   String trustBundle) {
+                                   String trustBundle, boolean showInExplorer, boolean includeInGlobalSearch) {
+
+    /** Preserve the default usage of existing sources. */
+    public SourceSettingsConfig(String id, String type, String title, URI baseUrl, Auth auth,
+                                Map<String, String> options, ClientCertificate clientCertificate, String trustBundle) {
+        this(id, type, title, baseUrl, auth, options, clientCertificate, trustBundle, true, true);
+    }
 
     public SourceSettingsConfig {
         auth = auth == null ? Auth.anonymous() : auth;

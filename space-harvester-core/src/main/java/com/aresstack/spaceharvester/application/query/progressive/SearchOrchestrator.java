@@ -87,6 +87,7 @@ public final class SearchOrchestrator implements AutoCloseable {
     private final SearchRunLog runs;
     private final NeighborSource neighbors;
     private final NeighborLoader loader;
+    private final java.util.function.BiPredicate<KeywordSearch.Query, String> included;
     /** Suchmethode „Fachbegriffe“ (W8) oder {@code null}, dann bleibt sie auch mit Haken ungeprüft. */
     private final TermSearch terms;
     private final Set<Run> active = ConcurrentHashMap.newKeySet();
@@ -148,6 +149,14 @@ public final class SearchOrchestrator implements AutoCloseable {
     public SearchOrchestrator(VariantSearch search, VariantSearch semantic, QueryExpansionStrategy expansion,
                               QueryExpansionStrategy rules, HitScorer scorer, SearchRunLog runs,
                               NeighborSource neighbors, NeighborLoader loader, TermSearch terms) {
+        this(search, semantic, expansion, rules, scorer, runs, neighbors, loader, terms, (query, id) -> true);
+    }
+
+    public SearchOrchestrator(VariantSearch search, VariantSearch semantic, QueryExpansionStrategy expansion,
+                              QueryExpansionStrategy rules, HitScorer scorer, SearchRunLog runs,
+                              NeighborSource neighbors, NeighborLoader loader, TermSearch terms,
+                              java.util.function.BiPredicate<KeywordSearch.Query, String> included) {
+        this.included = Objects.requireNonNull(included, "included");
         this.terms = terms;
         this.neighbors = Objects.requireNonNull(neighbors, "neighbors");
         this.loader = Objects.requireNonNull(loader, "loader");
@@ -530,7 +539,8 @@ public final class SearchOrchestrator implements AutoCloseable {
             Map<PageKey, HitReason.Neighbor> candidates = new LinkedHashMap<>();
             neighborhood.local().forEach((key, via) -> {
                 // Schon gefunden: kein Kandidat. Außerhalb des Umfangs der Suche (Quelle, Seiten, Spaces, Arten): nie.
-                if (!entries.containsKey(key) && NeighborScope.allows(query, key, neighborhood.places().get(key))) {
+                if (!entries.containsKey(key) && included.test(query, key.sourceId())
+                        && NeighborScope.allows(query, key, neighborhood.places().get(key))) {
                     candidates.put(key, via);
                 }
             });
@@ -619,7 +629,7 @@ public final class SearchOrchestrator implements AutoCloseable {
                 return;
             }
             Set<PageKey> pages = new LinkedHashSet<>(unconfirmed);
-            neighborhood.missing().keySet().stream().filter(key -> !entries.containsKey(key)
+            neighborhood.missing().keySet().stream().filter(key -> !entries.containsKey(key) && included.test(query, key.sourceId())
                     && NeighborScope.allows(query, key, neighborhood.places().get(key))).forEach(pages::add);
             if (pages.isEmpty()) {
                 return;

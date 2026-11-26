@@ -148,7 +148,7 @@ final class NdvSourceRules implements NdvSearchLink {
         SourceDraft draft = new SourceDraft(d.id(), d.type(), d.title(), d.baseUrl(), d.directory(), d.include(),
                 d.authType(), d.username(), d.secretVariable(), d.certificateType(), d.certificatePath(),
                 d.certificatePasswordVariable(), d.certificateAlias(), d.thumbprint(), d.trustBundle(), options,
-                d.baseUrlType());
+                d.baseUrlType(), d.showInExplorer(), d.includeInGlobalSearch());
         return new SourceDraft.Editable(draft, editable.plaintextSecrets());
     }
 

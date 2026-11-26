@@ -134,6 +134,18 @@ class PageLoadsTest {
     }
 
     @Test
+    void anExplicitLoadDoesNotDependOnAnAutomaticSearchJob() {
+        var caller = AccessContext.technicalClient("app");
+        var automatic = loads.join(caller, "Suchtreffer", pages("1"), false,
+                com.aresstack.spaceharvester.application.changelog.ChangeTrigger.SEARCH).started().orElseThrow();
+        var explicit = loads.join(caller, "Seite laden", pages("1"));
+        assertThat(explicit.started()).isPresent();
+        assertThat(explicit.groups()).doesNotContain(automatic.groupId());
+        executor.runAll();
+        assertThat(cache).contains(new PageKey("wiki", "1"));
+    }
+
+    @Test
     void nothingStartsWhenEveryPageIsCached() {
         cache.addAll(pages("1", "3"));
 
