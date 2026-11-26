@@ -479,6 +479,19 @@ public interface HarvestSource {
     }
 
     /**
+     * Wie {@link #changedPageMetadata(String, java.time.Duration, String, int)}, aber ab der exakten Position
+     * {@code checkpoint} einer früheren, vollständig verarbeiteten Änderungssuche (ADR 0042, Punkt 5). Der letzte
+     * Stapel trägt die neue Position ({@link PageMetadataBatch#checkpoint()}). Ohne exakte Positionen, wie
+     * standardmäßig, gilt {@code within}.
+     *
+     * @param checkpoint {@code null} oder {@link PageMetadataBatch#checkpoint()} einer früheren Suche
+     */
+    default PageMetadataBatch changedPageMetadata(String partitionKey, String checkpoint, java.time.Duration within,
+                                                  String cursor, int limit) {
+        return changedPageMetadata(partitionKey, within, cursor, limit);
+    }
+
+    /**
      * Ein Stapel Metadaten der Seiten einer Partition, die die Quelle als gelöscht führt (Confluence: Papierkorb des
      * Space). Eine solche Seite ist autoritativ gelöscht, für jeden Benutzer.
      *

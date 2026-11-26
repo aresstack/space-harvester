@@ -110,6 +110,30 @@ class ChangeSyncTest {
         assertThat(run.confirmed().stalePageIds()).containsExactly("2");
     }
 
+    /** ADR 0042, Punkt 5: Die exakte Position wird erst mit der bestätigten Generation fortgeschrieben. */
+    @Test
+    void theExactPositionOfTheSourceIsStoredWithTheConfirmedGenerationOnly() {
+        cached("1");
+        source.nextCheckpoint = "position-1";
+        assertThat(run(AN_HOUR_AGO).confirmed().changeCheckpoint()).isEqualTo("position-1");
+        assertThat(source.lastCheckpoint).as("eine ausdrückliche Zeitmarke fragt ohne Position").isNull();
+
+        source.nextCheckpoint = "position-2";
+        source.failListingAtCall(0);
+        SpaceSync.SyncRun failed = run(null);
+        assertThat(source.lastCheckpoint).isEqualTo("position-1");
+        assertThat(failed.confirmed()).isNull();
+        assertThat(store.confirmed("wiki", "DOC").orElseThrow().changeCheckpoint()).isEqualTo("position-1");
+
+        SpaceSync.SyncRun next = run(null);
+        assertThat(source.lastCheckpoint).isEqualTo("position-1");
+        assertThat(next.confirmed().changeCheckpoint()).isEqualTo("position-2");
+
+        source.nextCheckpoint = null;
+        assertThat(run(null).confirmed().changeCheckpoint())
+                .as("ohne Position der Quelle gilt beim nächsten Mal wieder die Zeitmarke").isNull();
+    }
+
     @Test
     void pagesChangedBeforeTheWindowAreLeftAlone() {
         cached("1");

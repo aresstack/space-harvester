@@ -47,6 +47,10 @@ class FakeSource implements HarvestSource {
     int singlePageCalls;
     /** Fenster der letzten Änderungssuche. */
     java.time.Duration lastWithin;
+    /** Position, ab der die letzte Änderungssuche fragte (ADR 0042, Punkt 5). */
+    String lastCheckpoint;
+    /** Position, die der letzte Stapel der nächsten Änderungssuche meldet, oder {@code null}. */
+    String nextCheckpoint;
 
     @Override
     public String id() {
@@ -135,6 +139,14 @@ class FakeSource implements HarvestSource {
                 .filter(page -> page.partitionKey().equals(partitionKey) && !page.modifiedAt().isBefore(from))
                 .sorted(java.util.Comparator.comparing(PageMetadata::modifiedAt))
                 .toList(), null);
+    }
+
+    @Override
+    public PageMetadataBatch changedPageMetadata(String partitionKey, String checkpoint, java.time.Duration within,
+                                                 String cursor, int limit) {
+        lastCheckpoint = checkpoint;
+        PageMetadataBatch batch = changedPageMetadata(partitionKey, within, cursor, limit);
+        return new PageMetadataBatch(batch.pages(), batch.nextCursor(), nextCheckpoint);
     }
 
     @Override

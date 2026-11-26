@@ -127,11 +127,17 @@ public class ChangeSync {
         Instant startedAt = clock.instant();
         Instant from = since != null ? since : baseline == null ? null : baseline.changesSince();
         List<PageMetadataListing.Entry> changed = List.of();
+        // ADR 0042, Punkt 5: ab der exakten Position der letzten bestätigten Suche, sonst ab der Zeitmarke. Die neue
+        // Position wird erst mit der bestätigten Generation gespeichert; scheitert der Lauf, bleibt die alte.
+        String checkpoint = since == null && baseline != null ? baseline.changeCheckpoint() : null;
+        String reached = null;
         if (from != null) {
             Duration within = Duration.between(from, startedAt).plus(OVERLAP);
             try {
-                changed = collect(cursor -> queries.changedPageMetadata(sourceId, spaceKey, within, cursor,
-                        batchSize));
+                Changes listed = collect(cursor -> queries.changedPageMetadata(sourceId, spaceKey, checkpoint, within,
+                        cursor, batchSize));
+                changed = listed.entries();
+                reached = listed.checkpoint();
             } catch (SourceAccessException e) {
                 return aborted(sourceId, spaceKey, baseline, startedAt, listener, e);
             }
@@ -198,7 +204,7 @@ public class ChangeSync {
                 purgesDue(sourceId, baseline, listedIds));
         try (StagedGeneration staged = store.begin(sourceId, spaceKey)) {
             Set<String> failed = applier.apply(plan, staged, listener);
-            SyncBaseline next = next(baseline, known, plan, failed, startedAt);
+            SyncBaseline next = next(baseline, known, plan, failed, startedAt, reached);
             listener.checkpoint();
             staged.commit(next);
             return new SpaceSync.SyncRun(plan, failed, next, null);
@@ -348,7 +354,7 @@ public class ChangeSync {
 
     /** Die bisherige Generation, fortgeschrieben um die Änderungen; ohne Generation das, was der Cache kennt. */
     private SyncBaseline next(SyncBaseline baseline, Map<String, BaselineEntry> known, SyncPlan plan,
-                              Set<String> failed, Instant startedAt) {
+                              Set<String> failed, Instant startedAt, String checkpoint) {
         SortedMap<String, BaselineEntry> pages = new TreeMap<>(baseline == null ? known : baseline.pages());
         SortedSet<String> stale = new TreeSet<>(baseline == null ? Set.of() : baseline.stalePageIds());
         SortedSet<String> missing = new TreeSet<>(baseline == null ? Set.of() : baseline.missingPageIds());
@@ -405,22 +411,28 @@ public class ChangeSync {
         missing.removeAll(pages.keySet());
         long generation = baseline == null ? 1 : baseline.generation() + 1;
         return new SyncBaseline(plan.inventory().sourceId(), plan.inventory().spaceKey(), generation, confirmedAt,
-                pages, stale, missing, withheld, startedAt.isAfter(confirmedAt) ? confirmedAt : startedAt);
+                pages, stale, missing, withheld, startedAt.isAfter(confirmedAt) ? confirmedAt : startedAt, checkpoint);
     }
 
-    private static List<PageMetadataListing.Entry> collect(Function<String, PageMetadataListing> batch) {
+    /** Alle Stapel einer Änderungssuche und die Position der Quelle nach dem letzten, oder {@code null}. */
+    private record Changes(List<PageMetadataListing.Entry> entries, String checkpoint) {
+    }
+
+    private static Changes collect(Function<String, PageMetadataListing> batch) {
         List<PageMetadataListing.Entry> entries = new ArrayList<>();
         Set<String> cursors = new HashSet<>();
         String cursor = null;
+        String checkpoint;
         do {
             PageMetadataListing listing = batch.apply(cursor);
             entries.addAll(listing.entries());
+            checkpoint = listing.checkpoint();
             cursor = listing.nextCursor();
             if (cursor != null && !cursors.add(cursor)) {
                 throw new SourceAccessException(listing.sourceId(), SourceAccessException.Reason.UNAVAILABLE,
                         "Die Quelle hat denselben Cursor wiederholt geliefert", null);
             }
         } while (cursor != null);
-        return entries;
+        return new Changes(entries, checkpoint);
     }
 }

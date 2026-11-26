@@ -173,6 +173,7 @@ public class FailedPageRetry {
         Instant now = clock.instant();
         Instant confirmedAt = now.isBefore(baseline.confirmedAt()) ? baseline.confirmedAt() : now;
         return new SyncBaseline(baseline.sourceId(), baseline.spaceKey(), baseline.generation() + 1, confirmedAt,
-                pages, stale, missing, withheld, baseline.changesSince());
+                pages, stale, missing, withheld, baseline.changesSince(),
+                baseline.changeCheckpoint());
     }
 }

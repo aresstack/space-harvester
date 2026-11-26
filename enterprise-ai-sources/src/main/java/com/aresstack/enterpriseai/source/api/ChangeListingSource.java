@@ -36,6 +36,21 @@ public interface ChangeListingSource {
             throws KnowledgeSourceException;
 
     /**
+     * Like {@link #changedResources}, but continue after an exact position of the source instead of a time window
+     * (ADR 0042, point 5): {@code checkpoint} is {@link PartitionResources#checkpoint()} of the last batch of an
+     * earlier listing the caller processed completely. Where the source does not know the checkpoint (any more), or for
+     * parts it does not cover, it falls back to {@code within}; a resource reported twice is harmless, a lost one
+     * is not. Sources without exact positions ignore {@code checkpoint}, which is the default.
+     *
+     * @param checkpoint {@code ""} or a checkpoint this source delivered for the same partition; ignored when
+     *                   {@code cursor} is not empty
+     */
+    default PartitionResources changedResourcesSince(String partitionKey, String checkpoint, Duration within,
+                                                     String cursor, int limit) throws KnowledgeSourceException {
+        return changedResources(partitionKey, within, cursor, limit);
+    }
+
+    /**
      * Return one batch of the resources of a partition that were removed but are still known to the source
      * (Confluence: pages in the trash of the space). Such a resource is authoritatively deleted for every user; a
      * resource purged from the trash no longer appears here and is found by the next inventory.

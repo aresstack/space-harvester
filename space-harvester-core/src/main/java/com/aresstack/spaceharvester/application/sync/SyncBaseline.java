@@ -31,11 +31,23 @@ import java.util.TreeSet;
  * @param changesSince    ab wann Änderungen in der Quelle noch nicht im Stand stehen können: Beginn der Inventur oder
  *                        der Änderungssuche, die diese Generation bestätigt hat (ADR 0014). Die nächste Änderungssuche
  *                        fragt ab hier; nie nach {@code confirmedAt}
+ * @param changeCheckpoint exakte Position der Quelle nach der Änderungssuche, die diese Generation bestätigt hat
+ *                         (ADR 0042, Punkt 5), oder {@code null}: Dann fragt die nächste Änderungssuche ab
+ *                         {@code changesSince}. Erst mit der bestätigten Generation fortgeschrieben, nie vorher
  */
 public record SyncBaseline(String sourceId, String spaceKey, long generation, Instant confirmedAt,
                            SortedMap<String, BaselineEntry> pages, SortedSet<String> stalePageIds,
                            SortedSet<String> missingPageIds, SortedMap<String, Instant> withheldPageIds,
-                           Instant changesSince) {
+                           Instant changesSince, String changeCheckpoint) {
+
+    /** Eine Generation ohne exakte Position der Quelle; die nächste Änderungssuche fragt ab {@code changesSince}. */
+    public SyncBaseline(String sourceId, String spaceKey, long generation, Instant confirmedAt,
+                        SortedMap<String, BaselineEntry> pages, SortedSet<String> stalePageIds,
+                        SortedSet<String> missingPageIds, SortedMap<String, Instant> withheldPageIds,
+                        Instant changesSince) {
+        this(sourceId, spaceKey, generation, confirmedAt, pages, stalePageIds, missingPageIds, withheldPageIds,
+                changesSince, null);
+    }
 
     /** Eine Generation, deren Änderungen bis {@code confirmedAt} im Stand stehen. */
     public SyncBaseline(String sourceId, String spaceKey, long generation, Instant confirmedAt,
@@ -66,6 +78,7 @@ public record SyncBaseline(String sourceId, String spaceKey, long generation, In
         }
         Objects.requireNonNull(confirmedAt, "confirmedAt");
         changesSince = changesSince == null ? confirmedAt : changesSince;
+        changeCheckpoint = changeCheckpoint == null || changeCheckpoint.isEmpty() ? null : changeCheckpoint;
         if (changesSince.isAfter(confirmedAt)) {
             throw new IllegalArgumentException("changesSince darf nicht nach confirmedAt liegen");
         }
