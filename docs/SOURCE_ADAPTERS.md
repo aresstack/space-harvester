@@ -301,7 +301,7 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
 | Größe je Datei | 20 MiB (`TikaDocumentText.DEFAULT_MAX_BYTES`, wie ADR 0002 und `maxFileMegabytes`) | kein Text, `document-text-too-large` |
 | Laufzeit je Datei | 30 s, eigener Thread, danach unterbrochen | `document-text-timeout`, später erneut |
 | gleichzeitige Läufe | 2; ein hängender Lauf hält seinen Platz | `document-text-busy`, später erneut |
-| Textlänge | 1 000 000 Zeichen, wie der Volltextindex je Seite | gekürzt, `truncated` |
+| Textlänge | 1 000 000 Zeichen (fest, `docs/grenzen.md`) | gekürzt, `truncated` |
 
 - **Lokale Dateien** (`type: files`): `LocalFilesSourceAdapter` übergibt Erkennung und Extraktoren an den Provider.
   Den Lesetext für Volltextindex und Anreicherungen bildet `LocalFilesTextProjector` aus dem abgelegten Original:
