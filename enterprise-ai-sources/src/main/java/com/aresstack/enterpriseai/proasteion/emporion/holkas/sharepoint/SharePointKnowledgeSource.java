@@ -237,6 +237,19 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
     @Override
     public PartitionResources changedResources(String partitionKey, java.time.Duration within, String cursor, int limit)
             throws KnowledgeSourceException {
+        return changedResourcesSince(partitionKey, "", within, cursor, limit);
+    }
+
+    /**
+     * Continue each library after the change token of the checkpoint (ADR 0042, point 5); libraries without one start
+     * at the time window. The last batch of a native listing carries the new checkpoint, the token of the last change
+     * processed in every library. A token the server no longer accepts ends the native listing, and the inventory takes
+     * over, which carries no checkpoint, so the caller keeps its time stamp as the fallback.
+     */
+    @Override
+    public PartitionResources changedResourcesSince(String partitionKey, String checkpoint,
+                                                    java.time.Duration within, String cursor, int limit)
+            throws KnowledgeSourceException {
         requirePartition(partitionKey);
         if (limit < 1) throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: ungültiger Änderungscursor");
         SharePointChangeCursor.State state;
@@ -247,7 +260,7 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
             state = SharePointChangeCursor.State.inventory(partitionKey);
             if (configuredScope.maxDepth() == Integer.MAX_VALUE && configuredScope.maxResources() == Integer.MAX_VALUE) {
                 try {
-                    state = nativeStart(partitionKey, within);
+                    state = nativeStart(partitionKey, within, checkpoint);
                 } catch (KnowledgeSourceException unavailable) {
                     if (Thread.currentThread().isInterrupted()) throw unavailable;
                     // Fall back to inventory instead of accepting an incomplete delta.
@@ -285,17 +298,26 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         }
     }
 
-    /** Fix the window in server time and the libraries to read; nothing is read from the change log yet. */
-    private SharePointChangeCursor.State nativeStart(String partitionKey, java.time.Duration within)
-            throws KnowledgeSourceException {
+    /**
+     * Fix the window in server time, the libraries to read and where each continues: after the token of the
+     * checkpoint, else at the start of the window. Nothing is read from the change log yet.
+     */
+    private SharePointChangeCursor.State nativeStart(String partitionKey, java.time.Duration within,
+                                                     String checkpoint) throws KnowledgeSourceException {
         String auth = authorization();
         List<String> roots = searchRoots(auth);
         Map<String, String> lists = roots.isEmpty() ? Collections.<String, String>emptyMap()
                 : changeLibraries(roots, auth);
         long end = contextInfo(auth).serverMillis;
-        long start = Instant.ofEpochMilli(end).minus(within).toEpochMilli();
-        return SharePointChangeCursor.State.nativeListing(partitionKey, start, end,
-                new ArrayList<String>(lists.keySet()), new ArrayList<String>(lists.values()), roots);
+        Instant start = Instant.ofEpochMilli(end).minus(within);
+        Map<String, String> stored = SharePointChangeCursor.positions(partitionKey, checkpoint);
+        Map<String, String> positions = new LinkedHashMap<String, String>();
+        for (String id : lists.keySet()) {
+            String token = stored.get(id);
+            positions.put(id, token != null ? token : SharePointChangeLog.timeToken(SharePointChangeLog.prefix(id), start));
+        }
+        return SharePointChangeCursor.State.nativeListing(partitionKey, end, new ArrayList<String>(lists.keySet()),
+                new ArrayList<String>(lists.values()), roots, positions);
     }
 
     /**
@@ -306,11 +328,9 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
             throws KnowledgeSourceException {
         String auth = authorization();
         String digest = state.list < state.lists.size() ? contextInfo(auth).digest : null;
-        Instant start = Instant.ofEpochMilli(state.startMillis);
         Instant end = Instant.ofEpochMilli(state.endMillis);
         Map<String, KnowledgeResource> found = new LinkedHashMap<String, KnowledgeResource>();
         int list = state.list;
-        String token = state.token;
         Set<String> visited = new HashSet<String>();
         while (list < state.lists.size()) {
             String id = state.lists.get(list);
@@ -318,7 +338,7 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
             String endpoint = "lists(guid'" + id + "')";
             URI changes = api(endpoint + "/GetChanges");
             String prefix = SharePointChangeLog.prefix(id);
-            String from = token != null ? token : SharePointChangeLog.timeToken(prefix, start);
+            String from = state.positions.get(id);
             if (!visited.add(from)) {
                 throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: Wiederholtes Änderungstoken");
             }
@@ -327,18 +347,19 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
             for (SharePointChangeLog.Change change : page.changes) {
                 KnowledgeResource resource = changedResource(change.event, endpoint, id, root, state.roots, auth);
                 if (resource != null) found.put(resource.id().value(), resource);
-                token = change.token;
+                state = state.at(list, id, change.token);
                 if (found.size() >= limit) {
                     return new PartitionResources(new ArrayList<KnowledgeResource>(found.values()),
-                            changeCursors.encode(state.at(list, token)));
+                            changeCursors.encode(state));
                 }
             }
             if (!page.more) {
                 list++;
-                token = null;
+                state = state.at(list, id, null);
             }
         }
-        return new PartitionResources(new ArrayList<KnowledgeResource>(found.values()), "");
+        return new PartitionResources(new ArrayList<KnowledgeResource>(found.values()), "",
+                SharePointChangeCursor.checkpoint(state));
     }
 
     private KnowledgeResource changedResource(JsonObject event, String endpoint, String list, String root,

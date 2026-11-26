@@ -94,6 +94,8 @@ public class SpaceSync {
      */
     public void exclusions(Exclusions exclusions) {
         this.exclusions = Objects.requireNonNull(exclusions, "exclusions");
+    }
+
     /** Welche Seiten die Navigationsbefüllung erworben hat; „Bereinigen“ lässt sie stehen. */
     public void navigationMarks(NavigationMarks marks) {
         this.navigationMarks = Objects.requireNonNull(marks, "marks");

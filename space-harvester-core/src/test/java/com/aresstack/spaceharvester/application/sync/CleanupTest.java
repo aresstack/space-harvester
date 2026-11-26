@@ -84,6 +84,20 @@ class CleanupTest {
         assertThat(next.confirmed().pages()).containsKeys("1", "3", "4", "5");
     }
 
+    /** Ausgeschlossenes verliert den Grund „Bestand“, auch wenn die Inventur es noch listet (ADR 0037, Punkt 3/12). */
+    @Test
+    void anExcludedListedPageLosesItsInventoryReason() {
+        outsideTheInventory();
+        com.aresstack.spaceharvester.persistence.files.FileExclusionMarks marks =
+                new com.aresstack.spaceharvester.persistence.files.FileExclusionMarks(directory);
+        marks.mark("wiki", "DOC", "1");
+        sync.exclusions(new Exclusions(marks, (sourceId, pageId) -> null, (sourceId, pageId) -> null));
+
+        SyncPlan plan = sync.cleanupPlan("wiki", "DOC", SyncListener.NONE);
+
+        assertThat(sync.withoutReason(plan)).containsExactlyInAnyOrder("1", "2");
+    }
+
     @Test
     void withoutAConfirmedInventoryNothingIsACandidateAndNothingIsRemoved() {
         outsideTheInventory();
