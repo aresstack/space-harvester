@@ -29,4 +29,14 @@ class RetrySettingsTest {
                 .hasMessageContaining("pause-after-failures");
         assertThat(new RetrySettings(0, Duration.ZERO, Duration.ZERO, 1).maxAttempts()).isZero();
     }
+
+    @Test
+    void delayDoublesUpToTheLongestWait() {
+        RetrySettings settings = new RetrySettings(3, java.time.Duration.ofSeconds(1), java.time.Duration.ofSeconds(3),
+                5);
+        assertThat(settings.delay(0)).isEqualTo(java.time.Duration.ofSeconds(1));
+        assertThat(settings.delay(1)).isEqualTo(java.time.Duration.ofSeconds(2));
+        assertThat(settings.delay(2)).isEqualTo(java.time.Duration.ofSeconds(3));
+        assertThat(new RetrySettings(1, java.time.Duration.ZERO, java.time.Duration.ZERO, 1).delay(4)).isZero();
+    }
 }

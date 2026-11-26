@@ -221,7 +221,7 @@ public final class AppRuntime implements AutoCloseable {
      * Laufzeit vollständig (Quellenformular).
      */
     public static List<com.aresstack.spaceharvester.application.sources.SourceType> sourceTypes(AppSettings settings) {
-        return Harvester.builder().sourceAdapter(confluence(settings)).sourceAdapter(sharePoint(settings))
+        return Harvester.builder().sourceAdapter(confluence(settings)).sourceAdapter(sharePoint(settings)).sourceAdapter(bscw(settings))
                 .dataDirectory(settings.storage().dataDirectory()).sourceTypes();
     }
 
@@ -230,6 +230,11 @@ public final class AppRuntime implements AutoCloseable {
      * HTML-Antworten statt Dateien neben dem Protokoll. Wiederholungen bei Netzfehlern, 429 und 5xx aus jobs.retry
      * (ADR 0025); Datei-Downloads und Einmalcodes wiederholt der Client nie (keine neue Mail).
      */
+    private static ConfluenceSourceAdapter confluence(AppSettings settings) {
+        return ConfluenceSourceAdapter.desktop(com.aresstack.spaceharvester.app.ui.SettingsView.logDirectory())
+                .withRetry(settings.jobLimits().retry());
+    }
+
     /**
      * SharePoint mit {@code jobs.retry.max-attempts} als {@code maxRetries}: Ein abgerissener Inhalt wird so oft ab dem
      * letzten Byte fortgesetzt (Angelo 26.11.2026, WLAN).
@@ -239,9 +244,12 @@ public final class AppRuntime implements AutoCloseable {
                 .withRetry(settings.jobLimits().retry());
     }
 
-    private static ConfluenceSourceAdapter confluence(AppSettings settings) {
-        return ConfluenceSourceAdapter.desktop(com.aresstack.spaceharvester.app.ui.SettingsView.logDirectory())
-                .withRetry(settings.jobLimits().retry());
+    /**
+     * BSCW mit {@code jobs.retry}: Ein abgerissenes Stück eines Downloads auf die Platte wird neu angefordert, die schon
+     * geladenen Stücke bleiben (Angelo 26.11.2026, WLAN).
+     */
+    private static com.aresstack.spaceharvester.source.SourceAdapter bscw(AppSettings settings) {
+        return new com.aresstack.spaceharvester.source.BscwSourceAdapter().withRetry(settings.jobLimits().retry());
     }
 
     private static Harvester.Builder builder(AppSettings settings, AppSettings.Storage storage,
@@ -249,7 +257,7 @@ public final class AppRuntime implements AutoCloseable {
                                              SessionSecrets secrets, boolean withAi) {
         Harvester.Builder builder = Harvester.builder()
                 .sources(sources)
-                .sourceAdapter(confluence(settings)).sourceAdapter(sharePoint(settings))
+                .sourceAdapter(confluence(settings)).sourceAdapter(sharePoint(settings)).sourceAdapter(bscw(settings))
                 // Die App bedient Einmalcodes (SignInSlot); ohne Wartezeit fehlten solche Dateien sofort.
                 .signInWait(SignInRequests.DEFAULT_WAIT)
                 .dataDirectory(storage.dataDirectory())

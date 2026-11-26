@@ -58,6 +58,9 @@ final class BscwWebDavTransport {
         }
         String range = "bytes=" + offset + "-" + (offset + count - 1);
         RoutedWebDavHttp.Result response = exchange(resource, "GET", -1, count, range);
+        if (response.status() != 200 && response.status() != 206) {
+            throw status(response.status());
+        }
         if (response.status() != 206) {
             throw new KnowledgeSourceException(Kind.UNSUPPORTED,
                     "BSCW unterstützt für dieses Video keine HTTP-Range-Abfragen (HTTP "
@@ -84,6 +87,11 @@ final class BscwWebDavTransport {
         }
         if (response.status() == 200 && offset == 0) {
             return new Chunk(response.body(), true);
+        }
+        if (response.status() != 200 && response.status() != 206) {
+            // Ein Fehlerstatus (etwa 503 oder 401) ist ein Fehler des Abrufs, nicht „keine Range“; 5xx und 429 sind
+            // vorübergehend und werden als Stück neu angefordert.
+            throw status(response.status());
         }
         if (response.status() != 206 || response.body().length > count) {
             throw new KnowledgeSourceException(Kind.UNSUPPORTED,

@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.source;
 
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
+import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.sources.SourceField;
 import com.aresstack.spaceharvester.application.sources.SourceType;
 import java.net.URI;
@@ -20,6 +21,7 @@ public final class BscwSourceAdapter implements SourceAdapter {
     private static final int DEFAULT_CHUNK_MEGABYTES = BscwWebDavKnowledgeSource.DEFAULT_CHUNK_BYTES / (1024 * 1024);
 
     private final com.aresstack.spaceharvester.application.assets.DocumentText documents;
+    private final RetrySettings retry;
 
     /** Mit der gemeinsamen Tika-Extraktion (Vorgaben von {@code assets.extraction.*}). */
     public BscwSourceAdapter() {
@@ -28,7 +30,21 @@ public final class BscwSourceAdapter implements SourceAdapter {
 
     /** Mit der Tika-Extraktion des Dienstes, also mit den eingestellten {@code assets.extraction.*} (F39-10). */
     public BscwSourceAdapter(com.aresstack.spaceharvester.application.assets.DocumentText documents) {
+        this(documents, RetrySettings.DEFAULT);
+    }
+
+    private BscwSourceAdapter(com.aresstack.spaceharvester.application.assets.DocumentText documents,
+                              RetrySettings retry) {
         this.documents = java.util.Objects.requireNonNull(documents, "documents");
+        this.retry = java.util.Objects.requireNonNull(retry, "retry");
+    }
+
+    /**
+     * Derselbe Adapter mit den Wiederholungen aus {@code jobs.retry}: Ein abgerissenes Stück eines Downloads auf die
+     * Platte wird so oft neu angefordert, die schon geladenen Stücke bleiben.
+     */
+    public BscwSourceAdapter withRetry(RetrySettings value) {
+        return new BscwSourceAdapter(documents, value);
     }
 
     @Override
@@ -149,7 +165,7 @@ public final class BscwSourceAdapter implements SourceAdapter {
         // Ein Stück je Abruf passt immer in die Antwortgrenze des Transports (maxFileMegabytes).
         int chunk = Math.min(number(config, "chunkMegabytes", DEFAULT_CHUNK_MEGABYTES) * 1024 * 1024, maxBytes);
         BscwWebDavKnowledgeSource port = new BscwWebDavKnowledgeSource(SourceAddress.of(config.id()), root,
-                transport, depth, documents, chunk);
+                transport, depth, documents, chunk, retry);
         return new OpenedSource(port, null);
     }
 
