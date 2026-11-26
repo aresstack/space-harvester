@@ -108,6 +108,27 @@ class HarvesterFullTextTest {
     }
 
     @Test
+    void holdingsDistinguishSearchableFilesFromTitleOnlyFilesAndFolders() throws Exception {
+        Files.createDirectories(files.resolve("folder"));
+        Files.writeString(files.resolve("folder/empty.txt"), "");
+        Files.writeString(files.resolve("folder/note.txt"), "Searchable content");
+        try (Harvester harvester = files(Harvester.builder())) {
+            harvester.await(harvester.sync("docs", "docs").id(), Duration.ofSeconds(30));
+            awaitEnrichments(harvester);
+            var overview = harvester.holdings().overview(harvester.caller(), "docs", "docs");
+            assertThat(overview.pages().get(id("betrieb.md")).indexState())
+                    .isEqualTo(com.aresstack.spaceharvester.application.holdings.IndexState.INDEXED);
+            assertThat(overview.pages().get(id("folder/note.txt")).indexState())
+                    .isEqualTo(com.aresstack.spaceharvester.application.holdings.IndexState.INDEXED);
+            assertThat(overview.pages().get(id("folder/empty.txt")).indexState())
+                    .isNotEqualTo(com.aresstack.spaceharvester.application.holdings.IndexState.INDEXED);
+            assertThat(overview.space().indexCoverage().files()).isEqualTo(4);
+            assertThat(overview.space().indexCoverage().count(
+                    com.aresstack.spaceharvester.application.holdings.IndexState.INDEXED)).isEqualTo(3);
+        }
+    }
+
+    @Test
     void officeAndPdfFilesAreFoundByTheirTextOnceCached() throws IOException {
         // #183: Text aus Word und PDF über Tika, wie im Enterprise AI Client.
         Files.write(files.resolve("handbuch.docx"), DocumentFixtures.docx("Notstromaggregat wöchentlich prüfen"));

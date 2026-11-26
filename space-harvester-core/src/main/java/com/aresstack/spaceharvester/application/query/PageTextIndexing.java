@@ -148,9 +148,14 @@ public final class PageTextIndexing {
      * samt Space und Titel. Damit prüft etwa die Relevanzsuche, ob Stellen eines Embeddings zum abgelegten Text gehören.
      */
     public static String entryState(String input, PageMetadata current) {
+        return entryState(input, current.partitionKey(), current.title());
+    }
+
+    /** Calculate the same index stamp without loading the cached payload. */
+    public static String entryState(String input, String spaceKey, String title) {
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest((input + "\n" + current.partitionKey() + "\n"
-                    + current.title()).getBytes(StandardCharsets.UTF_8));
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest((input + "\n" + spaceKey + "\n"
+                    + title).getBytes(StandardCharsets.UTF_8));
             return "sha256:" + HexFormat.of().formatHex(digest);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 fehlt", e);

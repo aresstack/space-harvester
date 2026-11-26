@@ -733,6 +733,8 @@ public final class Harvester implements AutoCloseable {
             // ADR 0027: Bestand je Space; jeder Commit des Cache meldet ihm seine Änderungen. Schließt vor dem Cache.
             LuceneHoldingsCatalog holdingsCatalog = new LuceneHoldingsCatalog(cache);
             this.holdings = new Holdings(catalog, holdingsCatalog, access, builder.maxTreeNodes);
+            holdings.localIndex(textIndex);
+            textIndex.holdingsChanges(holdings.localIndexChanges());
             opened.add(holdings);
             // Paket V1: Verzeichnis der Verweise aus den gespeicherten Seiten; hört wie der Bestand auf jeden Commit.
             LuceneLinkIndex linkIndex = LuceneLinkIndex.open(cacheDirectory.resolve("links"));

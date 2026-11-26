@@ -2,6 +2,8 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
+import com.aresstack.spaceharvester.application.holdings.IndexCoverage;
+import com.aresstack.spaceharvester.application.holdings.IndexState;
 import com.aresstack.spaceharvester.application.holdings.HoldingState;
 import com.aresstack.spaceharvester.application.holdings.HoldingsListener;
 import com.aresstack.spaceharvester.application.holdings.PageHolding;
@@ -32,7 +34,8 @@ import java.util.Set;
 final class TreeStates {
 
     /** Was das Zeichen sagt. */
-    enum Kind { NONE, REMOTE, LOCAL, LOADING, OUTDATED, LOCKED, FULL, PARTIAL, EMPTY }
+    enum Kind { NONE, REMOTE, LOCAL, LOADING, OUTDATED, LOCKED, FULL, PARTIAL, EMPTY,
+        NOT_INDEXED, NO_TEXT, EXTRACTION_FAILED }
 
     /** Ein Zeichen samt Farbe und Tooltip; {@link Kind#NONE} ohne Zeichen. */
     record Badge(Kind kind, Glyph glyph, Color color, String tooltip) {
@@ -232,10 +235,12 @@ final class TreeStates {
             readSummaries(runtime, sourceId);
             return;
         }
+        reading.add(key);
         Background.run(() -> runtime.workspace().holdings(sourceId, spaceKey, pageIds), part -> {
             if (runtime != subscribed) {
                 return;
             }
+            reading.remove(key);
             SpaceHoldings current = spaces.get(key);
             if (current == null) {
                 return;
@@ -252,7 +257,16 @@ final class TreeStates {
             summaries.put(key, part.space());
             loadingAbove.remove(key);
             changed.run();
+            if (stale.remove(key)) {
+                readSpace(runtime, sourceId, spaceKey);
+            }
         }, error -> {
+            if (runtime == subscribed) {
+                reading.remove(key);
+                if (stale.remove(key)) {
+                    readSpace(runtime, sourceId, spaceKey);
+                }
+            }
         });
     }
 
@@ -307,7 +321,11 @@ final class TreeStates {
             return Badge.NONE;
         }
         Set<String> running = loading.get(key);
-        return node(summary.inventoried() ? summary.counts() : null, running != null && !running.isEmpty());
+        boolean busy = running != null && !running.isEmpty();
+        if (summary.inventoried() && summary.indexCoverage() != null) {
+            return indexNode(summary.indexCoverage(), busy);
+        }
+        return node(summary.inventoried() ? summary.counts() : null, busy);
     }
 
     static final String TIP_NOT_ALL = "nicht alle Spaces geladen";
@@ -328,6 +346,7 @@ final class TreeStates {
     static Badge all(List<String> sourceIds, Map<String, SpaceSummary> summaries, Map<String, Set<String>> loading,
                      Map<String, Set<String>> treeSpaces) {
         HoldingCounts counts = null;
+        IndexCoverage local = null;
         boolean running = false;
         boolean complete = !sourceIds.isEmpty();
         for (String sourceId : sourceIds) {
@@ -339,7 +358,13 @@ final class TreeStates {
                 }
                 known.add(entry.getValue().spaceKey());
                 if (entry.getValue().inventoried()) {
-                    counts = counts == null ? entry.getValue().counts() : counts.plus(entry.getValue().counts());
+                    if (entry.getValue().indexCoverage() != null) {
+                        local = local == null ? entry.getValue().indexCoverage()
+                                : local.plus(entry.getValue().indexCoverage());
+                    } else {
+                        counts = counts == null ? entry.getValue().counts()
+                                : counts.plus(entry.getValue().counts());
+                    }
                 } else {
                     complete = false;
                 }
@@ -353,11 +378,29 @@ final class TreeStates {
                 }
             }
         }
-        Badge badge = node(counts, running);
+        Badge badge;
+        if (local == null) {
+            badge = node(counts, running);
+        } else if (counts == null) {
+            badge = indexNode(local, running);
+        } else {
+            Badge combined = node(counts.plus(indexDisplayCounts(local)), running);
+            badge = new Badge(combined.kind(), combined.glyph(), combined.color(),
+                    indexTooltip(local) + " · " + tooltip(counts)
+                            + (running ? " · " + TIP_LOADING : ""));
+        }
         if (!complete && badge.kind() == Kind.FULL) {
             return new Badge(Kind.PARTIAL, Glyph.CIRCLE_HALF, Comic.INK, badge.tooltip() + " · " + TIP_NOT_ALL);
         }
         return badge;
+    }
+
+    /** Show coverage on actual local folders, leaving other structural navigation groups unchanged. */
+    Badge folder(String sourceId, String spaceKey, String pageId) {
+        SpaceHoldings known = spaces.get(key(sourceId, spaceKey));
+        PageHolding page = known == null ? null : known.pages().get(pageId);
+        return page != null && page.indexState() == IndexState.FOLDER
+                ? page(sourceId, spaceKey, pageId, true) : Badge.NONE;
     }
 
     /** Das Zeichen einer Seite; mit Kindern nach ihrem Teilbaum, sonst nach ihrem eigenen Zustand. */
@@ -372,6 +415,12 @@ final class TreeStates {
         boolean self = running.contains(pageId);
         if (page == null) {
             return self ? leaf(HoldingState.REMOTE, true) : Badge.NONE;
+        }
+        if (page.indexState() != null) {
+            if (page.indexState() == IndexState.FOLDER || hasChildren && page.subtree().pages() > 1) {
+                return indexNode(page.indexCoverage(), self || loadingAbove(key, holdings, running).contains(pageId));
+            }
+            return indexLeaf(page.indexState(), self);
         }
         if (!hasChildren || page.subtree().pages() <= 1) {
             return leaf(page.state(), self);
@@ -415,6 +464,68 @@ final class TreeStates {
             case LOCKED -> new Badge(Kind.LOCKED, Glyph.LOCK, Comic.RED, TIP_LOCKED);
             case REMOTE, REMOVED -> new Badge(Kind.REMOTE, Glyph.CLOUD, Comic.MUTED, TIP_REMOTE);
         };
+    }
+
+    /** Display full-text availability for local files without conflating it with cache availability. */
+    static Badge indexLeaf(IndexState state, boolean loading) {
+        if (loading) {
+            return new Badge(Kind.LOADING, Glyph.SYNC, Comic.BLUE, "Wird verarbeitet");
+        }
+        return switch (state) {
+            case INDEXED -> new Badge(Kind.LOCAL, Glyph.CHECK_CIRCLE, Comic.GREEN, "Volltext indexiert und aktuell");
+            case PARTIAL -> new Badge(Kind.PARTIAL, Glyph.CIRCLE_HALF, Comic.ORANGE,
+                    "Teilweise extrahiert und durchsuchbar");
+            case OUTDATED -> new Badge(Kind.OUTDATED, Glyph.WARNING, Comic.ORANGE,
+                    "Dateiversion veraltet; neuer Inhalt noch nicht indexiert");
+            case NOT_INDEXED -> new Badge(Kind.NOT_INDEXED, Glyph.CIRCLE_EMPTY, Comic.MUTED,
+                    "Noch nicht indexiert oder Indexstand nicht aktuell");
+            case NO_TEXT -> new Badge(Kind.NO_TEXT, Glyph.CIRCLE_EMPTY, Comic.MUTED,
+                    "Kein durchsuchbarer Volltext (Dateiname ggf. auffindbar)");
+            case FAILED -> new Badge(Kind.EXTRACTION_FAILED, Glyph.WARNING, Comic.ORANGE,
+                    "Textextraktion fehlgeschlagen");
+            case LOCKED -> leaf(HoldingState.LOCKED, false);
+            case FOLDER -> Badge.NONE;
+        };
+    }
+
+    private static HoldingCounts indexDisplayCounts(IndexCoverage coverage) {
+        return new HoldingCounts(coverage.files(), coverage.count(IndexState.INDEXED),
+                coverage.count(IndexState.PARTIAL) + coverage.count(IndexState.OUTDATED), 0);
+    }
+
+    static Badge indexNode(IndexCoverage coverage, boolean loading) {
+        String tip = indexTooltip(coverage);
+        if (loading) {
+            return new Badge(Kind.LOADING, Glyph.SYNC, Comic.BLUE, tip + " · Wird verarbeitet");
+        }
+        int indexed = coverage.count(IndexState.INDEXED);
+        int partial = coverage.count(IndexState.PARTIAL) + coverage.count(IndexState.OUTDATED);
+        if (coverage.files() > 0 && indexed == coverage.files()) {
+            return new Badge(Kind.FULL, Glyph.CIRCLE_FULL, Comic.GREEN, tip);
+        }
+        if (indexed > 0 || partial > 0) {
+            return new Badge(Kind.PARTIAL, Glyph.CIRCLE_HALF, partial > 0 ? Comic.ORANGE : Comic.INK, tip);
+        }
+        return new Badge(Kind.EMPTY, Glyph.CIRCLE_EMPTY, Comic.MUTED, tip);
+    }
+
+    static String indexTooltip(IndexCoverage coverage) {
+        StringBuilder tip = new StringBuilder().append(coverage.count(IndexState.INDEXED)).append(" von ")
+                .append(coverage.files()).append(" Dateien vollständig und aktuell indexiert");
+        appendCount(tip, coverage, IndexState.PARTIAL, "teilweise extrahiert");
+        appendCount(tip, coverage, IndexState.OUTDATED, "veraltet");
+        appendCount(tip, coverage, IndexState.NOT_INDEXED, "nicht indexiert");
+        appendCount(tip, coverage, IndexState.NO_TEXT, "ohne durchsuchbaren Text");
+        appendCount(tip, coverage, IndexState.FAILED, "Extraktion fehlgeschlagen");
+        appendCount(tip, coverage, IndexState.LOCKED, "gesperrt");
+        return tip.toString();
+    }
+
+    private static void appendCount(StringBuilder tip, IndexCoverage coverage, IndexState state, String label) {
+        int count = coverage.count(state);
+        if (count > 0) {
+            tip.append(", ").append(count).append(" ").append(label);
+        }
     }
 
     /** Das Zeichen eines Knotens mit Kindern oder eines Space; {@code counts == null} ohne Inventur. */
