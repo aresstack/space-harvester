@@ -247,7 +247,8 @@ class TermConfiguration {
     @Bean
     TermQueries termQueries(SourceCatalog catalog, AccessGuard access, Enrichments enrichments,
                             ObjectProvider<SnapshotRepository> repository, ObjectProvider<PageCacheReader> reader,
-                            SentenceSegmenter sentences, ObjectProvider<DocumentEnrichments> documents) {
+                            SentenceSegmenter sentences, ObjectProvider<DocumentEnrichments> documents,
+                            com.aresstack.spaceharvester.application.query.QueryLimits queryLimits) {
         TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
         SnapshotRepository snapshots = repository.getIfAvailable();
         PageCacheReader cache = reader.getIfAvailable();
@@ -270,7 +271,7 @@ class TermConfiguration {
                     DocumentEnrichments found = documents.getIfAvailable();
                     return found == null ? Optional.empty()
                             : found.sectionText(document, section, inputSha256, extraction);
-                });
+                }, queryLimits);
     }
 
     /** Wie {@code terms} in der Anreicherung (EnrichmentConfiguration): dieselben Satzgrenzen, dieselbe Version. */

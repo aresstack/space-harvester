@@ -107,9 +107,12 @@ public class PageQueryController {
             @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey,
             @Parameter(description = "nextCursor der vorigen Antwort; leer für den ersten Stapel")
             @RequestParam(required = false) String cursor,
-            @Parameter(description = "Größe des Stapels, 1 bis " + PageQueries.MAX_PAGE_LIMIT)
-            @RequestParam(defaultValue = "" + PageQueries.MAX_PAGE_LIMIT) int limit) {
-        return PagesResponse.of(queries.pages(caller, sourceId, spaceKey, cursor, limit));
+            @Parameter(description = "Größe des Stapels, 1 bis space-harvester.query.max-page-limit (Standard "
+                    + com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULT_MAX_PAGE_LIMIT
+                    + "); ohne Angabe der eingestellte Höchstwert")
+            @RequestParam(required = false) Integer limit) {
+        return PagesResponse.of(queries.pages(caller, sourceId, spaceKey, cursor,
+                limit == null ? queries.maxPageLimit() : limit));
     }
 
     @GetMapping("/{sourceId}/spaces/{spaceKey}/tree")

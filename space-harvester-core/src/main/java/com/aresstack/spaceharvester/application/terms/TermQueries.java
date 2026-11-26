@@ -64,8 +64,6 @@ public class TermQueries {
     public static final int MAX_LIMIT = 200;
     /** Höchstens so viele Zeichen Kontext je Seite eines Snippets. */
     public static final int MAX_SNIPPET_CHARS = 300;
-    /** Ab so vielen gelesenen Indexeinträgen endet eine Begriffsliste an der nächsten Begriffsgrenze. */
-    static final int MAX_SCAN = 50_000;
 
     private static final String CURSOR_VERSION = "t1";
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -78,6 +76,8 @@ public class TermQueries {
     private final PageTextProjector projector;
     private final String processorVersion;
     private final DocumentTexts documentTexts;
+    /** Ab so vielen gelesenen Indexeinträgen endet eine Begriffsliste an der nächsten Begriffsgrenze. */
+    private final int maxScan;
     private final SecretKey cursorKey = newCursorKey();
     private final TermLedger ledger;
     private volatile boolean managed;
@@ -114,6 +114,17 @@ public class TermQueries {
                        Function<PageKey, Optional<PageHeader>> headers,
                        Function<PageKey, Optional<PageSnapshot>> snapshots, PageTextProjector projector,
                        String processorVersion, DocumentTexts documentTexts) {
+        this(catalog, index, access, headers, snapshots, projector, processorVersion, documentTexts,
+                com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULTS);
+    }
+
+    /** Wie oben, mit den eingestellten Stapelgrößen ({@code space-harvester.query.max-term-scan}). */
+    public TermQueries(SourceCatalog catalog, TermIndex index, AccessGuard access,
+                       Function<PageKey, Optional<PageHeader>> headers,
+                       Function<PageKey, Optional<PageSnapshot>> snapshots, PageTextProjector projector,
+                       String processorVersion, DocumentTexts documentTexts,
+                       com.aresstack.spaceharvester.application.query.QueryLimits limits) {
+        this.maxScan = limits.maxTermScan();
         this.documentTexts = Objects.requireNonNull(documentTexts, "documentTexts");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.index = Objects.requireNonNull(index, "index");
@@ -356,7 +367,7 @@ public class TermQueries {
                             return new TermList(found, encode(fingerprint, lastFinished));
                         }
                     }
-                    if (scanned >= MAX_SCAN) {
+                    if (scanned >= maxScan) {
                         // Weiter an der Begriffsgrenze, damit kein Begriff auf zwei Antworten verteilt wird.
                         return new TermList(found, encode(fingerprint, group.key));
                     }

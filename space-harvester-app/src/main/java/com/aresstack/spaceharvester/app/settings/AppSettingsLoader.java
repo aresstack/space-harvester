@@ -228,7 +228,8 @@ public final class AppSettingsLoader {
                         "space-harvester.cache.check-timeout", problems),
                 duration(get(map(get(root, "cache")), "large-file-timeout"),
                         AppSettings.Storage.DEFAULT_LARGE_FILE_TIMEOUT, "space-harvester.cache.large-file-timeout",
-                        problems));
+                        problems),
+                queryLimits(map(get(root, "query")), problems));
 
         if (get(root, "embedding") != null) {
             problems.add("space-harvester.embedding entfällt (ADR 0011); den KI-Dienst unter space-harvester.ai "
@@ -311,6 +312,28 @@ public final class AppSettingsLoader {
             return com.aresstack.spaceharvester.app.transcription.WhisperModel.DEFAULT;
         }
         return model;
+    }
+
+    /**
+     * {@code space-harvester.query.max-page-limit} und {@code max-term-scan}: Stapelgrößen der Abfragen wie
+     * {@code QueryConfiguration} des Dienstes. Ein Wert unter 1 ist ein Problem und lässt die Vorgabe stehen.
+     */
+    private com.aresstack.spaceharvester.application.query.QueryLimits queryLimits(Map<?, ?> query,
+                                                                                   List<String> problems) {
+        var d = com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULTS;
+        int page = integer(get(query, "max-page-limit"), d.maxPageLimit(), "space-harvester.query.max-page-limit",
+                problems);
+        int scan = integer(get(query, "max-term-scan"), d.maxTermScan(), "space-harvester.query.max-term-scan",
+                problems);
+        if (page < 1) {
+            problems.add("space-harvester.query.max-page-limit muss mindestens 1 sein; es gilt " + d.maxPageLimit());
+            page = d.maxPageLimit();
+        }
+        if (scan < 1) {
+            problems.add("space-harvester.query.max-term-scan muss mindestens 1 sein; es gilt " + d.maxTermScan());
+            scan = d.maxTermScan();
+        }
+        return new com.aresstack.spaceharvester.application.query.QueryLimits(page, scan);
     }
 
     /**

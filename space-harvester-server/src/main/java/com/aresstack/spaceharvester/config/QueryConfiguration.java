@@ -98,13 +98,30 @@ class QueryConfiguration {
      * {@code true}) prüft danach die Version, {@code false} ruft die Seite neu ab (ADR 0013). Beides gilt je Quelle
      * ({@code sync.sources.<Quelle>.*}) und folgt der Konfiguration zur Laufzeit beim nächsten Abruf.
      */
+    /**
+     * Stapelgrößen der Abfragen ({@code space-harvester.query.max-page-limit}, {@code max-term-scan}); jede Liste
+     * setzt sich über ihren Cursor fort.
+     */
+    @Bean
+    com.aresstack.spaceharvester.application.query.QueryLimits queryLimits(
+            @Value("${space-harvester.query.max-page-limit:"
+                    + com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULT_MAX_PAGE_LIMIT + "}")
+            int maxPageLimit,
+            @Value("${space-harvester.query.max-term-scan:"
+                    + com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULT_MAX_TERM_SCAN + "}")
+            int maxTermScan) {
+        return new com.aresstack.spaceharvester.application.query.QueryLimits(maxPageLimit, maxTermScan);
+    }
+
     @Bean
     PageQueries pageQueries(SourceCatalog catalog, ObjectProvider<PageCacheReader> cache, AccessGuard access,
                             PageFreshness freshness, ObjectProvider<PageCacheFill> fill,
                             @Value("${space-harvester.query.max-tree-nodes:50000}") int maxTreeNodes,
-                            LiveConfiguration live) {
+                            LiveConfiguration live,
+                            com.aresstack.spaceharvester.application.query.QueryLimits queryLimits) {
         return new PageQueries(catalog, cache.getIfAvailable(PageCacheReader::unavailable), access, freshness,
-                fill.getIfAvailable(() -> PageCacheFill.NONE), maxTreeNodes, live::freshnessFor, Clock.systemUTC());
+                fill.getIfAvailable(() -> PageCacheFill.NONE), maxTreeNodes, live::freshnessFor, Clock.systemUTC(),
+                queryLimits);
     }
 
     /** Adressauflösung über alle Quellen (#178). */

@@ -71,7 +71,7 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Fakten je Ergebnis und Seite (`EnrichmentFacts.MAX_PER_RESULT`, `LuceneEnrichmentStore.MAX_PER_PAGE`) | 2000 / 1000 | Fakten darüber werden nicht geliefert | beseitigen: paginieren |
 | Links und Tabellenzellen (`TikaDocumentStructure.MAX_LINKS`, `MAX_TABLE_CELLS`) | 1000 / 10.000 | die übrigen fehlen in der Struktur | beseitigen |
 | Confluence-Listen (`RestJson.MAX_LIST_PAGES` × `LIST_LIMIT`) | 200 × 100 | Listen mit mehr als 20.000 Einträgen scheitern | beseitigen: weiterblättern, bis die Quelle endet |
-| Baum und Listen in der REST-API (`PageQueries.MAX_TREE_LEVELS`, `MAX_PAGE_LIMIT`, `ContentListing.MAX_START`, `TermQueries.MAX_SCAN`) | 200 Ebenen je Antwort / 100 / 10.000 / 50.000 | spätere Einträge der Listen sind nicht erreichbar | beseitigen: Seitengröße einstellbar. **Baum erledigt (F40-6):** `GET …/tree` liefert ebenenweise (`root`, `levels`); ein Knoten mit `more` hat tiefere Kinder, die `root=<id>` nachliefert; die Gesamttiefe ist nicht begrenzt. 200 Ebenen je Antwort sind eine Invariante des JSON-Formats (Jackson schachtelt höchstens 500) |
+| Baum und Listen in der REST-API (`PageQueries.MAX_TREE_LEVELS`, früher `MAX_PAGE_LIMIT`, `ContentListing.MAX_START`, `TermQueries.MAX_SCAN`) | 200 Ebenen je Antwort / 100 / 10.000 / 50.000 | spätere Einträge der Listen sind nicht erreichbar | beseitigen: Seitengröße einstellbar. **Listen erledigt:** `ContentListing` hat keinen höchsten Offset mehr; die Stapelgrößen von Seitenliste und Begriffsliste sind `space-harvester.query.max-page-limit` (100) und `max-term-scan` (50.000), beide Listen setzen sich über ihren Cursor fort. `space-harvester.query.max-tree-nodes` (50.000) bleibt einstellbar; größere Bäume liefert `…/tree` ebenenweise. **Baum erledigt (F40-6):** `GET …/tree` liefert ebenenweise (`root`, `levels`); ein Knoten mit `more` hat tiefere Kinder, die `root=<id>` nachliefert; die Gesamttiefe ist nicht begrenzt. 200 Ebenen je Antwort sind eine Invariante des JSON-Formats (Jackson schachtelt höchstens 500) |
 | Cache-Vorschau und Explorer (früher `Payloads.MAX_DISPLAY_CHARS`) | entfallen (früher 2.000.000 Zeichen) | – | beseitigen: paginieren (F40-5). **Erledigt:** Die Reiter „Payload“ und „Storage“ zeigen den Inhalt vollständig; `ProgressiveText` füllt sie schrittweise (`ProgressiveText.STEP_CHARS` je EDT-Durchlauf, Invariante), sodass die Oberfläche bedienbar bleibt. Die Vorschau aus dem Cache (`PageNavigation.cachedChildren`, früher höchstens 1000 Kinder) ist paginiert, „Weitere laden“ blättert im Cache, auch ohne Quelle; der Seitenbaum ohne Live-Baum (`Explorer.wholeSpace`, früher 5000 Knoten) und die Kinder für Bereichspodcasts (früher 200) lesen alle Einträge. Die Stapelgröße ist `Explorer.BATCH` |
 | Diagrammtexte (`DiagramLabels`, Zahl ohne Konstante) | 4000 Zeichen Code | der Code wurde vor dem Modellaufruf abgeschnitten (F41-7) | **beseitigt**: zu langer Code wird nach dem Tokenbudget des Modells (`ModelBudget`) an Zeilengrenzen in Teile zerlegt und teilweise beschriftet |
 | Progressive Suchen (`ProgressiveSearches.DEFAULT_MAX_RUNNING`, `DEFAULT_MAX_WAITING`, `DEFAULT_RETENTION`, `DEFAULT_MAX_TIME_BUDGET`) | 256 laufend / 256 wartend / 5 min / 2 min | laufen schon `max-running` Suchen, wartet eine neue (`waiting`) und startet, sobald ein Platz frei wird; erst wenn auch `max-waiting` voll ist, wird sie mit 429 abgewiesen; eine neue verdrängt nie eine andere; ein größeres Zeitbudget wird gekürzt | **einstellbar**: `space-harvester.search.progressive.max-running`, `.max-waiting`, `.retention`, `.max-time-budget` (F38-4, ADR 0038 Punkt 10) |
@@ -185,7 +185,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ConnectionProbe.MAX_HEADER_BYTES` | `16 * 1024` | fest | Protokollgrenze | dokumentieren, berücksichtigen |
 | `ContentListing.DEFAULT_MAX_RESPONSE_BYTES` | `32L * 1024 * 1024` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
 | `ContentListing.MAX_LIMIT` | `PageSearch.MAX_LIMIT` | fest | Stapel-/Seitengröße | einstellbar |
-| `ContentListing.MAX_START` | `10_000` | fest | Bestandsgrenze | beseitigen |
 | `DelegatedConfluenceHttp.MAX_BYTES` | `1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `DelegatedConfluenceHttp.TIMEOUT` | `Duration.ofSeconds(10)` | fest | Timeout | einstellbar |
 | `DiagramComposer.ATTEMPTS` | `3` | fest | Speicher-/Ressourcenbudget | einstellbar |
@@ -329,7 +328,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `PagePodcasts.SECTION_CHARS` | `3000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `PagePodcasts.SUBPAGE_CHARS` | `1500` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `PageQueries.MAX_CHECKED` | `10_000` | fest | Speicher-/Ressourcenbudget | einstellbar |
-| `PageQueries.MAX_PAGE_LIMIT` | `100` | fest | Stapel-/Seitengröße | einstellbar |
 | `PageQueries.MAX_TREE_LEVELS` | `200` | fest | Stapel-/Seitengröße | Invariante: Ebenen je JSON-Antwort, Fortsetzung über `root` (F40-6) |
 | `PageQueries.TREE_BATCH` | `1000` | fest | Stapel-/Seitengröße | einstellbar |
 | `PageSearch.MAX_LIMIT` | `100` | fest | Stapel-/Seitengröße | einstellbar |
@@ -367,6 +365,8 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ProxySettings.DEFAULT_RESOLVE_TIMEOUT` | `Duration.ofSeconds(20)` | Vorgabe | Timeout | einstellbar |
 | `QrCodes.TEXT_PART_BYTES` | `800` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `QualitySuite.MAX_QUESTION_LENGTH` | `200` | fest | Invariante/Darstellung | im Code belassen |
+| `QueryLimits.DEFAULT_MAX_PAGE_LIMIT` | `100` | `space-harvester.query.max-page-limit` | Stapel-/Seitengröße | einstellbar (erledigt; Fortsetzung über den Cursor) |
+| `QueryLimits.DEFAULT_MAX_TERM_SCAN` | `50_000` | `space-harvester.query.max-term-scan` | Stapel-/Seitengröße | einstellbar (erledigt; Fortsetzung über den Cursor) |
 | `ReadingViews.MAX_PREFETCH` | `25` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `ReadingViews.PREFETCH_PARALLEL` | `2` | fest | Parallelität | einstellbar |
 | `RelatedSections.DEFAULT_MAX_PER_KIND` | `3` | Vorgabe | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
@@ -463,7 +463,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `TermProcessor.MAX_OCCURRENCES` | `50_000` | fest | Bestandsgrenze | beseitigen |
 | `TermProcessor.MAX_TERMS` | `10_000` | fest | Bestandsgrenze | beseitigen |
 | `TermQueries.MAX_LIMIT` | `200` | fest | Stapel-/Seitengröße | einstellbar |
-| `TermQueries.MAX_SCAN` | `50_000` | fest | Bestandsgrenze | beseitigen |
 | `TermQueries.MAX_SNIPPET_CHARS` | `300` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `TermRelations.MAX_EVIDENCE` | `20` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `TermRelations.MAX_LIMIT` | `200` | fest | Stapel-/Seitengröße | einstellbar |

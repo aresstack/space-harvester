@@ -149,7 +149,8 @@ public final class AppRuntime implements AutoCloseable {
                 settings.storage().maxLargeAssets(), settings.storage().searchTimeout(),
                 settings.storage().maxTreeNodes(), null, settings.storage().extraction(),
                 settings.storage().maxPageBytes(), settings.storage().maxTextFileBytes(),
-                settings.storage().checkTimeout(), settings.storage().largeFileTimeout());
+                settings.storage().checkTimeout(), settings.storage().largeFileTimeout(),
+                settings.storage().queryLimits());
         AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
         try (Harvester harvester = builder(settings, storage, List.of(), policy, version, sessionSecrets, false)
                 .build()) {
@@ -167,7 +168,8 @@ public final class AppRuntime implements AutoCloseable {
                 settings.storage().maxLargeAssets(), settings.storage().searchTimeout(),
                 settings.storage().maxTreeNodes(), null, settings.storage().extraction(),
                 settings.storage().maxPageBytes(), settings.storage().maxTextFileBytes(),
-                settings.storage().checkTimeout(), settings.storage().largeFileTimeout());
+                settings.storage().checkTimeout(), settings.storage().largeFileTimeout(),
+                settings.storage().queryLimits());
         AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
         try (Harvester harvester = builder(settings, storage, List.of(), policy, version, sessionSecrets, false)
                 .build()) {
@@ -261,6 +263,7 @@ public final class AppRuntime implements AutoCloseable {
                 .jobLimits(settings.jobLimits())
                 .searchTimeout(storage.searchTimeout())
                 .maxTreeNodes(storage.maxTreeNodes())
+                .queryLimits(storage.queryLimits())
                 .pdfFont(storage.pdfFont())
                 .cacheFreshness(new CacheFreshness(settings.cache().maxAge(), settings.cache().versionCheck()))
                 .withheldRetention(settings.cache().withheldRetention())
