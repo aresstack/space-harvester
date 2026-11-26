@@ -80,6 +80,7 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Modellname in der MVS-Diagnose (`MvsDiagnosisTools`) | `gpt-oss-120b` | die Diagnose lief nur mit diesem Modell | **einstellbar** (Angelo 26.11.2026): Zeile „Diagnose“ unter Einstellungen › KI-Dienst › Modelle mit Schalter „Diagnose per KI“ (`ai.diagnosis-enabled`, Standard an) und Modell (`ai.diagnosis-model`, vorbelegt `gpt-oss-120b`, Anbieter-Präfix wie `openai/` egal) |
 | Fristen im Command Deck außerhalb des Terminals (früher `FtpChatTools.TIMEOUT_SECONDS`, `EakteDocumentContent.TIMEOUT_SECONDS`, `HttpBetaViewServer.TIMEOUT`, `NetUseLogin.TIMEOUT_SECONDS`) | 120 / 120 / 60 / 60 s | langsame Hosts brachen ab | **einstellbar**: `DeckTimeouts` in `app-state.json` (`deck.timeouts.*`), Einstellungen › Mainframe › „Fristen im Command Deck“. Die Fristen des Terminals (Makros, Anmeldung, OpenTerm) bleiben bis zu einer Entscheidung |
 | Fristen je Anfrage einzelner KI-Aufgaben (früher `RemoteAi.SUMMARY_TIMEOUT`, `LABEL_TIMEOUT`, `EXPANSION_TIMEOUT`) | 5 min / 60 s / 90 s | große Modelle oder langsame Dienste brachen ab | **einstellbar**: `ai.summary-timeout`, `ai.label-timeout`, `ai.expansion-timeout` (`AiServiceSettings.Timeouts`), Einstellungen › KI-Dienst › Modelle › „Fristen je Anfrage“ |
+| Netz-Fristen der Quellen (früher `DelegatedConfluenceHttp.TIMEOUT`, `RoutedWebDavHttp.REQUEST_TIMEOUT`, `SourceDiagnostics.PROBE_TIMEOUT`) | 10 s / 90 s / 15 s | langsame Netze oder Proxys brachen Token-Prüfung, BSCW-Abrufe und Verbindungsprüfung ab | **einstellbar**: `network.timeouts.delegated-check`, `webdav-request`, `probe` (`SourceTimeouts`), für alle Quellen wie die Proxy-Frist |
 | MVS-Binärdiagnose und Hex-Ansicht (früher `BinarySample.MAX_CAPTURE_BYTES`, `MvsDiagnosisTools.BUDGET`, Lesegröße 4096, Frist 120 s) | 8 MiB / 65536 / 4096 Bytes / 120 s | größere Stichproben waren unmöglich, die KI las höchstens 64 KiB | **einstellbar**: `MvsDiagnosisSettings` in `app-state.json` (`deck.ftp.diagnosis.sample-bytes`, `read-bytes`, `budget-bytes`, `timeout-seconds`), Einstellungen › Mainframe › „MVS-Binärdiagnose und Hex-Ansicht“. Das Modell kommt aus der Zeile „Diagnose“ (siehe oben) |
 
 ### Grenzen außerhalb des eigenen Codes
@@ -189,7 +190,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ContentListing.DEFAULT_MAX_RESPONSE_BYTES` | `32L * 1024 * 1024` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
 | `ContentListing.MAX_LIMIT` | `PageSearch.MAX_LIMIT` | fest | Stapel-/Seitengröße | einstellbar |
 | `DelegatedConfluenceHttp.MAX_BYTES` | `1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
-| `DelegatedConfluenceHttp.TIMEOUT` | `Duration.ofSeconds(10)` | fest | Timeout | einstellbar |
 | `DiagramComposer.ATTEMPTS` | `3` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `DiagramComposer.MAX_ELEMENTS` | `5` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `DiagramComposer.MAX_MATERIAL_CHARS` | `4000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
@@ -270,6 +270,9 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `LargeFileGate.DEFAULT_MAX_CONCURRENT` | `2` | Vorgabe | Parallelität | einstellbar |
 | `LargeFileGate.DEFAULT_THRESHOLD_BYTES` | `20L * 1024 * 1024` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
 | `LargeFileGate.DEFAULT_WAIT` | `Duration.ofSeconds(30)` | Vorgabe | Timeout | einstellbar |
+| `LiveDictationSettings.MAX_FIRST_MILLIS` | `5_000` | fest | Obergrenze einer Einstellung | im Code belassen: Anlauf der Live-Spracheingabe, einstellbar bis hierher |
+| `LiveDictationSettings.MAX_STEP_MILLIS` | `10_000` | fest | Obergrenze einer Einstellung | im Code belassen: Takt der Live-Spracheingabe, einstellbar bis hierher |
+| `LiveDictationSettings.MAX_WINDOW_SECONDS` | `29` | fest | Externe Protokollgrenze | dokumentieren: Whisper sieht genau 30 s, das Live-Fenster bleibt darunter |
 | `LocalFilesSourceAdapter.DEFAULT_MAX_FILE_MEGABYTES` | `20` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
 | `LocalFilesSourceAdapter.MAX_FILE_MEGABYTES` | `64` | fest | Bestandsgrenze | beseitigen |
 | `LocalFolderHierarchy.NAVIGATION_BATCH` | `200` | fest | Stapel-/Seitengröße | einstellbar |
@@ -395,7 +398,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `RetrySettings.MAX_RESUME_INITIAL_DELAY` | `Duration.ofMinutes(10)` | fest | Timeout | einstellbar |
 | `RetrySettings.MAX_RESUME_MAX_DELAY` | `Duration.ofHours(1)` | fest | Timeout | einstellbar |
 | `RetrySettings.PAUSE_AFTER_LIMIT` | `1000` | fest | Stapel-/Seitengröße | einstellbar |
-| `RoutedWebDavHttp.REQUEST_TIMEOUT` | `Duration.ofSeconds(90)` | fest | Timeout | einstellbar |
 | `RuleBasedExpansion.MAX_TERMS` | `8` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `SearchExecutionPolicy.DEFAULT_VARIANT_TIMEOUT` | `Duration.ofSeconds(10)` | Vorgabe | Timeout | einstellbar |
 | `SearchExpansion.MAX_EXPANSIONS` | `3` | fest | Modellkontext | aus Modellfähigkeit ableiten |
@@ -423,7 +425,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `SignInRequests.DEFAULT_WAIT` | `Duration.ofMinutes(15)` | Vorgabe | Timeout | einstellbar |
 | `SimplificationSettings.DEFAULT_PARALLEL` | `2` | Vorgabe | Parallelität | einstellbar |
 | `SourceDataPurge.JOB_STOP_TIMEOUT` | `Duration.ofSeconds(30)` | fest | Timeout | einstellbar |
-| `SourceDiagnostics.PROBE_TIMEOUT` | `Duration.ofSeconds(15)` | fest | Timeout | einstellbar |
 | `SourceManagement.JOB_STOP_TIMEOUT` | `Duration.ofSeconds(30)` | fest | Timeout | einstellbar |
 | `SourceQueries.MAX_PAGE_ID_LIMIT` | `200` | fest | Stapel-/Seitengröße | einstellbar |
 | `SourceQueries.MAX_PAGE_METADATA_LIMIT` | `100` | fest | Stapel-/Seitengröße | einstellbar |
@@ -578,7 +579,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `DeckHome.MAX_COLUMNS` | `3` | fest | Invariante/Darstellung | im Code belassen |
 | `DiagramLabels.CACHE_SIZE` | `1000` | fest | Cache-Aufbewahrung | einstellbar |
 | `DiagramLabels.TIMEOUT_SECONDS` | `30` | fest | Timeout | einstellbar |
-| `DictationPreviewWindow.MAXIMUM` | `12 * RATE` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `DocumentPane.MAX_PILL` | `28` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_INTERVAL_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_PRESS_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |

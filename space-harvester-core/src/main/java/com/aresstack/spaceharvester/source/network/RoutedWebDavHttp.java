@@ -18,13 +18,19 @@ import javax.net.ssl.X509TrustManager;
  */
 public final class RoutedWebDavHttp implements AutoCloseable {
 
-    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(90);
-
     private final RoutedHttpPort transport;
     private final int maximumResponseBytes;
+    private final Duration requestTimeout;
 
     public RoutedWebDavHttp(HttpRoutePort routes, ProxyCredentials proxyCredentials,
                             X509TrustManager trustManager, int maximumResponseBytes) {
+        this(routes, proxyCredentials, trustManager, maximumResponseBytes, SourceTimeouts.DEFAULT_WEBDAV_REQUEST);
+    }
+
+    /** Mit eigener Frist je Anfrage ({@code network.timeouts.webdav-request}). */
+    public RoutedWebDavHttp(HttpRoutePort routes, ProxyCredentials proxyCredentials,
+                            X509TrustManager trustManager, int maximumResponseBytes, Duration requestTimeout) {
+        this.requestTimeout = java.util.Objects.requireNonNull(requestTimeout, "requestTimeout");
         if (maximumResponseBytes < 1) {
             throw new IllegalArgumentException("maximumResponseBytes must be positive");
         }
@@ -49,7 +55,7 @@ public final class RoutedWebDavHttp implements AutoCloseable {
         }
         try {
             RoutedHttpPort.Response response = transport.requestOnceAsync(
-                    method, uri, headers, responseLimit, REQUEST_TIMEOUT)
+                    method, uri, headers, responseLimit, requestTimeout)
                     .toCompletableFuture().join();
             return new Result(response.status(), response.body(), response.location());
         } catch (CompletionException failure) {

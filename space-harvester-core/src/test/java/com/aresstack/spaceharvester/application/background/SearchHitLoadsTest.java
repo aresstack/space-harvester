@@ -134,6 +134,34 @@ class SearchHitLoadsTest {
     }
 
     @Test
+    void retryLoadsOnlyTheFailedPagesInTheSameEntry() throws Exception {
+        failing.add("2");
+        Map<PageKey, AcquisitionScheduler.Ticket> tickets = tickets("1", "2", "3");
+        loads.offer("stapel-1", APP, tickets);
+        eventually(() -> onlyGroup().isPresent());
+        gate.countDown();
+        eventually(() -> onlyGroup().orElseThrow().finished());
+        JobStatus part = onlyGroup().orElseThrow().parts().getFirst();
+        // Angelo 26.11.2026: verständlich auf Deutsch, ↻ angeboten, der Grund je Seite in Worten in der Diagnose.
+        assertThat(part.error().message()).contains("↻ lädt nur ihn erneut").doesNotContain("nächste Suche");
+        assertThat(jobs.events(part.id())).anySatisfy(event -> assertThat(event.message())
+                .contains("Quelle nicht erreichbar", "(UNAVAILABLE)"));
+        assertThat(com.aresstack.spaceharvester.application.jobs.JobLifecycleState.of(part).actions())
+                .contains(com.aresstack.spaceharvester.application.jobs.JobAction.RETRY_FAILED);
+
+        failing.clear();
+        background.retryFailed(part.id(), null);
+        eventually(() -> jobs.status(part.id(), "app").state() == JobState.COMPLETED);
+
+        JobStatus again = jobs.status(part.id(), "app");
+        // Nur Seite 2 neu angefordert, im selben Eintrag; 1 und 3 bleiben, wie sie sind.
+        assertThat(requests).hasValue(1);
+        assertThat(again.progress().discovered()).isEqualTo(1);
+        assertThat(again.progress().written()).isEqualTo(1);
+        assertThat(again.progress().failed()).isZero();
+    }
+
+    @Test
     void aFailedStartLeavesTheTicketsOfTheSearchAlone() throws Exception {
         Map<PageKey, AcquisitionScheduler.Ticket> tickets = tickets("1", "2");
         refuse.set(true);

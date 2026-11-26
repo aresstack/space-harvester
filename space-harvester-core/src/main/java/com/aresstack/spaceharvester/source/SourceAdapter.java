@@ -115,12 +115,22 @@ public interface SourceAdapter {
      * @param trustBundles Vertrauensquellen für {@code trust-bundle}
      * @param async        asynchrone Transporte für Snapshots oder {@code null}
      * @param proxyCredentials Anmeldung am Proxy für WebClient-Transporte (#189); {@code null} ohne
+     * @param timeouts     Netz-Fristen der Quellen ({@code network.timeouts}); {@code null}: Vorgaben
      */
     record Context(ConfiguredSecrets secrets, ProxyRoutes routes, String userAgent, TrustBundles trustBundles,
-                   AsyncSnapshotTransports async, ProxyCredentials proxyCredentials) {
+                   AsyncSnapshotTransports async, ProxyCredentials proxyCredentials,
+                   com.aresstack.spaceharvester.source.network.SourceTimeouts timeouts) {
 
         public Context {
             proxyCredentials = proxyCredentials == null ? ProxyCredentials.none() : proxyCredentials;
+            timeouts = timeouts == null ? com.aresstack.spaceharvester.source.network.SourceTimeouts.DEFAULTS
+                    : timeouts;
+        }
+
+        /** Mit den Vorgaben der Netz-Fristen. */
+        public Context(ConfiguredSecrets secrets, ProxyRoutes routes, String userAgent, TrustBundles trustBundles,
+                       AsyncSnapshotTransports async, ProxyCredentials proxyCredentials) {
+            this(secrets, routes, userAgent, trustBundles, async, proxyCredentials, null);
         }
     }
 

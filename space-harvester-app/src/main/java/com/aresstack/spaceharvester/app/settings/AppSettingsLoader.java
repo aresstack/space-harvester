@@ -229,7 +229,8 @@ public final class AppSettingsLoader {
                 duration(get(map(get(root, "cache")), "large-file-timeout"),
                         AppSettings.Storage.DEFAULT_LARGE_FILE_TIMEOUT, "space-harvester.cache.large-file-timeout",
                         problems),
-                queryLimits(map(get(root, "query")), problems));
+                queryLimits(map(get(root, "query")), problems),
+                sourceTimeouts(map(get(network, "timeouts")), problems));
 
         if (get(root, "embedding") != null) {
             problems.add("space-harvester.embedding entfällt (ADR 0011); den KI-Dienst unter space-harvester.ai "
@@ -318,6 +319,25 @@ public final class AppSettingsLoader {
      * {@code space-harvester.query.max-page-limit} und {@code max-term-scan}: Stapelgrößen der Abfragen wie
      * {@code QueryConfiguration} des Dienstes. Ein Wert unter 1 ist ein Problem und lässt die Vorgabe stehen.
      */
+    /**
+     * {@code space-harvester.network.timeouts.*}: Netz-Fristen der Quellen wie im Dienst
+     * ({@code SpaceHarvesterProperties.Network}). Eine Frist unter 1 ms ist ein Problem und lässt die Vorgabe stehen.
+     */
+    private com.aresstack.spaceharvester.source.network.SourceTimeouts sourceTimeouts(Map<?, ?> timeouts, List<String> problems) {
+        return new com.aresstack.spaceharvester.source.network.SourceTimeouts(networkTimeout(timeouts, "delegated-check", problems),
+                networkTimeout(timeouts, "webdav-request", problems), networkTimeout(timeouts, "probe", problems));
+    }
+
+    private Duration networkTimeout(Map<?, ?> timeouts, String key, List<String> problems) {
+        String name = "space-harvester.network.timeouts." + key;
+        Duration value = optionalDuration(get(timeouts, key), name, problems);
+        if (value != null && (value.isNegative() || value.isZero())) {
+            problems.add(name + " muss positiv sein; es gilt die Vorgabe");
+            return null;
+        }
+        return value;
+    }
+
     private com.aresstack.spaceharvester.application.query.QueryLimits queryLimits(Map<?, ?> query,
                                                                                    List<String> problems) {
         var d = com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULTS;
