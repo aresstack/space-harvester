@@ -464,6 +464,53 @@ class SourceFormTest {
         });
     }
 
+    @Test
+    void sharePointOffersWindowsLoginAndPersistsItWithoutAnyCredentials() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        start(config, null);
+        AtomicReference<String> yaml = new AtomicReference<>();
+        AtomicReference<String> savedId = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = new SourceForm(context);
+            f.kind.setSelectedItem("SharePoint");
+            assertThat(items(f.origin)).containsExactly("KeePass", "Manuell", SourceForm.WINDOWS_LOGIN);
+            ((JTextField) f.fields.input("siteUrl")).setText("https://share.example.org/sites/team");
+            f.origin.setSelectedItem("Manuell");
+            f.auth.setSelectedItem("Benutzer und Passwort");
+            f.username.setText("domain-user");
+            f.sessionValue.setText("not-for-windows");
+            ((JTextField) f.fields.input("credentialRef")).setText("keepass:previous");
+            f.origin.setSelectedItem(SourceForm.WINDOWS_LOGIN);
+            assertThat(f.auth.isVisible()).isFalse();
+            assertThat(f.username.isVisible()).isFalse();
+            assertThat(f.sessionValue.isVisible()).isFalse();
+            assertThat(f.fields.input("credentialRef").isEnabled()).isFalse();
+            SourceDraft draft = f.draft();
+            assertThat(draft.authType()).isEqualTo(SourceSettingsConfig.AuthType.NONE);
+            assertThat(draft.extraOptions()).containsEntry("windowsLogin", "true").doesNotContainKey("credentialRef");
+            yaml.set(draft.yaml("    "));
+            savedId.set(draft.id());
+            assertThat(yaml.get()).doesNotContain("username:", "password:", "not-for-windows", "credentialRef:");
+            f.origin.setSelectedItem("Manuell");
+            assertThat(f.draft().extraOptions()).doesNotContainKey("windowsLogin");
+            f.origin.setSelectedItem(SourceForm.WINDOWS_LOGIN);
+            f.kind.setSelectedItem("JES");
+            assertThat(items(f.origin)).doesNotContain(SourceForm.WINDOWS_LOGIN);
+            assertThat(f.origin.getSelectedItem()).isEqualTo("Manuell");
+        });
+        Files.writeString(config, "space-harvester:\n  sources:\n" + yaml.get());
+        var editable = new ConfigFileEditor(context.loader()).editable(config, savedId.get());
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = new SourceForm(context, editable);
+            assertThat(f.origin.getSelectedItem()).isEqualTo(SourceForm.WINDOWS_LOGIN);
+            assertThat(f.draft().extraOptions()).containsEntry("windowsLogin", "true");
+        });
+    }
+
     private static List<String> items(JComboBox<String> combo) {
         List<String> items = new ArrayList<>();
         for (int i = 0; i < combo.getItemCount(); i++) {

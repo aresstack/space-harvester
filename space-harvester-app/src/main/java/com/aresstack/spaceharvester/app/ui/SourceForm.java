@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.app.settings.AuthMode;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
+import com.aresstack.spaceharvester.app.settings.WindowsLogin;
 import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
 import com.aresstack.spaceharvester.app.settings.SourceFieldSpec;
 import com.aresstack.spaceharvester.app.settings.SourceFields;
@@ -67,6 +68,7 @@ final class SourceForm {
     private static final String PAT = "Personal Access Token";
     private static final String BASIC = "Benutzer und Passwort";
     private static final String NONE = "Ohne Anmeldung";
+    static final String WINDOWS_LOGIN = "Windows-Anmeldung";
     private static final String NO_CERTIFICATE = "Kein Client-Zertifikat";
     private static final String WINDOWS_MY = "Windows-Zertifikatsspeicher (CurrentUser\\My)";
     private static final String PKCS12 = "PKCS#12-Datei (.p12/.pfx)";
@@ -220,6 +222,9 @@ final class SourceForm {
             keePassEntry.setSelectedItem(knownEntry);
         }
         origin.addActionListener(e -> {
+            if (windowsLogin()) {
+                auth.setSelectedItem(NONE);
+            }
             if (keePassChosen() && !authPickedInKeePass) {
                 deriveAuthFromKeePass(keePassUser);
             }
@@ -741,7 +746,7 @@ final class SourceForm {
         boolean tls = confluence || generic && SourceFields.tls(selectedType());
         // Zertifikat und Vertrauen eines Typs ohne TLS zeigt das Formular nicht; sie bleiben wie in der Datei.
         SourceDraft kept = generic && editing != null && editing.draft().type().equals(type) ? editing.draft() : null;
-        SourceSettingsConfig.AuthType authType = files ? SourceSettingsConfig.AuthType.NONE
+        SourceSettingsConfig.AuthType authType = files || windowsLogin() ? SourceSettingsConfig.AuthType.NONE
                 : PAT.equals(auth.getSelectedItem()) ? SourceSettingsConfig.AuthType.PAT
                 : BASIC.equals(auth.getSelectedItem()) ? SourceSettingsConfig.AuthType.BASIC
                 : SourceSettingsConfig.AuthType.NONE;
@@ -768,6 +773,16 @@ final class SourceForm {
                     authType == SourceSettingsConfig.AuthType.NONE ? null : variable.getText(),
                     kept.certificateType(), kept.certificatePath(), kept.certificatePasswordVariable(),
                     kept.certificateAlias(), kept.thumbprint(), kept.trustBundle(), options(false));
+        }
+        if (WindowsLogin.SHAREPOINT.equals(type)) {
+            Map<String, String> selectedOptions = new java.util.TreeMap<>(draft.extraOptions());
+            if (windowsLogin()) {
+                selectedOptions.remove("credentialRef");
+                selectedOptions.put(WindowsLogin.OPTION, "true");
+            } else {
+                selectedOptions.remove(WindowsLogin.OPTION);
+            }
+            draft = draft.withOptions(selectedOptions);
         }
         if (editing != null) {
             draft = draft.withUsage(editing.draft().showInExplorer(), editing.draft().includeInGlobalSearch());
@@ -859,7 +874,32 @@ final class SourceForm {
         } finally {
             deriving = was;
         }
+        refreshWindowsOrigin();
         suggestVariable();
+    }
+
+    private boolean windowsLogin() {
+        return WindowsLogin.SHAREPOINT.equals(typeId())
+                && WINDOWS_LOGIN.equals(origin.getSelectedItem());
+    }
+
+    private void refreshWindowsOrigin() {
+        if (WindowsLogin.SHAREPOINT.equals(typeId())) {
+            for (int i = 0; i < origin.getItemCount(); i++) {
+                if (WINDOWS_LOGIN.equals(origin.getItemAt(i))) {
+                    if (windowsLogin()) {
+                        auth.setSelectedItem(NONE);
+                    }
+                    return;
+                }
+            }
+            origin.addItem(WINDOWS_LOGIN);
+        } else {
+            if (WINDOWS_LOGIN.equals(origin.getSelectedItem())) {
+                origin.setSelectedItem(AiSettingsPanel.MANUAL);
+            }
+            origin.removeItem(WINDOWS_LOGIN);
+        }
     }
 
     private SourceType selectedType() {
@@ -1027,6 +1067,15 @@ final class SourceForm {
             return;
         }
         SourceDraft source = draft();
+        if (windowsLogin() && !WindowsLogin.ready()) {
+            feedback.warning("Windows-Anmeldung noch nicht aktiv", WindowsLogin.conflictingOptions()
+                    ? "Abweichende JVM-Startparameter verhindern die vorgesehene Windows-Anmeldung. "
+                            + "Bitte die Startkonfiguration mit der Administration prüfen."
+                    : "Quelle speichern und Space Harvester vollständig neu starten. "
+                            + "Die Windows-Anmeldung muss beim Java-Start aktiviert werden.");
+            done.run();
+            return;
+        }
         ConfigFileEditor.Draft draft;
         try {
             draft = write(source);
@@ -1069,9 +1118,17 @@ final class SourceForm {
         }
         SourceDraft source = draft();
         boolean fromKeePass = keePassLogin();
+        if (windowsLogin() && !GraphicsEnvironment.isHeadless()
+                && !WindowsLogin.ready()
+                && !Dialogs.confirm(root, "Windows-Anmeldung",
+                        "Die integrierte Anmeldung wird beim nächsten vollständigen Start aktiviert. "
+                        + "Die JDK-Einstellungen gelten für die gesamte Desktop-App; Windows-Vertrauensrichtlinien "
+                        + "bleiben maßgeblich. Nach dem Speichern Space Harvester neu starten. Fortfahren?")) {
+            return;
+        }
         String keePassTitle = fromKeePass ? keePassTitle() : null;
         // Aus KeePass gelesene Werte gehen nur in die Sitzung, nie in den Tresor.
-        char[] value = fromKeePass ? new char[0] : sessionValue.getPassword();
+        char[] value = fromKeePass || windowsLogin() ? new char[0] : sessionValue.getPassword();
         char[] sessionOnly = fromKeePass && keePassSecretRead() ? keePassSecret.clone() : new char[0];
         feedback.working("Wird gespeichert …");
         save.setEnabled(false);
@@ -1248,6 +1305,10 @@ final class SourceForm {
             case BASIC -> BASIC;
             case NONE -> NONE;
         });
+        if (WindowsLogin.selected(source.type(), source.authType(),
+                source.extraOptions())) {
+            origin.setSelectedItem(WINDOWS_LOGIN);
+        }
         username.setText(source.username() == null ? "" : source.username());
         variable.setText(source.secretVariable() == null ? "" : source.secretVariable());
         certificate.setSelectedItem(source.certificateType() == null ? NO_CERTIFICATE
@@ -1301,6 +1362,9 @@ final class SourceForm {
         AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
         // „Verbindung testen“ geht über denselben Proxy, also mit dessen Passwort.
         secrets.proxyPassword(context.secrets().proxyPassword());
+        if (windowsLogin()) {
+            return secrets;
+        }
         String sourceId = source.id();
         char[] value = keePassLogin() ? (keePassSecretRead() ? keePassSecret.clone() : new char[0])
                 : sessionValue.getPassword();
@@ -1317,6 +1381,9 @@ final class SourceForm {
     private List<String> problems() {
         SourceDraft source = draft();
         List<String> problems = new ArrayList<>(source.problems());
+        if (windowsLogin() && !WindowsLogin.available()) {
+            problems.add("Die integrierte Windows-Anmeldung benötigt Windows.");
+        }
         if (source.serverAddress() && baseUrl.getText().isBlank() && keePassAddressPending()) {
             // Gewählter Eintrag, Adresse noch nicht gelesen: nicht still die Confluence-Hilfe speichern.
             problems.replaceAll(problem -> problem.startsWith("Die Adresse fehlt")
@@ -1674,12 +1741,23 @@ final class SourceForm {
         form.visible(release, !releaseAdvanced || sourceAdvancedOpen);
         loginSection.setVisible(login || tls);
         trustSection.setVisible(trusted);
-        boolean basic = BASIC.equals(auth.getSelectedItem());
+        boolean windowsLogin = windowsLogin();
+        boolean basic = !windowsLogin && BASIC.equals(auth.getSelectedItem());
         boolean keePass = login && keePassChosen();
         // Hide a fixed authentication method; keep the selector for sources with a choice.
-        form.visible(auth, login && !oneAuthMode);
-        boolean anonymous = NONE.equals(auth.getSelectedItem());
+        form.visible(auth, login && !oneAuthMode && !windowsLogin);
+        boolean anonymous = windowsLogin || NONE.equals(auth.getSelectedItem());
         form.visible(origin, login);
+        JTextField reference = fields.secretReference();
+        if (reference != null) {
+            reference.setEnabled(!windowsLogin);
+        }
+        form.hint(origin, windowsLogin
+                ? "Aktuelles Windows-Konto; keine Zugangsdaten. "
+                        + (WindowsLogin.ready() ? "JDK-Anmeldung aktiv."
+                        : WindowsLogin.conflictingOptions() ? "Abweichende JVM-Startparameter; Startkonfiguration prüfen."
+                        : "Speichern und die App neu starten; Einstellungen gelten für die gesamte App.")
+                : "KeePass liefert Zugangsdaten; Manuell legt sie im Tresor ab.");
         form.visible(keePassRow, keePass);
         // Bei KeePass belegt der Eintrag die Anmeldeart nur vor; jede Art bleibt wählbar.
         form.hint(auth, keePass ? "Wird aus dem KeePass-Eintrag vorbelegt; hier umstellen, falls nötig" : " ");
