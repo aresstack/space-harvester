@@ -754,9 +754,12 @@ final class FtpDatasetsView extends JPanel {
     void armDiagnosis(RemoteEntry entry) {
         if (!connected || !owner.session().mvs() || !readable(entry)
                 || selectedAll().size() != 1 || !entry.path().equals(selected().path())) return;
+        MvsDiagnosisSettings diagnosisSettings = MvsDiagnosisSettings.shared();
         if (!confirm.test("MCP-Binärdiagnose", "Originalbytes von " + entry.path()
                 + " für gpt-oss-120b am konfigurierten KI-Endpunkt freigeben? "
-                + "Der Chat kann bis zu 64 KiB aus einer 8-MiB-Stichprobe abrufen. "
+                + "Der Chat kann bis zu " + diagnosisSettings.get(MvsDiagnosisSettings.Value.BUDGET_BYTES)
+                + " Bytes aus einer Stichprobe von " + diagnosisSettings.get(MvsDiagnosisSettings.Value.SAMPLE_BYTES)
+                + " Bytes abrufen (Einstellungen › Mainframe). "
                 + "Die Übertragung wird vollständig gelesen. Chatantworten können im Verlauf stehen. "
                 + "Nur bei einem autorisierten Endpunkt freigeben.")) return;
         revokeDiagnosis();
