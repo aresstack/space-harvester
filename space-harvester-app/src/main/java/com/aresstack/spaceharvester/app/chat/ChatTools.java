@@ -221,6 +221,7 @@ final class ChatTools {
             if (appSources == null) return List.of();
             List<AiChat.Tool> all = new ArrayList<>(List.of(readDefinition(), appSearchDefinition()));
             if (storedCobolTool().availableForChat()) all.add(StoredCobolChatTool.definition());
+            if (explicitAppSources != null) all.addAll(storedProgramTools().definitions());
             return List.copyOf(all);
         }
         if (appSources == null) {
@@ -229,6 +230,7 @@ final class ChatTools {
         List<AiChat.Tool> all = new ArrayList<>(definitions(nodes != null));
         all.add(appSearchDefinition());
         if (storedCobolTool().availableForChat()) all.add(StoredCobolChatTool.definition());
+        if (explicitAppSources != null) all.addAll(storedProgramTools().definitions());
         return List.copyOf(all);
     }
 
@@ -330,6 +332,8 @@ final class ChatTools {
             case TERM -> "Schlägt einen Fachbegriff nach";
             case APP_SEARCH -> "Durchsucht die Wissensquellen";
             case StoredCobolChatTool.NAME -> "Durchsucht gespeicherte COBOL-Analysen";
+            case StoredProgramChatTools.SOURCES, StoredProgramChatTools.SEARCH, StoredProgramChatTools.ANALYSIS ->
+                    StoredProgramChatTools.describe(call.name());
             default -> "Werkzeug";
         };
     }
@@ -362,6 +366,9 @@ final class ChatTools {
                 case TERM -> term(arguments.path("begriff").asString(""));
                 case APP_SEARCH -> appSearch(arguments);
                 case StoredCobolChatTool.NAME -> cobolSearch(arguments);
+                case StoredProgramChatTools.SOURCES, StoredProgramChatTools.SEARCH, StoredProgramChatTools.ANALYSIS ->
+                        explicitAppSources == null || appSources == null ? "Unbekanntes Werkzeug."
+                                : storedProgramTools().run(call.name(), arguments);
                 default -> "Unbekanntes Werkzeug.";
             };
         } catch (CancellationException e) {
@@ -988,6 +995,14 @@ final class ChatTools {
 
     private StoredCobolChatTool storedCobolTool() {
         return new StoredCobolChatTool(workspace, explicitAppSources, () -> cancelled,
+                (spaceKey, key) -> {
+                    release(spaceKey, key);
+                    granted.add(key);
+                });
+    }
+
+    private StoredProgramChatTools storedProgramTools() {
+        return new StoredProgramChatTools(workspace, explicitAppSources, () -> cancelled,
                 (spaceKey, key) -> {
                     release(spaceKey, key);
                     granted.add(key);

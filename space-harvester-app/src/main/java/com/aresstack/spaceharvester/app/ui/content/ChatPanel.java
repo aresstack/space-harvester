@@ -2177,13 +2177,14 @@ public final class ChatPanel extends JPanel {
             // #1151: dieselbe Unterhaltung, aber die Werkzeuge der Perspektive (Command Deck: Maskenassistent).
             custom.tools().modelSelected(modelName);
             var perspectiveTools = custom.tools();
-            if (appSearchOn && custom.scopeKey().startsWith("command-deck/ftp")) {
-                var cobol = new com.aresstack.spaceharvester.app.chat.StoredCobolChatTool(runtime.workspace(),
+            if (appSearchOn && (custom.scopeKey().startsWith("command-deck/ftp")
+                    || custom.scopeKey().startsWith("command-deck/ndv"))) {
+                var programs = new com.aresstack.spaceharvester.app.chat.StoredProgramChatTools(runtime.workspace(),
                         () -> context.runtime() == runtime
                                 ? appSearchSources(context.settings(), runtime, true) : Set.of(),
                         () -> context.runtime() != runtime,
                         (spaceKey, key) -> runtime.workspace().releasePageForChat(spaceKey, key));
-                perspectiveTools = cobol.attach(perspectiveTools, () -> context.runtime() == runtime);
+                perspectiveTools = programs.attach(perspectiveTools, () -> context.runtime() == runtime);
             }
             turn.withToolset(perspectiveTools, custom.system());
         } else {
