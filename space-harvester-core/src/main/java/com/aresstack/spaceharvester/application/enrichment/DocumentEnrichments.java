@@ -187,6 +187,34 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
         return hasCurrentLocalAnalysis(snapshot, processorId);
     }
 
+    /** Wait only within the search's existing deadline; the scheduled analysis owns the computation. */
+    public boolean awaitLocal(PageSnapshot snapshot, String processorId, long deadline) {
+        if (prepareLocal(snapshot, processorId)) {
+            return true;
+        }
+        while (System.nanoTime() < deadline) {
+            if (hasCurrentLocalAnalysis(snapshot, processorId)) {
+                return true;
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return hasCurrentLocalAnalysis(snapshot, processorId);
+    }
+
+    /** Validate a section index against the exact extraction of the currently cached local original. */
+    public boolean currentLocalExtraction(PageKey page, String extraction) {
+        if (extraction == null) {
+            return false;
+        }
+        return localPending(page).flatMap(Pending::extraction)
+                .map(current -> extraction.startsWith(basis(current) + "|")).orElse(false);
+    }
+
     /** Explicitly recompute local section results in the existing interactive job. */
     public Enrichments.Run recomputeLocal(PageSnapshot snapshot, String processorId, JobContext context) {
         if (!enabled.getAsBoolean()) {
@@ -218,7 +246,16 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             enrichments.store().removeDocument(DocumentKey.localOriginal(snapshot.key()));
             enrichments.flush();
         } else if (enabled.getAsBoolean() && !enrichments.documentProcessorIds().isEmpty()) {
-            enqueue(item.get());
+            if (background == null) {
+                enqueue(item.get());
+            } else {
+                Partition partition = new Partition(snapshot.key().sourceId(), snapshot.spaceKey());
+                synchronized (this) {
+                    noted.add(partition);
+                }
+                // Primary page content must not wait for the attachment batching interval.
+                startWhenIdle(partition);
+            }
         }
     }
     /** Der Netzzustand, oder {@code null}: dann zählt ein Netzfehler eines Prozessors wie jeder andere. */
@@ -912,6 +949,27 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             catchUp(sourceId, spaceKey, pageIds, context);
             return;
         }
+        // Primary local originals participate in the page enrichment before its follow-up rules run.
+        if (enabled.getAsBoolean()) {
+            for (String pageId : pageIds) {
+                if (context != null) {
+                    context.checkpoint();
+                }
+                localPending(new PageKey(sourceId, pageId)).ifPresent(item -> {
+                    int removed = removals(item);
+                    try {
+                        process(item, context, null);
+                    } catch (JobCancelledException | JobFailedException e) {
+                        throw e;
+                    } catch (RuntimeException e) {
+                        LOG.log(System.Logger.Level.WARNING, "Local document analysis failed ({0})",
+                                e.getClass().getName());
+                    } finally {
+                        forgetIfRemoved(item, removed);
+                    }
+                });
+            }
+        }
         if (anyDue(sourceId, spaceKey, pageIds, context)) {
             note(new Partition(sourceId, spaceKey));
         }
@@ -1248,7 +1306,7 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      * Undurchsichtige Kennung einer abgelegten Extraktion; nur verglichen, nie zerlegt. Mit Ablagezeitpunkt und
      * Zählern, denn ein erneutes Lesen mit weiteren Grenzen ersetzt die Abschnitte unter demselben Schlüssel.
      */
-    static String basis(StoredExtraction extraction) {
+    public static String basis(StoredExtraction extraction) {
         ExtractionKey key = extraction.key();
         return key.sha256() + "|" + key.extractor() + "|" + key.version() + "|" + key.model() + "|"
                 + extraction.createdAt() + "|" + extraction.sections() + "|" + extraction.blocks() + "|"

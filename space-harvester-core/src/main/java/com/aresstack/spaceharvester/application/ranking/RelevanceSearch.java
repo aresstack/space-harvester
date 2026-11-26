@@ -147,6 +147,11 @@ public class RelevanceSearch {
     private final SearchRunLog runs;
     private final BooleanSupplier documents;
     private final DocumentTexts documentTexts;
+    private volatile java.util.function.BiPredicate<PageKey, String> localExtraction = (key, basis) -> false;
+
+    public void localOriginals(java.util.function.BiPredicate<PageKey, String> current) {
+        localExtraction = Objects.requireNonNull(current, "current");
+    }
 
     /**
      * Ohne Live-Prüfung je Treffer: Rechte nur gegen die Zugriffspolicy und die Kopfdaten im Index. Für Tests und
@@ -761,7 +766,8 @@ public class RelevanceSearch {
         List<Enrichment> documentResults = store.findDocuments(header.key());
         for (Enrichment found : documentResults) {
             if (!"embedding".equals(found.processorId()) || found.status() != Enrichment.Status.OK
-                    || !found.processorVersion().equals(model.version())) {
+                    || !found.processorVersion().equals(model.version())
+                    || found.document().localOriginal() && !localExtraction.test(header.key(), found.extraction())) {
                 continue;
             }
             Chunk chunk = best(found, vector);

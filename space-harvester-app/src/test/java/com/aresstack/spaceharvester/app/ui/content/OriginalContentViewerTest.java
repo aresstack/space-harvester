@@ -19,7 +19,7 @@ import java.util.Map;
 import java.util.List;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
-import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
+import com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -90,7 +90,9 @@ final class OriginalContentViewerTest {
                 && panel.originalViewer().showsPicture()));
         PageSnapshot snapshot = context.runtime().workspace().cachedPage("docs", id).orElseThrow().snapshot();
         assertThat(snapshot.metadata().attributes()).containsEntry(PageMetadata.RESOURCE_KIND, PageMetadata.FILE_KIND);
-        assertThat(new LocalFilesTextProjector().project(snapshot).orElseThrow().text()).contains("Lokaler PDF Beleg");
+        assertThat(LocalOriginalReference.read(snapshot.payload())).isPresent();
+        assertThat(context.runtime().workspace().pageText(snapshot)).isNotNull();
+        assertThat(context.runtime().workspace().pageText(snapshot).text()).contains("Lokaler PDF Beleg");
         onEdt(() -> {
             panel.load("docs", csvId, false);
             return null;

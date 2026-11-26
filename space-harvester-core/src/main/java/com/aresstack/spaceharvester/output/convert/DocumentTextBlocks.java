@@ -33,6 +33,20 @@ final class DocumentTextBlocks {
 
     /** @return leer, wenn die Payload kein solcher Lesetext ist */
     static Optional<List<Block>> of(NativePayload payload) {
+        var portable = com.aresstack.spaceharvester.application.snapshot.PortableLocalDocument.read(payload);
+        if (portable.isPresent()) {
+            var document = portable.get();
+            List<Block> blocks = new ArrayList<>();
+            if (!document.text().isBlank()) {
+                blocks.add(new Paragraph(List.of(text(document.text()))));
+            }
+            if (document.textTruncated() || !document.extractionAvailable() || document.text().isBlank()) {
+                blocks.add(new StorageDocument.Note("Lokale Datei: " + document.status()
+                        + (document.textTruncated() ? " – Textauszug gekürzt" : "")
+                        + (!document.extractionAvailable() ? " – Extraktion nicht verfügbar" : "")));
+            }
+            return Optional.of(blocks);
+        }
         if (!NativePayload.DOCUMENT_TEXT.equals(payload.nativeFormat())) {
             return Optional.empty();
         }
