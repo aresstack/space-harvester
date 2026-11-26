@@ -94,6 +94,37 @@ class SourceDiagramsTest {
     }
 
     @Test
+    void cobolDoesNotInventExecutionOrderOrStopRun() {
+        String cobol = """
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       PROCEDURE DIVISION.
+                       MAIN-PARA.
+                           PERFORM WORK-PARA.
+                           GOBACK.
+                       UNUSED-PARA.
+                           DISPLAY 'UNUSED'.
+                       WORK-PARA.
+                           CALL 'BOOKING'.
+                           EXIT.
+                """;
+        for (DiagramType type : new DiagramType[]{DiagramType.STRUCTURE, DiagramType.FLOWCHART, DiagramType.SEQUENCE}) {
+            for (boolean compact : new boolean[]{false, true}) {
+                var diagram = SourceDiagrams.generate(cobol, "DEMO.cbl", Optional.of(SourceLanguage.COBOL),
+                        type, 0, compact, false, null);
+                assertThat(diagram.type()).isEqualTo(DiagramType.STRUCTURE);
+                String mermaid = diagram.mermaid().orElseThrow();
+                assertThat(mermaid).doesNotContain("STOP RUN", "PARA_MAIN_PARA --> PARA_UNUSED_PARA",
+                        "PARA_UNUSED_PARA --> PARA_WORK_PARA", "sequenceDiagram");
+                if (!compact) {
+                    assertThat(mermaid).contains("PARA_MAIN_PARA -.->|PERFORM| PARA_WORK_PARA",
+                            "PARA_WORK_PARA ==>|CALL| CALL_BOOKING");
+                }
+            }
+        }
+    }
+
+    @Test
     void explicitDetailsOverrideAutomaticCollapse() {
         StringBuilder jcl = new StringBuilder("//BIG      JOB (ACCT),'BAU',CLASS=A\n");
         for (int i = 1; i <= 40; i++) {
