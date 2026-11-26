@@ -50,6 +50,13 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // LimitInventoryTest liest docs/grenzen.md und den Produktionscode der eigenen Module (docs/grenzen.md).
+    inputs.file(rootProject.file('docs/grenzen.md')).withPropertyName('limitDocumentation')
+    // Module mit eigenem Code; die unveränderten Kopien aus dem Enterprise AI Client folgen dem Upstream.
+    def limitModules = ['space-harvester-core', 'space-harvester-app', 'space-harvester-server', 'command-deck',
+                        'document-export', 'mainframe-languages', 'mermaid-renderer', 'nlp-parser', 'nlp-lexicon']
+    inputs.files(limitModules.collect { rootProject.fileTree("${it}/src/main/java") }).withPropertyName('limitSources')
+    systemProperty 'limits.modules', limitModules.join(',')
     systemProperty 'java.awt.headless', 'true'
     // Die Meldung des Vergleichs nennt die Schlüssel der neuen Lücke; ohne sie zeigt das CI-Protokoll nur die Zeile.
     testLogging {

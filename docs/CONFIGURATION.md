@@ -4,6 +4,9 @@
 mTLS: [README](../README.md#quellen-konfigurieren); Secrets und Azure Key Vault: [SECRETS.md](SECRETS.md); Proxy:
 README, Abschnitt „Proxy und PAC/WPAD“.
 
+Alle festen Grenzen (Größen, Anzahlen, Tiefen, Zeiten, Parallelität) mit Wert, Einstellung und Folge beim Erreichen:
+[grenzen.md](grenzen.md). Eine Grenze, die einstellbar wird, bekommt ihren Schlüssel hier und ihre Zeile dort.
+
 ## Lokal, ohne Server
 
 Der Dienst braucht nur `application.yml` und optional eine eigene Datei wie `config/application-local.yml` (von Git
