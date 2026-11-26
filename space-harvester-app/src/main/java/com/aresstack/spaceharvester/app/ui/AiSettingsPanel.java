@@ -248,6 +248,10 @@ final class AiSettingsPanel {
      * Sprechwerte des Podcasts unter „Erweitert“ (Angelo 24.11.2026: keine fest eingebauten Werte): Pause zwischen
      * zwei Beiträgen, Versuche je Stück und gleichzeitige Synthesen je Beitrag; nur für den Podcast, nicht fürs Vorlesen.
      */
+    /** Takt der Live-Spracheingabe (unter „Erweitert“, dient als Zeilenkennung fürs Auf- und Zuklappen). */
+    final JSpinner liveDictationStep = countSpinner(
+            com.aresstack.spaceharvester.app.speech.LiveDictationSettings.MIN_STEP_MILLIS,
+            com.aresstack.spaceharvester.app.speech.LiveDictationSettings.MAX_STEP_MILLIS, 100);
     final JSpinner podcastPause = countSpinner(0, AiServiceSettings.Speech.MAX_PODCAST_PAUSE_MILLIS, 50,
             AiServiceSettings.Speech.DEFAULT_PODCAST_PAUSE_MILLIS);
     final JSpinner podcastAttempts = countSpinner(1, AiServiceSettings.Speech.MAX_PODCAST_ATTEMPTS, 1,
@@ -464,6 +468,16 @@ final class AiSettingsPanel {
                     + "Prüfsummen");
     static final String WHISPER_TRANSCRIPTS_LABEL = "Whisper-Modell Transkripte";
     static final String WHISPER_DICTATION_LABEL = "Whisper-Modell Spracheingabe";
+    static final String LIVE_DICTATION_LABEL = "Spracheingabe live";
+    static final String LIVE_DICTATION_TUNING_LABEL = "Spracheingabe live – Fenster";
+    static final String LIVE_DICTATION_HELP = "Live mitschreiben: Die Wörter erscheinen schon während des Sprechens im "
+            + "Eingabefeld, vorläufiger Text blassgelb hinterlegt. Umschalten auch per Klick auf die Wellen im Chat. "
+            + "Ohne Häkchen kommt der Text erst nach dem Stopp (erst komplett).\n\n"
+            + "Takt: so oft wird neu erkannt (bei langsamem Rechner wartet die nächste Erkennung auf die vorige). "
+            + "Fenster: höchstens so viele Sekunden noch nicht festen Tons werden auf einmal erkannt, immer unter 30 "
+            + "Sekunden, weil Whisper nicht mehr sieht. Text steht fest, sobald zwei Erkennungen nacheinander gleich "
+            + "lauten; Wiederholungen an der Fenstergrenze fallen weg. Anlauf: so viel Ton braucht die erste "
+            + "Erkennung.";
     static final String WHISPER_TRANSCRIPTS_HELP = "Für Video-Transkripte und „In PPTX umwandeln“, läuft lokal; größere "
             + "Modelle erkennen genauer und rechnen länger. Wird nur nach Rückfrage oder auf Klick einmal von Hugging "
             + "Face geladen.";
@@ -624,13 +638,8 @@ final class AiSettingsPanel {
                     new HelpButton(Dialogs.CLOSE_SIZE, WHISPER_TRANSCRIPTS_LABEL, WHISPER_TRANSCRIPTS_HELP)), null);
             modelRows.add(WHISPER_DICTATION_LABEL, Comic.row(dictationChoice, dictationInstall,
                     new HelpButton(Dialogs.CLOSE_SIZE, WHISPER_DICTATION_LABEL, WHISPER_DICTATION_HELP)), null);
-            javax.swing.JCheckBox livePreview = Comic.checkBox("Live-Transkription (experimentell)");
-            livePreview.setSelected(com.aresstack.spaceharvester.app.speech.LiveDictationPreference.enabled());
-            livePreview.setToolTipText("Zeigt eine vorläufige Erkennung während der Aufnahme; "
-                    + "die endgültige Erkennung bleibt unverändert. Gilt ab der nächsten Aufnahme.");
-            livePreview.addActionListener(e -> com.aresstack.spaceharvester.app.speech.LiveDictationPreference
-                    .setEnabled(livePreview.isSelected()));
-            modelRows.add("Spracheingabe", livePreview, null);
+            modelRows.add(LIVE_DICTATION_LABEL, liveDictationRow(), null);
+            modelRows.add(LIVE_DICTATION_TUNING_LABEL, liveDictationTuningRow(), null);
             whisperChoice.addActionListener(e -> {
                 int index = whisperChoice.getSelectedIndex();
                 if (showingWhisper || index < 0 || context.settings() == null) {
@@ -1779,6 +1788,48 @@ final class AiSettingsPanel {
 
     /** Ein Zahlenfeld von {@code minimum} bis {@code maximum} im Stil der Dauer-Felder dieser App. */
     /** Wie {@link #countSpinner(int, int, int)}, mit einem anderen Anfangswert als dem kleinsten. */
+    /**
+     * „Spracheingabe live“: dieselbe Umschaltung wie der Klick auf die Wellen im Chat, dazu die Werte des gleitenden
+     * Fensters (Angelo 26.11.2026: keine fest eingebauten Werte). Gespeichert im App-Zustand, gilt ab der nächsten
+     * Aufnahme bzw. sofort für die Umschaltung.
+     */
+    private javax.swing.JComponent liveDictationRow() {
+        javax.swing.JCheckBox live = Comic.checkBox("live mitschreiben");
+        live.setSelected(com.aresstack.spaceharvester.app.speech.LiveDictationSettings.live());
+        live.addActionListener(e -> com.aresstack.spaceharvester.app.speech.LiveDictationSettings.live(
+                live.isSelected()));
+        com.aresstack.spaceharvester.app.speech.LiveDictationSettings.listen(() -> javax.swing.SwingUtilities
+                .invokeLater(() -> live.setSelected(
+                        com.aresstack.spaceharvester.app.speech.LiveDictationSettings.live())));
+        return Comic.row(live, new HelpButton(Dialogs.CLOSE_SIZE, LIVE_DICTATION_LABEL, LIVE_DICTATION_HELP));
+    }
+
+    /** Die Werte des gleitenden Fensters unter „Erweitert“. */
+    private javax.swing.JComponent liveDictationTuningRow() {
+        com.aresstack.spaceharvester.app.speech.LiveDictationSettings.Tuning tuning =
+                com.aresstack.spaceharvester.app.speech.LiveDictationSettings.tuning();
+        liveDictationStep.setValue(tuning.stepMillis());
+        JSpinner step = liveDictationStep;
+        JSpinner window = countSpinner(
+                com.aresstack.spaceharvester.app.speech.LiveDictationSettings.MIN_WINDOW_SECONDS,
+                com.aresstack.spaceharvester.app.speech.LiveDictationSettings.MAX_WINDOW_SECONDS, 1,
+                tuning.windowSeconds());
+        JSpinner first = countSpinner(com.aresstack.spaceharvester.app.speech.LiveDictationSettings.MIN_FIRST_MILLIS,
+                com.aresstack.spaceharvester.app.speech.LiveDictationSettings.MAX_FIRST_MILLIS, 100,
+                tuning.firstMillis());
+        javax.swing.event.ChangeListener save = e -> com.aresstack.spaceharvester.app.speech.LiveDictationSettings
+                .tuning(new com.aresstack.spaceharvester.app.speech.LiveDictationSettings.Tuning(
+                        ((Number) step.getValue()).intValue(), ((Number) window.getValue()).intValue(),
+                        ((Number) first.getValue()).intValue()));
+        step.addChangeListener(save);
+        window.addChangeListener(save);
+        first.addChangeListener(save);
+        // Der Takt steht vorn: an ihm erkennt „Erweitert“ die Zeile.
+        return Comic.row(step, Comic.text("ms Takt,"), window, Comic.text("s Fenster,"), first,
+                Comic.text("ms Anlauf"),
+                new HelpButton(Dialogs.CLOSE_SIZE, LIVE_DICTATION_TUNING_LABEL, LIVE_DICTATION_HELP));
+    }
+
     private static JSpinner countSpinner(int minimum, int maximum, int step, int initial) {
         JSpinner spinner = countSpinner(minimum, maximum, step);
         spinner.setValue(initial);
@@ -2238,6 +2289,7 @@ final class AiSettingsPanel {
         modelRows.visible(simplifyParallel, open);
         modelRows.visible(checkParallel, open);
         modelRows.visible(podcastPause, open);
+        modelRows.visible(liveDictationStep, open);
         Comic.disclose(advanced, open);
         models.repaint();
         models.revalidate();
