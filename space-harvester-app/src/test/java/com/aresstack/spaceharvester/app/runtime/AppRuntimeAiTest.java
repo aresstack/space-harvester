@@ -46,6 +46,38 @@ class AppRuntimeAiTest {
     }
 
     @Test
+    void aRenamedSourceNeedsNoRestartButAMovedOneDoes(@org.junit.jupiter.api.io.TempDir java.nio.file.Path home)
+            throws java.io.IOException {
+        // Rechtsklick „Umbenennen“ (Angelo 26.11.2026): Der Anzeigename ist reine Anzeige; laufende Aufträge laufen
+        // weiter. Ein anderes Ziel verlangt weiterhin den Neustart.
+        AppSettings before = sourceFile(home, "quellen.yml", "Wiki", "https://wiki.example.org");
+        AppSettings renamed = sourceFile(home, "quellen.yml", "Team-Wiki", "https://wiki.example.org");
+        AppSettings moved = sourceFile(home, "quellen.yml", "Wiki", "https://anderes.example.org");
+
+        assertThat(AppRuntime.liveChange(before, renamed)).isTrue();
+        assertThat(before.withLive(renamed).sources()).isEqualTo(renamed.sources());
+        assertThat(AppRuntime.liveChange(before, moved)).isFalse();
+    }
+
+    private static AppSettings sourceFile(java.nio.file.Path home, String name, String title, String url)
+            throws java.io.IOException {
+        java.nio.file.Path file = home.resolve(name);
+        java.nio.file.Files.writeString(file, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: wiki
+                      type: confluence
+                      title: %s
+                      base-url: %s
+                """.formatted(home.resolve("daten").toString().replace("\\", "/"), title, url));
+        // Dieselbe Datei, nacheinander geschrieben: wie beim Speichern aus der App.
+        return new com.aresstack.spaceharvester.app.settings.AppSettingsLoader(
+                new com.aresstack.spaceharvester.app.settings.Placeholders(n -> null), home).load(file);
+    }
+
+    @Test
     void parallelLimitsChangeLiveWithoutARestart(@org.junit.jupiter.api.io.TempDir java.nio.file.Path home) {
         // Die Auswahl in der Auftragsliste ändert die Grenzen sofort; eine spätere Live-Änderung (Frist o. Ä.) darf
         // die Laufzeit deshalb nicht still neu starten.

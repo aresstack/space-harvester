@@ -652,6 +652,42 @@ public final class AppContext {
     }
 
     /**
+     * Ändert ein Feld einer Quelle in der Konfigurationsdatei (kommentarschonend, mit .bak, außer die Datei enthält ein
+     * Geheimnis im Klartext) und lädt neu. Enthält der Eintrag selbst ein Geheimnis im Klartext, bleibt die Datei
+     * unverändert: Das Speichern ersetzte es durch einen Platzhalter; das übernimmt das Formular „Bearbeiten …“.
+     * Ändert sich nur der Anzeigename, übernimmt die Laufzeit ihn ohne Neustart ({@code AppRuntime.liveChange}).
+     *
+     * @param saved läuft nach dem Schreiben der Datei, vor dem Neuladen
+     * @param done  läuft nach dem Neuladen
+     */
+    public void changeSource(String sourceId, java.util.function.UnaryOperator<com.aresstack.spaceharvester.app
+            .settings.SourceDraft> change, Runnable saved, Runnable done, Consumer<Throwable> failed) {
+        ConfigFileEditor editor = new ConfigFileEditor(loader);
+        Background.run(() -> {
+            com.aresstack.spaceharvester.app.settings.SourceDraft.Editable editable =
+                    editor.editable(configFile, sourceId);
+            if (!editable.plaintextSecrets().isEmpty()) {
+                throw new IllegalStateException("Der Eintrag enthält ein Geheimnis im Klartext. Bitte unter "
+                        + "Wissensquellen über ⋯ › „Bearbeiten …“ an der Karte ändern; das Formular legt es sicher ab.");
+            }
+            boolean backup = !editor.fileHasPlaintextSecret(configFile);
+            editor.save(configFile, editor.replace(configFile, change.apply(editable.draft())), backup);
+            return sourceId;
+        }, id -> {
+            saved.run();
+            reload(done);
+        }, failed);
+    }
+
+    /**
+     * Rechtsklick „Umbenennen“ an einer Quelle (Angelo 26.11.2026): dasselbe Feld wie „Anzeigename“ in der
+     * Quellenverwaltung, dieselbe Speicherung ({@link #changeSource}); ID und Ziel bleiben, kein Neustart.
+     */
+    public void renameSource(String sourceId, String title, Runnable done, Consumer<Throwable> failed) {
+        changeSource(sourceId, draft -> draft.withTitle(title), () -> { }, done, failed);
+    }
+
+    /**
      * Gibt eine Quelle für den KI-Dienst frei: dasselbe Häkchen wie im Quellenformular („Inhalte dieser Quelle dürfen
      * an den KI-Dienst gehen“), derselbe Schlüssel {@code space-harvester.ai.external-processing-sources} in derselben
      * Datei; danach übernimmt der Core die Freigabe ohne Neustart ({@link #reload}).

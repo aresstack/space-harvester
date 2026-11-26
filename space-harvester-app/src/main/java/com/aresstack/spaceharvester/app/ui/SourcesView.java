@@ -642,8 +642,9 @@ public final class SourcesView implements View {
                                 }
                             })));
             row(EditableProperty.text("Anzeigename", config.title(), config.title(), "Anzeigenamen ändern",
-                    (value, ok, failed) -> saveField(entry, d -> with(d, value, d.baseUrl(), d.directory()), ok,
-                            failed)));
+                    // Nur der Name: Die Laufzeit übernimmt ihn ohne Neustart, laufende Aufträge laufen weiter.
+                    (value, ok, failed) -> context.changeSource(entry.id(), d -> d.withTitle(value), ok,
+                            () -> select(entry.id()), failed)));
             if (confluence || config.baseUrl() != null) {
                 String url = config.baseUrl() == null ? "" : config.baseUrl().toString();
                 row(EditableProperty.text("Adresse", url, url, "Adresse der Quelle ändern",
@@ -732,9 +733,8 @@ public final class SourcesView implements View {
     }
 
     /**
-     * Ändert ein Feld der Quelle in der Konfigurationsdatei (kommentarschonend, mit .bak) und lädt neu. Enthält der
-     * Eintrag ein Geheimnis im Klartext, bleibt die Datei unverändert: Das Speichern ersetzte es durch einen
-     * Platzhalter; das übernimmt das Formular „Bearbeiten …“ mit Rückfrage.
+     * Ändert ein Feld der Quelle in der Konfigurationsdatei und lädt neu ({@link AppContext#changeSource}). Weil das
+     * die Quellen neu starten kann, fragt es vorher bei laufenden Aufträgen nach.
      */
     private void saveField(AppSettings.SourceEntry entry, UnaryOperator<SourceDraft> change, Runnable ok,
                            Consumer<Throwable> failed) {
@@ -742,21 +742,7 @@ public final class SourcesView implements View {
             failed.accept(new IllegalStateException("Nicht übernommen: Es laufen noch Aufträge."));
             return;
         }
-        ConfigFileEditor editor = new ConfigFileEditor(context.loader());
-        Background.run(() -> {
-            SourceDraft.Editable editable = editor.editable(context.configFile(), entry.id());
-            if (!editable.plaintextSecrets().isEmpty()) {
-                throw new IllegalStateException("Der Eintrag enthält ein Geheimnis im Klartext. Bitte über ⋯ › "
-                        + "„Bearbeiten …“ an der Karte ändern; das Formular legt es sicher ab.");
-            }
-            boolean backup = !editor.fileHasPlaintextSecret(context.configFile());
-            ConfigFileEditor.Draft draft = editor.replace(context.configFile(), change.apply(editable.draft()));
-            editor.save(context.configFile(), draft, backup);
-            return entry.id();
-        }, id -> {
-            ok.run();
-            context.reload(() -> select(id));
-        }, failed);
+        context.changeSource(entry.id(), change, ok, () -> select(entry.id()), failed);
     }
 
     private static SourceDraft with(SourceDraft d, String title, String baseUrl, String directory) {

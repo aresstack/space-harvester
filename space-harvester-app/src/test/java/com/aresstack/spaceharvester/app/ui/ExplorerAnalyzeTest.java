@@ -112,7 +112,7 @@ class ExplorerAnalyzeTest {
         useFakes();
         // „Indexieren“ zuerst, „Seite indexieren“ nur an Seiten mit Unterseiten (Angelo, 20.11.2026); dahinter
         // „Favorit“ und „Änderungen nachholen“, auch an der Quelle (Angelo, 16.11.2026). „Ausschließen“ an Spaces und
-        // Seiten, nicht an der Quelle (Angelo, 26.11.2026).
+        // Seiten, nicht an der Quelle (Angelo, 26.11.2026). „Umbenennen“ nur an der Quelle (Angelo, 26.11.2026).
         assertThat(labels(LEAF)).containsExactly("Öffnen", Explorer.INDEX, Explorer.EXCLUDE, Explorer.FAVORITE,
                 Explorer.REFRESH, Explorer.ANALYZE, Explorer.CHECK);
         assertThat(labels(PARENT)).containsExactly("Öffnen", Explorer.INDEX, Explorer.PAGE_ONLY, Explorer.EXCLUDE,
@@ -124,7 +124,8 @@ class ExplorerAnalyzeTest {
         assertThat(labels(SPACE)).containsExactly(Explorer.INDEX, Explorer.EXCLUDE, Explorer.FAVORITE,
                 Explorer.REFRESH, Explorer.ANALYZE, Explorer.CHECK);
         assertThat(labels(SOURCE)).containsExactly(Explorer.INDEX, Explorer.FAVORITE, Explorer.REFRESH,
-                Explorer.ANALYZE, Explorer.CHECK);
+                Explorer.RENAME, Explorer.ANALYZE, Explorer.CHECK);
+        assertThat(entry(SOURCE, Explorer.RENAME).getToolTipText()).isEqualTo(Explorer.RENAME_TIP);
         assertThat(labels(new Explorer.MoreItem("c"))).isEmpty();
         assertThat(labels(new Explorer.Note(Explorer.LOADING))).isEmpty();
         assertThat(entry(PARENT, Explorer.ANALYZE).isEnabled()).isTrue();

@@ -361,9 +361,24 @@ public final class AppRuntime implements AutoCloseable {
         harvester.parallelPreparations(next.jobLimits().parallelPreparations());
         harvester.parallelDownloads(next.jobLimits().parallelDownloads());
         harvester.downloadConnections(next.jobLimits().downloadConnections());
+        retitle(settings, next);
         settings = next;
         lastRejection = List.of();
         return Reconfiguration.APPLIED;
+    }
+
+    /**
+     * Übernimmt geänderte Anzeigenamen in den laufenden Core, ohne eine Quelle neu zu öffnen; {@link #liveChange} hat
+     * schon geprüft, dass sich an den Quellen nur der Name geändert hat.
+     */
+    private void retitle(AppSettings current, AppSettings next) {
+        java.util.Map<String, String> before = new java.util.HashMap<>();
+        current.sources().forEach(entry -> before.put(entry.id(), entry.config().title()));
+        for (AppSettings.SourceEntry entry : next.sources()) {
+            if (!java.util.Objects.equals(before.get(entry.id()), entry.config().title())) {
+                harvester.sourceManagement().rename(entry.id(), entry.config().title());
+            }
+        }
     }
 
     /**

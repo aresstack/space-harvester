@@ -159,7 +159,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     private final String id;
     private final String type;
-    private final String title;
+    /** Anzeigename; nur Anzeige, nie Kennung. {@link #retitle} ändert ihn ohne neue Instanz (Rechtsklick „Umbenennen“). */
+    private volatile String title;
     private final KnowledgeSourcePort port;
     private final InFlightLimit inFlight;
     /**
@@ -321,6 +322,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public String title() {
         return title;
+    }
+
+    /** Ändert nur den Anzeigenamen; Port, Web-Sitzung, Umfang und Zugangsdaten bleiben unberührt. */
+    void retitle(String title) {
+        this.title = java.util.Objects.requireNonNull(title, "title");
     }
 
     @Override

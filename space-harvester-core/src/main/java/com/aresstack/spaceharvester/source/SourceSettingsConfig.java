@@ -34,6 +34,12 @@ public record SourceSettingsConfig(String id, String type, String title, URI bas
         trustBundle = trustBundle == null || trustBundle.isBlank() ? null : trustBundle.trim();
     }
 
+    /** Dieselbe Quelle mit anderem Anzeigenamen; ID, Ziel und Anmeldung bleiben. */
+    public SourceSettingsConfig withTitle(String title) {
+        return new SourceSettingsConfig(id, type, title, baseUrl, auth, options, clientCertificate, trustBundle,
+                showInExplorer, includeInGlobalSearch);
+    }
+
     /** Quelle ohne Client-Zertifikat, mit dem Vertrauen der JVM. */
     public SourceSettingsConfig(String id, String type, String title, URI baseUrl, Auth auth,
                                 Map<String, String> options) {
