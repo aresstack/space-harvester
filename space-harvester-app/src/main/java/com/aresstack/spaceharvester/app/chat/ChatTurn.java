@@ -286,13 +286,12 @@ public final class ChatTurn {
      *
      * @param tools  die an den Chat gebundenen Browser-Werkzeuge
      * @param rules  zusätzlicher Systemhinweis (Lesen mehrerer Seiten, Browserprofil mit Such-URLs)
-     * @param rounds Werkzeugrunden dieses Turns (Browser-Budget)
      * @param begin  wird zu Beginn des Turns auf seinem Thread gerufen (meldet den Turn beim Browser an), oder
      *               {@code null}
      * @param ended  wird nach dem Ende des Turns gerufen, auf eigenem Thread (schließt den Browser)
      */
     public record WebSearch(com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools tools, String rules,
-                            int rounds, Runnable begin, Runnable ended) {
+                            Runnable begin, Runnable ended) {
     }
 
     /**
