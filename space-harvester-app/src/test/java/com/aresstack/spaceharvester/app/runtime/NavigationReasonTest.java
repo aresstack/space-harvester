@@ -55,24 +55,59 @@ class NavigationReasonTest {
                     .findFirst().orElseThrow().navigationPageId("/parity/README.txt").orElseThrow();
             Workspace workspace = new Workspace(harvester, new AccessGuard((context, scope, kind) ->
                     AccessDecision.ALLOW), new ActivityLog(data.resolve("aktivitaet.txt")));
+            Ended ended = new Ended(harvester);
 
-            awaitLoads(harvester, workspace.acquireVisitedResources("ftp-test", List.of("/parity/README.txt")));
+            awaitLoads(harvester, ended, workspace.acquireVisitedResources("ftp-test", List.of("/parity/README.txt")));
             String first = harvester.pages().cached(harvester.caller(), "ftp-test", readme).orElseThrow()
                     .snapshot().payload().rawSha256();
 
             server.change("/parity/README.txt", "Satz Delta nach der Aenderung im Wurzelordner.\n");
-            awaitLoads(harvester, workspace.acquireVisitedResources("ftp-test", List.of("/parity/README.txt")));
+            awaitLoads(harvester, ended, workspace.acquireVisitedResources("ftp-test", List.of("/parity/README.txt")));
 
             assertThat(harvester.pages().cached(harvester.caller(), "ftp-test", readme).orElseThrow()
                     .snapshot().payload().rawSha256()).isNotEqualTo(first);
         }
     }
 
-    private static void awaitLoads(Harvester harvester, PageLoads.Joined loads) throws Exception {
+    /**
+     * Wartet, bis die gestarteten Teile beendet sind und ihr Ende gemeldet ist: Erst dann sieht {@code PageLoads} sie
+     * nicht mehr als ladend, und ein erneuter Besuch startet eine eigene Prüfung, statt sich dem endenden Teil
+     * anzuschließen. Die Meldungen gehen in Anmeldereihenfolge an die Empfänger, {@code PageLoads} zuerst.
+     */
+    private static void awaitLoads(Harvester harvester, Ended ended, PageLoads.Joined loads) throws Exception {
         assertThat(loads).isNotNull();
-        for (String jobId : loads.started().orElseThrow().jobIds()) {
+        java.util.List<String> jobIds = loads.started().orElseThrow().jobIds();
+        for (String jobId : jobIds) {
             JobStatus status = harvester.await(jobId, Duration.ofSeconds(60));
             assertThat(status.state()).as("Laden: %s", status.error()).isEqualTo(JobState.COMPLETED);
+        }
+        ended.await(jobIds, Duration.ofSeconds(60));
+    }
+
+    /** Gemeldete Enden der Teile zum Laden von Seiten. */
+    private static final class Ended {
+        private final java.util.Set<String> ids = new java.util.HashSet<>();
+
+        Ended(Harvester harvester) {
+            harvester.backgroundJobs().subscribe(PageLoads.KIND, status -> {
+                if (!PageLoads.loading(status.state())) {
+                    ended(status.id());
+                }
+            }, last -> ended(last.id()));
+        }
+
+        private synchronized void ended(String id) {
+            ids.add(id);
+            notifyAll();
+        }
+
+        synchronized void await(java.util.Collection<String> wanted, Duration timeout) throws InterruptedException {
+            long deadline = System.nanoTime() + timeout.toNanos();
+            while (!ids.containsAll(wanted)) {
+                long left = deadline - System.nanoTime();
+                assertThat(left).as("Ende gemeldet für %s", wanted).isPositive();
+                java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(this, left);
+            }
         }
     }
 
