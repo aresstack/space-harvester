@@ -75,6 +75,23 @@ public class SharePointNavigationPagesTest {
         fail("Cyclic continuation did not terminate");
     }
 
+    @Test
+    public void skipsEmptyContinuationPagesWithoutReturningAnEmptyBatch() throws Exception {
+        URI folders = URI.create("https://example.test/folders");
+        URI files = URI.create("https://example.test/files");
+        NavigationChildren result = pages.folder("parent", "", folders, files, (first, current, isFolder) -> {
+            if (isFolder && current.equals(folders)) {
+                return new SharePointNavigationPages.Page(Collections.<NavigationNode>emptyList(), URI.create(folders + "?2"));
+            }
+            if (isFolder) {
+                return new SharePointNavigationPages.Page(Collections.<NavigationNode>emptyList(), null);
+            }
+            return new SharePointNavigationPages.Page(Collections.singletonList(node("file")), null);
+        });
+        assertTrue(result.complete());
+        assertEquals(1, result.nodes().size());
+    }
+
     private static NavigationChildren children(SharePointNavigationPages pages, int folder, String cursor,
                                                boolean changed) throws KnowledgeSourceException {
         String parent = "folder-" + folder;
@@ -102,7 +119,7 @@ public class SharePointNavigationPagesTest {
         try {
             attempt.run();
             fail("Invalid cursor accepted");
-        } catch (KnowledgeSourceException expected) {
+        } catch (com.aresstack.enterpriseai.source.api.InvalidNavigationCursorException expected) {
             assertEquals(KnowledgeSourceException.Kind.INVALID_RESPONSE, expected.kind());
         }
     }

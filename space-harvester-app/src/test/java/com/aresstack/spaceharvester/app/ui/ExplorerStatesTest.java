@@ -76,7 +76,7 @@ class ExplorerStatesTest {
         await(() -> explorer[0].states().knows("handbuch", space.spaceKey()));
         // Noch nichts geladen: die Seite ist nur in der Quelle oder dem Bestand unbekannt, der Space leer oder ohne Inventur.
         TreeStates.Badge before = onEdt(() -> explorer[0].badge(page));
-        assertThat(before.kind()).isIn(TreeStates.Kind.NONE, TreeStates.Kind.REMOTE);
+        assertThat(before.kind()).isIn(TreeStates.Kind.NONE, TreeStates.Kind.NOT_INDEXED);
         assertThat(onEdt(() -> explorer[0].badge(space)).kind()).isIn(TreeStates.Kind.EMPTY, TreeStates.Kind.NONE);
 
         JobStatus job = context.runtime().workspace().startExport("handbuch", space.spaceKey(), List.of("json"));
@@ -87,17 +87,17 @@ class ExplorerStatesTest {
         // Die Meldung des Core trifft ein, der Baum liest nur die genannten Seiten nach: Haken und voller Kreis.
         await(() -> onEdtQuietly(() -> explorer[0].badge(page)).kind() == TreeStates.Kind.LOCAL);
         assertThat(onEdt(() -> explorer[0].badge(page)).glyph()).isEqualTo(Glyph.CHECK_CIRCLE);
-        assertThat(onEdt(() -> explorer[0].badge(page)).tooltip()).isEqualTo(TreeStates.TIP_LOCAL);
+        assertThat(onEdt(() -> explorer[0].badge(page)).tooltip()).isEqualTo("Volltext indexiert und aktuell");
         await(() -> onEdtQuietly(() -> explorer[0].badge(space)).kind() == TreeStates.Kind.FULL);
-        assertThat(onEdt(() -> explorer[0].badge(space)).tooltip()).isEqualTo("2 von 2 Seiten lokal");
+        assertThat(onEdt(() -> explorer[0].badge(space)).tooltip()).isEqualTo("2 von 2 Dateien vollständig und aktuell indexiert");
         // Das Zeichen der Kopfzeile fasst alle Quellen zusammen (Angelo, 16.11.2026), ebenfalls ohne Abfrage.
         await(() -> onEdtQuietly(() -> explorer[0].states().all(List.of("handbuch"), java.util.Map.of())).kind() == TreeStates.Kind.FULL);
         assertThat(onEdt(() -> explorer[0].allBadge().getIcon())).isEqualTo(Glyph.CIRCLE_FULL);
-        assertThat(onEdt(() -> explorer[0].allBadge().getToolTipText())).isEqualTo(Explorer.refreshTip("2 von 2 Seiten lokal"));
+        assertThat(onEdt(() -> explorer[0].allBadge().getToolTipText())).isEqualTo(Explorer.refreshTip("2 von 2 Dateien vollständig und aktuell indexiert"));
         // Auch die Wurzel der Quelle trägt den Zustandspunkt (Angelo, 16.11.2026): über alle ihre Spaces.
         Explorer.SourceItem source = new Explorer.SourceItem("handbuch", "Handbuch");
         assertThat(onEdt(() -> explorer[0].badge(source)).kind()).isEqualTo(TreeStates.Kind.FULL);
-        assertThat(onEdt(() -> explorer[0].badge(source)).tooltip()).isEqualTo("2 von 2 Seiten lokal");
+        assertThat(onEdt(() -> explorer[0].badge(source)).tooltip()).isEqualTo("2 von 2 Dateien vollständig und aktuell indexiert");
 
         // Nach einem neuen Stand des Space (Core-Meldung) liest der aufgeklappte Knoten seine Kinder nach: die neue
         // Seite erscheint, Aufklappung und Auswahl bleiben (Codex zu #802).

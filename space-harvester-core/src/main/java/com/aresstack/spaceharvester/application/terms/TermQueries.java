@@ -24,6 +24,7 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -80,6 +81,17 @@ public class TermQueries {
     private final SecretKey cursorKey = newCursorKey();
     private final TermLedger ledger;
     private volatile boolean managed;
+    private volatile java.util.function.BiPredicate<PageKey, String> localExtraction = (key, basis) -> false;
+    private volatile java.util.function.Function<PageSnapshot,
+            Optional<com.aresstack.spaceharvester.application.enrichment.LocalReadingText.Reading>> localReader =
+            snapshot -> Optional.empty();
+
+    public void localOriginals(java.util.function.BiPredicate<PageKey, String> current,
+            java.util.function.Function<PageSnapshot,
+                    Optional<com.aresstack.spaceharvester.application.enrichment.LocalReadingText.Reading>> reader) {
+        this.localExtraction = Objects.requireNonNull(current, "current");
+        this.localReader = Objects.requireNonNull(reader, "reader");
+    }
 
     /**
      * @param headers          Kopfdaten einer Seite im Cache; leer, wenn sie dort nicht (mehr) liegt
@@ -631,6 +643,8 @@ public class TermQueries {
         Visibility visibility = new Visibility(caller, search.spaceKey());
         Map<PageKey, Optional<PageText>> texts = new HashMap<>();
         Map<String, Optional<PageText>> sectionTexts = new HashMap<>();
+        Map<PageKey, Optional<com.aresstack.spaceharvester.application.enrichment.LocalReadingText.Reading>>
+                readings = new HashMap<>();
         String lastKey = null;
 
         List<Occurrence> found = new ArrayList<>();
@@ -638,11 +652,16 @@ public class TermQueries {
         boolean inclusive = fromKey != null;
         while (true) {
             List<TermPosting> batch = index.postings(filter, from, inclusive, TermIndex.MAX_BATCH);
-            for (TermPosting posting : batch) {
-                Optional<PageHeader> header = visibility.current(posting);
+            for (TermPosting indexed : batch) {
+                Optional<PageHeader> header = visibility.current(indexed);
                 if (header.isEmpty()) {
                     continue;
                 }
+                Optional<TermPosting> projected = readerPosting(indexed, header.get(), readings);
+                if (projected.isEmpty()) {
+                    continue;
+                }
+                TermPosting posting = projected.get();
                 boolean resumed = posting.sortKey().equals(fromKey);
                 for (TermOccurrence occurrence : posting.occurrences()) {
                     if (resumed && occurrence.start() <= afterStart) {
@@ -706,6 +725,27 @@ public class TermQueries {
         }
         return text(key).filter(text -> text.inputSha256().equals(inputSha256) && end <= text.text().length())
                 .map(text -> snippet(text.text(), new TermOccurrence(start, end), chars));
+    }
+
+    /** Translate local section offsets into the same bounded reader used by page snippets. */
+    private Optional<TermPosting> readerPosting(TermPosting posting, PageHeader header,
+            Map<PageKey, Optional<com.aresstack.spaceharvester.application.enrichment.LocalReadingText.Reading>>
+                    readings) {
+        if (!posting.document().localOriginal()) {
+            return Optional.of(posting);
+        }
+        return readings.computeIfAbsent(posting.page(), key -> snapshots.apply(key).flatMap(localReader))
+                .flatMap(reading -> reading.slices().stream()
+                        .filter(slice -> slice.document().equals(posting.document())
+                                && slice.section() == posting.documentSection()
+                                && slice.text().inputSha256().equals(posting.inputSha256()))
+                        .map(slice -> new TermPosting(posting.page(), posting.kind(), posting.term(),
+                                posting.normalized(), posting.count(), posting.expansion(), posting.section(),
+                                posting.occurrences().stream().filter(o -> slice.contains(o.start(), o.end()))
+                                        .map(o -> new TermOccurrence(slice.offset() + o.start(),
+                                                slice.offset() + o.end())).toList(),
+                                header.revision(), reading.text().inputSha256(), posting.processorVersion(),
+                                posting.sortKey())).findFirst());
     }
 
     /** Kontext um eine Fundstelle, ohne Ersatzzeichen zu teilen. */
@@ -901,6 +941,9 @@ public class TermQueries {
                     // Ohne Aufrufer (Verwalter) zählt nur der Stand; die Rechte prüft, wer die Zahl herausgibt.
                     .filter(found -> caller == null || access.canRead(caller, key.sourceId(),
                             found.metadata().partitionKey(), key.pageId())));
+            if (posting.localOriginal()) {
+                return header.filter(found -> localExtraction.test(posting.page(), posting.extraction()));
+            }
             if (posting.ofDocument()) {
                 // Ein Dokument hat die Rechte seiner Seite; aktuell ist sein Stand, wenn der Lauf durch ist.
                 return header.filter(found -> posting.extraction() != null);
@@ -938,6 +981,8 @@ public class TermQueries {
             this.kind = kind;
         }
 
+        private final Set<PageKey> countedPages = new HashSet<>();
+
         void count(TermPosting posting) {
             if (posting.ofDocument()) {
                 // Getrennt gezählt: ein großer Anhang verändert die Zahlen der Seiten nicht (ADR 0026, AP9b).
@@ -953,7 +998,9 @@ public class TermQueries {
                 term = posting.term();
             }
             occurrences += posting.count();
-            pages++;
+            if (countedPages.add(posting.page())) {
+                pages++;
+            }
             sources.add(posting.page().sourceId());
             if (spellings.size() < 5) {
                 spellings.add(posting.term());

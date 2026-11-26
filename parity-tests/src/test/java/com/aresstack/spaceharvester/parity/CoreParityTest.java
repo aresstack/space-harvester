@@ -336,8 +336,9 @@ class CoreParityTest {
             }
             CORE_FILES.put("files.all.documents", String.join(",", byPath.keySet()));
             byPath.forEach((path, page) -> {
-                String text = new String(harvester.pages().page(harvester.caller(), "parity",
-                        page.header().key().pageId(), false).snapshot().payload().bytes(), StandardCharsets.UTF_8);
+                String text = harvester.pageText(harvester.pages().page(harvester.caller(), "parity",
+                        page.header().key().pageId(), false).snapshot())
+                        .map(com.aresstack.spaceharvester.application.enrichment.PageText::text).orElse("");
                 List<String> found = new ArrayList<>();
                 for (int i = 0; i < ParityFiles.SENTENCES.length; i++) {
                     if (text.contains(ParityFiles.SENTENCES[i])) {

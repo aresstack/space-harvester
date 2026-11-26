@@ -73,7 +73,9 @@ public record MetadataFact(String id, PageKey page, String type, String role, St
                 && provenance.processorId().equals(other.provenance.processorId())
                 && provenance.processorVersion().equals(other.provenance.processorVersion())
                 && provenance.inputSha256().equals(other.provenance.inputSha256())
-                && Objects.equals(provenance.revision(), other.provenance.revision());
+                && Objects.equals(provenance.revision(), other.provenance.revision())
+                && Objects.equals(provenance.localPartId(), other.provenance.localPartId())
+                && Objects.equals(provenance.localSection(), other.provenance.localSection());
     }
 
     /**
@@ -136,7 +138,12 @@ public record MetadataFact(String id, PageKey page, String type, String role, St
      * @param revision    Revision der Payload oder {@code null}
      */
     public record Provenance(String processorId, String processorVersion, String inputSha256, String revision,
-                             Instant computedAt) {
+                             Instant computedAt, String localPartId, Integer localSection) {
+
+        public Provenance(String processorId, String processorVersion, String inputSha256, String revision,
+                          Instant computedAt) {
+            this(processorId, processorVersion, inputSha256, revision, computedAt, null, null);
+        }
 
         public Provenance {
             Objects.requireNonNull(processorId, "processorId");
@@ -146,8 +153,11 @@ public record MetadataFact(String id, PageKey page, String type, String role, St
         }
 
         static Provenance of(Enrichment enrichment) {
+            boolean local = enrichment.document().localOriginal();
             return new Provenance(enrichment.processorId(), enrichment.processorVersion(), enrichment.inputSha256(),
-                    enrichment.revision(), enrichment.computedAt());
+                    enrichment.revision(), enrichment.computedAt(),
+                    local ? enrichment.document().part().map(part -> part.value()).orElse(null) : null,
+                    local ? enrichment.section() : null);
         }
     }
 

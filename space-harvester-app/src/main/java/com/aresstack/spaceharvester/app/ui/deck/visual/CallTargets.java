@@ -108,7 +108,7 @@ final class CallTargets implements SourceResolver {
         try {
             var profile = store.session().profile();
             return Optional.of(new NdvLookup(NdvAnalysisSettings.resolver(),
-                    NdvAnalysisSettings.analysis(profile.label()).cache(), library(origin.location()),
+                    NdvAnalysisSettings.analysis(store.session()).cache(), library(origin.location()),
                     profile.defaultLibrary()));
         } catch (RuntimeException e) {
             return Optional.empty();
@@ -142,6 +142,13 @@ final class CallTargets implements SourceResolver {
             return Optional.empty();
         }
         String wanted = clean(targetName).toUpperCase(Locale.ROOT);
+        if (origin != null && origin.store() instanceof NdvDocumentStore ndvOrigin) {
+            List<EditorSession> matching = editors.all().stream()
+                    .filter(session -> session != origin && base(session.name()).equals(wanted))
+                    .filter(session -> session.store() instanceof NdvDocumentStore store
+                            && store.session() == ndvOrigin.session()).toList();
+            return matching.size() == 1 ? Optional.of(matching.getFirst()) : Optional.empty();
+        }
         return editors.all().stream()
                 .filter(session -> session != origin && base(session.name()).equals(wanted))
                 .findFirst();

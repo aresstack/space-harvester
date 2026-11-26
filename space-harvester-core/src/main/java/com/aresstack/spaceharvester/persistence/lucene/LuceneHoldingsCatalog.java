@@ -35,7 +35,9 @@ public final class LuceneHoldingsCatalog implements HoldingsCatalog {
 
     private static final Set<String> PAGE_FIELDS = Set.of(PageCacheSchema.PAGE_ID, PageCacheSchema.PARENT_ID,
             PageCacheSchema.RAW_SHA256, PageCacheSchema.VERSION_FIELD,
-            PageCacheSchema.SNAPSHOT + PageCacheSchema.VERSION_FIELD);
+            PageCacheSchema.SNAPSHOT + PageCacheSchema.VERSION_FIELD, PageCacheSchema.TITLE,
+            PageCacheSchema.ATTRIBUTE_KEY, PageCacheSchema.ATTRIBUTE_VALUE, PageCacheSchema.NATIVE_FORMAT,
+            PageCacheSchema.LOCAL_EXTRACTION_STATUS);
     private static final String WITHHELD_PARENT = PageCacheSchema.WITHHELD + "." + PageCacheSchema.PARENT_ID;
 
     private final LucenePageCache cache;
@@ -59,9 +61,7 @@ public final class LuceneHoldingsCatalog implements HoldingsCatalog {
             if (count > 0) {
                 for (ScoreDoc hit : searcher.search(pages, count).scoreDocs) {
                     Document doc = stored.document(hit.doc, PAGE_FIELDS);
-                    catalog.add(new CatalogPage(doc.get(PageCacheSchema.PAGE_ID), doc.get(PageCacheSchema.PARENT_ID),
-                            doc.get(PageCacheSchema.RAW_SHA256) != null, doc.get(PageCacheSchema.VERSION_FIELD),
-                            doc.get(PageCacheSchema.SNAPSHOT + PageCacheSchema.VERSION_FIELD)));
+                    catalog.add(page(doc, stored, hit.doc));
                 }
             }
             if (space == null) {
@@ -89,6 +89,51 @@ public final class LuceneHoldingsCatalog implements HoldingsCatalog {
             return Optional.of(new Stock(LucenePageCacheReader.of(PageCacheSchema.confirmedGeneration(space)),
                     catalog, stale, locked));
         });
+    }
+
+    private static CatalogPage page(Document doc, StoredFields stored, int id) throws java.io.IOException {
+        boolean folder = false;
+        String[] keys = doc.getValues(PageCacheSchema.ATTRIBUTE_KEY);
+        String[] values = doc.getValues(PageCacheSchema.ATTRIBUTE_VALUE);
+        for (int i = 0; i < keys.length && i < values.length; i++) {
+            if (com.aresstack.spaceharvester.application.sources.PageMetadata.RESOURCE_KIND.equals(keys[i])) {
+                folder = com.aresstack.spaceharvester.application.sources.PageMetadata.FOLDER_KIND.equals(values[i]);
+            }
+        }
+        var status = extractionStatus(doc, stored, id);
+        String hash = doc.get(PageCacheSchema.RAW_SHA256);
+        return new CatalogPage(doc.get(PageCacheSchema.PAGE_ID), doc.get(PageCacheSchema.PARENT_ID),
+                hash != null, doc.get(PageCacheSchema.VERSION_FIELD),
+                doc.get(PageCacheSchema.SNAPSHOT + PageCacheSchema.VERSION_FIELD), hash,
+                doc.get(PageCacheSchema.TITLE), folder, status);
+    }
+
+    private static com.aresstack.spaceharvester.application.assets.ExtractionStatus extractionStatus(
+            Document doc, StoredFields stored, int id) throws java.io.IOException {
+        String status = doc.get(PageCacheSchema.LOCAL_EXTRACTION_STATUS);
+        if (status != null) {
+            return com.aresstack.spaceharvester.application.assets.ExtractionStatus.valueOf(status);
+        }
+        if (!com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.FORMAT
+                .equals(doc.get(PageCacheSchema.NATIVE_FORMAT))) {
+            return null;
+        }
+        // Read only the bounded reference JSON, never the original bytes.
+        BytesRef raw = stored.document(id, Set.of(PageCacheSchema.RAW_JSON)).getBinaryValue(PageCacheSchema.RAW_JSON);
+        if (raw == null) {
+            return null;
+        }
+        var payload = new com.aresstack.spaceharvester.application.snapshot.NativePayload(
+                Arrays.copyOfRange(raw.bytes, raw.offset, raw.offset + raw.length),
+                com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.MEDIA_TYPE,
+                com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.FORMAT);
+        try {
+            return com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.read(payload)
+                    .map(com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference::status)
+                    .orElse(null);
+        } catch (RuntimeException failure) {
+            return com.aresstack.spaceharvester.application.assets.ExtractionStatus.FAILED;
+        }
     }
 
     @Override

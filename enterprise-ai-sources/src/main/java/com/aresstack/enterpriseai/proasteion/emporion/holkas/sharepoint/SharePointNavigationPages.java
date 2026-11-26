@@ -1,6 +1,7 @@
 package com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint;
 
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
+import com.aresstack.enterpriseai.source.api.InvalidNavigationCursorException;
 import com.aresstack.enterpriseai.source.api.NavigationChildren;
 import com.aresstack.enterpriseai.source.api.NavigationNode;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointNavigationCursor.State;
@@ -47,7 +48,7 @@ final class SharePointNavigationPages {
             State next = nextPage(state, first, page.next, files);
             String fingerprint = fingerprint(page);
             if (state.offset > page.nodes.size() || (state.offset > 0 && !fingerprint.equals(state.fingerprint))) {
-                throw invalid("REST-Seite wurde seit dem letzten Abruf verändert; Ordner neu laden");
+                throw new InvalidNavigationCursorException("SharePoint: REST-Seite wurde seit dem letzten Abruf verändert; Ordner neu laden");
             }
             int end = state.offset + Math.min(BATCH_SIZE - result.size(), page.nodes.size() - state.offset);
             result.addAll(page.nodes.subList(state.offset, end));
@@ -59,7 +60,7 @@ final class SharePointNavigationPages {
             boolean resumedPage = state.offset > 0;
             state = next;
             // Defer the next server page until the next Explorer request.
-            if (page.next != null && !resumedPage) break;
+            if (page.next != null && !resumedPage && !result.isEmpty()) break;
         }
         return new NavigationChildren(result, state == null ? "" : cursors.encode(state));
     }

@@ -14,6 +14,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.deigma.ExtractionRequest;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.ExtractionResult;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.ResourceExtractor;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
+import com.aresstack.enterpriseai.source.api.InvalidNavigationCursorException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.SourceLink;
@@ -483,7 +484,7 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         List<String> roots = searchRoots(authorization);
         if (parent.isRoot()) {
             if (cursor != null && !cursor.isEmpty()) {
-                throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: ungültiger Navigationscursor");
+                throw new InvalidNavigationCursorException("SharePoint: ungültiger Navigationscursor");
             }
             List<NavigationNode> nodes = new ArrayList<NavigationNode>();
             for (String root : roots) nodes.add(folderNode(root));
@@ -491,7 +492,7 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         }
         if (!isFolderId(parent.resource())) {
             if (cursor != null && !cursor.isEmpty()) {
-                throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: ungültiger Navigationscursor");
+                throw new InvalidNavigationCursorException("SharePoint: ungültiger Navigationscursor");
             }
             return new NavigationChildren(Collections.<NavigationNode>emptyList(), "");
         }
@@ -499,8 +500,8 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         if (!withinRoots(folder, roots)) {
             throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: Ordner außerhalb des Umfangs");
         }
-        URI folders = resourceApi("Folder", folder, "/Folders?$select=Name,ServerRelativeUrl");
-        URI files = resourceApi("Folder", folder, "/Files?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel");
+        URI folders = resourceApi("Folder", folder, "/Folders?$select=Name,ServerRelativeUrl&$top=" + SharePointNavigationPages.BATCH_SIZE);
+        URI files = resourceApi("Folder", folder, "/Files?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel&$top=" + SharePointNavigationPages.BATCH_SIZE);
         return navigationPages.folder(parent.resource().value(), cursor, folders, files,
                 (first, current, isFolderPage) -> navigationPage(folder, first, current, isFolderPage, authorization));
     }

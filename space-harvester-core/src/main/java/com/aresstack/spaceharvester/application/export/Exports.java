@@ -114,6 +114,30 @@ public class Exports {
     private final Clock clock;
     private volatile ImportedAssets collected;
     private volatile ReadingViewStore views;
+    private volatile LocalExportSnapshots localExports;
+    private volatile com.aresstack.spaceharvester.application.enrichment.PageTextProjector fileTexts =
+            snapshot -> Optional.empty();
+
+    public void fileTexts(com.aresstack.spaceharvester.application.enrichment.PageTextProjector fileTexts) {
+        this.fileTexts = Objects.requireNonNull(fileTexts, "fileTexts");
+    }
+
+    private Optional<String> projectFile(ConvertiblePage page) {
+        if (!"file".equals(page.snapshot().payload().nativeFormat())) {
+            return Optional.empty();
+        }
+        try {
+            return fileTexts.project(page.snapshot())
+                    .map(com.aresstack.spaceharvester.application.enrichment.PageText::text);
+        } catch (com.aresstack.spaceharvester.application.assets.DocumentTextException unavailable) {
+            return Optional.empty();
+        }
+    }
+
+
+    public void localExports(LocalExportSnapshots localExports) {
+        this.localExports = Objects.requireNonNull(localExports, "localExports");
+    }
 
     public Exports(Jobs jobs, PageCacheReader cache, ExportArtifactWriter writer, Clock clock) {
         this(jobs, cache, writer, ExportConverters.none(), clock);
@@ -918,6 +942,8 @@ public class Exports {
         List<TreeEntry> entries = new ArrayList<>();
         List<PageFailure> failures = new ArrayList<>();
         Map<String, ListedPage> exported = new HashMap<>();
+        List<String> localWarnings = new ArrayList<>();
+        Set<String> incompleteLocal = new HashSet<>();
         Map<String, Long> positions = new HashMap<>();
         Set<String> hidden = new HashSet<>();
         // Nur lesbare gescheiterte Seiten zählen, auch solche, die nie in den Cache kamen und deshalb in keiner
@@ -982,7 +1008,8 @@ public class Exports {
                         context.discovered(1);
                     }
                     failedIds.remove(listed.pageId());
-                    PageFailure failure = exportPage(session, listed, generation, positions);
+                    PageFailure failure = exportPage(session, listed, generation, positions, exported,
+                            request.holdingsOnly(), localWarnings, incompleteLocal);
                     if (!prepared.counted()) {
                         context.processed(1);
                     }
@@ -991,7 +1018,6 @@ public class Exports {
                         entries.add(new TreeEntry(listed.pageId(), listed.pageId().equals(request.rootPageId())
                                 ? null : listed.parentPageId(), positions.get(listed.pageId()),
                                 listed.header().metadata().title()));
-                        exported.put(listed.pageId(), listed);
                         if (states.get(listed.pageId()) == HoldingState.OUTDATED) {
                             outdated++;
                         }
@@ -1012,6 +1038,7 @@ public class Exports {
             context.checkpoint();
             PageTree tree = startFirst(PageTreeBuilder.build(entries), request.rootPageId());
             List<String> warnings = new ArrayList<>(prepared.warnings());
+            warnings.addAll(localWarnings);
             if (unrefreshed > 0) {
                 warnings.add(unrefreshed + " Seiten ließen sich beim Einlesen nicht abrufen; sie fehlen oder sind auf "
                         + "altem Stand");
@@ -1060,7 +1087,8 @@ public class Exports {
             }
             // Vollständig heißt: alle für den Auftraggeber lesbaren Seiten aus einer bestätigten Generation, im
             // aktuellen Stand (eine Ausgabe aus dem Bestand mit veralteten Seiten ist es nicht).
-            boolean complete = covered && failures.isEmpty() && unrefreshed == 0 && notHeld == 0 && outdated == 0;
+            boolean complete = covered && failures.isEmpty() && unrefreshed == 0 && notHeld == 0 && outdated == 0
+                    && incompleteLocal.isEmpty();
             if (!complete) {
                 context.incomplete();
             }
@@ -1234,7 +1262,9 @@ public class Exports {
 
     /** @return {@code null}, wenn die Seite geschrieben wurde, sonst warum nicht */
     private PageFailure exportPage(ExportArtifactWriter.Session session, ListedPage listed,
-                                          CacheGeneration generation, Map<String, Long> positions) {
+                                          CacheGeneration generation, Map<String, Long> positions,
+                                          Map<String, ListedPage> exported, boolean holdingsOnly,
+                                          List<String> warnings, Set<String> incompleteLocal) {
         if (listed.rawSha256() == null) {
             return new PageFailure(listed.pageId(), "PAYLOAD_MISSING",
                     "Für Seite " + listed.pageId() + " liegt noch keine Payload im Cache");
@@ -1250,7 +1280,25 @@ public class Exports {
             return new PageFailure(listed.pageId(), "CHANGED_DURING_EXPORT",
                     "Seite " + listed.pageId() + " wurde während des Exports im Cache geändert");
         }
-        session.page(listed.header(), page.snapshot());
+        PageSnapshot snapshot = page.snapshot();
+        if (com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.recognizes(snapshot.payload())) {
+            LocalExportSnapshots local = localExports;
+            if (local == null) {
+                return new PageFailure(listed.pageId(), "LOCAL_EXPORT_UNAVAILABLE",
+                        "Lokaler Dateiexport ist nicht eingerichtet");
+            }
+            LocalExportSnapshots.Result portable = local.prepare(snapshot, holdingsOnly);
+            snapshot = portable.snapshot();
+            if (portable.warning() != null) {
+                warnings.add("Datei " + listed.pageId() + ": " + portable.warning());
+            }
+            if (portable.incomplete()) {
+                incompleteLocal.add(listed.pageId());
+            }
+        }
+        session.page(listed.header(), snapshot);
+        // Track the exported bytes, not the hash of the cache reference.
+        exported.put(listed.pageId(), ListedPage.of(listed.header(), snapshot));
         // Reihenfolge unter den Geschwistern wie in Confluence; gehört zu keinem Hash.
         Long position = SiblingPosition.of(page.snapshot().payload());
         if (position != null) {
@@ -1426,6 +1474,11 @@ public class Exports {
             List<PageHeader> headers = new ArrayList<>(exported.size());
             walk(tree, (pageId, depth) -> headers.add(exported.get(pageId).header()));
             return headers;
+        }
+
+        @Override
+        public Optional<String> fileText(ConvertiblePage page) {
+            return projectFile(page);
         }
 
         @Override

@@ -24,6 +24,12 @@ public final class KnowledgeDocumentTextProjector implements PageTextProjector {
 
     @Override
     public Optional<PageText> project(PageSnapshot snapshot) {
+        var portable = com.aresstack.spaceharvester.application.snapshot.PortableLocalDocument.read(snapshot.payload());
+        if (portable.isPresent()) {
+            String text = portable.get().text();
+            return text.isBlank() ? Optional.empty() : Optional.of(new PageText(
+                    "portable-local-document/v1", text, List.of()));
+        }
         // Auch der Textauszug einer Datei über der Größengrenze des Caches (LargeFiles): derselbe Lesetext.
         if (!NATIVE_FORMAT.equals(snapshot.payload().nativeFormat())
                 && !com.aresstack.spaceharvester.application.snapshot.LargeFiles.TEXT_FORMAT

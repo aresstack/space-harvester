@@ -85,6 +85,44 @@ class LucenePageCacheReaderTest {
     }
 
     @Test
+    void concurrentOrderUpdatesUseOneRevision() throws Exception {
+        String revision = reader.compareAndSetChildOrder("wiki", null, "parent", null,
+                java.util.List.of("initial")).orElseThrow();
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.Future<java.util.Optional<String>> a = executor.submit(() -> {
+                start.await();
+                return reader.compareAndSetChildOrder("wiki", null, "parent", revision, java.util.List.of("a"));
+            });
+            java.util.concurrent.Future<java.util.Optional<String>> b = executor.submit(() -> {
+                start.await();
+                return reader.compareAndSetChildOrder("wiki", null, "parent", revision, java.util.List.of("b"));
+            });
+            start.countDown();
+            java.util.Optional<String> first = a.get();
+            java.util.Optional<String> second = b.get();
+            assertThat(first.isPresent() ^ second.isPresent()).isTrue();
+            assertThat(reader.childOrder("wiki", null, "parent")).containsExactly(first.isPresent() ? "a" : "b");
+            assertThat(reader.compareAndSetChildOrder("wiki", null, "parent", revision, java.util.List.of("stale"))).isEmpty();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void optionalOrderWriteDoesNotWaitForInventoryLock() throws Exception {
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try (LucenePageCache.Batch ignored = cache.begin()) {
+            java.util.concurrent.Future<java.util.Optional<String>> write = executor.submit(() ->
+                    reader.compareAndSetChildOrder("wiki", null, "parent", null, java.util.List.of("a")));
+            assertThat(write.get(3, java.util.concurrent.TimeUnit.SECONDS)).isEmpty();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void anUnknownSpaceHasNoGeneration() {
         assertThat(reader.currentGeneration("wiki", "DEV")).isEmpty();
     }

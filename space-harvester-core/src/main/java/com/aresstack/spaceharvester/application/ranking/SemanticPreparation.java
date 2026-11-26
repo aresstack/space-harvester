@@ -58,7 +58,12 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
      * Aufruf weiter.
      */
     private final Jobs jobs;
-    private final java.util.function.BiPredicate<PageSnapshot, String> localPreparation;
+    private final LocalPreparation localPreparation;
+
+    @FunctionalInterface
+    public interface LocalPreparation {
+        boolean prepare(PageSnapshot snapshot, String processorId, long deadline);
+    }
 
     /** Angabe an Aufträgen „Suchtreffer vorbereiten“ früherer Fassungen ({@code task}); neue entstehen nicht mehr. */
     public static final String TASK = "prepare-search-hits";
@@ -77,12 +82,12 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
     /** @param jobs für den Rest nach der Frist ({@value #PHASE}) oder {@code null} */
     public SemanticPreparation(KeywordSearch keywords, Function<PageKey, Optional<PageSnapshot>> snapshots,
                                Enrichments enrichments, String processorId, Duration wait, Jobs jobs) {
-        this(keywords, snapshots, enrichments, processorId, wait, jobs, (snapshot, id) -> false);
+        this(keywords, snapshots, enrichments, processorId, wait, jobs, (snapshot, id, deadline) -> false);
     }
 
     public SemanticPreparation(KeywordSearch keywords, Function<PageKey, Optional<PageSnapshot>> snapshots,
                                Enrichments enrichments, String processorId, Duration wait, Jobs jobs,
-                               java.util.function.BiPredicate<PageSnapshot, String> localPreparation) {
+                               LocalPreparation localPreparation) {
         this.localPreparation = Objects.requireNonNull(localPreparation, "localPreparation");
         this.jobs = jobs;
         this.keywords = Objects.requireNonNull(keywords, "keywords");
@@ -143,7 +148,7 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
             Optional<PageSnapshot> page = snapshots.apply(key);
             if (page.isPresent() && com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
                     .recognizes(page.get().payload())) {
-                if (!localPreparation.test(page.get(), processorId)) {
+                if (!localPreparation.prepare(page.get(), processorId, deadline)) {
                     pending++;
                 }
             } else {

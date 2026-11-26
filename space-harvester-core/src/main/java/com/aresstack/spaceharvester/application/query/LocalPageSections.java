@@ -25,7 +25,8 @@ public final class LocalPageSections {
         LocalOriginalReference reference = LocalOriginalReference.read(snapshot.payload()).orElseThrow();
         String input = PageTextIndexing.entryState(snapshot.payload().rawSha256(), metadata);
         String mediaType = reference.originalMediaType();
-        if (index.inputSha256(snapshot.key()).filter(input::equals).isPresent()) {
+        if (index.inputSha256(snapshot.key()).filter(input::equals).isPresent()
+                && index.contentStateKnown(snapshot.key())) {
             return false;
         }
         if (reference.extractionKey() == null) {
@@ -37,10 +38,8 @@ public final class LocalPageSections {
         StoredExtraction extraction = documents.stored(reference.extractionKey())
                 .orElseThrow(() -> new IllegalStateException("Referenced extraction missing"));
         try (Stream<DocumentExtractions.IndexSection> sections = documents.indexSections(extraction)) {
-            Stream<PageTextIndex.Entry> entries = sections.flatMap(section -> split(section.partTitle().isBlank() ? section.text()
-                    : section.partTitle() + "\n" + section.text())
-                    .map(text -> new PageTextIndex.Entry(snapshot.key(), metadata.partitionKey(),
-                            metadata.title(), text, input, mediaType)));
+            Stream<PageTextIndex.Entry> entries = sections.flatMap(section ->
+                    entries(snapshot, metadata, input, mediaType, section));
             // Retain a title-only entry only when the document has no indexable sections.
             try (entries) {
                 var iterator = entries.iterator();
@@ -55,10 +54,18 @@ public final class LocalPageSections {
         return true;
     }
 
-    private static Stream<String> split(String text) {
-        // Bound each Lucene entry even when the extractor emitted a single unusually large block.
+    private static Stream<PageTextIndex.Entry> entries(PageSnapshot snapshot, PageMetadata metadata, String input,
+                                                        String mediaType, DocumentExtractions.IndexSection section) {
+        // Keep embedded names searchable without counting them as extracted document content.
+        String prefix = section.partTitle().isBlank() ? "" : section.partTitle() + "\n";
+        String text = prefix + section.text();
         final int size = 100_000;
         return java.util.stream.IntStream.iterate(0, offset -> offset < text.length(), offset -> offset + size)
-                .mapToObj(offset -> text.substring(offset, Math.min(offset + size, text.length())));
+                .mapToObj(offset -> {
+                    String chunk = text.substring(offset, Math.min(offset + size, text.length()));
+                    int nameChars = Math.min(chunk.length(), Math.max(0, prefix.length() - offset));
+                    return new PageTextIndex.Entry(snapshot.key(), metadata.partitionKey(), metadata.title(),
+                            chunk, input, mediaType, nameChars);
+                });
     }
 }

@@ -51,11 +51,8 @@ public final class NdvAnalysis {
     /** Nach dem Speichern: Quelltext ablegen, neu analysieren, Aufrufer neu berechnen (wie {@code onSourceSaved}). */
     public void saved(NdvObject object, String source) {
         cache.put(object, source);
-        NaturalDependencyGraph graph = graphs.get(upper(object.library()));
-        if (graph != null) {
-            graph.addSource(object.library(), object.displayName(), source);
-            graph.build();
-            changed();
+        if (graphs.containsKey(upper(object.library()))) {
+            build(object.library());
         }
     }
 

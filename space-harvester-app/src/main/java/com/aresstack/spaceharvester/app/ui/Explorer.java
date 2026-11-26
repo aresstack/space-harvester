@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.query.SpaceTree;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
+import com.aresstack.spaceharvester.application.sources.InvalidNavigationCursorException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -220,7 +221,7 @@ public final class Explorer {
     record MoreItem(String cursor) implements Item {
         @Override
         public String toString() {
-            return MORE;
+            return cursor == null ? "Ordner neu laden" : MORE;
         }
     }
 
@@ -1382,14 +1383,8 @@ public final class Explorer {
         Background.run(() -> children(runtime, item, null), batch -> {
             node.loading = false;
             node.loaded = true;
-            if (node.fromCache) {
-                node.fromCache = false;
-                merge(node, batch, true);
-            } else {
-                node.removeAllChildren();
-                append(node, batch);
-                model.nodeStructureChanged(node);
-            }
+            node.fromCache = false;
+            merge(node, batch, true);
             // Prefetch is optional and must never postpone the visible navigation results.
             Background.run(() -> {
                 prefetch(runtime, item, batch);
@@ -1503,34 +1498,29 @@ public final class Explorer {
         model.nodeChanged(moreNode);
         Background.run(() -> children(runtime, parent.item(), more.cursor()), batch -> {
             parent.loading = false;
-            if (parent.confirmed != null) {
-                // Über einem Stand aus dem Cache: auch die weiteren Stapel gleichen ab statt anzuhängen.
-                merge(parent, batch, false);
-                if (then != null) {
-                    then.run();
-                }
-                return;
+            merge(parent, batch, more.cursor() == null);
+            if (more.cursor() == null) {
+                note.setText("Ordner neu geladen.");
             }
-            // Nur einfügen und entfernen, nicht den Knoten neu aufbauen: das ließe die Auswahl darunter (und damit den
-            // Suchbereich) fallen.
-            model.removeNodeFromParent(moreNode);
-            int first = parent.getChildCount();
-            append(parent, batch);
-            int[] added = new int[parent.getChildCount() - first];
-            for (int i = 0; i < added.length; i++) {
-                added[i] = first + i;
-            }
-            model.nodesWereInserted(parent, added);
             if (then != null) {
                 then.run();
             }
         }, error -> {
             parent.loading = false;
-            moreNode.setUserObject(more);
+            MoreItem retry = more;
+            if (error instanceof InvalidNavigationCursorException && more.cursor() != null) {
+                retry = new MoreItem(null);
+                moreNode.setUserObject(retry);
+                model.nodeChanged(moreNode);
+                loadMore(parent, moreNode, retry, then);
+                return;
+            }
+            moreNode.setUserObject(retry);
             model.nodeChanged(moreNode);
             note.setText("Nicht geladen: " + Problems.describe(error).title());
         });
     }
+
 
     private static void append(Node parent, Batch batch) {
         for (Node child : batch.nodes()) {
@@ -2172,7 +2162,8 @@ public final class Explorer {
         return switch (item) {
             case SourceItem source -> states.all(List.of(source.sourceId()), treeSpaces());
             case SpaceItem space -> states.space(space.sourceId(), space.spaceKey());
-            case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP -> TreeStates.Badge.NONE;
+            case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP ->
+                    states.folder(page.sourceId(), page.spaceKey(), page.pageId());
             case PageItem page -> states.page(page.sourceId(), page.spaceKey(), page.pageId(),
                     !Boolean.FALSE.equals(page.hasChildren()));
             case null, default -> TreeStates.Badge.NONE;

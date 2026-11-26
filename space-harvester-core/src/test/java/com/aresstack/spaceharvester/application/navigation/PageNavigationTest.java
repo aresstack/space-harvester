@@ -96,22 +96,22 @@ class PageNavigationTest {
                 .containsExactly("101", "102", "105", "106");
 
         // Erster Stapel der Quelle: 102, (103 gesperrt), 101; die übrigen nach Titel dahinter.
-        live.children(CLIENT, "wiki", null, "100", null);
+        PageNavigation.Children first = live.children(CLIENT, "wiki", null, "100", null);
         assertThat(live.cachedChildren(CLIENT, "wiki", null, "100").pages()).extracting(PageNode::pageId)
                 .containsExactly("102", "101", "105", "106");
         assertThat(cache.childOrder("wiki", null, "100")).containsExactly("102", "103", "101");
 
         // Zweiter und letzter Stapel hängt an; 106 kennt die Quelle nicht mehr und kommt nach Titel dahinter.
-        live.children(CLIENT, "wiki", null, "100", "weiter");
+        live.children(CLIENT, "wiki", null, "100", first.nextCursor());
         assertThat(cache.childOrder("wiki", null, "100")).containsExactly("102", "103", "101", "105");
         assertThat(live.cachedChildren(CLIENT, "wiki", null, "100").pages()).extracting(PageNode::pageId)
                 .containsExactly("102", "101", "105", "106");
 
-        // Dieselbe Reihenfolge erneut: kein neuer Schreibzugriff.
+        // Advance the revision even for identical orders to invalidate older continuations.
         int writes = cache.childOrderWrites;
-        live.children(CLIENT, "wiki", null, "100", null);
-        live.children(CLIENT, "wiki", null, "100", "weiter");
-        assertThat(cache.childOrderWrites).isEqualTo(writes);
+        first = live.children(CLIENT, "wiki", null, "100", null);
+        live.children(CLIENT, "wiki", null, "100", first.nextCursor());
+        assertThat(cache.childOrderWrites).isEqualTo(writes + 2);
 
         // Wurzelseiten je Space.
         live.children(CLIENT, "wiki", "DEV", null, null);

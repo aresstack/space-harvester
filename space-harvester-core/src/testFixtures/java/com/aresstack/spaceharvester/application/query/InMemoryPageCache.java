@@ -113,19 +113,35 @@ public final class InMemoryPageCache implements PageCacheReader {
         return !children(sourceId, null, pageId, 1).isEmpty();
     }
 
-    private final Map<String, List<String>> childOrders = new ConcurrentHashMap<>();
+    private final Map<String, ChildOrderState> childOrders = new ConcurrentHashMap<>();
     /** Wie oft eine Reihenfolge der Kinder geschrieben wurde. */
     public int childOrderWrites;
 
     @Override
     public List<String> childOrder(String sourceId, String spaceKey, String parentPageId) {
-        return childOrders.getOrDefault(childOrderKey(sourceId, spaceKey, parentPageId), List.of());
+        return childOrderState(sourceId, spaceKey, parentPageId).get().pageIds();
     }
 
     @Override
-    public void rememberChildOrder(String sourceId, String spaceKey, String parentPageId, List<String> pageIds) {
+    public synchronized void rememberChildOrder(String sourceId, String spaceKey, String parentPageId, List<String> pageIds) {
         childOrderWrites++;
-        childOrders.put(childOrderKey(sourceId, spaceKey, parentPageId), List.copyOf(pageIds));
+        childOrders.put(childOrderKey(sourceId, spaceKey, parentPageId), new ChildOrderState(java.util.UUID.randomUUID().toString(), pageIds));
+    }
+
+    @Override
+    public synchronized Optional<ChildOrderState> childOrderState(String sourceId, String spaceKey, String parentPageId) {
+        return Optional.of(childOrders.getOrDefault(childOrderKey(sourceId, spaceKey, parentPageId),
+                new ChildOrderState(null, List.of())));
+    }
+
+    @Override
+    public synchronized Optional<String> compareAndSetChildOrder(String sourceId, String spaceKey, String parentPageId,
+                                                                  String expectedRevision, List<String> pageIds) {
+        if (!java.util.Objects.equals(expectedRevision, childOrderState(sourceId, spaceKey, parentPageId).get().revision())) {
+            return Optional.empty();
+        }
+        rememberChildOrder(sourceId, spaceKey, parentPageId, pageIds);
+        return Optional.of(childOrderState(sourceId, spaceKey, parentPageId).get().revision());
     }
 
     private static String childOrderKey(String sourceId, String spaceKey, String parentPageId) {

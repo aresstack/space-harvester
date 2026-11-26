@@ -94,11 +94,17 @@ public interface TermIndex {
      * @param extraction  wie {@link TermPosting#extraction()}
      */
     record TermKey(PageKey page, TermKind kind, String normalized, String revision, String inputSha256,
-                   boolean ofDocument, String extraction, String sortKey) {
+                   boolean ofDocument, String extraction, String sortKey, boolean localOriginal) {
+
+        public TermKey(PageKey page, TermKind kind, String normalized, String revision, String inputSha256,
+                       boolean ofDocument, String extraction, String sortKey) {
+            this(page, kind, normalized, revision, inputSha256, ofDocument, extraction, sortKey, false);
+        }
 
         public static TermKey of(TermPosting posting) {
             return new TermKey(posting.page(), posting.kind(), posting.normalized(), posting.revision(),
-                    posting.inputSha256(), posting.ofDocument(), posting.extraction(), posting.sortKey());
+                    posting.inputSha256(), posting.ofDocument(), posting.extraction(), posting.sortKey(),
+                    posting.document().localOriginal());
         }
 
         public String groupKey() {

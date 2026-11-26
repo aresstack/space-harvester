@@ -44,6 +44,11 @@ public interface ConversionInput {
      */
     void forEachPage(Consumer<ConvertiblePage> action);
 
+    /** Project text only from the exported file bytes, never from the live source. */
+    default Optional<String> fileText(ConvertiblePage page) {
+        return Optional.empty();
+    }
+
     /**
      * Die beschafften Bilder des Datenbestands ({@code assets.json} und Asset-Speicher); ohne Bilder
      * {@link ExportAssets#NONE}. Converter laden daraus, nie von der Quelle.
