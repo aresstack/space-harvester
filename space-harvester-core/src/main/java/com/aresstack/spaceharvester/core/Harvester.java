@@ -3556,7 +3556,15 @@ public final class Harvester implements AutoCloseable {
             LOG.log(System.Logger.Level.WARNING, "Hintergrundaufträge nicht als unterbrochen markiert ({0})",
                     e.getClass().getName());
         }
-        RuntimeException failure = closeAll(resources.reversed(), null);
+        // Vor den Ablagen: Die Aufträge müssen aufgehört haben, bevor Cache, Index und Co. schließen, auf denen sie
+        // arbeiten (Angelo 26.11.2026: Löschen der Daten einer entfernten Quelle beim Neuladen). Die Ablage der
+        // Aufträge schließt erst danach mit den übrigen; ein zweites Schließen von Jobs tut nichts.
+        List<AutoCloseable> order = new ArrayList<>();
+        if (jobs != null) {
+            order.add(jobs);
+        }
+        order.addAll(resources.reversed());
+        RuntimeException failure = closeAll(order, null);
         if (failure != null) {
             throw failure;
         }

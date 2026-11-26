@@ -239,6 +239,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `Holdings.MAX_PAGES_PER_MESSAGE` | `1000` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `ImageSettings.DEFAULT_MAX_PER_RUN` | `500` | Vorgabe | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `JobEvent.MAX_DETAIL_CHARS` | `16_000` | fest | Invariante/Darstellung | im Code belassen |
+| `Jobs.STOP_TIMEOUT` | `Duration.ofSeconds(30)` | fest | Timeout | einstellbar |
 | `JobLimits.DEFAULT_MAX_OPEN_BACKGROUND` | `1000` | Vorgabe | Warteschlange | einstellbar: `space-harvester.jobs.max-open-background` |
 | `JobLimits.DEFAULT_MAX_OPEN_PER_OWNER` | `4` | Vorgabe | Warteschlange | einstellbar: `space-harvester.jobs.max-open-per-owner` |
 | `JobLimits.DEFAULT_MAX_QUEUED` | `20` | Vorgabe | Warteschlange | einstellbar: `space-harvester.jobs.max-queued` |
@@ -422,9 +423,9 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `SignInFailures.MAX_DETAIL` | `120` | fest | Invariante/Darstellung | im Code belassen |
 | `SignInRequests.DEFAULT_WAIT` | `Duration.ofMinutes(15)` | Vorgabe | Timeout | einstellbar |
 | `SimplificationSettings.DEFAULT_PARALLEL` | `2` | Vorgabe | Parallelität | einstellbar |
-| `SourceDataPurge.JOB_STOP_TIMEOUT` | `Duration.ofSeconds(30)` | fest | Timeout | einstellbar |
+| `SourceDataPurge.JOB_STOP_TIMEOUT` | `Jobs.STOP_TIMEOUT` | fest | Timeout | einstellbar |
 | `SourceDiagnostics.PROBE_TIMEOUT` | `Duration.ofSeconds(15)` | fest | Timeout | einstellbar |
-| `SourceManagement.JOB_STOP_TIMEOUT` | `Duration.ofSeconds(30)` | fest | Timeout | einstellbar |
+| `SourceManagement.JOB_STOP_TIMEOUT` | `com.aresstack.spaceharvester.application.jobs.Jobs.STOP_TIMEOUT` | fest | Timeout | einstellbar |
 | `SourceQueries.MAX_PAGE_ID_LIMIT` | `200` | fest | Stapel-/Seitengröße | einstellbar |
 | `SourceQueries.MAX_PAGE_METADATA_LIMIT` | `100` | fest | Stapel-/Seitengröße | einstellbar |
 | `SpaceSync.DEFAULT_WITHHELD_RETENTION` | `Duration.ofDays(30)` | Vorgabe | Cache-Aufbewahrung | einstellbar |
