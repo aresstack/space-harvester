@@ -82,6 +82,7 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Fristen im Command Deck außerhalb des Terminals (früher `FtpChatTools.TIMEOUT_SECONDS`, `EakteDocumentContent.TIMEOUT_SECONDS`, `HttpBetaViewServer.TIMEOUT`, `NetUseLogin.TIMEOUT_SECONDS`) | 120 / 120 / 60 / 60 s | langsame Hosts brachen ab | **einstellbar**: `DeckTimeouts` in `app-state.json` (`deck.timeouts.*`), Einstellungen › Mainframe › „Fristen im Command Deck“. Die Fristen des Terminals (Makros, Anmeldung, OpenTerm) bleiben bis zu einer Entscheidung |
 | Fristen je Anfrage einzelner KI-Aufgaben (früher `RemoteAi.SUMMARY_TIMEOUT`, `LABEL_TIMEOUT`, `EXPANSION_TIMEOUT`) | 5 min / 60 s / 90 s | große Modelle oder langsame Dienste brachen ab | **einstellbar**: `ai.summary-timeout`, `ai.label-timeout`, `ai.expansion-timeout` (`AiServiceSettings.Timeouts`), Einstellungen › KI-Dienst › Modelle › „Fristen je Anfrage“ |
 | Netz-Fristen der Quellen (früher `DelegatedConfluenceHttp.TIMEOUT`, `RoutedWebDavHttp.REQUEST_TIMEOUT`, `SourceDiagnostics.PROBE_TIMEOUT`) | 10 s / 90 s / 15 s | langsame Netze oder Proxys brachen Token-Prüfung, BSCW-Abrufe und Verbindungsprüfung ab | **einstellbar**: `network.timeouts.delegated-check`, `webdav-request`, `probe` (`SourceTimeouts`), für alle Quellen wie die Proxy-Frist |
+| Fristen der App (früher `HttpModelDownload.CONNECT_TIMEOUT`/`RESPONSE_TIMEOUT`, `ChatWebBrowser.FIREFOX_START_TIMEOUT_MILLIS`, `DiagramLabels.TIMEOUT_SECONDS`, `VlcPcmAudioDecoder.NO_AUDIO_TIMEOUT_NANOS`) | 30 / 60 / 30 / 30 / 60 s | langsame Netze, Rechner oder Modelle brachen ab | **einstellbar**: `AppTimeouts` in `app-state.json` (`app.timeouts.*`), Einstellungen › Allgemein › „Fristen der App“ |
 | MVS-Binärdiagnose und Hex-Ansicht (früher `BinarySample.MAX_CAPTURE_BYTES`, `MvsDiagnosisTools.BUDGET`, Lesegröße 4096, Frist 120 s) | 8 MiB / 65536 / 4096 Bytes / 120 s | größere Stichproben waren unmöglich, die KI las höchstens 64 KiB | **einstellbar**: `MvsDiagnosisSettings` in `app-state.json` (`deck.ftp.diagnosis.sample-bytes`, `read-bytes`, `budget-bytes`, `timeout-seconds`), Einstellungen › Mainframe › „MVS-Binärdiagnose und Hex-Ansicht“. Das Modell kommt aus der Zeile „Diagnose“ (siehe oben) |
 
 ### Grenzen außerhalb des eigenen Codes
@@ -563,11 +564,9 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ChatTools.MAX_TERM_CHARS` | `200` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatTurn.MAX_QUERY_CHARS` | `KeywordSearch.MAX_TEXT_LENGTH` | fest | Invariante/Darstellung | im Code belassen: die Grenze der Suche selbst (früher fest 500; die Suche lehnte über 200 Zeichen ab) |
 | `ChatTurn.SUB_AGENT_CHARS` | `ChatKnowledge.MAX_PAGE_CHARS` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatWebBrowser.FIREFOX_START_TIMEOUT_MILLIS` | `30000L` | fest | Timeout | einstellbar |
 | `ComicDivider.GRIP_MAX` | `36` | fest | Invariante/Darstellung | im Code belassen |
 | `DeckHome.MAX_COLUMNS` | `3` | fest | Invariante/Darstellung | im Code belassen |
 | `DiagramLabels.CACHE_SIZE` | `1000` | fest | Cache-Aufbewahrung | einstellbar |
-| `DiagramLabels.TIMEOUT_SECONDS` | `30` | fest | Timeout | einstellbar |
 | `DocumentPane.MAX_PILL` | `28` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_INTERVAL_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_PRESS_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
@@ -584,8 +583,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `FragmentedMp4AudioOnlySource.MAX_READ` | `MediaStreamBridge.CHUNK_BYTES` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `FtpChatTools.MAX_ENTRIES` | `300` | fest | Cache-Aufbewahrung | einstellbar |
 | `GlossaryTab.SNIPPET_CHARS` | `120` | fest | Invariante/Darstellung | im Code belassen |
-| `HttpModelDownload.CONNECT_TIMEOUT` | `Duration.ofSeconds(30)` | fest | Timeout | einstellbar |
-| `HttpModelDownload.RESPONSE_TIMEOUT` | `Duration.ofSeconds(60)` | fest | Timeout | einstellbar |
 | `HuggingFaceClient.MAX_DOWNLOAD_ATTEMPTS` | `5` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `InfoPopup.MAX_HEIGHT` | `600` | fest | Invariante/Darstellung | im Code belassen |
 | `InfoPopup.MAX_WIDTH` | `480` | fest | Invariante/Darstellung | im Code belassen |
@@ -634,7 +631,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `TextToolCalls.ANNOUNCE_MAX_CHARS` | `300` | fest | Invariante/Darstellung (Erkennung eines Werkzeugaufrufs als Text) | im Code belassen |
 | `TextWithPicture.MAX_PICTURE_WIDTH` | `280` | fest | Invariante/Darstellung | im Code belassen |
 | `TiledDiagramRenderer.MAX_TILE_SVG_SIZE` | `800.0` | fest | Invariante/Darstellung | im Code belassen |
-| `VlcPcmAudioDecoder.NO_AUDIO_TIMEOUT_NANOS` | `TimeUnit.SECONDS.toNanos(60)` | fest | Timeout | einstellbar |
 | `VlcPcmAudioDecoder.READ_BYTES` | `64 * 1024` | fest | Stapel-/Seitengröße | einstellbar |
 | `WhisperSpeechTranscriber.READ_BYTES` | `16_000 * 2 * 5` | fest | Stapel-/Seitengröße | einstellbar |
 | `WordDocumentPreview.MAX_PREVIEW_CHARACTERS` | `2_000_000` | fest | Bestandsgrenze | beseitigen |

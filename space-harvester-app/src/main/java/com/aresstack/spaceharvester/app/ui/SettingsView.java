@@ -144,6 +144,12 @@ public final class SettingsView implements View {
                     () -> com.aresstack.spaceharvester.app.ui.deck.DeckTimeouts.shared().values(),
                     NumberSettingsPanel.Store.immediately(
                             values -> com.aresstack.spaceharvester.app.ui.deck.DeckTimeouts.shared().save(values)));
+    /** Bereich „Allgemein“: Fristen der App außerhalb von Core und Command Deck (app-state.json). */
+    static final String APP_TIMEOUTS_HEADING = "Fristen der App";
+    final NumberSettingsPanel<AppTimeouts.Value> appTimeouts =
+            new NumberSettingsPanel<>(APP_TIMEOUTS_HEADING, "Alle Fristen der App auf ihre Vorgabe zurücksetzen",
+                    AppTimeouts.Value.class, () -> AppTimeouts.shared().values(),
+                    NumberSettingsPanel.Store.immediately(values -> AppTimeouts.shared().save(values)));
     /** Bereich „NDV“: Natural-Blockfarben im Editor (wie MainframeMate). */
     final NdvSettingsPanel ndv = new NdvSettingsPanel();
     final NdvAnalysisSettingsPanel ndvAnalysis = new NdvAnalysisSettingsPanel();
@@ -329,6 +335,7 @@ public final class SettingsView implements View {
                 Comic.plate(ANALYTICS_TITLE, Comic.PETROL, analyticsRows),
                 Comic.plate("Ablage", Comic.PETROL, data),
                 Comic.plate(FileAccessEditor.HEADING, Comic.ORANGE, fileAccess.component()),
+                Comic.plate(APP_TIMEOUTS_HEADING, Comic.PETROL, appTimeouts.component()),
                 Comic.plate("Diagnose", Comic.DARK, diagnosis),
                 Comic.plate(CONSOLE_TITLE, Comic.DARK, consoleRows)));
         page(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.serviceComponent())));

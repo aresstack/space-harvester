@@ -40,7 +40,6 @@ public final class ChatWebBrowser {
     /** Systemeigenschaft mit dem Pfad zu Firefox, wie im Enterprise AI Client. */
     public static final String FIREFOX_PROPERTY = "enterpriseai.firefox";
     static final String PROFILES_DIRECTORY = "browser-profiles";
-    private static final long FIREFOX_START_TIMEOUT_MILLIS = 30000L;
     private static final System.Logger LOG = System.getLogger(ChatWebBrowser.class.getName());
 
     private final ChatBrowserPort browsers;
@@ -81,7 +80,8 @@ public final class ChatWebBrowser {
             return null;
         }
         DelegatingBrowserAccessGuard guard = new DelegatingBrowserAccessGuard();
-        ChatBrowserRuntime runtime = new ChatBrowserRuntime(new FirefoxEngine(firefox, FIREFOX_START_TIMEOUT_MILLIS),
+        ChatBrowserRuntime runtime = new ChatBrowserRuntime(new FirefoxEngine(firefox,
+                com.aresstack.spaceharvester.app.ui.AppTimeouts.shared().get(com.aresstack.spaceharvester.app.ui.AppTimeouts.Value.FIREFOX_START).toMillis()),
                 new BrowserProfileStore(dataDirectory.resolve(PROFILES_DIRECTORY)), guard);
         return new ChatWebBrowser(runtime, guard, settings);
     }

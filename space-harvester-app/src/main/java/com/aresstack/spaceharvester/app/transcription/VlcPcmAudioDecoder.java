@@ -26,7 +26,6 @@ public final class VlcPcmAudioDecoder implements AudioPcmDecoder {
 
     static final int SAMPLE_RATE = 16_000;
     static final int BYTES_PER_SECOND = SAMPLE_RATE * 2;
-    private static final long NO_AUDIO_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(60);
     private static final int READ_BYTES = 64 * 1024;
     /**
      * VLC's resampler for 48 kHz to 16 kHz. The default one rounds down per AAC frame (341 instead of 341.33 samples)
@@ -118,6 +117,9 @@ public final class VlcPcmAudioDecoder implements AudioPcmDecoder {
                                 LongConsumer onDecodedSeconds) throws Exception {
         long lastProgress = System.nanoTime();
         long lastReported = -1;
+        // Ohne Ton höchstens so lange (Einstellungen › Allgemein › Fristen der App).
+        java.time.Duration silence = com.aresstack.spaceharvester.app.ui.AppTimeouts.shared()
+                .get(com.aresstack.spaceharvester.app.ui.AppTimeouts.Value.AUDIO_SILENCE);
         while (!completed.await(100, TimeUnit.MILLISECONDS)) {
             if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
                 throw new InterruptedIOException("Audio decoding cancelled");
@@ -127,8 +129,8 @@ public final class VlcPcmAudioDecoder implements AudioPcmDecoder {
             long now = System.nanoTime();
             if (delivered > before) {
                 lastProgress = now;
-            } else if (now - lastProgress > NO_AUDIO_TIMEOUT_NANOS) {
-                throw new IOException("VLC did not deliver audio samples for 60 seconds");
+            } else if (now - lastProgress > silence.toNanos()) {
+                throw new IOException("VLC did not deliver audio samples for " + silence.toSeconds() + " seconds");
             }
             long seconds = delivered / BYTES_PER_SECOND;
             if (seconds != lastReported) {

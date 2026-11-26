@@ -32,9 +32,6 @@ import javax.net.ssl.TrustManager;
 public final class HttpModelDownload implements ParserModelInstaller.Download,
         com.aresstack.spaceharvester.app.hf.HuggingFaceClient.Transport {
 
-    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(30);
-    /** Höchstens so lange auf die Antwortköpfe warten; ein hängender Datenstrom endet über „Abbrechen“. */
-    private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(60);
 
     private final ProxySettings proxy;
     private final TrustSettings tls;
@@ -53,7 +50,7 @@ public final class HttpModelDownload implements ParserModelInstaller.Download,
 
     /** Baut den Client erst beim Laden, damit reine Statusabfragen nichts aufbauen. */
     private HttpClient client() {
-        return routed(proxy, tls).followRedirects(HttpClient.Redirect.NORMAL).connectTimeout(CONNECT_TIMEOUT).build();
+        return routed(proxy, tls).followRedirects(HttpClient.Redirect.NORMAL).connectTimeout(com.aresstack.spaceharvester.app.ui.AppTimeouts.shared().get(com.aresstack.spaceharvester.app.ui.AppTimeouts.Value.DOWNLOAD_CONNECT)).build();
     }
 
     /**
@@ -101,7 +98,9 @@ public final class HttpModelDownload implements ParserModelInstaller.Download,
 
     private HttpResponse<InputStream> send(URI target, long rangeFrom) throws IOException {
         HttpRequest.Builder request = HttpRequest.newBuilder(target).header("User-Agent", userAgent)
-                .timeout(RESPONSE_TIMEOUT).GET();
+                // Höchstens so lange auf die Antwortköpfe warten (Einstellungen › Allgemein); ein hängender Datenstrom
+                // endet über „Abbrechen“.
+                .timeout(com.aresstack.spaceharvester.app.ui.AppTimeouts.shared().get(com.aresstack.spaceharvester.app.ui.AppTimeouts.Value.DOWNLOAD_RESPONSE)).GET();
         if (rangeFrom > 0) {
             request.header("Range", "bytes=" + rangeFrom + "-");
         }

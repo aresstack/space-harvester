@@ -80,10 +80,10 @@ public final class DeckTimeouts {
         }
     }
 
-    private final DeckNumbers<Value> numbers;
+    private final com.aresstack.spaceharvester.app.ui.StateNumbers<Value> numbers;
 
     public DeckTimeouts(AppState state) {
-        this.numbers = new DeckNumbers<>(state, PREFIX, Value.class);
+        this.numbers = new com.aresstack.spaceharvester.app.ui.StateNumbers<>(state, PREFIX, Value.class);
     }
 
     /** Die Fristen der laufenden App. */
