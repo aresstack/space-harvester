@@ -105,6 +105,17 @@ public final class LucenePageCacheReader implements PageCacheReader {
         });
     }
 
+    @Override
+    public Optional<ChildOrderState> childOrderState(String sourceId, String spaceKey, String parentPageId) {
+        return guarded(() -> Optional.of(cache.childOrderState(sourceId, spaceKey, parentPageId)));
+    }
+
+    @Override
+    public Optional<String> compareAndSetChildOrder(String sourceId, String spaceKey, String parentPageId,
+                                                     String expectedRevision, List<String> pageIds) {
+        return guarded(() -> cache.compareAndSetChildOrder(sourceId, spaceKey, parentPageId, expectedRevision, pageIds));
+    }
+
     private Optional<CacheGeneration> generation(String sourceId, String spaceKey) {
         Optional<ConfirmedGeneration> confirmed = cache.confirmedGeneration(sourceId, spaceKey);
         if (confirmed.isPresent()) {

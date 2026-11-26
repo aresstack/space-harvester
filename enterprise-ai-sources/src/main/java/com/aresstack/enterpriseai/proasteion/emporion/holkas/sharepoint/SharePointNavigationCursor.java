@@ -1,6 +1,7 @@
 package com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint;
 
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
+import com.aresstack.enterpriseai.source.api.InvalidNavigationCursorException;
 import com.google.gson.Gson;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
@@ -40,7 +41,7 @@ final class SharePointNavigationCursor {
                     || (state.offset > 0 && state.fingerprint == null)) throw new IllegalArgumentException();
             return state;
         } catch (RuntimeException invalid) {
-            throw SharePointNavigationPages.invalid("Ungültiger Navigationscursor; Ordner neu laden");
+            throw new InvalidNavigationCursorException("SharePoint: Ungültiger Navigationscursor; Ordner neu laden");
         }
     }
 
