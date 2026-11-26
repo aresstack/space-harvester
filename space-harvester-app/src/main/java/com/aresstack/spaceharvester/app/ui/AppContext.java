@@ -311,6 +311,15 @@ public final class AppContext {
         return runtime;
     }
 
+    /**
+     * Die Quellentypen für das Quellenformular, immer vollständig: aus denselben Adaptern wie die Laufzeit
+     * ({@link AppRuntime#sourceTypes}), auch solange sie noch startet, neu startet oder nicht starten konnte.
+     */
+    public java.util.List<com.aresstack.spaceharvester.application.sources.SourceType> sourceTypes() {
+        AppSettings current = settings;
+        return AppRuntime.sourceTypes(current != null ? current : loader.load(configFile));
+    }
+
     public Throwable startProblem() {
         return startProblem;
     }
