@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.application.evidence;
 
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
+import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraph;
+import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
 import java.util.Optional;
 
 /**
@@ -8,6 +10,15 @@ import java.util.Optional;
  * {@link TextEvidence Textbeleg} und {@link SourceLocationEvidence Quellstellenbeleg}.
  */
 public sealed interface Evidence permits TextEvidence, SourceLocationEvidence {
+
+    /**
+     * Der Beleg einer gespeicherten Aussage: bei einer Aussage aus der Programmanalyse ihr Quellstellenbeleg, sonst der
+     * Textbeleg ihres Originalsatzes (auch bei Vorstufe und Korrektur: Ein vereinfachter Satz ist nie Beleg).
+     */
+    static Evidence of(KnowledgeGraph.PageRef page, ParsedStatements.Statement statement) {
+        SourceLocationEvidence source = statement.derivation().source();
+        return source != null ? source : TextEvidence.of(page, statement);
+    }
 
     /** Art des Belegs. */
     Kind kind();

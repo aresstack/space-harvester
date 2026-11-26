@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.persistence.files;
 
 import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.assets.PartId;
+import com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence;
 import com.aresstack.spaceharvester.application.knowledge.KnowledgeGraphStore;
 import com.aresstack.spaceharvester.application.knowledge.PageStatementAnalysis;
 import com.aresstack.spaceharvester.application.knowledge.ParsedStatements;
@@ -259,14 +260,7 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
     static ObjectNode json(PageStatementAnalysis analysis) {
         ObjectNode root = JSON.createObjectNode();
         root.put("schema", PageStatementAnalysis.SCHEMA);
-        root.put("sourceId", analysis.key().sourceId());
-        root.put("pageId", analysis.key().pageId());
-        // Dokumente (ADR 0026): getrennte Felder, nie eine zusammengesetzte Kennung; bei Seiten fehlen beide.
-        if (analysis.document().localOriginal()) {
-            root.put("localOriginal", true);
-        }
-        analysis.document().attachmentId().ifPresent(id -> root.put("attachmentId", id));
-        analysis.document().part().ifPresent(part -> root.put("partId", part.value()));
+        putDocument(root, analysis.document());
         root.put("spaceKey", analysis.spaceKey());
         root.put("title", analysis.title());
         root.put("revision", analysis.revision());
@@ -342,6 +336,10 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
                 entry.put("featuresFrom", statement.derivation().featuresFrom().name());
                 if (statement.derivation().corrects() != null) {
                     entry.put("corrects", statement.derivation().corrects()); // ADR 0032, FL4
+                }
+                if (statement.derivation().source() != null) {
+                    // ADR 0041, Punkt 7: Quellstellenbeleg einer Aussage aus der Programmanalyse
+                    putSource(entry.putObject("source"), statement.derivation().source());
                 }
                 if (statement.derivation().section() != null) {
                     // ADR 0032, FL4: der Abschnitt der Vorstufe, den der Prüfschritt als Zusammenhang zeigt
@@ -447,11 +445,8 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
         node.path("components").forEach(value -> components.add(value.asString()));
         ParsedStatements result = new ParsedStatements(sentences, mentions, statements, attachments, components,
                 text(node, "conllu"));
-        PageKey key = new PageKey(root.path("sourceId").asString(), root.path("pageId").asString());
-        String attachmentId = text(root, "attachmentId");
-        String partId = text(root, "partId");
-        DocumentKey document = new DocumentKey(key, Optional.ofNullable(attachmentId),
-                Optional.ofNullable(partId).map(PartId::parse), root.path("localOriginal").asBoolean(false));
+        DocumentKey document = document(root);
+        PageKey key = document.page();
         return new PageStatementAnalysis(key, text(root, "spaceKey"), text(root, "title"),
                 text(root, "revision"), root.path("inputSha256").asString(), root.path("analyzerId").asString(),
                 root.path("analyzerVersion").asString(), Instant.parse(root.path("analyzedAt").asString()), result,
@@ -472,6 +467,13 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
         if (raw != null && origin == ParsedStatements.Origin.ORIGINAL && !"ORIGINAL".equals(raw)) {
             return null; // unbekannte Herkunft, etwa aus einer neueren Fassung: nicht als Original ausgeben
         }
+        if (origin == ParsedStatements.Origin.PROGRAMM) {
+            SourceLocationEvidence source = source(entry.path("source"));
+            if (sentence == null || sentence.isBlank() || source == null) {
+                return null; // ohne lesbaren Quellstellenbeleg nie laden: sonst hinge die Aussage an keinem Beleg
+            }
+            return ParsedStatements.Derivation.programm(sentence, source);
+        }
         if (origin == ParsedStatements.Origin.MODELL) {
             String corrects = text(entry, "corrects");
             if (sentence == null || sentence.isBlank() || corrects == null || corrects.isBlank()) {
@@ -486,6 +488,81 @@ public final class FileKnowledgeGraphStore implements KnowledgeGraphStore {
         }
         return new ParsedStatements.Derivation(origin, flag, sentence, enumOr(ParsedStatements.Origin.class, entry,
                 "featuresFrom", ParsedStatements.Origin.VORSTUFE), null, section(entry.path("section")));
+    }
+
+    /**
+     * Dokument (ADR 0026): getrennte Felder {@code sourceId}, {@code pageId}, {@code attachmentId}, {@code partId},
+     * {@code localOriginal}, nie eine zusammengesetzte Kennung; bei Seiten fehlen die drei letzten.
+     */
+    private static void putDocument(ObjectNode node, DocumentKey document) {
+        node.put("sourceId", document.page().sourceId());
+        node.put("pageId", document.page().pageId());
+        if (document.localOriginal()) {
+            node.put("localOriginal", true);
+        }
+        document.attachmentId().ifPresent(id -> node.put("attachmentId", id));
+        document.part().ifPresent(part -> node.put("partId", part.value()));
+    }
+
+    /** Gegenstück zu {@link #putDocument}. */
+    private static DocumentKey document(JsonNode node) {
+        PageKey key = new PageKey(node.path("sourceId").asString(), node.path("pageId").asString());
+        return new DocumentKey(key, Optional.ofNullable(text(node, "attachmentId")),
+                Optional.ofNullable(text(node, "partId")).map(PartId::parse), node.path("localOriginal").asBoolean(false));
+    }
+
+    /** Quellstellenbeleg (ADR 0041, Punkt 7). */
+    private static void putSource(ObjectNode node, SourceLocationEvidence source) {
+        putDocument(node.putObject("program"), source.program());
+        node.put("revision", source.revision());
+        node.put("analysisVersion", source.analysisVersion());
+        ArrayNode sites = node.putArray("sites");
+        for (SourceLocationEvidence.CodeSite site : source.sites()) {
+            ObjectNode entry = sites.addObject();
+            putDocument(entry.putObject("document"), site.document());
+            entry.put("revision", site.revision()).put("firstLine", site.firstLine()).put("lastLine", site.lastLine());
+        }
+        ArrayNode facts = node.putArray("facts");
+        for (SourceLocationEvidence.ParserFact fact : source.facts()) {
+            facts.addObject().put("kind", fact.kind()).put("text", fact.text()).put("site", fact.site())
+                    .put("firstLine", fact.firstLine()).put("lastLine", fact.lastLine());
+        }
+        ArrayNode dependencies = node.putArray("dependencies");
+        for (SourceLocationEvidence.Dependency dependency : source.dependencies()) {
+            ObjectNode entry = dependencies.addObject().put("name", dependency.name());
+            dependency.document().ifPresent(document -> putDocument(entry.putObject("document"), document));
+            dependency.revision().ifPresent(revision -> entry.put("revision", revision));
+        }
+    }
+
+    /** Quellstellenbeleg oder {@code null}, wenn er fehlt oder unlesbar ist; nie ein halber Beleg. */
+    private static SourceLocationEvidence source(JsonNode node) {
+        if (!node.isObject()) {
+            return null;
+        }
+        try {
+            List<SourceLocationEvidence.CodeSite> sites = new ArrayList<>();
+            for (JsonNode entry : node.path("sites")) {
+                sites.add(new SourceLocationEvidence.CodeSite(document(entry.path("document")),
+                        text(entry, "revision"), entry.path("firstLine").asInt(), entry.path("lastLine").asInt()));
+            }
+            List<SourceLocationEvidence.ParserFact> facts = new ArrayList<>();
+            for (JsonNode entry : node.path("facts")) {
+                facts.add(new SourceLocationEvidence.ParserFact(text(entry, "kind"), text(entry, "text"),
+                        entry.path("site").asInt(), entry.path("firstLine").asInt(), entry.path("lastLine").asInt()));
+            }
+            List<SourceLocationEvidence.Dependency> dependencies = new ArrayList<>();
+            for (JsonNode entry : node.path("dependencies")) {
+                dependencies.add(entry.path("document").isObject()
+                        ? SourceLocationEvidence.Dependency.resolved(text(entry, "name"), document(entry.path("document")),
+                        text(entry, "revision"))
+                        : SourceLocationEvidence.Dependency.missing(text(entry, "name")));
+            }
+            return new SourceLocationEvidence(document(node.path("program")), text(node, "revision"), sites, facts,
+                    dependencies, text(node, "analysisVersion"));
+        } catch (RuntimeException unreadable) {
+            return null;
+        }
     }
 
     /** Abschnitt einer Aussage der Vorstufe oder {@code null}, wenn er fehlt oder unlesbar ist. */

@@ -53,6 +53,37 @@ class TextEvidenceTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("ohne Fassung");
     }
 
+    @Test
+    void evidenceOfAStatementIsTheSourceLocationForProgramStatementsAndTheSentenceOtherwise() {
+        var page = new KnowledgeGraph.PageRef(PAGE, null, "ANTRAG01", null, null);
+        var program = DocumentKey.page(PAGE);
+        var source = new SourceLocationEvidence(program, "p1",
+                List.of(new SourceLocationEvidence.CodeSite(program, "p1", 10, 12)), List.of(), List.of(), "v1");
+        var text = statement("wiki/4711@abc#s0.v1", 0, 0, 20);
+        var hypothesis = text.withDerivation(ParsedStatements.Derivation.programm("Der Antrag wird geprüft.", source));
+
+        assertThat(Evidence.of(page, text)).isInstanceOf(TextEvidence.class);
+        assertThat(Evidence.of(page, hypothesis)).isSameAs(source);
+        assertThat(Evidence.of(page, hypothesis).bearing()).contains(Bearing.IST);
+    }
+
+    @Test
+    void programDerivationNeedsSentenceAndSourceAndOnlyItCarriesOne() {
+        var program = DocumentKey.page(PAGE);
+        var source = new SourceLocationEvidence(program, "p1",
+                List.of(new SourceLocationEvidence.CodeSite(program, "p1", 10, 12)), List.of(), List.of(), "v1");
+
+        assertThatThrownBy(() -> ParsedStatements.Derivation.programm(" ", source))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ParsedStatements.Derivation(ParsedStatements.Origin.PROGRAMM,
+                ParsedStatements.StageFlag.NONE, "Satz", null, null, null, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ParsedStatements.Derivation(ParsedStatements.Origin.VORSTUFE,
+                ParsedStatements.StageFlag.FACT, "Satz", null, null, null, source))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(ParsedStatements.Derivation.programm("Satz", source).withSection(null).source()).isSameAs(source);
+    }
+
     private static ParsedStatements.Statement statement(String id, int sentence, int start, int end) {
         return new ParsedStatements.Statement(id, sentence, start, end, "prüft", "prüfen",
                 ParsedStatements.Voice.ACTIVE, ParsedStatements.Clause.MAIN, true, List.of(), Set.of());
