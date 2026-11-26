@@ -47,7 +47,6 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     static final String FORMAT = "2";
     /** Kürzung der Überschriftenkette wie {@code KnowledgeChunker.fitHeading} im Enterprise AI Client. */
     static final String HEADING = "heading:eac";
-    static final int MAX_CHUNKS = 200;
 
     private static final System.Logger LOG = System.getLogger(EmbeddingProcessor.class.getName());
 
@@ -317,10 +316,8 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         if (cutWarning != null) {
             warnings.add(cutWarning);
         }
-        if (chunks.size() > MAX_CHUNKS) {
-            warnings.add("Nur die ersten " + MAX_CHUNKS + " von " + chunks.size() + " Abschnitten eingebettet");
-            chunks = chunks.subList(0, MAX_CHUNKS);
-        }
+        // Alle Abschnitte (docs/grenzen.md): Die Textlänge begrenzt allein embedding-max-chars, die Anfragegröße der
+        // Adapter über seine Stapelgröße.
         List<float[]> vectors = chunks.isEmpty() ? List.of()
                 : provider.embed(chunks.stream().map(chunk -> chunk.input(text.text())).toList());
         if (vectors.size() != chunks.size()) {

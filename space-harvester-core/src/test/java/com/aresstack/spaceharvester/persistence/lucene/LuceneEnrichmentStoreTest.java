@@ -101,6 +101,25 @@ class LuceneEnrichmentStoreTest extends EnrichmentStoreContract {
             assertThat(store.nearest("wiki", VERSION, new float[] {1, 0, 0}, 1))
                     .extracting(EmbeddingIndex.ChunkHit::page).containsExactly(NIGHT);
         }
+
+        /** Angelo 26.11.2026 (docs/grenzen.md): Vektoren mit mehr als 1024 Dimensionen, etwa 3072, werden gefunden. */
+        @Test
+        void vectorsWithMoreThan1024DimensionsAreIndexedAndFoundAfterReopening() {
+            int dimensions = 3072;
+            float[] query = new float[dimensions];
+            query[dimensions - 1] = 1;
+            String payload = "{\"model\":\"test-model\",\"dimensions\":" + dimensions + ",\"chunks\":[{\"charStart\":0,"
+                    + "\"charEnd\":10,\"section\":null,\"vector\":[" + "0,".repeat(dimensions - 1) + "1]}]}";
+            Enrichment wide = embedding(NIGHT, VERSION, "[1,0,0]");
+            store.save(new Enrichment(wide.key(), wide.processorId(), wide.processorVersion(), wide.inputSha256(),
+                    "2", Enrichment.Status.OK, payload, java.util.List.of(), null, wide.computedAt()));
+            store.close();
+
+            store = LuceneEnrichmentStore.open(directory);
+
+            assertThat(store.nearest("wiki", VERSION, query, 1)).extracting(EmbeddingIndex.ChunkHit::page)
+                    .containsExactly(NIGHT);
+        }
     }
 
     @Nested
