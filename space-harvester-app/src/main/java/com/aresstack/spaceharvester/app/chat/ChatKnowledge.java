@@ -190,13 +190,12 @@ public final class ChatKnowledge {
     static final String BEGIN = "--- KONTEXT ---";
     static final String END = "--- ENDE KONTEXT ---";
 
-    /** Zeichenbudget des ganzen Kontextblocks (etwa 6000 Tokens). */
-    public static final int MAX_CONTEXT_CHARS = 24_000;
-    /** Höchstens so viele Auszüge je Frage. */
+    /** Höchstens so viele Auszüge je Frage (Breite der Suche). */
     public static final int MAX_SOURCES = 8;
-    /** Längster Auszug einer einzelnen Seite, wenn der Chat ganze Seiten mitgibt. */
-    public static final int MAX_PAGE_CHARS = 12_000;
-    /** Längster Auszug eines Treffers der Suche. */
+    /**
+     * Längster Auszug eines Treffers in der Quellenliste der Oberfläche (Vorschau einer Quelle, nicht für das Modell;
+     * was an das Modell geht, folgt dem Platz in der Anfrage, {@link ChatRoom}).
+     */
     public static final int MAX_HIT_CHARS = 3_000;
 
     private ChatKnowledge() {
@@ -249,9 +248,12 @@ public final class ChatKnowledge {
         return text.toString();
     }
 
-    /** Baut den Block aus den Auszügen, bis Budget oder Höchstzahl erreicht sind; Auszüge ohne Text fallen weg. */
-    public static Context assemble(List<Excerpt> excerpts) {
-        return assemble(excerpts, MAX_CONTEXT_CHARS, MAX_SOURCES);
+    /**
+     * Baut den Block aus den Auszügen, bis der Platz in der Anfrage ({@code maxChars}, {@link ChatRoom}; früher fest
+     * 24.000 Zeichen) oder die Höchstzahl erreicht ist; Auszüge ohne Text fallen weg.
+     */
+    public static Context assemble(List<Excerpt> excerpts, int maxChars) {
+        return assemble(excerpts, maxChars, MAX_SOURCES);
     }
 
     static Context assemble(List<Excerpt> excerpts, int maxChars, int maxSources) {

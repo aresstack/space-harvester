@@ -2161,12 +2161,14 @@ public final class ChatPanel extends JPanel {
         if (text.isEmpty() || !send.isEnabled()) {
             return;
         }
-        ToolScope custom = currentToolScope(withAttachments(text));
+        // Anhänge einmal lesen; ihr Text zählt zum Platz der Anfrage.
+        String asked = withAttachments(text);
+        ToolScope custom = currentToolScope(asked);
         if (custom != null) {
-            submit(withAttachments(text), null, custom.area(), ChatTurn.Kind.QUESTION, custom);
+            submit(asked, null, custom.area(), ChatTurn.Kind.QUESTION, custom);
             return;
         }
-        submit(withAttachments(text), resolved, areaText(selection, resolved == null ? null : resolved.counts()),
+        submit(asked, resolved, areaText(selection, resolved == null ? null : resolved.counts()),
                 ChatTurn.Kind.QUESTION);
     }
 
@@ -2178,13 +2180,18 @@ public final class ChatPanel extends JPanel {
         if (toolScope == null) {
             return null;
         }
-        List<com.aresstack.spaceharvester.ai.AiChat.Message> asked = new java.util.ArrayList<>();
+        return ChatRoom.within(roomBeside(question), toolScope::get);
+    }
+
+    /** Platz in Zeichen, der neben dem Verlauf des Chats und {@code question} in der Anfrage frei ist. */
+    private int roomBeside(String question) {
+        List<com.aresstack.spaceharvester.ai.AiChat.Message> asked = new ArrayList<>();
         for (ChatRecord.Message message : chat.messages()) {
             asked.add(com.aresstack.spaceharvester.ai.AiChat.Message.user(message.text() == null ? ""
                     : message.text()));
         }
         asked.add(com.aresstack.spaceharvester.ai.AiChat.Message.user(question));
-        return ChatRoom.within(ChatRoom.left(chatBudget(), asked, List.of(), 1), toolScope::get);
+        return ChatRoom.left(chatBudget(), asked, List.of(), 1);
     }
 
     /** Tokenbudget des Chat-Modells aus Kontextlänge und Ausgabelimit; {@code null}, wenn eines fehlt. */
@@ -2365,6 +2372,9 @@ public final class ChatPanel extends JPanel {
         }
         List<Path> files = List.copyOf(attachments);
         String[] contents = new String[files.size()];
+        // Die Anhänge teilen sich, was neben Verlauf und Frage in die Anfrage passt.
+        int room = roomBeside(text);
+        int each = room == ChatRoom.UNLIMITED ? room : room / files.size();
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(
                 Math.min(parallel("files", FILES_DEFAULT), files.size()), work -> {
                     Thread thread = new Thread(work, "chat-anhang");
@@ -2375,7 +2385,7 @@ public final class ChatPanel extends JPanel {
             List<java.util.concurrent.Future<?>> running = new ArrayList<>();
             for (int i = 0; i < files.size(); i++) {
                 int index = i;
-                running.add(pool.submit(() -> contents[index] = attachmentText(files.get(index))));
+                running.add(pool.submit(() -> contents[index] = attachmentText(files.get(index), each)));
             }
             for (java.util.concurrent.Future<?> future : running) {
                 try {
@@ -2400,15 +2410,21 @@ public final class ChatPanel extends JPanel {
 
     private static final String UNREADABLE = "(nicht als Text lesbar)";
 
-    /** Der Text einer angehängten Datei, auf das Budget einer Seite gekürzt. */
-    private static String attachmentText(Path file) {
+    /**
+     * Der Text einer angehängten Datei, so weit er in die Anfrage passt ({@code room}, {@link ChatRoom}; früher fest
+     * 12.000 Zeichen); was nicht passt, steht als gekürzt da.
+     */
+    private static String attachmentText(Path file, int room) {
         try {
             // Dokumente (PDF, Word, Excel …) wie die Vorschau im Command Deck über den Tika-Adapter des Core.
             String name = file.getFileName() == null ? "" : file.getFileName().toString();
             String content = com.aresstack.spaceharvester.app.deck.DocumentPreviewStore.isDocument(name)
                     ? new com.aresstack.spaceharvester.app.deck.DocumentPreviewStore().load(file.toString()).text()
                     : Files.readString(file, StandardCharsets.UTF_8);
-            return ChatKnowledge.excerpt(content, ChatKnowledge.MAX_PAGE_CHARS);
+            String shown = ChatKnowledge.excerpt(content, room);
+            return shown.length() >= content.strip().length() ? shown
+                    : shown + "\n(gekürzt: Die Anfrage hat für diesen Anhang nur Platz für " + room + " von "
+                    + content.strip().length() + " Zeichen)";
         } catch (java.io.IOException | RuntimeException
                  | com.aresstack.spaceharvester.deck.editor.DocumentException unreadable) {
             return UNREADABLE;
