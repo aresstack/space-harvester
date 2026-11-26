@@ -127,10 +127,11 @@ public class SpaceSync {
         if (!plan.inventory().confirmed()) {
             return plan;
         }
-        plan = indexed(plan);
+        java.util.function.Predicate<String> covered = pageId -> collector.covers(sourceId, pageId);
+        plan = indexed(plan.withinInventoryCoverage(covered));
         Map<String, RemovalCheck.Result> removals = removalCheck.verify(plan);
         SyncPlan checked = removals.isEmpty() ? plan : plan.withRemovals(removals);
-        return checked.withPurgesDue(clock.instant().minus(retention(sourceId)));
+        return checked.withPurgesDue(clock.instant().minus(retention(sourceId)), covered);
     }
 
     /** Lädt die Seiten unter markierten Wurzeln vollständig; die Vorfahren kommen aus der Inventur. */

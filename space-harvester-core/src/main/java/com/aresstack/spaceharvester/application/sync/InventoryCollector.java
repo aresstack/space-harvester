@@ -37,6 +37,10 @@ public class InventoryCollector {
         this.batchSize = batchSize;
     }
 
+    boolean covers(String sourceId, String pageId) {
+        return queries.inventoryCovers(sourceId, pageId);
+    }
+
     public Inventory collect(String sourceId, String spaceKey) {
         return collect(sourceId, spaceKey, () -> { });
     }

@@ -60,6 +60,26 @@ public class FtpTlsTest {
     }
 
     @Test
+    public void samplesLargeFilesAndReopensTheSessionForTheNextRequest() throws Exception {
+        server = new FakeFtpsServer(false, false);
+        char[] large = new char[200000];
+        Arrays.fill(large, 'A');
+        server.files.put("/large", new String(large));
+        server.files.put("/small", "small source");
+        FtpSessionPool<FtpClientSession> pool = new FtpSessionPool<FtpClientSession>(
+                com.aresstack.enterpriseai.astu.knowledge.SourceAddress.of("sample"),
+                settings(null, null), null, (s, user, password) ->
+                CommonsNetFtpSession.open(s, "indexer", "secret".toCharArray()));
+        try {
+            assertEquals(64 * 1024, pool.run(session -> session.sampleText("/large")).length());
+            assertEquals("small source", pool.run(session -> session.sampleText("/small")));
+            assertEquals("small source", pool.run(session -> session.readText("/small")));
+        } finally {
+            pool.close();
+        }
+    }
+
+    @Test
     public void implicitFtpsSpeaksTlsFromTheFirstByte() throws Exception {
         server = new FakeFtpsServer(true, true);
         server.files.put("/doku/a.txt", "implizit");

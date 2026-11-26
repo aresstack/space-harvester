@@ -187,6 +187,10 @@ public class SourceQueries {
         return source(sourceId).outsideScope(pageId);
     }
 
+    public boolean inventoryCovers(String sourceId, String pageId) {
+        return source(sourceId).inventoryCovers(pageId);
+    }
+
     /**
      * Die vollständige Anhangsliste einer Seite, live aus der Quelle (#9), mit dem aktuellen Space der Seite für die
      * Rechteprüfung. Lädt keine Dateien.
