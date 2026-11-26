@@ -1266,8 +1266,10 @@ final class FtpDatasetsView extends JPanel {
 
     private void showHex(RemoteEntry entry) {
         if (!readable(entry) || !connected) return;
-        owner.run(owner.session().filesOnce(files -> files.readBinarySample(entry.path(),
-                com.aresstack.spaceharvester.deck.ftp.BinarySample.MAX_CAPTURE_BYTES)),
+        MvsDiagnosisSettings settings = MvsDiagnosisSettings.shared();
+        int sampleBytes = settings.number(MvsDiagnosisSettings.Value.SAMPLE_BYTES);
+        int pageBytes = settings.number(MvsDiagnosisSettings.Value.READ_BYTES);
+        owner.run(owner.session().filesOnce(files -> files.readBinarySample(entry.path(), sampleBytes)),
                 "Hex-Ansicht fehlgeschlagen", sample -> {
                     javax.swing.JTextArea content = new javax.swing.JTextArea(24, 100);
                     content.setEditable(false);
@@ -1275,14 +1277,14 @@ final class FtpDatasetsView extends JPanel {
                     JPanel panel = new JPanel(new BorderLayout(4, 4));
                     JPanel navigation = new JPanel();
                     javax.swing.JSpinner offset = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(
-                            0, 0, Math.max(0, sample.capturedBytes() - 1), 4096));
+                            0, 0, Math.max(0, sample.capturedBytes() - 1), pageBytes));
                     navigation.add(new JLabel("Byteoffset:"));
                     navigation.add(offset);
                     navigation.add(new JLabel("Stichprobe: " + sample.capturedBytes() + " / " + sample.totalBytes() + " Bytes"));
                     Runnable render = () -> {
                         int position = (Integer) offset.getValue();
                         content.setText(com.aresstack.spaceharvester.app.chat.MvsDiagnosisTools.hex(
-                                sample.slice(position, 4096), position));
+                                sample.slice(position, pageBytes), position));
                         content.setCaretPosition(0);
                     };
                     offset.addChangeListener(e -> render.run());

@@ -184,7 +184,7 @@ public abstract class SyncBaselineStoreContract {
         SyncBaseline first = new SyncBaseline(listed.sourceId(), listed.spaceKey(), listed.generation(),
                 listed.confirmedAt(), listed.pages(), listed.stalePageIds(), new TreeSet<>(Set.of("3")),
                 new TreeMap<>(Map.of("4", Instant.parse("2026-10-01T08:00:00Z"))),
-                listed.confirmedAt().minusSeconds(90));
+                listed.confirmedAt().minusSeconds(90), "position-der-quelle");
         commit(fixture, first, root);
 
         Fixture reopened = reopen(fixture);
@@ -196,6 +196,7 @@ public abstract class SyncBaselineStoreContract {
         assertThat(read.withheldPageIds()).containsEntry("4", Instant.parse("2026-10-01T08:00:00Z"));
         assertThat(read.complete()).isFalse();
         assertThat(read.changesSince()).isEqualTo(listed.confirmedAt().minusSeconds(90));
+        assertThat(read.changeCheckpoint()).isEqualTo("position-der-quelle");
         assertThat(reopened.snapshots().find(root.key())).contains(root);
     }
 

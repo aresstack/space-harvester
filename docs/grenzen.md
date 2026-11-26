@@ -45,7 +45,11 @@ Es gibt keinen eigenen Mechanismus nur für Grenzen. Grenzen nutzen die vorhande
    `System.getProperty()` auf.
 5. **Oberfläche.** Grenzen, die für Benutzer wichtig sind, kommen in die Einstellungen der App. Die Spalte „Stand“
    unten zeigt, ob eine Grenze schon einstellbar ist.
-6. **ADR.** Die ADR des Bereichs führt die Grenze in ihrem Abschnitt „Grenzen und Limits“ (ADR 0036 Punkt 12). Dieses
+6. **Command Deck.** Die Einstellungen des Decks (Terminal, NDV, MVS-Binärdiagnose) liegen wie bisher in
+   `app-state.json` unter `deck.*` und stehen in den Einstellungen der App. Zahlen mit Grenzen beschreibt eine
+   Aufzählung nach `NumberSetting` (Schlüssel, Bezeichnung, Hinweis, Vorgabe, Grenzen); `NumberSettingsPanel` zeigt
+   sie einheitlich, wie den Bereich „Video“.
+7. **ADR.** Die ADR des Bereichs führt die Grenze in ihrem Abschnitt „Grenzen und Limits“ (ADR 0036 Punkt 12). Dieses
    Dokument ist die Gesamtliste, und beide müssen übereinstimmen.
 
 ## Die folgenreichsten Grenzen
@@ -68,12 +72,13 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Links und Tabellenzellen (`TikaDocumentStructure.MAX_LINKS`, `MAX_TABLE_CELLS`) | 1000 / 10.000 | die übrigen fehlen in der Struktur | beseitigen |
 | Confluence-Listen (`RestJson.MAX_LIST_PAGES` × `LIST_LIMIT`) | 200 × 100 | Listen mit mehr als 20.000 Einträgen scheitern | beseitigen: weiterblättern, bis die Quelle endet |
 | Baum und Listen in der REST-API (`PageQueries.MAX_TREE_LEVELS`, `MAX_PAGE_LIMIT`, `ContentListing.MAX_START`, `TermQueries.MAX_SCAN`) | 200 Ebenen je Antwort / 100 / 10.000 / 50.000 | spätere Einträge der Listen sind nicht erreichbar | beseitigen: Seitengröße einstellbar. **Baum erledigt (F40-6):** `GET …/tree` liefert ebenenweise (`root`, `levels`); ein Knoten mit `more` hat tiefere Kinder, die `root=<id>` nachliefert; die Gesamttiefe ist nicht begrenzt. 200 Ebenen je Antwort sind eine Invariante des JSON-Formats (Jackson schachtelt höchstens 500) |
-| Cache-Vorschau und Explorer (`Payloads.MAX_DISPLAY_CHARS`) | 2.000.000 Zeichen | lange Inhalte werden sichtbar gekürzt angezeigt („Speichern unter …“ speichert vollständig) | beseitigen: paginieren (F40-5). **Erledigt:** Die Vorschau aus dem Cache (`PageNavigation.cachedChildren`, früher höchstens 1000 Kinder) ist paginiert, „Weitere laden“ blättert im Cache, auch ohne Quelle; der Seitenbaum ohne Live-Baum (`Explorer.wholeSpace`, früher 5000 Knoten) und die Kinder für Bereichspodcasts (früher 200) lesen alle Einträge. Die Stapelgröße ist `Explorer.BATCH` |
+| Cache-Vorschau und Explorer (früher `Payloads.MAX_DISPLAY_CHARS`) | entfallen (früher 2.000.000 Zeichen) | – | beseitigen: paginieren (F40-5). **Erledigt:** Die Reiter „Payload“ und „Storage“ zeigen den Inhalt vollständig; `ProgressiveText` füllt sie schrittweise (`ProgressiveText.STEP_CHARS` je EDT-Durchlauf, Invariante), sodass die Oberfläche bedienbar bleibt. Die Vorschau aus dem Cache (`PageNavigation.cachedChildren`, früher höchstens 1000 Kinder) ist paginiert, „Weitere laden“ blättert im Cache, auch ohne Quelle; der Seitenbaum ohne Live-Baum (`Explorer.wholeSpace`, früher 5000 Knoten) und die Kinder für Bereichspodcasts (früher 200) lesen alle Einträge. Die Stapelgröße ist `Explorer.BATCH` |
 | Diagrammtexte (`DiagramLabels`, Zahl ohne Konstante) | 4000 Zeichen Code | der Code wurde vor dem Modellaufruf abgeschnitten (F41-7) | **beseitigt**: zu langer Code wird nach dem Tokenbudget des Modells (`ModelBudget`) an Zeilengrenzen in Teile zerlegt und teilweise beschriftet |
 | Progressive Suchen (`ProgressiveSearches.DEFAULT_MAX_RUNNING`, `DEFAULT_MAX_WAITING`, `DEFAULT_RETENTION`, `DEFAULT_MAX_TIME_BUDGET`) | 256 laufend / 256 wartend / 5 min / 2 min | laufen schon `max-running` Suchen, wartet eine neue (`waiting`) und startet, sobald ein Platz frei wird; erst wenn auch `max-waiting` voll ist, wird sie mit 429 abgewiesen; eine neue verdrängt nie eine andere; ein größeres Zeitbudget wird gekürzt | **einstellbar**: `space-harvester.search.progressive.max-running`, `.max-waiting`, `.retention`, `.max-time-budget` (F38-4, ADR 0038 Punkt 10) |
 | Speicher und Pakete (Desktop-`FileSystemAssetStore.DEFAULT_MAX_TOTAL_BYTES`, `ZipExportPackageReader`, `ImportController.MAX_PACKAGE_BYTES`, `LocalFilesSourceAdapter.MAX_FILE_MEGABYTES`, `BscwSourceAdapter`) | 20 GiB, 256 MiB, 4 GiB, 64 MB, Tiefe 50 | größere Dateien und tiefere Ordner werden nicht geerntet oder importiert | Speicherbudget einstellbar, Bestandsgrenzen beseitigen |
 | KI-Textbudgets (Chat 24.000 Zeichen / 8 Quellen, Podcast, Zusammenfassungen, Fristen 12.000 Zeichen) | fest | Material wird vor dem Modellaufruf gekürzt | aus der Tokenlänge des Modells ableiten |
 | Modellname in der MVS-Diagnose (`MvsDiagnosisTools`) | `gpt-oss-120b` | die Diagnose läuft nur mit diesem Modell | eingestelltes Modell verwenden |
+| MVS-Binärdiagnose und Hex-Ansicht (früher `BinarySample.MAX_CAPTURE_BYTES`, `MvsDiagnosisTools.BUDGET`, Lesegröße 4096, Frist 120 s) | 8 MiB / 65536 / 4096 Bytes / 120 s | größere Stichproben waren unmöglich, die KI las höchstens 64 KiB | **einstellbar**: `MvsDiagnosisSettings` in `app-state.json` (`deck.ftp.diagnosis.sample-bytes`, `read-bytes`, `budget-bytes`, `timeout-seconds`), Einstellungen › Mainframe › „MVS-Binärdiagnose und Hex-Ansicht“. Die Modellfreigabe bleibt bis zur Entscheidung unverändert |
 
 ### Grenzen außerhalb des eigenen Codes
 
@@ -87,7 +92,7 @@ Quelleinstellung geändert, per PR auf EAC-main und danach `sync-from-upstream.s
 | Confluence `MAX_READER_ATTACHMENTS` | 500 | weitere Anhänge fehlen |
 | LocalFiles `PARTITION_DEPTH` | 20 | tiefere Ordner fehlen |
 | Outlook `MAX_FOLDER_DEPTH` | 15 | tiefere Ordner fehlen |
-| SharePoint-Änderungsschnappschüsse (`SharePointChangePages`) | 4 im Prozess | ältere Änderungsstände gehen verloren; der ChangeToken wird nicht gespeichert (F42-1: Register entfernen, Token speichern) |
+| SharePoint-Änderungsschnappschüsse (früher `SharePointChangePages`) | entfallen | **Erledigt** (F42-1, ADR 0042 Punkte 5 und 6): kein Register mehr, der Cursor trägt seine Position; das exakte ChangeToken je Bibliothek wird mit der bestätigten Generation gespeichert (EAC #259, #261) |
 | SharePoint-Änderungsseite, JSON | 500 / 32 MiB | |
 | Confluence/Jira Reader | 100 / 50 MiB | |
 | MediaWiki-Stapel, Git-Kinderstapel, NDV-Metadaten | 50 / 200 / 10.000 | |
@@ -575,7 +580,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `DiagramLabels.TIMEOUT_SECONDS` | `30` | fest | Timeout | einstellbar |
 | `DictationPreviewWindow.MAXIMUM` | `12 * RATE` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `DocumentPane.MAX_PILL` | `28` | fest | Invariante/Darstellung | im Code belassen |
-| `DocumentPreviewStore.MAX_BYTES` | `50L * 1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `DoubleShiftShortcut.MAX_INTERVAL_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_PRESS_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
 | `EakteDocumentContent.TIMEOUT_SECONDS` | `120` | fest | Timeout | einstellbar |
@@ -607,16 +611,15 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `Mp4AudioOnlySource.MAX_BOX_BYTES` | `32 * 1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `Mp4AudioOnlySource.MAX_CHUNKS` | `2_000_000` | fest | Stapel-/Seitengröße | einstellbar |
 | `Mp4AudioOnlySource.REMOTE_READ_BYTES` | `256 * 1024` | fest | Stapel-/Seitengröße | einstellbar |
-| `MvsDiagnosisTools.BUDGET` | `65536` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `NdvBrowser.SEARCH_LIMIT` | `200` | fest | Stapel-/Seitengröße | einstellbar |
 | `NdvChatTools.MAX_OBJECTS` | `300` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `PageDetailPanel.BELOW_RELATIONS_LIMIT` | `1000` | fest | Invariante/Darstellung | im Code belassen |
 | `PageDetailPanel.BELOW_ROWS_LIMIT` | `1000` | fest | Invariante/Darstellung | im Code belassen |
 | `ParallelChoice.CUSTOM_MAX` | `9999` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `PassagesTab.PREVIEW_CHARS` | `140` | fest | Invariante/Darstellung | im Code belassen |
-| `Payloads.MAX_DISPLAY_CHARS` | `2_000_000` | fest | Bestandsgrenze | beseitigen |
 | `PdfPages.MAX_PIXELS` | `40_000_000d` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `PresentationPages.MAX_PIXELS` | `40_000_000d` | fest | Speicher-/Ressourcenbudget | einstellbar |
+| `ProgressiveText.STEP_CHARS` | `256 * 1024` | fest | Invariante/Darstellung | im Code belassen (begrenzt nur die Arbeit je EDT-Durchlauf, nie den Inhalt) |
 | `ReaderImageStore.MAX_PIXELS` | `40_000_000L` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `ReadingPane.MAX_IMAGES` | `200` | fest | Bestandsgrenze | beseitigen |
 | `ReadingPane.MAX_WIDTH` | `720` | fest | Invariante/Darstellung | im Code belassen |
@@ -665,7 +668,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | Konstante | Wert | Stand | Kategorie (vorläufig) | Behandlung |
 |---|---|---|---|---|
 | `BetaViewHttp.MAX_REDIRECTS` | `10` | fest | Protokollgrenze | dokumentieren, berücksichtigen |
-| `BinarySample.MAX_CAPTURE_BYTES` | `8 * 1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `CopybookMemberIndex.TTL_NANOS` | `Duration.ofSeconds(60).toNanos()` | fest | Cache-Aufbewahrung | einstellbar |
 | `FtpProfile.DEFAULT_TIMEOUT_SECONDS` | `60` | Vorgabe | Timeout | einstellbar |
 | `HttpBetaViewServer.TIMEOUT` | `Duration.ofSeconds(60)` | fest | Timeout | einstellbar |

@@ -82,20 +82,15 @@ durchsuchen. Das bedeutet einen vollständigen Dateisystemscan über das Netz, e
 | Native SharePoint-Quelle mit Suche, Navigation, Originalzugriff, `GetChanges` | auf main (#1455) |
 | Cursor ohne Sitzung und ohne Grenze (`SharePointNavigationCursor`, HMAC), `$top=100`, Überspringen leerer Seiten mit Zyklenerkennung | auf main (#1465, #1469, EAC #249, #250) |
 | Windows-Anmeldung als ausdrückliche Wahl im Quellenformular | auf main (#1484) |
-| Exakte ChangeTokens speichern und erst nach Verarbeitung fortschreiben | **nicht umgesetzt** (Punkt 5) |
-| Änderungsabruf ohne Register im Prozess | **weicht ab** (Punkt 6) |
+| Exakte ChangeTokens speichern und erst nach Verarbeitung fortschreiben | umgesetzt (EAC #261, Space Harvester): Checkpoint je Bibliothek = Token der letzten verarbeiteten Änderung, gespeichert in der bestätigten Generation (`SyncBaseline.changeCheckpoint`); ohne Checkpoint oder bei abgelehntem Token gelten Zeitmarke bzw. Inventur |
+| Änderungsabruf ohne Register im Prozess | umgesetzt (EAC #259): Cursor trägt Fenster und Position je Bibliothek, kein Register |
 | Verhalten eines echten SharePoint bei mehr als 100 Dateien | **nicht nachgewiesen** (PowerShell-Test steht aus) |
 | Punkt 7: Bibliotheken ausschließen (allgemeiner Mechanismus) | auf develop (#1504), Abgleich folgt (ADR 0037, Punkt 15) |
 
 ## Abweichungen des Codes vom Zielbild
 
-- **ChangeToken.** Auf main dient die vorhandene Synchronisationszeitmarke als Ausgangspunkt
-  (`SharePointChangeLog` bildet daraus `ChangeTokenStart`). Das exakte Token wird nicht gespeichert.
-- **Register mit fester Größe beim Änderungsabgleich.** `SharePointChangePages` hält die Ergebnisse eines
-  Änderungsabrufs als Schnappschuss in einer Map im Prozess, höchstens vier (`MAX_SESSIONS = 4`). Ein fünfter
-  gleichzeitiger Abruf verdrängt den ältesten; dessen Cursor ist danach ungültig („ungültiger Änderungscursor“,
-  gemeldet als `UNSUPPORTED`, nicht als eigener Cursorfehler). Das ist dasselbe Muster, das ADR 0040 für die
-  Navigation verworfen hat, hier für den Abgleich. Nach Punkt 6 entfällt es.
+- Keine mehr offen bei Punkt 5 und 6. Am echten SharePoint ist nicht geprüft, wie der Server ein zu altes Token
+  ablehnt; jede Ablehnung beendet den nativen Abruf, und die Inventur übernimmt.
 
 ## Geklärt am 26.11.2026
 
@@ -120,7 +115,6 @@ Enterprise AI Client.
 | Verbindungs- und Lesezeit | 15 s, 60 s, höchstens 10 Minuten | Quellenoptionen `connectTimeoutMillis`, `readTimeoutMillis` | nein, kein Feld im Quellenformular |
 | Stapelgröße der Navigation (`$top`) | 100 | **fest im Code** (`SharePointNavigationPages.BATCH_SIZE`) | nein |
 | Stapelgröße des Änderungsabrufs | 500 | **fest im Code** (`SharePointChangeLog.PAGE_SIZE`) | nein |
-| Gleichzeitige Schnappschüsse des Änderungsabrufs | 4 | **fest im Code** (`SharePointChangePages.MAX_SESSIONS`); entfällt nach Punkt 6 | nein |
 | Größte JSON-Antwort (**Größenlimit**) | 32 MiB | **fest im Code** (`SharePointKnowledgeSource.MAX_JSON_BYTES`) | nein |
 | Gelesener Dateianfang zur Erkennung (**Größenlimit**) | 8192 Bytes | **fest im Code** (`PREFIX_BYTES`) | nein |
 

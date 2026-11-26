@@ -1102,6 +1102,10 @@ public final class AppContext {
         }, started -> {
             boolean restarted = started.runtime() != previous;
             settings = started.settings();
+            // Vorschauen außerhalb der Quellen (Deck, Chat) lesen Dokumente mit denselben Grenzen.
+            if (settings != null) {
+                com.aresstack.spaceharvester.app.deck.DocumentTexts.limits(settings.storage().extraction());
+            }
             runtime = started.runtime();
             if (runtime != null) {
                 // Der Vergleich der Standbilder im Core folgt den Werten für Videos, auch nach dem Speichern.
