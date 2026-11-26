@@ -22,7 +22,7 @@ import tools.jackson.databind.json.JsonMapper;
 /** Persist parser facts and dependency probes in the existing page enrichment store. */
 public final class CobolProgramEnrichment implements EnrichmentProcessor {
     public static final String ID = "cobol-program";
-    public static final String VERSION = "2";
+    public static final String VERSION = "3";
     private static final ObjectMapper JSON = JsonMapper.builder().build();
     private final Map<String, List<String>> libraries;
     private final Function<PageKey, Optional<PageSnapshot>> lookup;

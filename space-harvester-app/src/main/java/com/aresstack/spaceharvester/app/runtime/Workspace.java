@@ -541,6 +541,23 @@ public final class Workspace {
      * Die lokal gespeicherte Seite, nur aus dem Cache und ohne Abruf oder Prüfung bei der Quelle; leer, wenn sie
      * nicht lokal liegt oder nicht lesbar ist. Das Wissen des Chats liest so (ADR 0028: nur Lokales geht an die KI).
      */
+    /** Build a read-only query view of current COBOL artifacts in one configured FTP source. */
+    public com.aresstack.spaceharvester.app.runtime.program.StoredCobolSearch.Snapshot storedCobolSearch(
+            String sourceId, java.util.function.BooleanSupplier cancelled) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
+        var config = harvester.sourceManagement().sources().stream()
+                .filter(source -> source.id().equals(sourceId) && "ftp".equalsIgnoreCase(source.type()))
+                .findFirst().orElseThrow(() -> new IllegalArgumentException("Keine FTP-Wissensquelle"));
+        if (!sourceEnabled(sourceId) || sourceDataBeingDeleted(sourceId)) {
+            throw new IllegalStateException("Wissensquelle nicht verfügbar");
+        }
+        var search = new com.aresstack.spaceharvester.app.runtime.program.StoredCobolSearch(
+                key -> cachedPage(key.sourceId(), key.pageId()), this::enrichments);
+        return search.build(sourceId,
+                com.aresstack.spaceharvester.app.runtime.program.StoredCopybooks.libraries(config.options().get("syslib")),
+                visitor -> harvester.pages().visitCachedHeaders(caller, sourceId, visitor, cancelled), cancelled);
+    }
+
     public Optional<DeliveredPage> cachedPage(String sourceId, String pageId) {
         try {
             return harvester.pages().cached(caller, sourceId, pageId);

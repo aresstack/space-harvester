@@ -517,6 +517,12 @@ public final class PageDetailPanel extends JPanel {
     private boolean originalLinkShown;
     private boolean originalProgramShown;
     private final javax.swing.JButton recomputeProgram = new javax.swing.JButton("Programmanalyse berechnen");
+    private final javax.swing.JButton searchPrograms = new javax.swing.JButton("COBOL-Suche");
+    private java.util.concurrent.Future<?> programSearchTask;
+    private int programSearchGeneration;
+    private ProgramFocus pendingProgramFocus;
+
+    private record ProgramFocus(PageKey key, String rawSha256, int line) { }
     /** Hilfetext der Leseansicht einer Seite; nur sichtbar, solange sie gezeigt wird. */
     static final String READING_HELP = "Die Leseansicht zeigt die Seite, wie die Quelle sie darstellt. Liegt sie im "
             + "Cache, erscheint sie sofort; die Prüfung bei der Quelle läuft im Hintergrund.\n\n"
@@ -813,6 +819,9 @@ public final class PageDetailPanel extends JPanel {
         // Die Unterreiter mittig, „mit Unterseiten“ rechts in der unteren Leiste mit der Lupe (Angelo 23.11.2026); die
         // übrigen Aktionen in der Kopfzeile links vom Stern. „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange
         // „Beziehungen“ gewählt ist (BG2b).
+        analysisActions.add(searchPrograms);
+        searchPrograms.setVisible(false);
+        searchPrograms.addActionListener(event -> searchStoredPrograms());
         analysisActions.add(recomputeProgram);
         recomputeProgram.setVisible(false);
         recomputeProgram.addActionListener(event -> recompute(com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment.ID));
@@ -1074,6 +1083,9 @@ public final class PageDetailPanel extends JPanel {
         page = null;
         programAnalysisTabs.reset();
         recomputeProgram.setVisible(false);
+        searchPrograms.setVisible(false);
+        cancelProgramSearch();
+        pendingProgramFocus = null;
         subpages.box().setVisible(true);
         // Der Graph verlässt die Seite vor den Unterseiten: Deren Abmeldung soll für die alte Seite nichts mehr laden.
         graphView.page(null);
@@ -1402,6 +1414,7 @@ public final class PageDetailPanel extends JPanel {
         boolean program = programAnalysisTabs.show(snapshot, views);
         subpages.box().setVisible(!program);
         recomputeProgram.setVisible(program);
+        searchPrograms.setVisible(snapshot.metadata().attributes().containsKey("ftp.path"));
         showRelations();
     }
 
@@ -1724,6 +1737,10 @@ public final class PageDetailPanel extends JPanel {
         AppRuntime runtime = context.runtime();
         if (runtime == null || sourceId == null || pageId == null) {
             return;
+        }
+        cancelProgramSearch();
+        if (pendingProgramFocus != null && !pendingProgramFocus.key().equals(new PageKey(sourceId, pageId))) {
+            pendingProgramFocus = null;
         }
         remember(Place.page(sourceId, pageId));
         this.sourceId = sourceId;
@@ -2581,8 +2598,7 @@ public final class PageDetailPanel extends JPanel {
 
         showReader(loaded.reader(), page.live());
         showOriginalContent(viewable(metadata, snapshot.metadata()), snapshot.payload());
-        com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot)
-                .ifPresent(this::showOriginalProgram);
+        showStoredProgram(snapshot);
         showTextOriginal(loaded.reader());
         raw.setText(loaded.display());
         raw.setCaretPosition(0);
@@ -2651,7 +2667,85 @@ public final class PageDetailPanel extends JPanel {
                 header.url() != null ? header.url() : snapshot.url(), attributes);
     }
 
-    private void showOriginalProgram(com.aresstack.spaceharvester.mainframe.cobol.CobolSource source) {
+    private void searchStoredPrograms() {
+        if (programSearchTask != null) {
+            cancelProgramSearch();
+            feedback.info("COBOL-Suche abgebrochen", null);
+            return;
+        }
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null) return;
+        String source = sourceId;
+        int current = request;
+        int generation = ++programSearchGeneration;
+        searchPrograms.setText("Suche abbrechen");
+        feedback.working("Gespeicherte COBOL-Analysen werden gelesen …");
+        programSearchTask = Background.start(() -> runtime.workspace().storedCobolSearch(source,
+                () -> Thread.currentThread().isInterrupted()), snapshot -> {
+            if (current != request || context.runtime() != runtime || generation != programSearchGeneration) return;
+            programSearchTask = null;
+            searchPrograms.setText("COBOL-Suche");
+            feedback.clear();
+            new StoredCobolSearchDialog(snapshot).show(this).ifPresent(fact -> {
+                if (current == request && context.runtime() == runtime) openStoredProgramHit(runtime, fact, current);
+            });
+        }, error -> {
+            if (current != request || context.runtime() != runtime || generation != programSearchGeneration) return;
+            programSearchTask = null;
+            searchPrograms.setText("COBOL-Suche");
+            feedback.problem(error);
+        });
+    }
+
+    private void cancelProgramSearch() {
+        programSearchGeneration++;
+        if (programSearchTask != null) {
+            programSearchTask.cancel(true);
+            programSearchTask = null;
+        }
+        searchPrograms.setText("COBOL-Suche");
+    }
+
+    private void openStoredProgramHit(AppRuntime runtime,
+            com.aresstack.spaceharvester.mainframe.cobol.CobolSearch.Fact fact, int current) {
+        String source = fact.attributes().get("SOURCE_ID");
+        String id = fact.attributes().get("PAGE_ID");
+        String hash = fact.attributes().get("SOURCE_RAW_SHA256");
+        if (source == null || id == null || hash == null) {
+            feedback.info("Keine verifizierte Quellposition verfügbar", null);
+            return;
+        }
+        var focus = new ProgramFocus(new PageKey(source, id), hash, fact.line());
+        Background.run(() -> runtime.workspace().cachedPage(source, id)
+                .filter(stored -> hash.equals(stored.snapshot().payload().rawSha256())).isPresent(), valid -> {
+            if (current != request || context.runtime() != runtime) return;
+            if (!valid) {
+                feedback.warning("Fundstelle nicht mehr aktuell", "COBOL-Suche erneut öffnen.");
+                return;
+            }
+            pendingProgramFocus = focus;
+            context.navigator().openPage(source, id);
+        }, error -> {
+            if (current == request && context.runtime() == runtime) feedback.problem(error);
+        });
+    }
+
+    private void showStoredProgram(PageSnapshot snapshot) {
+        var focus = pendingProgramFocus;
+        pendingProgramFocus = null;
+        boolean matching = focus != null && focus.key().equals(snapshot.key())
+                && focus.rawSha256().equals(snapshot.payload().rawSha256());
+        var code = matching
+                ? com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.verified(snapshot)
+                : com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot);
+        code.ifPresent(source -> showOriginalProgram(source, matching ? focus.line() : 0));
+        if (matching && code.isPresent()) tabs.select(READING);
+        if (focus != null && (!matching || code.isEmpty())) {
+            feedback.warning("Fundstelle nicht mehr aktuell", "Quelltextrevision hat sich geändert.");
+        }
+    }
+
+    private void showOriginalProgram(com.aresstack.spaceharvester.mainframe.cobol.CobolSource source, int line) {
         com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.register();
         var editor = new org.fife.ui.rsyntaxtextarea.RSyntaxTextArea();
         editor.setSyntaxEditingStyle(com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.COBOL);
@@ -2661,6 +2755,14 @@ public final class PageDetailPanel extends JPanel {
         fileContent.add(new org.fife.ui.rtextarea.RTextScrollPane(editor), BorderLayout.CENTER);
         originalProgramShown = true;
         originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        if (line > 0 && line <= editor.getLineCount()) {
+            try {
+                editor.setCaretPosition(editor.getLineStartOffset(line - 1));
+                tabs.select(READING);
+            } catch (javax.swing.text.BadLocationException invalid) {
+                feedback.warning("Fundstelle nicht verfügbar", "Zeile liegt außerhalb des Quelltexts.");
+            }
+        }
         updateFootTools(tabs.selected());
     }
 
@@ -5926,6 +6028,7 @@ public final class PageDetailPanel extends JPanel {
         recompute.setEnabled(enabled);
         recomputeReader.setEnabled(enabled);
         recomputeProgram.setEnabled(enabled);
+        searchPrograms.setEnabled(enabled);
     }
 
     /** Die Überschrift der Seite für die Zeile der Bereichsanzeige; öffnet beim Überfahren die Details. */
