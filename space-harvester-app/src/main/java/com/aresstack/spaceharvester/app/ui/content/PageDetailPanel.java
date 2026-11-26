@@ -517,6 +517,7 @@ public final class PageDetailPanel extends JPanel {
     private boolean originalLinkShown;
     private boolean originalProgramShown;
     private final javax.swing.JButton recomputeProgram = new javax.swing.JButton("Programmanalyse berechnen");
+    private final javax.swing.JButton recomputeBusiness = new javax.swing.JButton("Fachliche KI-Analyse");
     private final javax.swing.JButton searchPrograms = new javax.swing.JButton("COBOL-Suche");
     private java.util.concurrent.Future<?> programSearchTask;
     private int programSearchGeneration;
@@ -825,6 +826,9 @@ public final class PageDetailPanel extends JPanel {
         analysisActions.add(recomputeProgram);
         recomputeProgram.setVisible(false);
         recomputeProgram.addActionListener(event -> recompute(com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment.ID));
+        analysisActions.add(recomputeBusiness);
+        recomputeBusiness.setVisible(false);
+        recomputeBusiness.addActionListener(event -> analyzeBusiness());
         analysisActions.add(storeField);
         analysisActions.add(analysisView.proposeIcon());
         analysisActions.add(analysisView.createIcon());
@@ -1083,6 +1087,7 @@ public final class PageDetailPanel extends JPanel {
         page = null;
         programAnalysisTabs.reset();
         recomputeProgram.setVisible(false);
+        recomputeBusiness.setVisible(false);
         searchPrograms.setVisible(false);
         cancelProgramSearch();
         pendingProgramFocus = null;
@@ -1414,6 +1419,7 @@ public final class PageDetailPanel extends JPanel {
         boolean program = programAnalysisTabs.show(snapshot, views);
         subpages.box().setVisible(!program);
         recomputeProgram.setVisible(program);
+        recomputeBusiness.setVisible(program);
         searchPrograms.setVisible(snapshot.metadata().attributes().containsKey("ftp.path"));
         showRelations();
     }
@@ -5920,6 +5926,51 @@ public final class PageDetailPanel extends JPanel {
         }
     }
 
+    private void analyzeBusiness() {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null) return;
+        var snapshot = page.snapshot();
+        var key = snapshot.key();
+        var ai = runtime.settings().ai();
+        if (ai.chatModel() == null || ai.chatModel().isBlank()) {
+            feedback.warning("Kein Chat-Modell eingestellt", null);
+            return;
+        }
+        if (!ai.externalProcessingSources().contains(key.sourceId())) {
+            feedback.warning("FTP-Wissensquelle nicht für KI freigegeben", "Freigabe unter Einstellungen prüfen.");
+            return;
+        }
+        int budget = ai.contextTokens() == null ? 12000
+                : (int) Math.min(12000L, Math.max(512L, (long) ai.contextTokens() - 1024L));
+        int current = request;
+        recomputeBusiness.setEnabled(false);
+        feedback.working("Fachliche KI-Analyse wird berechnet …");
+        Background.run(() -> {
+            runtime.workspace().recomputeCobolBusiness(key, snapshot.payload().rawSha256(), ai.chatModel(), budget,
+                    () -> context.runtime() == runtime && ai.equals(runtime.settings().ai()),
+                    state -> javax.swing.SwingUtilities.invokeLater(() -> {
+                        if (current == request && context.runtime() == runtime) {
+                            feedback.working(state == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED
+                                    ? "Wartet auf freien Platz …" : "Fachliche KI-Analyse wird berechnet …");
+                        }
+                    }));
+            var cached = runtime.workspace().cachedPage(key.sourceId(), key.pageId())
+                    .orElseThrow(() -> new IllegalStateException("Programm nicht mehr verfügbar."));
+            return runtime.workspace().enrichments(cached);
+        }, updated -> {
+            if (current != request || context.runtime() != runtime) return;
+            recomputeBusiness.setEnabled(true);
+            views = updated;
+            showProgramAnalysis(snapshot);
+            analysisTabs.select("Fachliche Analyse");
+            feedback.success("Fachliche KI-Analyse gespeichert");
+        }, error -> {
+            if (current != request || context.runtime() != runtime) return;
+            recomputeBusiness.setEnabled(true);
+            feedback.warning("Fachliche KI-Analyse nicht abgeschlossen", error.getMessage());
+        });
+    }
+
     void recompute() {
         recompute(null);
     }
@@ -6040,6 +6091,7 @@ public final class PageDetailPanel extends JPanel {
         recompute.setEnabled(enabled);
         recomputeReader.setEnabled(enabled);
         recomputeProgram.setEnabled(enabled);
+        recomputeBusiness.setEnabled(enabled);
         searchPrograms.setEnabled(enabled);
     }
 

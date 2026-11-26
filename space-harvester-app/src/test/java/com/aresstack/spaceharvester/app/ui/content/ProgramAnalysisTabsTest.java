@@ -76,7 +76,7 @@ class ProgramAnalysisTabsTest {
                 ProgramAnalysisTabs analysis = new ProgramAnalysisTabs(tabs);
                 assertThat(tabs.names()).containsExactly("Absätze", "Aussagen");
                 assertThat(analysis.show(program, views)).isTrue();
-                assertThat(tabs.names()).containsExactly("Programmstruktur", "Datenstrukturen", "Copybooks", "Aufrufe", "Diagnosen", "Kontrollfluss", "Datenfluss");
+                assertThat(tabs.names()).containsExactly("Programmstruktur", "Datenstrukturen", "Copybooks", "Aufrufe", "Diagnosen", "Kontrollfluss", "Datenfluss", "Fachliche Analyse");
                 tabs.select("Kontrollfluss");
                 assertThat(cells(tabs)).anyMatch(value -> value.toString().contains("CALL BOOKING")
                         || value.toString().contains("CALL 'BOOKING'"));

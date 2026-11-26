@@ -25,6 +25,7 @@ final class ProgramAnalysisTabs {
     private final Map<String, Section> sections = new LinkedHashMap<>();
     private final ControlFlowView controlFlow = new ControlFlowView();
     private final DataFlowView dataFlow = new DataFlowView();
+    private final BusinessAnalysisView business = new BusinessAnalysisView();
 
     ProgramAnalysisTabs(PillTabs tabs) {
         this.tabs = tabs;
@@ -36,6 +37,7 @@ final class ProgramAnalysisTabs {
         register("Diagnosen");
         tabs.tab("Kontrollfluss", controlFlow);
         tabs.tab("Datenfluss", dataFlow);
+        tabs.tab("Fachliche Analyse", business);
         reset();
     }
 
@@ -54,6 +56,7 @@ final class ProgramAnalysisTabs {
         sections.values().forEach(section -> section.replace(List.of(), "Analyse wird geladen …"));
         controlFlow.show(null, "Analyse wird geladen …");
         dataFlow.show(null, "Analyse wird geladen …");
+        business.pending();
     }
 
     boolean show(PageSnapshot snapshot, List<Enrichments.View> views) {
@@ -86,6 +89,9 @@ final class ProgramAnalysisTabs {
         var names = new ArrayList<>(sections.keySet());
         names.add("Kontrollfluss");
         names.add("Datenfluss");
+        names.add("Fachliche Analyse");
+        if (analysis == null) business.pending();
+        else business.show(views);
         tabs.showOnly(names);
         return true;
     }

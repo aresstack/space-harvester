@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.marks.VideoMarks;
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.images.ImagePayload;
@@ -893,7 +894,48 @@ public final class Workspace {
 
     /** Anreicherungen einer gelieferten Seite ({@code view=extended}); das Lesen der Seite hat CONTENT geprüft. */
     public List<Enrichments.View> enrichments(DeliveredPage page) {
-        return harvester.enrichments().view(page.snapshot());
+        var views = harvester.enrichments().view(page.snapshot());
+        return views.stream().map(view -> {
+            if (!com.aresstack.spaceharvester.app.runtime.program.CobolBusinessEnrichment.ID
+                    .equals(view.enrichment().processorId())) return view;
+            if (view.freshness() == Enrichment.Freshness.CURRENT
+                    && cobolBusiness().visible(page, view.enrichment(), views)) return view;
+            // Conceal stale or inaccessible evidence, including the derived hypothesis text.
+            var previous = view.enrichment();
+            var concealed = new Enrichment(previous.key(), previous.processorId(), previous.processorVersion(),
+                    previous.inputSha256(), previous.revision(), Enrichment.Status.OK, "{}", List.of(), null,
+                    previous.computedAt());
+            return new Enrichments.View(concealed, Enrichment.Freshness.STALE);
+        }).toList();
+    }
+
+    private com.aresstack.spaceharvester.app.runtime.program.CobolBusinessUseCase cobolBusiness() {
+        return cobolBusiness(() -> true);
+    }
+
+    private com.aresstack.spaceharvester.app.runtime.program.CobolBusinessUseCase cobolBusiness(
+            java.util.function.BooleanSupplier modelUnchanged) {
+        return new com.aresstack.spaceharvester.app.runtime.program.CobolBusinessUseCase(harvester.enrichments(),
+                key -> cachedPage(key.sourceId(), key.pageId()),
+                source -> modelUnchanged.getAsBoolean() && sourceEnabled(source) && !sourceDataBeingDeleted(source)
+                        && harvester.aiRelease().sourceReleased(source),
+                page -> access.require(caller, ResourceScope.space(page.header().key().sourceId(),
+                        page.header().metadata().partitionKey()), AccessKind.SYNC),
+                this::releasePageForChat, java.time.Clock.systemUTC());
+    }
+
+    /** Run only by an explicit request; no remote source fetch or implicit AI release. */
+    public Enrichments.Run recomputeCobolBusiness(PageKey key, String rawSha256, String model, int batchCharacters,
+            java.util.function.BooleanSupplier modelUnchanged, java.util.function.Consumer<com.aresstack.spaceharvester.application.jobs.JobState> state) {
+        var page = cachedPage(key.sourceId(), key.pageId())
+                .orElseThrow(() -> new IllegalStateException("Programm nicht im Wissensbestand verfügbar."));
+        if (!page.snapshot().payload().rawSha256().equals(rawSha256)) {
+            throw new IllegalStateException("Programm nicht mehr aktuell.");
+        }
+        access.require(caller, ResourceScope.space(key.sourceId(), page.header().metadata().partitionKey()), AccessKind.SYNC);
+        return harvester.pageRecomputation().execute(caller.jobOwner(), page.snapshot(),
+                com.aresstack.spaceharvester.app.runtime.program.CobolBusinessEnrichment.ID, state,
+                context -> cobolBusiness(modelUnchanged).run(key, rawSha256, harvester::aiChat, model, batchCharacters, context));
     }
 
     /**
