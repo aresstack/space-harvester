@@ -61,6 +61,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param diagnosisModel      Modell der Diagnose; leer: gpt-oss-120b
  * @param diagnosisMaxTokens  Tokenlänge der Diagnose; leer: die des Chats
  * @param diagnosisThinking   Nachdenken der Diagnose; leer: das des Chats
+ * @param summaryTimeout      Frist je Anfrage der Update-Zusammenfassung; leer: 5 Minuten
+ * @param labelTimeout        Frist je Anfrage der Abschnittsbenennung; leer: 60 Sekunden
+ * @param expansionTimeout    Frist je Anfrage der Akronymauflösung; leer: 90 Sekunden
  */
 @ConfigurationProperties("space-harvester.ai")
 public record AiProperties(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
@@ -82,7 +85,8 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                            String podcastVoiceHost, String podcastVoiceCohost, String readAloudModel,
                            String readAloudVoice, Integer podcastPauseMillis, Integer podcastSpeechAttempts,
                            Integer podcastSpeechWorkers, Boolean diagnosisEnabled, String diagnosisModel,
-                           Integer diagnosisMaxTokens, String diagnosisThinking) {
+                           Integer diagnosisMaxTokens, String diagnosisThinking, Duration summaryTimeout,
+                           Duration labelTimeout, Duration expansionTimeout) {
 
     AiServiceSettings toSettings() {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout,
@@ -98,7 +102,8 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                         readAloudModel, readAloudVoice, podcastPauseMillis, podcastSpeechAttempts,
                         podcastSpeechWorkers),
                 new AiServiceSettings.Diagnosis(diagnosisEnabled,
-                        new AiServiceSettings.ModelUse(diagnosisModel, diagnosisMaxTokens, diagnosisThinking)));
+                        new AiServiceSettings.ModelUse(diagnosisModel, diagnosisMaxTokens, diagnosisThinking)),
+                new AiServiceSettings.Timeouts(summaryTimeout, labelTimeout, expansionTimeout));
     }
 
     /** Ohne API-Key. */

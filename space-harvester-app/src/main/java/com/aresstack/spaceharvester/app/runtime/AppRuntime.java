@@ -467,7 +467,9 @@ public final class AppRuntime implements AutoCloseable {
                 // Eigene Sprachausgabe für Podcast und Vorlesen (Angelo 24.11.2026); leer: automatisch.
                 .withSpeech(ai.speech())
                 // Diagnose per KI (Angelo 26.11.2026): Schalter und Modell, vorbelegt mit gpt-oss-120b.
-                .withDiagnosis(ai.diagnosis());
+                .withDiagnosis(ai.diagnosis())
+                // Fristen der Update-Zusammenfassung, Abschnittsbenennung und Akronymauflösung; leer: Vorgaben.
+                .withTimeouts(ai.timeouts());
         if (ai.visionModel() != null) {
             // Bildbeschreibungen nur auf Abruf im Reiter „Bilder“ (ADR 0021); ohne Modell nennt er den Grund.
             service = service.withVisionModel(ai.visionModel());

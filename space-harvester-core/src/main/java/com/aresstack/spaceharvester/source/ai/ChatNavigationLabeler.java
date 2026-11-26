@@ -24,7 +24,7 @@ import java.util.function.Supplier;
  * unveränderten {@code ChatSectionLabeler} des Enterprise AI Client. Folgt der wirksamen Konfiguration bei jedem
  * Aufruf: ein anderes {@code ai.chat-model} macht vorhandene Navigationen alt, ohne Modell benennt er nichts. Text geht
  * nur aus Quellen in {@code external-processing-sources} an den Dienst, höchstens 700 Zeichen je Abschnitt. Eigene
- * Frist ({@link RemoteAi#LABEL_TIMEOUT}) und höchstens {@value #PARALLELISM} Anfragen zugleich, damit die Benennung
+ * Frist ({@code ai.label-timeout}) und höchstens {@value #PARALLELISM} Anfragen zugleich, damit die Benennung
  * weder Suchvarianten noch Bildbeschreibung verdrängt. Nach einem Fehler benennt er {@link #PAUSE} lang nichts und
  * meldet sofort {@code UNREACHABLE}: Ein nicht erreichbares Modell hält die Hintergrund-Warteschlange, die Navigation
  * und Embeddings teilen, so höchstens einmal je Pause um eine Frist auf.
@@ -120,7 +120,7 @@ public final class ChatNavigationLabeler implements NavigationLabelModel {
         checkPause(version);
         boolean acquired;
         try {
-            acquired = slots.tryAcquire(RemoteAi.LABEL_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            acquired = slots.tryAcquire(current.timeouts().labelTimeout().toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new AiServiceException(AiServiceException.Reason.TIMEOUT, "Abschnittsbenennung unterbrochen");

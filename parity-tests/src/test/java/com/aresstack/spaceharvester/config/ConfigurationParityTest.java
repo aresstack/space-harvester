@@ -91,6 +91,9 @@ class ConfigurationParityTest {
                 diagnosis-model: diagnose-modell
                 diagnosis-max-tokens: 2048
                 diagnosis-thinking: high
+                summary-timeout: 7m
+                label-timeout: 45s
+                expansion-timeout: 2m
                 podcast-speech-model: tts-podcast
                 podcast-voice-host: Jana
                 podcast-voice-cohost: Thomas
@@ -245,6 +248,8 @@ class ConfigurationParityTest {
                 .isEqualTo(new AiServiceSettings.ModelUse("fristen-modell", 4096, "low"));
         assertThat(appAi.diagnosis()).isEqualTo(ai.diagnosis()).isEqualTo(new AiServiceSettings.Diagnosis(false,
                 new AiServiceSettings.ModelUse("diagnose-modell", 2048, "high")));
+        assertThat(appAi.timeouts()).isEqualTo(ai.timeouts()).isEqualTo(new AiServiceSettings.Timeouts(
+                java.time.Duration.ofMinutes(7), java.time.Duration.ofSeconds(45), java.time.Duration.ofMinutes(2)));
         assertThat(appAi.speech()).isEqualTo(ai.speech())
                 .isEqualTo(new AiServiceSettings.Speech("tts-podcast", "Jana", "Thomas", "tts-vorlesen", "Max", 500, 4,
                         3));

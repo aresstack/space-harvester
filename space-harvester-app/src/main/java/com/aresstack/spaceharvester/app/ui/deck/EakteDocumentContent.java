@@ -23,8 +23,6 @@ import java.util.concurrent.TimeoutException;
  */
 final class EakteDocumentContent implements DocumentContent {
 
-    /** So lange darf ein Schritt (Mappe lesen, Dokument lesen) dauern. */
-    static final long TIMEOUT_SECONDS = 120;
 
     private final EakteSessions sessions;
 
@@ -92,8 +90,10 @@ final class EakteDocumentContent implements DocumentContent {
     }
 
     private static <T> T await(java.util.concurrent.CompletableFuture<T> future) throws Exception {
+        // So lange darf ein Schritt (Mappe lesen, Dokument lesen) dauern; einstellbar (DeckTimeouts).
+        java.time.Duration timeout = DeckTimeouts.shared().get(DeckTimeouts.Value.EAKTE_DOCUMENT);
         try {
-            return future.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (ExecutionException e) {
             if (e.getCause() instanceof Exception cause) {
                 throw cause;
@@ -101,7 +101,7 @@ final class EakteDocumentContent implements DocumentContent {
             throw e;
         } catch (TimeoutException e) {
             future.cancel(true);
-            throw new IOException("Die E-Akte antwortet nicht (nach " + TIMEOUT_SECONDS + " s)", e);
+            throw new IOException("Die E-Akte antwortet nicht (nach " + timeout.toSeconds() + " s)", e);
         }
     }
 }

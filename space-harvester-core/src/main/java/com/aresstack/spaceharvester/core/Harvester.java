@@ -957,6 +957,11 @@ public final class Harvester implements AutoCloseable {
                         return true;
                     });
             opened.add(scheduler);
+            // Angelo 26.11.2026 (WLAN): vorübergehend gescheiterte Seiten seitenweise erneut anfordern statt scheitern,
+            // nach jobs.retry.*; der Vordergrund wartet ohne Netz, bis es zurück ist.
+            com.aresstack.spaceharvester.application.jobs.RetrySettings acquisitionRetry = builder.jobLimits.retry();
+            scheduler.retry(() -> acquisitionRetry);
+            scheduler.network(network);
             this.acquisition = scheduler;
             this.pageLoads = new com.aresstack.spaceharvester.application.background.PageLoads(backgroundJobs,
                     scheduler, AccessContext.technicalClient(OWNER),

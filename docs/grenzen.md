@@ -78,6 +78,8 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Speicher und Pakete (Desktop-`FileSystemAssetStore.DEFAULT_MAX_TOTAL_BYTES`, `ZipExportPackageReader`, `ImportController.MAX_PACKAGE_BYTES`, `LocalFilesSourceAdapter.MAX_FILE_MEGABYTES`, `BscwSourceAdapter`) | 20 GiB, 256 MiB, 4 GiB, 64 MB, Tiefe 50 | größere Dateien und tiefere Ordner werden nicht geerntet oder importiert | Speicherbudget einstellbar, Bestandsgrenzen beseitigen |
 | KI-Textbudgets (Chat 24.000 Zeichen / 8 Quellen, Podcast, Zusammenfassungen, Fristen 12.000 Zeichen) | fest | Material wird vor dem Modellaufruf gekürzt | aus der Tokenlänge des Modells ableiten |
 | Modellname in der MVS-Diagnose (`MvsDiagnosisTools`) | `gpt-oss-120b` | die Diagnose lief nur mit diesem Modell | **einstellbar** (Angelo 26.11.2026): Zeile „Diagnose“ unter Einstellungen › KI-Dienst › Modelle mit Schalter „Diagnose per KI“ (`ai.diagnosis-enabled`, Standard an) und Modell (`ai.diagnosis-model`, vorbelegt `gpt-oss-120b`, Anbieter-Präfix wie `openai/` egal) |
+| Fristen im Command Deck außerhalb des Terminals (früher `FtpChatTools.TIMEOUT_SECONDS`, `EakteDocumentContent.TIMEOUT_SECONDS`, `HttpBetaViewServer.TIMEOUT`, `NetUseLogin.TIMEOUT_SECONDS`) | 120 / 120 / 60 / 60 s | langsame Hosts brachen ab | **einstellbar**: `DeckTimeouts` in `app-state.json` (`deck.timeouts.*`), Einstellungen › Mainframe › „Fristen im Command Deck“. Die Fristen des Terminals (Makros, Anmeldung, OpenTerm) bleiben bis zu einer Entscheidung |
+| Fristen je Anfrage einzelner KI-Aufgaben (früher `RemoteAi.SUMMARY_TIMEOUT`, `LABEL_TIMEOUT`, `EXPANSION_TIMEOUT`) | 5 min / 60 s / 90 s | große Modelle oder langsame Dienste brachen ab | **einstellbar**: `ai.summary-timeout`, `ai.label-timeout`, `ai.expansion-timeout` (`AiServiceSettings.Timeouts`), Einstellungen › KI-Dienst › Modelle › „Fristen je Anfrage“ |
 | MVS-Binärdiagnose und Hex-Ansicht (früher `BinarySample.MAX_CAPTURE_BYTES`, `MvsDiagnosisTools.BUDGET`, Lesegröße 4096, Frist 120 s) | 8 MiB / 65536 / 4096 Bytes / 120 s | größere Stichproben waren unmöglich, die KI las höchstens 64 KiB | **einstellbar**: `MvsDiagnosisSettings` in `app-state.json` (`deck.ftp.diagnosis.sample-bytes`, `read-bytes`, `budget-bytes`, `timeout-seconds`), Einstellungen › Mainframe › „MVS-Binärdiagnose und Hex-Ansicht“. Das Modell kommt aus der Zeile „Diagnose“ (siehe oben) |
 
 ### Grenzen außerhalb des eigenen Codes
@@ -142,6 +144,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `AiServiceSettings.MAX_CHAT_MAX_TOKENS` | `1_000_000` | fest | Obergrenze einer Einstellung | prüfen: entfallen oder einstellbar |
 | `AiServiceSettings.MAX_CONTEXT_TOKENS` | `1_048_576` | fest | Obergrenze einer Einstellung | prüfen: entfallen oder einstellbar |
 | `AiServiceSettings.MAX_LOAD_TIMEOUT` | `Duration.ofHours(1)` | fest | Timeout | einstellbar |
+| `AiServiceSettings.MAX_TASK_TIMEOUT` | `Duration.ofMillis(Integer.MAX_VALUE)` | fest | Protokollgrenze | bleibt: Socket-Timeouts sind `int`-Millisekunden (etwa 24 Tage) |
 | `AiServiceSettings.MAX_PARALLEL` | `32` | fest | Parallelität | einstellbar |
 | `AiServiceSettings.MAX_PODCAST_ATTEMPTS` | `5` | fest | Obergrenze einer Einstellung | prüfen: entfallen oder einstellbar |
 | `AiServiceSettings.MAX_PODCAST_PAUSE_MILLIS` | `5000` | fest | Timeout | einstellbar |
@@ -381,9 +384,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `RelevanceSearch.MAX_TEXT_LENGTH` | `500` | fest | Invariante/Darstellung | im Code belassen |
 | `RelevanceSearch.PARALLEL_CHECKS` | `6` | fest | Parallelität | einstellbar |
 | `RemoteAi.CATALOG_ATTEMPTS` | `4` | fest | Speicher-/Ressourcenbudget | einstellbar |
-| `RemoteAi.EXPANSION_TIMEOUT` | `Duration.ofSeconds(90)` | fest | Timeout | einstellbar |
-| `RemoteAi.LABEL_TIMEOUT` | `Duration.ofSeconds(60)` | fest | Timeout | einstellbar |
-| `RemoteAi.SUMMARY_TIMEOUT` | `Duration.ofMinutes(5)` | fest | Timeout | einstellbar |
 | `RequestRoute.MAX_DEPTH` | `12` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `Reranking.MAX_WINDOW` | `100` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `RestJson.LIST_LIMIT` | `100` | fest | Stapel-/Seitengröße | einstellbar |
@@ -535,6 +535,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `AiSettingsPanel.MAX_SIMPLIFY_PARALLEL` | `16` | fest | Parallelität | einstellbar |
 | `AnalysisView.MAX_STEP_ROWS` | `10` | fest | Invariante/Darstellung | im Code belassen |
 | `AppExit.DEFAULT_TIMEOUT` | `Duration.ofSeconds(40)` | Vorgabe | Timeout | einstellbar |
+| `AiSettingsPanel.TIMEOUT_MAX_AMOUNT` | `999` | fest | Invariante/Darstellung | im Code belassen: größte Zahl im Feld, die Einheit (bis Tage) wählt der Benutzer |
 | `AppSettings.DEFAULT_CHECK_TIMEOUT` | `com.aresstack.spaceharvester.application.sync.PageFreshness.DEFAULT_TIMEOUT` | Vorgabe | Timeout | einstellbar |
 | `AppSettings.DEFAULT_LARGE_FILE_TIMEOUT` | `com.aresstack.spaceharvester.application.sync.PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT` | Vorgabe | Timeout | einstellbar |
 | `AppSettings.DEFAULT_MAX_PAGE_BYTES` | `com.aresstack.spaceharvester.persistence.lucene.LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
@@ -581,7 +582,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `DocumentPane.MAX_PILL` | `28` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_INTERVAL_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_PRESS_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
-| `EakteDocumentContent.TIMEOUT_SECONDS` | `120` | fest | Timeout | einstellbar |
 | `EvidencePopup.MAX_HEIGHT` | `420` | fest | Invariante/Darstellung | im Code belassen |
 | `Explorer.ANALYSIS_LIMIT` | `500` | fest | Stapel-/Seitengröße | einstellbar |
 | `Explorer.BATCH` | `100` | fest | Stapel-/Seitengröße | einstellbar |
@@ -594,7 +594,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `FragmentedMp4AudioOnlySource.MAX_FRAGMENTS` | `100_000` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `FragmentedMp4AudioOnlySource.MAX_READ` | `MediaStreamBridge.CHUNK_BYTES` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `FtpChatTools.MAX_ENTRIES` | `300` | fest | Cache-Aufbewahrung | einstellbar |
-| `FtpChatTools.TIMEOUT_SECONDS` | `120` | fest | Timeout | einstellbar |
 | `GlossaryTab.SNIPPET_CHARS` | `120` | fest | Invariante/Darstellung | im Code belassen |
 | `HttpModelDownload.CONNECT_TIMEOUT` | `Duration.ofSeconds(30)` | fest | Timeout | einstellbar |
 | `HttpModelDownload.RESPONSE_TIMEOUT` | `Duration.ofSeconds(60)` | fest | Timeout | einstellbar |
@@ -669,7 +668,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `BetaViewHttp.MAX_REDIRECTS` | `10` | fest | Protokollgrenze | dokumentieren, berücksichtigen |
 | `CopybookMemberIndex.TTL_NANOS` | `Duration.ofSeconds(60).toNanos()` | fest | Cache-Aufbewahrung | einstellbar |
 | `FtpProfile.DEFAULT_TIMEOUT_SECONDS` | `60` | Vorgabe | Timeout | einstellbar |
-| `HttpBetaViewServer.TIMEOUT` | `Duration.ofSeconds(60)` | fest | Timeout | einstellbar |
+| `HttpBetaViewServer.DEFAULT_TIMEOUT` | `Duration.ofSeconds(60)` | Vorgabe | Timeout | einstellbar (erledigt): `deck.timeouts.betaview-seconds` |
 | `HttpConnectTunnel.MAX_HEADER` | `16 * 1024` | fest | Protokollgrenze | dokumentieren, berücksichtigen |
 | `HttpEakteConnection.MAX_LOCAL_REDIRECTS` | `5` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `JobOutput.MAX_MISSES` | `3` | fest | Speicher-/Ressourcenbudget | einstellbar |
@@ -681,7 +680,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `MacroPlayer.TEXT_TIMEOUT` | `Duration.ofSeconds(5)` | fest | Timeout | einstellbar |
 | `MvsListingService.DEFAULT_PAGE_SIZE` | `200` | Vorgabe | Stapel-/Seitengröße | einstellbar |
 | `NdvAnalysis.HIERARCHY_DEPTH` | `5` | fest | Bestandsgrenze | beseitigen |
-| `NetUseLogin.TIMEOUT_SECONDS` | `60` | fest | Timeout | einstellbar |
+| `NetUseLogin.DEFAULT_TIMEOUT` | `Duration.ofSeconds(60)` | Vorgabe | Timeout | einstellbar (erledigt): `deck.timeouts.sharepoint-login-seconds` |
 | `OpenAmLogin.MAX_STEPS` | `25` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `OpenTermConnector.TUNNEL_TIMEOUT_MILLIS` | `20_000` | fest | Timeout | einstellbar |
 | `SamlNavigator.MAX_SAML_POSTS` | `3` | fest | Speicher-/Ressourcenbudget | einstellbar |

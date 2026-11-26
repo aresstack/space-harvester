@@ -17,23 +17,34 @@ import java.util.Objects;
  */
 public final class HttpBetaViewServer implements BetaViewServer {
 
-    /** Höchstens so lange auf eine Antwort warten. */
-    public static final Duration TIMEOUT = Duration.ofSeconds(60);
+    /** Vorgabe: höchstens so lange auf eine Antwort warten; die App stellt die Frist ein ({@code DeckTimeouts}). */
+    public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
 
     private final HttpClientFactory clients;
-    private final Duration timeout;
+    private final java.util.function.Supplier<Duration> timeout;
 
     public HttpBetaViewServer(HttpClientFactory clients) {
-        this(clients, TIMEOUT);
+        this(clients, DEFAULT_TIMEOUT);
     }
 
     public HttpBetaViewServer(HttpClientFactory clients, Duration timeout) {
+        this(clients, constant(timeout));
+    }
+
+    /** @param timeout die Frist, bei jeder Anmeldung neu gelesen */
+    public HttpBetaViewServer(HttpClientFactory clients, java.util.function.Supplier<Duration> timeout) {
         this.clients = Objects.requireNonNull(clients, "clients");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
     }
 
+    private static java.util.function.Supplier<Duration> constant(Duration timeout) {
+        Objects.requireNonNull(timeout, "timeout");
+        return () -> timeout;
+    }
+
     @Override
     public BetaViewConnection login(BetaViewProfile profile, char[] password) throws IOException {
+        Duration timeout = this.timeout.get();
         HttpClient client = clients.builder()
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .version(HttpClient.Version.HTTP_1_1)

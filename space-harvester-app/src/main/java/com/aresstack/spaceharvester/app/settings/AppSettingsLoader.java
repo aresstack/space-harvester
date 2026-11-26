@@ -1269,7 +1269,8 @@ public final class AppSettingsLoader {
                         count(ai, AiServiceSettings.PODCAST_SPEECH_WORKERS, 1,
                                 AiServiceSettings.Speech.MAX_PODCAST_WORKERS, problems)),
                 use(ai, "diagnosis", problems), optionalFlag(get(ai, AiServiceSettings.DIAGNOSIS_ENABLED),
-                        "space-harvester.ai." + AiServiceSettings.DIAGNOSIS_ENABLED, problems));
+                        "space-harvester.ai." + AiServiceSettings.DIAGNOSIS_ENABLED, problems),
+                timeouts(ai, problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
@@ -1282,7 +1283,7 @@ public final class AppSettingsLoader {
                 draft.pollDuration(), draft.thinking(), draft.parallelCount(), draft.visionTokens(),
                 draft.imageModel(), draft.imageTokens(), draft.visionLevel(), draft.imageLevel(),
                 draft.summary().use(), draft.summaryPlan().use(), draft.podcast().use(), draft.imagePlan().use(),
-                draft.deadline().use(), draft.speech(), draft.diagnosisSettings());
+                draft.deadline().use(), draft.speech(), draft.diagnosisSettings(), draft.timeouts());
     }
 
     /**
@@ -1306,6 +1307,26 @@ public final class AppSettingsLoader {
     }
 
     /** Eine eigene Modellzeile ({@code <prefix>-model}, {@code -max-tokens}, {@code -thinking}) als Eingaben. */
+    /** Fristen der KI-Aufgaben; eine ungültige Frist ist ein Problem und lässt dort die Vorgabe des Core gelten. */
+    private AiServiceSettings.Timeouts timeouts(Map<?, ?> ai, List<String> problems) {
+        Duration summary = taskTimeout(ai, AiServiceSettings.SUMMARY_TIMEOUT, problems);
+        Duration label = taskTimeout(ai, AiServiceSettings.LABEL_TIMEOUT, problems);
+        Duration expansion = taskTimeout(ai, AiServiceSettings.EXPANSION_TIMEOUT, problems);
+        return new AiServiceSettings.Timeouts(summary, label, expansion);
+    }
+
+    private Duration taskTimeout(Map<?, ?> ai, String key, List<String> problems) {
+        String name = "space-harvester.ai." + key;
+        Duration value = optionalDuration(get(ai, key), name, problems);
+        if (value != null && (value.isNegative() || value.isZero()
+                || value.compareTo(AiServiceSettings.Timeouts.MAX_TASK_TIMEOUT) > 0)) {
+            problems.add(name + " muss zwischen 1 ms und " + AiServiceSettings.Timeouts.MAX_TASK_TIMEOUT.toDays()
+                    + " Tagen liegen");
+            return null;
+        }
+        return value;
+    }
+
     private AiDraft.Use use(Map<?, ?> ai, String prefix, List<String> problems) {
         return new AiDraft.Use(text(get(ai, prefix + "-model"), problems),
                 text(get(ai, prefix + "-max-tokens"), problems), text(get(ai, prefix + "-thinking"), problems));

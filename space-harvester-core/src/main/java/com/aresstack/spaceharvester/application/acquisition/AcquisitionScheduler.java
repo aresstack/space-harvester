@@ -2,10 +2,13 @@ package com.aresstack.spaceharvester.application.acquisition;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
+import com.aresstack.spaceharvester.application.jobs.RetrySettings;
+import com.aresstack.spaceharvester.application.network.NetworkState;
 import com.aresstack.spaceharvester.application.observe.Coalescer;
 import com.aresstack.spaceharvester.application.observe.Listeners;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -23,6 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
+import java.util.function.Supplier;
 
 /**
  * Eine Warteschlange für alle Beschaffungen von Seiteninhalten (ADR 0016, Punkt 5 und 6): den Vordergrund (Funde einer
@@ -51,6 +55,16 @@ import java.util.function.BiConsumer;
  *       ein Aufrufer mit durchgereichter Anmeldung ({@link AccessContext#credential()}) wird abgelehnt. Wartet eine
  *       Seite für beide, lädt sie mit dem technischen Aufrufer; bricht ein delegierter Benutzer ab, fällt seine
  *       Anmeldung aus dem Eintrag.</li>
+ *   <li><b>Seitenweise fortsetzen statt scheitern</b> (Angelo 26.11.2026, WLAN: „einzelne Pakete neu anfordern und
+ *       fortsetzen, nicht von vorne anfangen“). Scheitert der Abruf einer Seite vorübergehend (Quelle nicht erreichbar,
+ *       Zeitüberschreitung, Drosselung), fordert der Planer genau diese Seite nach der Wartezeit des Wiederanlaufs
+ *       ({@link RetrySettings#resumeDelay}, {@code jobs.retry.*}) bis zu {@link RetrySettings#maxAttempts()} Mal neu an;
+ *       ihre Anfragen bleiben offen, fertige Seiten bleiben, wie sie sind. Liegt es am Netz ({@link NetworkState}) und
+ *       wartet der Vordergrund auf die Seite, wartet sie ohne Versuch zu verbrauchen, bis das Netz zurück ist; die
+ *       Statuszeile zeigt dann „bitte Internetverbindung prüfen“. Den Hintergrund lässt ein Netzfehler weiter enden:
+ *       Seine Füllung wartet selbst auf das Netz ({@code BackgroundFill}). Erst danach gilt eine Seite als nicht
+ *       geladen. Das ist die eine Stelle für alle Seitenabrufe; sie zählt nicht zu den Wiederholungen des REST-Clients
+ *       einer Quelle, die nur einzelne HTTP-Anfragen wiederholen.</li>
  * </ul>
  *
  * <p>Protokolliert nie Seiten-IDs, nur Quellen und Zähler.
@@ -61,6 +75,9 @@ public final class AcquisitionScheduler implements AutoCloseable {
 
     /** So lange nach der letzten Aktion des Vordergrunds bleibt der Hintergrund still. */
     public static final Duration DEFAULT_RESUME_DELAY = Duration.ofSeconds(5);
+
+    /** Ohne Wiederholung: eine gescheiterte Seite gilt sofort als nicht geladen. */
+    private static final RetrySettings NO_RETRY = new RetrySettings(0, Duration.ZERO, Duration.ZERO, 1);
 
     /** Wer eine Seite braucht. */
     public enum Priority {
@@ -138,6 +155,12 @@ public final class AcquisitionScheduler implements AutoCloseable {
     }
 
     private final Load load;
+    /** Wiederholungen vorübergehend gescheiterter Seiten; ohne {@link #retry(Supplier)} keine. */
+    private volatile Supplier<RetrySettings> retry = () -> NO_RETRY;
+    /** Der Netzzustand; ohne {@link #network(NetworkState)} wartet keine Seite auf das Netz. */
+    private volatile NetworkState network;
+    /** Seiten, die auf ihren nächsten Versuch oder das Netz warten; unter {@link #lock}. */
+    private final Set<Entry> resting = new LinkedHashSet<>();
     private final java.util.function.BiPredicate<String, ChangeTrigger> allowed;
     /** Seiten, die ein Auslöser nicht laden darf, etwa Ausgeschlossenes für automatische Auslöser. */
     private volatile java.util.function.BiPredicate<PageKey, ChangeTrigger> withheld = (key, trigger) -> false;
@@ -210,6 +233,22 @@ public final class AcquisitionScheduler implements AutoCloseable {
      */
     public void withhold(java.util.function.BiPredicate<PageKey, ChangeTrigger> withheld) {
         this.withheld = Objects.requireNonNull(withheld, "withheld");
+    }
+
+    /**
+     * Wiederholt vorübergehend gescheiterte Seiten nach {@code jobs.retry.*} (Angelo 26.11.2026): Anzahl
+     * {@link RetrySettings#maxAttempts()}, Wartezeit {@link RetrySettings#resumeDelay(int)}; zur Laufzeit gelesen.
+     */
+    public void retry(Supplier<RetrySettings> settings) {
+        this.retry = Objects.requireNonNull(settings, "settings");
+    }
+
+    /**
+     * Hängt den Netzzustand an: Scheitert eine Seite, auf die der Vordergrund wartet, am Netz, wartet sie, bis es zurück
+     * ist, statt zu scheitern; jede geladene Seite meldet das Netz als erreichbar.
+     */
+    public void network(NetworkState value) {
+        this.network = value;
     }
 
     public AcquisitionScheduler(Load load, Limits limits, Executor executor, Duration resumeDelay,
@@ -308,7 +347,13 @@ public final class AcquisitionScheduler implements AutoCloseable {
                 entry = new Entry(key, priority);
                 entries.put(key, entry);
                 queue.add(entry);
-            } else if (priority == Priority.FOREGROUND && !entry.running && entry.queued == Priority.BACKGROUND) {
+            } else if (priority == Priority.FOREGROUND && entry.resting) {
+                // Ein neuer Wunsch des Vordergrunds wartet nicht auf die Wartezeit: dieselbe Seite, gleich ein Versuch.
+                wake(entry);
+                foregroundQueue.add(entry);
+                entry.queued = Priority.FOREGROUND;
+            } else if (priority == Priority.FOREGROUND && !entry.running && !entry.resting
+                    && entry.queued == Priority.BACKGROUND) {
                 // Hochstufen: dieselbe Seite, kein zweiter Abruf.
                 backgroundQueue.remove(entry);
                 foregroundQueue.add(entry);
@@ -476,6 +521,16 @@ public final class AcquisitionScheduler implements AutoCloseable {
                 Entry entry = it.next();
                 if (entry.key.sourceId().equals(sourceId) && entry.foreground.isEmpty()) {
                     it.remove();
+                    entries.remove(entry.key, entry);
+                    dropped.addAll(entry.tickets());
+                }
+            }
+            // Ebenso, was auf einen nächsten Versuch wartet.
+            for (Iterator<Entry> it = resting.iterator(); it.hasNext(); ) {
+                Entry entry = it.next();
+                if (entry.key.sourceId().equals(sourceId) && entry.foreground.isEmpty()) {
+                    it.remove();
+                    entry.resting = false;
                     entries.remove(entry.key, entry);
                     dropped.addAll(entry.tickets());
                 }
@@ -672,6 +727,7 @@ public final class AcquisitionScheduler implements AutoCloseable {
     private void run(Entry entry) {
         boolean stored = false;
         RuntimeException failure = null;
+        boolean again = false;
         try {
             Start start = authorizedStart(entry);
             if (start == null) {
@@ -684,14 +740,132 @@ public final class AcquisitionScheduler implements AutoCloseable {
                 call.run();
             }
             stored = true;
+            NetworkState net = network;
+            if (net != null) {
+                net.succeeded();
+            }
         } catch (RuntimeException e) {
             failure = e;
+            again = again(entry, e);
             // Ohne Seiten-ID.
-            LOG.log(System.Logger.Level.INFO, "Beschaffung einer Seite in {0} gescheitert ({1})",
-                    entry.key.sourceId(), e.getClass().getName());
+            LOG.log(System.Logger.Level.INFO, "Beschaffung einer Seite in {0} gescheitert ({1}){2}",
+                    entry.key.sourceId(), describe(e), again ? "; sie wird erneut angefordert" : "");
         } finally {
-            finish(entry, stored, failure);
+            if (!again) {
+                finish(entry, stored, failure);
+            }
         }
+    }
+
+    /** Art und Grund eines Fehlschlags fürs Log, ohne Seiten-ID: etwa {@code SourceAccessException UNAVAILABLE}. */
+    private static String describe(Throwable failure) {
+        SourceAccessException access = access(failure);
+        return failure.getClass().getName() + (access == null ? "" : " " + access.reason());
+    }
+
+    private static SourceAccessException access(Throwable failure) {
+        Set<Throwable> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (Throwable current = failure; current != null && seen.add(current); current = current.getCause()) {
+            if (current instanceof SourceAccessException access) {
+                return access;
+            }
+        }
+        return null;
+    }
+
+    /** Ob ein Fehlschlag vorübergehend ist: Netz, Quelle nicht erreichbar oder Zeit abgelaufen, Drosselung. */
+    static boolean transientFailure(Throwable failure) {
+        if (NetworkState.networkFailure(failure)) {
+            return true;
+        }
+        SourceAccessException access = access(failure);
+        return access != null && (access.reason() == SourceAccessException.Reason.UNAVAILABLE
+                || access.reason() == SourceAccessException.Reason.RATE_LIMITED);
+    }
+
+    /**
+     * Legt eine vorübergehend gescheiterte Seite zurück, statt sie scheitern zu lassen: Ihre Anfragen bleiben offen, der
+     * Platz wird frei. Am Netz und vom Vordergrund gebraucht wartet sie auf das Netz, ohne Versuch zu verbrauchen; sonst
+     * folgt nach der Wartezeit des Wiederanlaufs der nächste Versuch, solange welche übrig sind.
+     *
+     * @return ob die Seite erneut angefordert wird; sonst endet ihr Abruf als gescheitert
+     */
+    private boolean again(Entry entry, RuntimeException failure) {
+        if (!transientFailure(failure)) {
+            return false;
+        }
+        NetworkState net = network;
+        RetrySettings settings;
+        try {
+            settings = retry.get();
+        } catch (RuntimeException e) {
+            settings = NO_RETRY;
+        }
+        boolean offline;
+        Duration delay = null;
+        lock.lock();
+        try {
+            if (closed || entries.get(entry.key) != entry || entry.tickets().isEmpty()) {
+                return false;
+            }
+            // Nur wer selbst nicht auf das Netz wartet, meldet es: die Füllung des Hintergrunds tut das selbst.
+            offline = net != null && !entry.foreground.isEmpty() && NetworkState.networkFailure(failure);
+            if (!offline) {
+                if (entry.retries >= settings.maxAttempts()) {
+                    return false;
+                }
+                delay = settings.resumeDelay(entry.retries);
+                entry.retries++;
+            }
+            if (entry.slot == Priority.FOREGROUND || !entry.foreground.isEmpty()) {
+                lastForeground = System.nanoTime();
+            }
+            count(entry, -1);
+            entry.running = false;
+            entry.resting = true;
+            resting.add(entry);
+            finished.signalAll();
+        } finally {
+            lock.unlock();
+        }
+        if (offline) {
+            net.failed(failure);
+            net.permit().whenComplete((ignored, cancelled) -> requeue(entry));
+        } else {
+            CompletableFuture.delayedExecutor(delay.toMillis(), TimeUnit.MILLISECONDS).execute(() -> requeue(entry));
+        }
+        dispatch();
+        return true;
+    }
+
+    /** Unter {@link #lock}: holt eine zurückgelegte Seite aus der Ruhe, ohne sie einzureihen. */
+    private void wake(Entry entry) {
+        entry.resting = false;
+        resting.remove(entry);
+    }
+
+    /** Der nächste Versuch einer zurückgelegten Seite: wieder in die Warteschlange ihres jetzigen Bedarfs. */
+    private void requeue(Entry entry) {
+        lock.lock();
+        try {
+            if (!entry.resting) {
+                // Schon wieder eingereiht (neuer Wunsch des Vordergrunds) oder beendet.
+                return;
+            }
+            wake(entry);
+            if (closed || entries.get(entry.key) != entry) {
+                return;
+            }
+            if (entry.tickets().isEmpty()) {
+                entries.remove(entry.key, entry);
+                return;
+            }
+            entry.queued = entry.foreground.isEmpty() ? Priority.BACKGROUND : Priority.FOREGROUND;
+            queue(entry.queued).add(entry);
+        } finally {
+            lock.unlock();
+        }
+        dispatch();
     }
 
     private void finish(Entry entry, boolean stored, RuntimeException failure) {
@@ -737,8 +911,14 @@ public final class AcquisitionScheduler implements AutoCloseable {
                     dropped.addAll(entry.tickets());
                     entries.remove(entry.key, entry);
                 }
+                for (Entry entry : List.copyOf(resting)) {
+                    dropped.addAll(entry.tickets());
+                    entries.remove(entry.key, entry);
+                    entry.resting = false;
+                }
                 foregroundQueue.clear();
                 backgroundQueue.clear();
+                resting.clear();
             }
         } finally {
             lock.unlock();
@@ -770,6 +950,10 @@ public final class AcquisitionScheduler implements AutoCloseable {
         /** Wo die Seite wartet; nach dem Start ohne Bedeutung. */
         private Priority queued;
         private boolean running;
+        /** Wartet auf ihren nächsten Versuch oder das Netz ({@link #resting}). */
+        private boolean resting;
+        /** Verbrauchte Wiederholungen nach vorübergehenden Fehlschlägen. */
+        private int retries;
         /** Auf welchem Platz sie lädt. */
         private Priority slot;
         /** Ob der laufende Abruf einen Platz für Nachladen belegt ({@link Mode#deferred()}). */
@@ -875,7 +1059,9 @@ public final class AcquisitionScheduler implements AutoCloseable {
                     if (entry.foreground.isEmpty() && entry.background.isEmpty()) {
                         queue(entry.queued).remove(entry);
                         entries.remove(entry.key, entry);
-                    } else if (entry.foreground.isEmpty() && entry.queued == Priority.FOREGROUND) {
+                        // Wartete sie auf ihren nächsten Versuch, entfällt er.
+                        wake(entry);
+                    } else if (!entry.resting && entry.foreground.isEmpty() && entry.queued == Priority.FOREGROUND) {
                         foregroundQueue.remove(entry);
                         backgroundQueue.add(entry);
                         entry.queued = Priority.BACKGROUND;

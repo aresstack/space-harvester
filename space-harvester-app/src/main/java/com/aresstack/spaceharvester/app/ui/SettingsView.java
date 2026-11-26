@@ -134,15 +134,16 @@ public final class SettingsView implements View {
                     "Alle Werte der MVS-Binärdiagnose auf ihre Vorgabe zurücksetzen",
                     com.aresstack.spaceharvester.app.ui.deck.MvsDiagnosisSettings.Value.class,
                     () -> com.aresstack.spaceharvester.app.ui.deck.MvsDiagnosisSettings.shared().values(),
-                    (values, saved, failed) -> {
-                        try {
-                            com.aresstack.spaceharvester.app.ui.deck.MvsDiagnosisSettings.shared().save(values);
-                            saved.run();
-                        } catch (RuntimeException e) {
-                            failed.accept(e);
-                        }
-                        return true;
-                    });
+                    NumberSettingsPanel.Store.immediately(
+                            values -> com.aresstack.spaceharvester.app.ui.deck.MvsDiagnosisSettings.shared().save(values)));
+    /** Bereich „Mainframe“: Fristen des Command Deck außerhalb des Terminals (app-state.json). */
+    static final String DECK_TIMEOUTS_HEADING = "Fristen im Command Deck";
+    final NumberSettingsPanel<com.aresstack.spaceharvester.app.ui.deck.DeckTimeouts.Value> deckTimeouts =
+            new NumberSettingsPanel<>(DECK_TIMEOUTS_HEADING, "Alle Fristen im Command Deck auf ihre Vorgabe zurücksetzen",
+                    com.aresstack.spaceharvester.app.ui.deck.DeckTimeouts.Value.class,
+                    () -> com.aresstack.spaceharvester.app.ui.deck.DeckTimeouts.shared().values(),
+                    NumberSettingsPanel.Store.immediately(
+                            values -> com.aresstack.spaceharvester.app.ui.deck.DeckTimeouts.shared().save(values)));
     /** Bereich „NDV“: Natural-Blockfarben im Editor (wie MainframeMate). */
     final NdvSettingsPanel ndv = new NdvSettingsPanel();
     final NdvAnalysisSettingsPanel ndvAnalysis = new NdvAnalysisSettingsPanel();
@@ -347,7 +348,8 @@ public final class SettingsView implements View {
                                 new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass))),
                 Comic.plate(TerminalSettingsPanel.HEADING, Comic.PETROL, terminal.component()),
                 Comic.plate(TerminalSettingsPanel.MOUSE_HEADING, Comic.PETROL, terminal.mouseComponent()),
-                Comic.plate(MVS_DIAGNOSIS_HEADING, Comic.PETROL, mvsDiagnosis.component())));
+                Comic.plate(MVS_DIAGNOSIS_HEADING, Comic.PETROL, mvsDiagnosis.component()),
+                Comic.plate(DECK_TIMEOUTS_HEADING, Comic.PETROL, deckTimeouts.component())));
         page(NDV, Comic.column(Comic.plate(NdvSettingsPanel.HEADING, Comic.PETROL, ndv.component()),
                 Comic.plate(NdvAnalysisSettingsPanel.ORDER_HEADING, Comic.PETROL, ndvAnalysis.orderComponent()),
                 Comic.plate(NdvAnalysisSettingsPanel.STEPLIB_HEADING, Comic.PETROL, ndvAnalysis.stepLibComponent()),
