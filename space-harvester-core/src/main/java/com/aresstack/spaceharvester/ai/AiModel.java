@@ -11,8 +11,10 @@ import java.util.Set;
  * @param categories  Einordnung des Dienstes, z. B. {@code chat}, {@code embedding}, {@code rerank},
  *                    {@code vision}; leer, wenn er
  *                    keine meldet
+ * @param contextTokens Kontextlänge des Modells in Tokens, wie der Dienst sie meldet ({@code context_length}); 0, wenn
+ *                      er keine nennt
  */
-public record AiModel(String id, String displayName, Set<String> categories) {
+public record AiModel(String id, String displayName, Set<String> categories, int contextTokens) {
 
     /** Kategorie der Embedding-Modelle. */
     public static final String EMBEDDING = "embedding";
@@ -27,5 +29,11 @@ public record AiModel(String id, String displayName, Set<String> categories) {
         Objects.requireNonNull(id, "id");
         displayName = displayName == null || displayName.isBlank() ? id : displayName;
         categories = categories == null ? Set.of() : Set.copyOf(categories);
+        contextTokens = Math.max(0, contextTokens);
+    }
+
+    /** Ohne gemeldete Kontextlänge. */
+    public AiModel(String id, String displayName, Set<String> categories) {
+        this(id, displayName, categories, 0);
     }
 }

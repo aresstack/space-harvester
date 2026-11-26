@@ -2194,11 +2194,26 @@ public final class ChatPanel extends JPanel {
         return ChatRoom.left(chatBudget(), asked, List.of(), 1);
     }
 
-    /** Tokenbudget des Chat-Modells aus Kontextlänge und Ausgabelimit; {@code null}, wenn eines fehlt. */
+    /** Tokenbudget des Chat-Modells, ohne den Modellkatalog zu fragen (für den EDT). */
     private com.aresstack.spaceharvester.app.runtime.ModelBudget chatBudget() {
+        return chatBudget(false);
+    }
+
+    /**
+     * Tokenbudget des Chat-Modells ({@link com.aresstack.spaceharvester.app.runtime.ModelBudget#chat}): Kontextlänge
+     * aus den Einstellungen, sonst aus dem Modellkatalog des Dienstes; mit {@code fetch} fragt der erste Aufruf den
+     * Katalog (nur auf einem Hintergrund-Thread des Turns). {@code null}, wenn keine Kontextlänge bekannt ist.
+     */
+    private com.aresstack.spaceharvester.app.runtime.ModelBudget chatBudget(boolean fetch) {
         AppSettings settings = context.settings();
-        return settings == null || settings.ai() == null ? null : com.aresstack.spaceharvester.app.runtime.ModelBudget
-                .known(settings.ai().contextTokens(), settings.ai().chatMaxTokens());
+        AppRuntime runtime = context.runtime();
+        if (settings == null || settings.ai() == null) {
+            return null;
+        }
+        Integer catalog = settings.ai().contextTokens() != null || runtime == null ? null
+                : runtime.workspace().catalogContextTokens(settings.ai().chatModel(), fetch);
+        return com.aresstack.spaceharvester.app.runtime.ModelBudget.chat(settings.ai().contextTokens(), catalog,
+                settings.ai().chatMaxTokens());
     }
 
     /**
@@ -2271,7 +2286,7 @@ public final class ChatPanel extends JPanel {
         listener.card = thinking;
         thinking.open();
         turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
-                listener, SwingUtilities::invokeLater).budget(chatBudget());
+                listener, SwingUtilities::invokeLater).budget(() -> chatBudget(true));
         if (custom != null) {
             // #1151: dieselbe Unterhaltung, aber die Werkzeuge der Perspektive (Command Deck: Maskenassistent).
             custom.tools().modelSelected(modelName);
