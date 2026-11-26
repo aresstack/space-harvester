@@ -139,6 +139,7 @@ public final class ChatPanel extends JPanel {
     static final String DICTATE = "Spracheingabe mit Whisper";
     /** Wie im Enterprise AI Client: die Erkennung nach dem Stopp ist orange in der Statuszeile zu sehen. */
     static final String RECOGNIZING_STATUS = "Erkenne Sprache …";
+    static final String SEND_AFTER_DICTATION_STATUS = "Erkenne Sprache … danach wird gesendet";
     private static final int MIN_EDITOR_HEIGHT = 64;
     private static final int MAX_NORMAL_EDITOR_HEIGHT = 400;
     private static final String NORMAL_EDITOR_HEIGHT = "composer.normalHeight";
@@ -331,6 +332,11 @@ public final class ChatPanel extends JPanel {
     private final Dictation dictation = new Dictation();
     private final javax.swing.JTextArea dictationPreview = new javax.swing.JTextArea(2, 20);
     private DictationPhase dictationPhase = DictationPhase.IDLE;
+    /**
+     * Senden wurde während der Spracheingabe gedrückt (Angelo 26.11.2026, wie ChatGPT): Aufnahme stoppen, fertig
+     * erkennen und danach sofort senden. Verwerfen und Fehlschlag heben den Wunsch auf.
+     */
+    private boolean sendAfterDictation;
     private long recordingStartedMillis;
 
     private enum DictationPhase { IDLE, RECORDING, RECOGNIZING }
@@ -842,6 +848,7 @@ public final class ChatPanel extends JPanel {
             return;
         }
         boolean wasRecording = dictationPhase == DictationPhase.RECORDING;
+        sendAfterDictation = false;
         dictation.cancel();
         dictationPhase = DictationPhase.IDLE;
         stopDictationLevelMeter();
@@ -897,6 +904,10 @@ public final class ChatPanel extends JPanel {
                     editor.requestFocusInWindow();
                 }
                 refreshDictationControls();
+                if (sendAfterDictation) {
+                    sendAfterDictation = false;
+                    send();
+                }
             }
 
             /** Fügt einen erkannten Abschnitt ein: zuerst am Cursor bzw. statt der Auswahl, dann hinter dem vorigen. */
@@ -912,6 +923,7 @@ public final class ChatPanel extends JPanel {
             @Override
             public void failed(String message) {
                 dictationPhase = DictationPhase.IDLE;
+                sendAfterDictation = false;
                 stopDictationLevelMeter();
                 String reason = message == null || message.trim().isEmpty() ?
                         "unbekannter Fehler" : message.trim();
@@ -2086,6 +2098,14 @@ public final class ChatPanel extends JPanel {
      * sie lesbarer Text sind. Läuft schon ein Turn, bricht Senden ihn ab.
      */
     void send() {
+        if (turn == null && dictationPhase != DictationPhase.IDLE) {
+            sendAfterDictation = true;
+            if (dictationPhase == DictationPhase.RECORDING) {
+                toggleDictation();
+            }
+            status.setText(SEND_AFTER_DICTATION_STATUS);
+            return;
+        }
         if (turn != null) {
             if (listening != null) {
                 listening.endApprovals();
