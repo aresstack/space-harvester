@@ -87,7 +87,7 @@ Quelleinstellung geändert, per PR auf EAC-main und danach `sync-from-upstream.s
 | Confluence `MAX_READER_ATTACHMENTS` | 500 | weitere Anhänge fehlen |
 | LocalFiles `PARTITION_DEPTH` | 20 | tiefere Ordner fehlen |
 | Outlook `MAX_FOLDER_DEPTH` | 15 | tiefere Ordner fehlen |
-| SharePoint-Änderungsschnappschüsse (`SharePointChangePages`) | 4 im Prozess | ältere Änderungsstände gehen verloren; der ChangeToken wird nicht gespeichert (F42-1: Register entfernen, Token speichern) |
+| SharePoint-Änderungsschnappschüsse (früher `SharePointChangePages`) | entfallen | **Erledigt** (F42-1, ADR 0042 Punkte 5 und 6): kein Register mehr, der Cursor trägt seine Position; das exakte ChangeToken je Bibliothek wird mit der bestätigten Generation gespeichert (EAC #259, #261) |
 | SharePoint-Änderungsseite, JSON | 500 / 32 MiB | |
 | Confluence/Jira Reader | 100 / 50 MiB | |
 | MediaWiki-Stapel, Git-Kinderstapel, NDV-Metadaten | 50 / 200 / 10.000 | |

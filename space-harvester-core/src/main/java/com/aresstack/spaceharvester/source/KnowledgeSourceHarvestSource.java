@@ -924,15 +924,23 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public PageMetadataBatch changedPageMetadata(String partitionKey, java.time.Duration within, String cursor,
                                                  int limit) {
+        return changedPageMetadata(partitionKey, null, within, cursor, limit);
+    }
+
+    @Override
+    public PageMetadataBatch changedPageMetadata(String partitionKey, String checkpoint, java.time.Duration within,
+                                                 String cursor, int limit) {
         ChangeListingSource changes = changes();
         PartitionResources batch;
         try {
-            batch = changes.changedResources(changePartition(partitionKey), within, cursor == null ? "" : cursor, limit);
+            batch = changes.changedResourcesSince(changePartition(partitionKey), checkpoint == null ? "" : checkpoint,
+                    within, cursor == null ? "" : cursor, limit);
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
         return new PageMetadataBatch(batch.resources().stream()
-                .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
+                .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor(),
+                batch.checkpoint());
     }
 
     @Override

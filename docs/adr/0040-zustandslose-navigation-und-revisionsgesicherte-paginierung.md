@@ -93,8 +93,6 @@ SharePoint ist die erste Quelle dieser Navigation. Was nur SharePoint betrifft (
   beginnen. „Zustandslos“ gilt damit je Prozess. Nach Punkt 10 genügt das vorerst.
 - **Der Rückfall aus Punkt 8 ist am echten Server ungeprüft.** #1468 nennt einen „Offset-/Fingerprint-Refetch“ als
   Rückfall. Ob er bei einem Server ohne Fortsetzungsverweis alle Einträge liefert, ist nur gegen Attrappen getestet.
-- **Beim Änderungsabgleich von SharePoint gibt es noch ein Register mit fester Größe** (`SharePointChangePages`,
-  vier Schnappschüsse). Das steht in ADR 0042.
 
 ## Geklärt am 26.11.2026
 
