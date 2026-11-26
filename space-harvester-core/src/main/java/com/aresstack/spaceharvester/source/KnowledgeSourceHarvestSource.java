@@ -602,6 +602,22 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
      * dieser Quelle: Schema und Endpoint der Quellenadresse ({@link KnowledgeSourcePort#sourceId()}), dahinter das
      * Ziel. Ob es die Seite gibt, klärt erst das Laden.
      */
+    @Override
+    public Optional<String> navigationPageId(String nativePath) {
+        if (!(port instanceof com.aresstack.enterpriseai.source.api.NavigationResourceSource navigation)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.ofNullable(navigation.navigationResource(nativePath)).map(this::nativeId);
+        } catch (KnowledgeSourceException e) {
+            if (e.kind() == KnowledgeSourceException.Kind.NOT_FOUND
+                    || e.kind() == KnowledgeSourceException.Kind.ACCESS_DENIED) {
+                return Optional.empty();
+            }
+            throw accessFailure(e);
+        }
+    }
+
     private Optional<KnowledgeResourceId> ownResource(String value) {
         SourceAddress address = port.sourceId();
         if (address == null || address.scheme().isEmpty()) {

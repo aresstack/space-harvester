@@ -275,6 +275,11 @@ public interface HarvestSource {
      * @throws SourceAccessException {@code UNSUPPORTED} für eine Quelle ohne diese Fähigkeit, sonst wie
      *                               {@link #partitions()}
      */
+    /** Resolve a directly visited native resource without extending the configured inventory. */
+    default Optional<String> navigationPageId(String nativePath) {
+        return Optional.empty();
+    }
+
     default Optional<String> resolveAddress(String address) {
         throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle kann Adressen nicht auflösen", null);

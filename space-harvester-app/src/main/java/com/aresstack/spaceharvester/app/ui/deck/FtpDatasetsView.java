@@ -415,12 +415,13 @@ final class FtpDatasetsView extends JPanel {
         }
         String resolved = session.mvs() ? MvsPath.absolute(target) : (target == null || target.isBlank() ? "/" : target);
         boolean withDetails = details;
+        boolean acquire = owner.navigationEnabled();
         owner.status("Liste " + resolved + " …", false);
         if (model.all.isEmpty() || !resolved.equals(current)) {
             message("Lade Einträge …", false);
         }
         String from = current;
-        owner.session().files(files -> files.list(resolved, withDetails)).whenComplete((list, error) ->
+        owner.session().files(files -> files.list(resolved, withDetails || acquire)).whenComplete((list, error) ->
                 SwingUtilities.invokeLater(() -> {
                     if (error != null) {
                         Throwable cause = error instanceof java.util.concurrent.CompletionException
@@ -449,6 +450,9 @@ final class FtpDatasetsView extends JPanel {
                     showList();
                     enableActions();
                     afterRefresh.run();
+                    if (acquire) {
+                        owner.navigationListed(list);
+                    }
                 }));
     }
 
