@@ -76,6 +76,68 @@ class StoredCopybooksTest {
     }
 
     @Test
+    void backgroundJobsRecomputeOnlyAffectedProgramsAfterCacheFillOrRemoval() throws Exception {
+        var program = snapshot("ftp", "APP.COBOL(DEMO)", CODE);
+        var unaffected = snapshot("ftp", "APP.COBOL(OTHER)",
+                CODE.replace("PROGRAM-ID. DEMO.", "PROGRAM-ID. OTHER.")
+                        .replace("           COPY CUSTOMER.\n", "       01 OWN-FIELD PIC X.\n"));
+        var foreign = snapshot("foreign", "APP.COBOL(DEMO)", CODE);
+        var higher = snapshot("ftp", "APP.CPY1(CUSTOMER)", "       01 CUSTOMER-FIELD PIC X.\n");
+        var revised = snapshot("ftp", "APP.CPY1(CUSTOMER)", "       01 REVISED-FIELD PIC 9.\n");
+        java.util.Deque<Runnable> pending = new java.util.ArrayDeque<>();
+        try (var cache = LucenePageCache.open(home.resolve("pages"));
+             var store = LuceneEnrichmentStore.open(home.resolve("analyses"));
+             var jobs = new com.aresstack.spaceharvester.application.jobs.Jobs(
+                     new com.aresstack.spaceharvester.application.jobs.InMemoryJobStore(), pending::addLast,
+                     new com.aresstack.spaceharvester.application.jobs.JobLimits(4, 10, java.time.Duration.ofHours(1)),
+                     Clock.systemUTC())) {
+            var processor = new CobolProgramEnrichment(
+                    Map.of("ftp", List.of("APP.CPY1"), "foreign", List.of("APP.CPY1")), cache::find);
+            var enrichments = new Enrichments(new KnowledgeDocumentTextProjector(), List.of(processor), store, Clock.systemUTC());
+            for (var snapshot : List.of(program, unaffected, foreign)) {
+                cache.save(snapshot);
+                assertThat(enrichments.refresh(snapshot).computed()).isEqualTo(1);
+            }
+            var untouched = store.find(unaffected.key()).getFirst();
+            var isolated = store.find(foreign.key()).getFirst();
+            var background = new com.aresstack.spaceharvester.application.background.BackgroundJobs(jobs, "app");
+            var dependent = new com.aresstack.spaceharvester.application.enrichment.DependentEnrichments(
+                    enrichments, cache, background, source -> true);
+            var fill = new com.aresstack.spaceharvester.application.enrichment.EnrichingCacheFill(
+                    com.aresstack.spaceharvester.application.query.PageCacheFill.of(cache::state, cache::trySave, cache::saveWaiting),
+                    enrichments, null, page -> dependent.changed(page.key().sourceId()));
+            assertThat(fill.store(higher, fill.state(higher.key()))).isTrue();
+            assertThat(pending).hasSize(1);
+            // A job already marked running can be followed by another; it must not reparse current results.
+            dependent.changed("ftp");
+            while (!pending.isEmpty()) pending.removeFirst().run();
+
+            assertThat(artifact(enrichments, program).analysis().elements())
+                    .anyMatch(element -> element.name().equals("CUSTOMER-FIELD"));
+            assertThat(store.find(unaffected.key())).containsExactly(untouched);
+            assertThat(store.find(foreign.key())).containsExactly(isolated);
+
+            assertThat(fill.store(revised, fill.state(revised.key()))).isTrue();
+            while (!pending.isEmpty()) pending.removeFirst().run();
+            assertThat(artifact(enrichments, program).analysis().elements())
+                    .anyMatch(element -> element.name().equals("REVISED-FIELD"));
+            assertThat(cache.remove(higher.key())).isTrue();
+            // Use the same notification as the synchronization follow-up.
+            dependent.changed("ftp");
+            while (!pending.isEmpty()) pending.removeFirst().run();
+            assertThat(artifact(enrichments, program).analysis().isPartial()).isTrue();
+            assertThat(artifact(enrichments, program).analysis().elements())
+                    .noneMatch(element -> element.name().equals("REVISED-FIELD"));
+            assertThat(store.find(unaffected.key())).containsExactly(untouched);
+            assertThat(store.find(foreign.key())).containsExactly(isolated);
+            var completed = background.parts(com.aresstack.spaceharvester.application.enrichment.DependentEnrichments.KIND);
+            assertThat(completed).hasSize(4).allSatisfy(job ->
+                    assertThat(job.state()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobState.COMPLETED));
+            assertThat(completed.stream().mapToLong(job -> job.progress().written()).sum()).isEqualTo(3);
+        }
+    }
+
+    @Test
     void qualifiedCopybookNeverSearchesUnconfiguredOrAmbiguousLibraries() throws Exception {
         var program = snapshot("ftp", "APP.COBOL(DEMO)", CODE);
         var member = snapshot("ftp", "A.CPY(CUSTOMER)", "       01 FIELD-A PIC X.\n");

@@ -732,6 +732,9 @@ public final class Harvester implements AutoCloseable {
                     new com.aresstack.spaceharvester.application.query.LocalPageSections(structuredDocuments));
 
             this.access = new AccessGuard(builder.accessPolicy);
+            var dependentEnrichments = new com.aresstack.spaceharvester.application.enrichment.DependentEnrichments(
+                    enrichments, cache, backgroundJobs, sourceId -> catalog.find(sourceId).isPresent()
+                            && access.permitsSourceWide(AccessContext.technicalClient(OWNER), sourceId, AccessKind.CONTENT));
             // ADR 0027: Bestand je Space; jeder Commit des Cache meldet ihm seine Änderungen. Schließt vor dem Cache.
             LuceneHoldingsCatalog holdingsCatalog = new LuceneHoldingsCatalog(cache);
             this.holdings = new Holdings(catalog, holdingsCatalog, access, builder.maxTreeNodes);
@@ -788,6 +791,7 @@ public final class Harvester implements AutoCloseable {
             this.pages = new PageQueries(catalog, reader, access, freshness,
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave, cache::saveWaiting),
                             enrichments, texts, snapshot -> {
+                                dependentEnrichments.changed(snapshot.key().sourceId());
                                 DocumentEnrichments sections = sectionTexts.get();
                                 if (sections != null) {
                                     sections.indexedLocal(snapshot);
@@ -1118,7 +1122,8 @@ public final class Harvester implements AutoCloseable {
                     // SY1: danach der automatische Synonymlauf der Quelle als Hintergrundauftrag.
                     // B1: danach die automatische Bildbeschreibung der Quelle als eigener Auftrag (Standard aus).
                     // K4: danach die Fachbegriffe der Quelle als Hintergrundauftrag (Standard aus).
-                    List.of(acronymRelationRule::refresh, sourceId -> synonymDiscovery.automatic(sourceId),
+                    List.of(dependentEnrichments::changed, acronymRelationRule::refresh,
+                            sourceId -> synonymDiscovery.automatic(sourceId),
                             sourceId -> glossaryClassification.automatic(sourceId),
                             sourceId -> {
                                 var automatic = this.automaticImages;

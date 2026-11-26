@@ -306,6 +306,13 @@ public class Enrichments {
         return List.copyOf(processors.keySet());
     }
 
+    /** Only local processors that explicitly track dependencies on other stored pages. */
+    public List<String> dependentProcessorIds(String sourceId) {
+        return processors.values().stream()
+                .filter(processor -> !processor.background() && processor.dependsOnOtherPages(sourceId))
+                .map(EnrichmentProcessor::id).toList();
+    }
+
     /**
      * Die Prozessoren für Dokumente, die die Seite bearbeiten, mit ihrer aktuellen Version: was ein aktueller
      * Analysestand eines Dokuments dieser Seite enthalten muss.

@@ -42,6 +42,7 @@ public final class CobolProgramEnrichment implements EnrichmentProcessor {
     @Override public String id() { return ID; }
     @Override public String version() { return VERSION; }
     @Override public boolean appliesTo(PageKey key) { return libraries.containsKey(key.sourceId()); }
+    @Override public boolean dependsOnOtherPages(String sourceId) { return libraries.containsKey(sourceId); }
 
     @Override
     public EnrichmentOutput process(PageText text) {

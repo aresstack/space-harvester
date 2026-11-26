@@ -95,6 +95,11 @@ public interface EnrichmentProcessor {
         return false;
     }
 
+    /** Opt in to source-wide reconciliation when other stored documents change. */
+    default boolean dependsOnOtherPages(String sourceId) {
+        return false;
+    }
+
     /**
      * Ob ein gespeicherter Stand mit gleichem Text und gleicher Version für diesen Abschnitt an dieser Stelle gilt;
      * Vorgabe: wenn er nicht {@link #outdated(Enrichment)} ist.
