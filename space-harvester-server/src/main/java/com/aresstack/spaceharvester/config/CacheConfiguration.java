@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichingCacheFill;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.jobs.JobStore;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
+import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
@@ -15,9 +16,6 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.GitSourceAdapter;
-import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
-import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
-import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.util.List;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -98,9 +96,9 @@ class CacheConfiguration {
 
     /** Hält den Volltextindex beim Ablegen und nach jedem Abgleich nach. */
     @Bean
-    PageTextIndexing pageTextIndexing(LucenePageTextIndex index) {
-        return new PageTextIndexing(List.of(new ConfluenceStorageTextProjector(), new LocalFilesTextProjector(),
-                new KnowledgeDocumentTextProjector()), index);
+    PageTextIndexing pageTextIndexing(LucenePageTextIndex index, PageTextProjector projector) {
+        // Derselbe Lesetext wie Anreicherungen und Begriffe (AssetConfiguration).
+        return new PageTextIndexing(List.of(projector), index);
     }
 
     /** Titel- und Metadatensuche (#28) auf demselben Index. */

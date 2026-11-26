@@ -271,10 +271,14 @@ space-harvester:
 - **Kopien:** Anhänge und Originale im JSON-Paket gehen als Strom ohne Kopie im Speicher. Eine Kopie bleibt in
   `ConfluenceHttpResponse` aus dem Enterprise AI Client für Antworten im Speicher (Konstruktor und `body()`;
   Vorschlag als Upstream-Patch 08).
-- **Textextraktion:** Tika liest nur Anhänge bis 20 MiB (`TikaDocumentText.DEFAULT_MAX_BYTES`), größere bekommen
-  keinen Text. Die Textlänge wird erst nach der Extraktion auf `maxChars` (1 Mio. Zeichen) gekürzt, weil der
-  Extraktor aus dem Enterprise AI Client den ganzen Text als String liefert; eine Grenze schon beim Schreiben des
-  Textes bräuchte eine Änderung dort.
+- **Textextraktion im Speicher** (`TikaDocumentText`: Lesetext lokaler Dateien, BSCW, Anhänge beim Ablegen,
+  Fristen): Dieser Weg hält die ganze Datei im Speicher und folgt denselben Schlüsseln (F39-10). Größte Datei ist die
+  Schranke `memory-limits` für `*` (Standard `20MB`), mit gesetzter `max-file-size` die kleinere von beiden; größere
+  bekommen keinen Text (`document-text-too-large`). `idle-timeout` gilt dort als Laufzeit je Datei (Tika meldet auf
+  diesem Weg keinen Fortschritt), ohne sie `total-timeout`; `parallel` begrenzt die Läufe, `max-chars` den Text. Nur
+  Dokumentvorschau und Chat-Browser der App nutzen noch die Standardwerte. Die Textlänge ist nicht begrenzt (F39-10, `docs/grenzen.md`): der Extraktor aus dem Enterprise AI
+  Client liefert den ganzen Text ohnehin als String, ein Kürzen danach hätte nur Text verloren und keinen Speicher
+  gespart.
 
 ## Reihenfolge der Quellen
 

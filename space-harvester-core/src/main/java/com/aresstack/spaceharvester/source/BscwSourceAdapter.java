@@ -19,6 +19,18 @@ public final class BscwSourceAdapter implements SourceAdapter {
     /** Vorgabe und Höchstwert für {@code options.chunkMegabytes} (Download großer Originale auf die Platte). */
     private static final int DEFAULT_CHUNK_MEGABYTES = BscwWebDavKnowledgeSource.DEFAULT_CHUNK_BYTES / (1024 * 1024);
 
+    private final com.aresstack.spaceharvester.application.assets.DocumentText documents;
+
+    /** Mit der gemeinsamen Tika-Extraktion (Vorgaben von {@code assets.extraction.*}). */
+    public BscwSourceAdapter() {
+        this(TikaDocumentText.shared());
+    }
+
+    /** Mit der Tika-Extraktion des Dienstes, also mit den eingestellten {@code assets.extraction.*} (F39-10). */
+    public BscwSourceAdapter(com.aresstack.spaceharvester.application.assets.DocumentText documents) {
+        this.documents = java.util.Objects.requireNonNull(documents, "documents");
+    }
+
     @Override
     public String type() {
         return TYPE;
@@ -137,7 +149,7 @@ public final class BscwSourceAdapter implements SourceAdapter {
         // Ein Stück je Abruf passt immer in die Antwortgrenze des Transports (maxFileMegabytes).
         int chunk = Math.min(number(config, "chunkMegabytes", DEFAULT_CHUNK_MEGABYTES) * 1024 * 1024, maxBytes);
         BscwWebDavKnowledgeSource port = new BscwWebDavKnowledgeSource(SourceAddress.of(config.id()), root,
-                transport, depth, TikaDocumentText.shared(), chunk);
+                transport, depth, documents, chunk);
         return new OpenedSource(port, null);
     }
 

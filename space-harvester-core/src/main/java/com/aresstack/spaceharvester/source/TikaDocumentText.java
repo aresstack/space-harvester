@@ -12,6 +12,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtrac
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.spaceharvester.application.assets.DocumentText;
 import com.aresstack.spaceharvester.application.assets.DocumentTextException;
+import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -37,13 +38,13 @@ import java.util.concurrent.TimeoutException;
  *
  * <p>Dazu kommen die Grenzen des Dienstes, weil Tika fremde Dateien parst:
  * <ul>
- *   <li>Größe: höchstens {@link #DEFAULT_MAX_BYTES} je Datei (dieselben 20 MiB wie Confluence-Antworten, ADR 0002, und
- *       {@code options.maxFileMegabytes} lokaler Dateien); größere Dateien werden nicht geparst.</li>
- *   <li>Zeit: höchstens {@link #DEFAULT_TIMEOUT} je Datei, in einem eigenen Thread; danach wird er unterbrochen und
- *       das Ergebnis verworfen.</li>
- *   <li>Gleichzeitigkeit: höchstens {@link #MAX_PARALLEL} Läufe; ein hängender Lauf hält seinen Platz, bis er endet,
- *       sodass nie mehr als so viele Threads in Tika stecken.</li>
- *   <li>Textlänge: höchstens {@link #DEFAULT_MAX_CHARS} Zeichen.</li>
+ *   <li>Größe: die Speicherschranke aus {@code assets.extraction.memory-limits} (Vorgabe 20 MiB, wie Confluence-
+ *       Antworten, ADR 0002); größere Dateien werden nicht geparst ({@link #TikaDocumentText(ExtractionLimits)}).</li>
+ *   <li>Zeit: {@code assets.extraction.idle-timeout} je Datei (Vorgabe 30 s), in einem eigenen Thread; danach wird er
+ *       unterbrochen und das Ergebnis verworfen.</li>
+ *   <li>Gleichzeitigkeit: {@code assets.extraction.parallel} Läufe (Vorgabe 2); ein hängender Lauf hält seinen Platz,
+ *       bis er endet, sodass nie mehr als so viele Threads in Tika stecken.</li>
+ *   <li>Textlänge: ohne Grenze (F39-10); nur ein ausdrücklich übergebenes Zeichenbudget kürzt.</li>
  * </ul>
  * Die letzten Ergebnisse bleiben im Speicher ({@value #CACHE_ENTRIES} Einträge nach Inhalts-Hash), weil Volltextindex
  * und Anreicherungen dieselbe Datei kurz nacheinander projizieren. Meldungen nennen weder Dateinamen noch Inhalte.
@@ -56,14 +57,10 @@ public final class TikaDocumentText implements DocumentText {
     /** Tika-Linie und Regeln dieser Klasse; steigt, wenn sich der gelesene Text ändern kann. */
     public static final String VERSION = "3.3-2";
 
-    /** Größte Datei, die geparst wird: 20 MiB. */
-    public static final long DEFAULT_MAX_BYTES = 20L * 1024 * 1024;
-    /** Längster Text je Datei (fest, docs/grenzen.md; soll {@code assets.extraction.max-chars} folgen). */
-    public static final int DEFAULT_MAX_CHARS = 1_000_000;
-    /** Längste Laufzeit je Datei. */
-    public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
-    /** Gleichzeitige Läufe. */
-    public static final int MAX_PARALLEL = 2;
+    /** Ohne Zeichenbudget: der ganze Text (F39-10); Tika liefert ihn ohnehin als einen String. */
+    private static final int UNBOUNDED = Integer.MAX_VALUE;
+    /** Ohne Zeitgrenze ({@code 0} in den Einstellungen). */
+    private static final Duration NO_TIMEOUT = Duration.ofNanos(Long.MAX_VALUE);
     static final int CACHE_ENTRIES = 8;
     /** So viele Bytes reichen für die Signatur, wenn die Datei zu groß zum Parsen ist. */
     private static final int PREFIX_BYTES = 64 * 1024;
@@ -73,7 +70,7 @@ public final class TikaDocumentText implements DocumentText {
     private final long maxBytes;
     private final int maxChars;
     private final Duration timeout;
-    private final Semaphore slots = new Semaphore(MAX_PARALLEL);
+    private final Semaphore slots;
     private final Map<String, Object> recent = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Object> eldest) {
@@ -83,20 +80,58 @@ public final class TikaDocumentText implements DocumentText {
     /** Tika lädt beim ersten Gebrauch, nicht beim Start. */
     private volatile Engine engine;
 
+    /** Mit den Vorgaben von {@code space-harvester.assets.extraction.*} ({@link ExtractionLimits#DEFAULTS}). */
     public TikaDocumentText() {
-        this(DEFAULT_MAX_BYTES, DEFAULT_MAX_CHARS, DEFAULT_TIMEOUT);
+        this(ExtractionLimits.DEFAULTS);
     }
 
+    /**
+     * Mit den Schutzgrenzen aus {@code space-harvester.assets.extraction.*} (F39-10: dieselben Einstellungen wie die
+     * strukturierte Extraktion, keine eigenen festen Werte). Dieser Weg hält die ganze Datei im Speicher, darum gilt
+     * als Größe die Speicherschranke für alle Typen ({@code memory-limits."*"}, Vorgabe 20 MiB) und, wenn gesetzt, die
+     * kleinere {@code max-file-size}. Tika meldet hier keinen Fortschritt, darum gilt {@code idle-timeout} (Vorgabe
+     * 30 s) als Laufzeit je Datei, ohne sie {@code total-timeout}. {@code max-chars} kürzt den Text, {@code parallel}
+     * begrenzt die gleichzeitigen Läufe. {@code 0} heißt jeweils: keine Grenze.
+     */
+    public TikaDocumentText(ExtractionLimits limits) {
+        this(maxBytes(limits), limits.maxChars() > 0 ? (int) Math.min(limits.maxChars(), UNBOUNDED) : UNBOUNDED,
+                timeout(limits), limits.parallel());
+    }
+
+    /** Mit ausdrücklichen Grenzen; gleichzeitige Läufe wie in {@link ExtractionLimits#DEFAULTS}. */
     public TikaDocumentText(long maxBytes, int maxChars, Duration timeout) {
-        if (maxBytes < 1 || maxChars < 1 || timeout == null || timeout.isNegative() || timeout.isZero()) {
+        this(maxBytes, maxChars, timeout, ExtractionLimits.DEFAULTS.parallel());
+    }
+
+    private TikaDocumentText(long maxBytes, int maxChars, Duration timeout, int parallel) {
+        if (maxBytes < 1 || maxChars < 1 || timeout == null || timeout.isNegative() || timeout.isZero()
+                || parallel < 1) {
             throw new IllegalArgumentException("Grenzen müssen positiv sein");
         }
         this.maxBytes = maxBytes;
         this.maxChars = maxChars;
         this.timeout = timeout;
+        this.slots = new Semaphore(parallel);
     }
 
-    /** Die gemeinsame Instanz des Dienstes mit den Standardgrenzen. */
+    private static long maxBytes(ExtractionLimits limits) {
+        long memory = limits.memoryLimits().getOrDefault(ExtractionLimits.ANY_TYPE, 0L);
+        long file = limits.maxFileBytes();
+        if (memory > 0 && file > 0) {
+            return Math.min(memory, file);
+        }
+        long either = Math.max(memory, file);
+        return either > 0 ? either : Long.MAX_VALUE;
+    }
+
+    private static Duration timeout(ExtractionLimits limits) {
+        if (!limits.idleTimeout().isZero()) {
+            return limits.idleTimeout();
+        }
+        return limits.totalTimeout().isZero() ? NO_TIMEOUT : limits.totalTimeout();
+    }
+
+    /** Gemeinsame Instanz mit den Vorgaben ({@link ExtractionLimits#DEFAULTS}), nur wo keine Einstellungen vorliegen. */
     public static TikaDocumentText shared() {
         return Shared.INSTANCE;
     }

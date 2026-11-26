@@ -33,13 +33,15 @@ class DocumentExtractionsTest {
         String line = "Absatz " + "x".repeat(1000);
         int lines = (int) (Assets.IN_MEMORY_BYTES / line.length()) + 10;
         Asset asset = put(store, (line + "\n").repeat(lines));
+        // Ohne Zeichenbudget (F39-10): früher endete der Text nach 1 Mio. Zeichen, hier sind es über 20 Mio.
         DocumentExtractions extractions = new DocumentExtractions(structure, new FileSystemExtractionStore(directory),
-                ExtractionLimits.DEFAULTS, Integer.MAX_VALUE);
+                ExtractionLimits.DEFAULTS);
 
         AssetText text = extractions.text(asset, store, NOW);
 
         assertThat(structure.readFromFile).as("aus der Datei gelesen, nicht kopiert").isTrue();
         assertThat(text.truncated()).isFalse();
+        assertThat(text.text()).hasSize(lines * line.length() + (lines - 1) * 2);
         assertThat(text.text()).startsWith(line + "\n\n" + line).endsWith(line);
         assertThat(text.extractor()).isEqualTo(structure.id());
         // Abgelegt wird der Text ohne Status; der Status steht in der Extraktion (AP4a).

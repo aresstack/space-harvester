@@ -485,6 +485,9 @@ public final class Harvester implements AutoCloseable {
         // unterbrochener Teile, damit nichts doppelt beginnt.
         List<Runnable> startScans = new ArrayList<>();
         StartTimer start = new StartTimer();
+        // F39-10: eine Tika-Extraktion mit den Grenzen aus assets.extraction.* für lokale Dateien, Anhänge, Export
+        // und Fristen, statt der gemeinsamen Instanz mit festen Werten.
+        TikaDocumentText documentText = new TikaDocumentText(builder.extractionLimits);
         try {
             this.networkFollows = builder.configuration != null && !builder.networkFixed;
             // Folgt das Netzwerk der Konfiguration, liest das Vertrauen ohne Bundle die Regel je Handshake.
@@ -646,7 +649,7 @@ public final class Harvester implements AutoCloseable {
             DocumentExtractions structuredDocuments = new DocumentExtractions(documentStructure,
                     new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits);
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
-                    new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector(),
+                    new LocalFilesTextProjector(documentText), new KnowledgeDocumentTextProjector(),
                     new com.aresstack.spaceharvester.source.LocalReferenceTextProjector(structuredDocuments),
                     // Angelo 20.11.2026: Videoseiten ohne Text lesen ihr Transkript, die letzte Korrektur zuerst; die
                     // Ablage entsteht erst weiter unten.
@@ -731,7 +734,7 @@ public final class Harvester implements AutoCloseable {
             LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
             opened.add(textIndex);
             PageTextIndexing texts = new PageTextIndexing(List.of(new ConfluenceStorageTextProjector(),
-                    new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()), textIndex,
+                    new LocalFilesTextProjector(documentText), new KnowledgeDocumentTextProjector()), textIndex,
                     new com.aresstack.spaceharvester.application.query.LocalPageSections(structuredDocuments));
 
             this.access = new AccessGuard(builder.accessPolicy);
@@ -1279,7 +1282,7 @@ public final class Harvester implements AutoCloseable {
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, holdingsCatalog, clock);
             exports.localExports(new com.aresstack.spaceharvester.application.export.LocalExportSnapshots(
                     structuredDocuments, snapshots::exportLocalOriginal, builder.maxPageBytes));
-            exports.fileTexts(new LocalFilesTextProjector());
+            exports.fileTexts(new LocalFilesTextProjector(documentText));
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
             // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit
             // der Seite als Eltern; Bildanhänge dort mit ihrer vorhandenen Beschreibung (#371)
@@ -1288,7 +1291,7 @@ public final class Harvester implements AutoCloseable {
             this.signIns = new SignInRequests(builder.signInWait, clock);
             long maxAssetBytes = Assets.maxBytes(builder.maxAssetBytes);
             this.assets = new Assets(catalog, assetStore, maxAssetBytes, clock, describer,
-                    TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
+                    documentText, textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
             // ADR 0026, AP3b: abgelegte Dokumente aus der Datei lesen, Text in Abschnitten unter extractions/.
             assets.documentExtractions(structuredDocuments);
@@ -1385,7 +1388,7 @@ public final class Harvester implements AutoCloseable {
             ChatStepModel deadlineModel = new ChatStepModel(DEADLINE_STEP, deadlineAi, () -> null, catalog,
                     trustBundles, builder.userAgent);
             this.documentAnalyses = new com.aresstack.spaceharvester.application.deadlines.DeadlineAnalysisService(
-                    jobs, OWNER, TikaDocumentText.shared(),
+                    jobs, OWNER, documentText,
                     new com.aresstack.spaceharvester.application.deadlines.IdentifierExtractor(sentences),
                     new com.aresstack.spaceharvester.application.deadlines.AiFactExtractor(deadlineModel,
                             com.aresstack.spaceharvester.ai.ModelRetry.logging(
@@ -1683,7 +1686,7 @@ public final class Harvester implements AutoCloseable {
             exports.onSubmitted(images::announce);
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
-            conversions.fileTexts(new LocalFilesTextProjector());
+            conversions.fileTexts(new LocalFilesTextProjector(documentText));
             // ADR 0026, Punkt 11: abgelegte Dokumente ohne Download neu lesen; der Space für den Volltextindex
             // kommt aus dem Cache.
             this.rereads = new DocumentRereads(jobs, assets, assetStore,

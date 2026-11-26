@@ -56,7 +56,7 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Grenze | Wert | Folge beim Erreichen | Plan |
 |---|---|---|---|
 | Volltext je Seite und Anhang (`LucenePageTextIndex.MAX_TEXT_CHARS`) | 1.000.000 Zeichen | Text danach wurde ohne Hinweis nicht indexiert | **beseitigt**: der Index nimmt den ganzen Text |
-| Lesetext und Tika für lokale Dateien, BSCW und Fristen (`TikaDocumentText.shared()`) | 20 MiB, 1.000.000 Zeichen, 30 s, 2 parallel | `assets.extraction.*` gilt dort nicht, lange Texte werden ohne Hinweis abgeschnitten (F39-10) | einheitlich `assets.extraction.*`, Lesetext abschnittsweise |
+| Lesetext und Tika für lokale Dateien, BSCW, Anhänge und Fristen (`TikaDocumentText`) | 20 MiB, 1.000.000 Zeichen, 30 s, 2 parallel | `assets.extraction.*` galt dort nicht; lange Texte wurden nach 1 Mio. Zeichen ohne Hinweis abgeschnitten (F39-10) | Zeichengrenze **beseitigt** (Tika, Lesetext `DocumentExtractions`, `LargeFileTexts`). Größe, Zeit und Parallelität **einstellbar** über `assets.extraction.memory-limits."*"` (bzw. `max-file-size`), `idle-timeout`, `parallel`, im Dienst und im Harvester-Kern. Offen: Dokumentvorschau und Chat-Browser der App nutzen noch die Vorgaben; Lesetext abschnittsweise |
 | Embedding-Dimension (`LuceneEnrichmentStore.MAX_VECTOR_DIMENSIONS`) | 1024 | Modelle mit 1536 oder 3072 Dimensionen bekamen keine Vektoren | **beseitigt**: `VectorCodec`, Dimension gibt das Modell vor |
 | Abschnitte je Dokument (`EmbeddingProcessor.MAX_CHUNKS`) | 200 | nur die ersten etwa 70.000 Token waren semantisch suchbar | **beseitigt**: alle Abschnitte; es gilt nur das einstellbare `enrichment.documents.embedding-max-chars` |
 | Wartende Funde (`FindingCataloging.CAPACITY`, `REMEMBERED`) | 1000 / 10.000 | weitere Funde fallen weg | beseitigen: zurückstellen statt verwerfen |
@@ -187,7 +187,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `DiagramComposer.ATTEMPTS` | `3` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `DiagramComposer.MAX_ELEMENTS` | `5` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `DiagramComposer.MAX_MATERIAL_CHARS` | `4000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `DocumentExtractions.DEFAULT_MAX_TEXT_CHARS` | `1_000_000` | Vorgabe | Bestandsgrenze | beseitigen |
 | `DocumentNavigationBuilder.ANCHOR_CHARS` | `60` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `DomainTermGraph.MAX_NODES` | `40` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `EditedFactStore.ID_BYTES` | `16` | fest | Invariante/Darstellung | im Code belassen |
@@ -495,10 +494,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `TikaDocumentStructure.MAX_TABLE_CELLS` | `10_000` | fest | Bestandsgrenze | beseitigen |
 | `TikaDocumentStructure.SPACE_CHECK_BYTES` | `8L * 1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `TikaDocumentText.CACHE_ENTRIES` | `8` | fest | Cache-Aufbewahrung | einstellbar |
-| `TikaDocumentText.DEFAULT_MAX_BYTES` | `20L * 1024 * 1024` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
-| `TikaDocumentText.DEFAULT_MAX_CHARS` | `1_000_000` | Vorgabe | Bestandsgrenze | beseitigen |
-| `TikaDocumentText.DEFAULT_TIMEOUT` | `Duration.ofSeconds(30)` | Vorgabe | Timeout | einstellbar |
-| `TikaDocumentText.MAX_PARALLEL` | `2` | fest | Parallelität | einstellbar |
+| `TikaDocumentText.NO_TIMEOUT` | `Duration.ofNanos(Long.MAX_VALUE)` | fest | Invariante | bleibt: bedeutet „ohne Zeitgrenze“ (`0` in `assets.extraction.idle-timeout` und `total-timeout`) |
 | `TikaDocumentText.PREFIX_BYTES` | `64 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `UpdateSummarizer.MAX_CONTEXT_CHARS` | `400` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `UpdateSummarizer.MAX_EXCERPT_CHARS` | `1_500` | fest | Modellkontext | aus Modellfähigkeit ableiten |
