@@ -29,11 +29,23 @@ class MainWindowPerspectiveTest {
     Path home;
 
     private AppContext context;
+    private long started;
 
+    @org.junit.jupiter.api.BeforeEach
+    void mark() {
+        started = Background.mark();
+    }
+
+    /** Erst die eigene Hintergrundarbeit samt Rückmeldungen abwarten, dann die Laufzeit schließen. */
     @AfterEach
-    void shutdown() {
+    void shutdown() throws Exception {
         if (context != null) {
-            context.shutdown();
+            try {
+                SwingUtilities.invokeAndWait(() -> { });
+                Background.awaitIdle(started, java.time.Duration.ofSeconds(30));
+            } finally {
+                context.shutdown();
+            }
         }
     }
 

@@ -50,6 +50,10 @@ public final class AssistantMarkdownMessage extends JPanel implements WidthAware
         footer.setQrAction(accessory);
     }
 
+    public void setCopyAction(JComponent accessory) {
+        footer.setCopyAction(accessory);
+    }
+
     public void setSources(JComponent sources) {
         footer.setSources(sources);
     }

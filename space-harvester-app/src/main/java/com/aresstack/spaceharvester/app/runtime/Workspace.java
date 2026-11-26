@@ -1019,7 +1019,7 @@ public final class Workspace {
 
     /** Run only by an explicit request; no remote source fetch or implicit AI release. */
     public Enrichments.Run recomputeCobolBusiness(PageKey key, String rawSha256, String model,
-            com.aresstack.spaceharvester.app.runtime.program.CobolBusinessAnalysis.Budget budget,
+            ModelBudget budget,
             java.util.function.BooleanSupplier modelUnchanged, java.util.function.Consumer<com.aresstack.spaceharvester.application.jobs.JobState> state) {
         var page = cachedPage(key.sourceId(), key.pageId())
                 .orElseThrow(() -> new IllegalStateException("Programm nicht im Wissensbestand verfügbar."));
@@ -1029,7 +1029,45 @@ public final class Workspace {
         access.require(caller, ResourceScope.space(key.sourceId(), page.header().metadata().partitionKey()), AccessKind.SYNC);
         return harvester.pageRecomputation().execute(caller.jobOwner(), page.snapshot(),
                 com.aresstack.spaceharvester.app.runtime.program.CobolBusinessEnrichment.ID, state,
-                context -> cobolBusiness(modelUnchanged).run(key, rawSha256, harvester::aiChat, model, budget, context));
+                context -> {
+                    var run = cobolBusiness(modelUnchanged).run(key, rawSha256, harvester::aiChat, model, budget,
+                            context);
+                    programStatements(key, context);
+                    return run;
+                });
+    }
+
+    /**
+     * The fresh business hypotheses of a program as program statements in the one Fachlogik store (ADR 0041, item 7;
+     * ADR 0032, update of 26.11.2026): source-location evidence from the stored analyses, read only through the gate,
+     * stored by the core only while technically current. Without a sentence analyzer the hypotheses stay in the
+     * program analysis alone.
+     */
+    private void programStatements(PageKey key, com.aresstack.spaceharvester.application.jobs.JobContext context) {
+        if (!harvester.statementAnalysis().available()) return;
+        var page = cachedPage(key.sourceId(), key.pageId())
+                .orElseThrow(() -> new IllegalStateException("Programm nicht im Wissensbestand verfügbar."));
+        var gate = programAnalyses();
+        var parser = gate.current(page, com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment.ID);
+        var business = gate.current(page, com.aresstack.spaceharvester.app.runtime.program.CobolBusinessEnrichment.ID);
+        if (parser.isEmpty() || business.isEmpty()) return;
+        java.util.function.Function<PageKey, Optional<DeliveredPage>> pages = other -> cachedPage(other.sourceId(),
+                other.pageId());
+        var mapped = com.aresstack.spaceharvester.app.runtime.program.ProgramHypothesisEvidence.of(page.snapshot(),
+                parser.get(), business.get(), other -> pages.apply(other).map(DeliveredPage::snapshot));
+        context.checkpoint();
+        context.phase("COBOL", "Hypothesen in den Fachlogik-Bestand übernehmen");
+        var stored = harvester.statementAnalysis().analyzeProgram(caller, page.snapshot(), mapped.hypotheses(),
+                new com.aresstack.spaceharvester.app.runtime.program.ProgramCurrentSources(pages, gate),
+                context::cancelRequested);
+        int left = mapped.unmapped() + stored.rejected();
+        context.record(left == 0
+                ? com.aresstack.spaceharvester.application.jobs.JobEvent.Draft.info("COBOL",
+                        stored.stored() + " Hypothesen als Aussagen mit Quellstellenbeleg übernommen")
+                : com.aresstack.spaceharvester.application.jobs.JobEvent.Draft.warning(
+                        com.aresstack.spaceharvester.application.jobs.JobEvent.Category.JOB, "COBOL",
+                        "PROGRAM_STATEMENTS_LEFT_OUT", stored.stored() + " Hypothesen übernommen, " + left
+                                + " ohne zuordenbaren oder aktuellen Quellstellenbeleg ausgelassen"));
     }
 
     /**

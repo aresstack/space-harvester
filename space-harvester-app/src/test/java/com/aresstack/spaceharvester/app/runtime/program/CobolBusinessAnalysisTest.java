@@ -134,34 +134,34 @@ class CobolBusinessAnalysisTest {
         }
     }
 
-    private static final CobolBusinessAnalysis.Budget ROOMY = forFacts(4096);
+    private static final com.aresstack.spaceharvester.app.runtime.ModelBudget ROOMY = forFacts(4096);
 
     /** A budget that leaves exactly {@code factTokens} for facts after prompt, envelope and answer reserve. */
-    private static CobolBusinessAnalysis.Budget forFacts(int factTokens) {
-        var probe = new CobolBusinessAnalysis.Budget(1_000_000, 1);
+    private static com.aresstack.spaceharvester.app.runtime.ModelBudget forFacts(int factTokens) {
+        var probe = new com.aresstack.spaceharvester.app.runtime.ModelBudget(1_000_000, 1);
         int overhead = 1_000_000 - Math.min(CobolBusinessAnalysis.factBudget(probe, true),
                 CobolBusinessAnalysis.factBudget(probe, false));
-        return new CobolBusinessAnalysis.Budget(overhead + factTokens, 1);
+        return new com.aresstack.spaceharvester.app.runtime.ModelBudget(overhead + factTokens, 1);
     }
 
     @Test
     void budgetsTokensWithPromptEnvelopeAndAnswerReserve() {
-        var budget = new CobolBusinessAnalysis.Budget(8192, 2048);
+        var budget = new com.aresstack.spaceharvester.app.runtime.ModelBudget(8192, 2048);
         int facts = CobolBusinessAnalysis.factBudget(budget, false);
-        int fixed = CobolBusinessAnalysis.tokens("x".repeat(3000));
+        int fixed = com.aresstack.spaceharvester.app.runtime.ModelBudget.tokens("x".repeat(3000));
         assertThat(fixed).isEqualTo(1000);
         // Answer reserve and system prompt are taken off before any fact is packed.
         assertThat(facts).isLessThan(8192 - 2048).isGreaterThan(0);
         // Small context windows are rejected with a reason instead of overflowing the model.
-        assertThatThrownBy(() -> CobolBusinessAnalysis.factBudget(new CobolBusinessAnalysis.Budget(300, 200), false))
+        assertThatThrownBy(() -> CobolBusinessAnalysis.factBudget(new com.aresstack.spaceharvester.app.runtime.ModelBudget(300, 200), false))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("Antwortreserve");
         // Missing settings are named, not guessed.
-        assertThatThrownBy(() -> CobolBusinessAnalysis.Budget.of(null, 1024))
+        assertThatThrownBy(() -> com.aresstack.spaceharvester.app.runtime.ModelBudget.of(null, 1024))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("Kontextlänge");
-        assertThatThrownBy(() -> CobolBusinessAnalysis.Budget.of(8192, null))
+        assertThatThrownBy(() -> com.aresstack.spaceharvester.app.runtime.ModelBudget.of(8192, null))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("Ausgabelimit");
         // The estimate never undercounts words or dense text.
-        assertThat(CobolBusinessAnalysis.tokens("MOVE WS-CUSTOMER-ID TO OUT-ID")).isGreaterThanOrEqualTo(10);
+        assertThat(com.aresstack.spaceharvester.app.runtime.ModelBudget.tokens("MOVE WS-CUSTOMER-ID TO OUT-ID")).isGreaterThanOrEqualTo(10);
     }
 
     @Test

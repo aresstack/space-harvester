@@ -55,10 +55,10 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 
 | Grenze | Wert | Folge beim Erreichen | Plan |
 |---|---|---|---|
-| Volltext je Seite und Anhang (`LucenePageTextIndex.MAX_TEXT_CHARS`) | 1.000.000 Zeichen | Text danach wird ohne Hinweis nicht indexiert und ist nicht auffindbar | beseitigen: Volltext abschnittsweise indexieren |
+| Volltext je Seite und Anhang (`LucenePageTextIndex.MAX_TEXT_CHARS`) | 1.000.000 Zeichen | Text danach wurde ohne Hinweis nicht indexiert | **beseitigt**: der Index nimmt den ganzen Text |
 | Lesetext und Tika für lokale Dateien, BSCW und Fristen (`TikaDocumentText.shared()`) | 20 MiB, 1.000.000 Zeichen, 30 s, 2 parallel | `assets.extraction.*` gilt dort nicht, lange Texte werden ohne Hinweis abgeschnitten (F39-10) | einheitlich `assets.extraction.*`, Lesetext abschnittsweise |
-| Embedding-Dimension (`LuceneEnrichmentStore.MAX_VECTOR_DIMENSIONS`) | 1024 | Modelle mit 1536 oder 3072 Dimensionen bekommen keine Vektoren, die semantische Suche bleibt still leer | beseitigen: Vektorformat mit der Dimension des Modells |
-| Abschnitte je Dokument (`EmbeddingProcessor.MAX_CHUNKS`) | 200 | nur die ersten etwa 70.000 Token sind semantisch suchbar; eine Warnung steht nur in der Anreicherung | beseitigen: `ai.embedding-max-chars` ist schon die einstellbare Grenze |
+| Embedding-Dimension (`LuceneEnrichmentStore.MAX_VECTOR_DIMENSIONS`) | 1024 | Modelle mit 1536 oder 3072 Dimensionen bekamen keine Vektoren | **beseitigt**: `VectorCodec`, Dimension gibt das Modell vor |
+| Abschnitte je Dokument (`EmbeddingProcessor.MAX_CHUNKS`) | 200 | nur die ersten etwa 70.000 Token waren semantisch suchbar | **beseitigt**: alle Abschnitte; es gilt nur das einstellbare `enrichment.documents.embedding-max-chars` |
 | Wartende Funde (`FindingCataloging.CAPACITY`, `REMEMBERED`) | 1000 / 10.000 | weitere Funde fallen weg | beseitigen: zurückstellen statt verwerfen |
 | Webhook-Warteschlange (`ChangeEvents.MAX_QUEUED`, `MAX_BODY_BYTES`) | 10.000 Seiten / 1 MiB | Meldungen fallen weg, erst die Inventur holt sie nach | Warteschlange beseitigen (eine Zeile je Seite), Rumpfgröße einstellbar |
 | Hintergrundaufträge, Vorabladen (`Jobs.BACKGROUND_CAPACITY`, `AttachmentPrefetches.MAX_WAITING`) | 1000 / 5000 | weitere Aufträge werden abgewiesen; beim Vorabladen lädt der Aufrufer selbst | einstellbar unter `space-harvester.jobs` |
@@ -69,7 +69,7 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Confluence-Listen (`RestJson.MAX_LIST_PAGES` × `LIST_LIMIT`) | 200 × 100 | Listen mit mehr als 20.000 Einträgen scheitern | beseitigen: weiterblättern, bis die Quelle endet |
 | Baum und Listen in der REST-API (`PageQueries.MAX_TREE_DEPTH`, `MAX_PAGE_LIMIT`, `ContentListing.MAX_START`, `TermQueries.MAX_SCAN`) | 200 / 100 / 10.000 / 50.000 | tiefere Ebenen und spätere Einträge sind nicht erreichbar | beseitigen: Baum ebenenweise (F40-6), Seitengröße einstellbar |
 | Cache-Vorschau und Explorer (`Explorer.TREE_LIMIT`, `Payloads.MAX_DISPLAY_CHARS`) | 5000 Knoten / 2.000.000 Zeichen | große Bäume und lange Inhalte werden abgeschnitten | beseitigen: paginieren (F40-5) |
-| Diagrammtexte (`DiagramLabels`, Zahl ohne Konstante) | 4000 Zeichen Code | der Code wird vor dem Modellaufruf abgeschnitten, die Beschriftung kennt den Rest nicht; der Benutzer sieht keinen Hinweis (F41-7) | beseitigen: tokenbasiert und parsergestützt |
+| Diagrammtexte (`DiagramLabels`, Zahl ohne Konstante) | 4000 Zeichen Code | der Code wurde vor dem Modellaufruf abgeschnitten (F41-7) | **beseitigt**: zu langer Code wird nach dem Tokenbudget des Modells (`ModelBudget`) an Zeilengrenzen in Teile zerlegt und teilweise beschriftet |
 | Laufende progressive Suchen (`ProgressiveSearches.CAPACITY`, `RETENTION`) | 256 / 5 min | eine neue Suche verdrängt die älteste abgeschlossene; laufen 256, wird sie abgewiesen | in die Auftragsinfrastruktur, Budgets getrennt einstellbar (F38-4) |
 | Speicher und Pakete (Desktop-`FileSystemAssetStore.DEFAULT_MAX_TOTAL_BYTES`, `ZipExportPackageReader`, `ImportController.MAX_PACKAGE_BYTES`, `LocalFilesSourceAdapter.MAX_FILE_MEGABYTES`, `BscwSourceAdapter`) | 20 GiB, 256 MiB, 4 GiB, 64 MB, Tiefe 50 | größere Dateien und tiefere Ordner werden nicht geerntet oder importiert | Speicherbudget einstellbar, Bestandsgrenzen beseitigen |
 | KI-Textbudgets (Chat 24.000 Zeichen / 8 Quellen, Podcast, Zusammenfassungen, Fristen 12.000 Zeichen) | fest | Material wird vor dem Modellaufruf gekürzt | aus der Tokenlänge des Modells ableiten |
@@ -191,7 +191,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `DocumentNavigationBuilder.ANCHOR_CHARS` | `60` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `DomainTermGraph.MAX_NODES` | `40` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `EditedFactStore.ID_BYTES` | `16` | fest | Invariante/Darstellung | im Code belassen |
-| `EmbeddingProcessor.MAX_CHUNKS` | `200` | fest | Bestandsgrenze | beseitigen |
 | `EnrichmentFacts.ID_BYTES` | `16` | fest | Invariante/Darstellung | im Code belassen |
 | `EnrichmentFacts.MAX_PER_RESULT` | `2_000` | fest | Bestandsgrenze | beseitigen |
 | `EnrichmentSettings.DEFAULT_EMBEDDING_MAX_CHARS` | `2_000_000` | Vorgabe | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
@@ -267,7 +266,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `LocalFolderHierarchy.NAVIGATION_BATCH` | `200` | fest | Stapel-/Seitengröße | einstellbar |
 | `LuceneEnrichmentStore.MAX_FACTS_PER_PAGE` | `EnrichmentFacts.PROCESSORS.size() * EnrichmentFacts.MAX_PER_RESULT` | fest | Bestandsgrenze | beseitigen |
 | `LuceneEnrichmentStore.MAX_PER_PAGE` | `1_000` | fest | Bestandsgrenze | beseitigen |
-| `LuceneEnrichmentStore.MAX_VECTOR_DIMENSIONS` | `1_024` | fest | Bestandsgrenze | beseitigen |
 | `LucenePageCache.ACQUIRE_WAIT` | `Duration.ofSeconds(60)` | fest | Timeout | einstellbar |
 | `LucenePageCache.CLOSE_WAIT` | `Duration.ofSeconds(10)` | fest | Timeout | einstellbar |
 | `LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES` | `20 * 1024 * 1024` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
@@ -277,7 +275,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `LucenePageTextIndex.MAX_DOCUMENTS` | `8 * MAX_LIMIT` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `LucenePageTextIndex.MAX_LIMIT` | `1_000` | fest | Stapel-/Seitengröße | einstellbar |
 | `LucenePageTextIndex.MAX_TERMS` | `32` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
-| `LucenePageTextIndex.MAX_TEXT_CHARS` | `1_000_000` | fest | Bestandsgrenze | beseitigen |
 | `ManualSyncRounds.REMEMBERED_ENDS` | `1000` | fest | Cache-Aufbewahrung | einstellbar |
 | `MetadataFact.MAX_VALUE_LENGTH` | `512` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `MimeTree.MAX_HEADER` | `64 * 1024` | fest | Protokollgrenze | dokumentieren, berücksichtigen |

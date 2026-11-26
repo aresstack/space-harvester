@@ -52,6 +52,11 @@ public final class CopyButton extends JButton {
     private boolean copied;
     /** Den Fokus zeigt der Kreis nur, wenn er über die Tastatur kam; nach einem Klick nicht. */
     private final KeyboardFocusRing focusRing = KeyboardFocusRing.install(this);
+    /** Kantenlänge; {@link #flat} verkleinert sie. */
+    private int size = RoundHover.SIZE;
+    private int height = RoundHover.SIZE;
+    /** Flacher Stil ({@link #flat}): kein Kreis, Haken in der Schriftfarbe statt Grün. */
+    private boolean flat;
 
     /** Kopiert {@code text.get()} in die Zwischenablage des Systems. */
     public CopyButton(Supplier<String> text) {
@@ -99,6 +104,25 @@ public final class CopyButton extends JButton {
         Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         reset.setRepeats(false);
         addActionListener(e -> copy());
+    }
+
+    /**
+     * Flach wie {@link FlatIconButton} (Stil aus Angelos Proxy-Programm), für die Knopfreihe einer Chat-Nachricht:
+     * {@value FlatIconButton#SIZE} × {@value FlatIconButton#SIZE}, kein Kreis beim Darüberfahren, kein Fokus. Symbol
+     * und Haken stehen in {@code ink}, damit sie auch auf der farbigen Blase zu sehen sind.
+     */
+    public CopyButton flat(Color ink) {
+        return flat(ink, FlatIconButton.SIZE);
+    }
+
+    /** Wie {@link #flat(Color)}, aber nur {@code height} hoch, für die Kopfzeile einer Sprechblase. */
+    public CopyButton flat(Color ink, int height) {
+        setForeground(Objects.requireNonNull(ink, "ink"));
+        flat = true;
+        size = FlatIconButton.SIZE;
+        this.height = height;
+        FlatIconButton.style(this, height);
+        return this;
     }
 
     private void copy() {
@@ -169,7 +193,7 @@ public final class CopyButton extends JButton {
 
     @Override
     protected void paintComponent(Graphics graphics) {
-        if (isEnabled() && (getModel().isRollover() || getModel().isPressed() || focusRing.shown())) {
+        if (!flat && isEnabled() && (getModel().isRollover() || getModel().isPressed() || focusRing.shown())) {
             RoundHover.paint(graphics, 0, 0, getWidth(), getHeight(), getModel().isPressed());
         }
         super.paintComponent(graphics);
@@ -182,7 +206,7 @@ public final class CopyButton extends JButton {
 
     @Override
     public Dimension getPreferredSize() {
-        return new Dimension(RoundHover.SIZE, RoundHover.SIZE);
+        return new Dimension(size, height);
     }
 
     @Override
@@ -225,7 +249,7 @@ public final class CopyButton extends JButton {
                 g.translate(x, y);
                 g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                 if (c instanceof CopyButton button && button.copied) {
-                    g.setColor(Comic.GREEN);
+                    g.setColor(button.flat ? button.getForeground() : Comic.GREEN);
                     Path2D tick = new Path2D.Double();
                     tick.moveTo(3, 8.5);
                     tick.lineTo(6.5, 12);

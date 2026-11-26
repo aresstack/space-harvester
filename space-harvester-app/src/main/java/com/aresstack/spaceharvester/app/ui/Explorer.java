@@ -1456,20 +1456,26 @@ public final class Explorer {
     }
 
     /**
-     * Ein Klick oder Enter: Seite öffnen bzw. den nächsten Stapel holen. Quelle und Space zeigt schon die Auswahl in
+     * Ein Klick oder Enter: Seite bzw. Ordner öffnen oder den nächsten Stapel holen. Quelle und Space zeigt schon die Auswahl in
      * der Mitte (die Quellenseite mit den Updates), ein Klick wechselt dort keinen Reiter. In der Suche wechselt kein
      * Klick die Ansicht, die Auswahl ist dort der Filter (Angelo, 21.11.2026).
      */
-    private void activate(TreePath path) {
+    void activate(TreePath path) {
         if (!(path.getLastPathComponent() instanceof Node node)) {
             return;
         }
         switch (node.item()) {
             case PageItem page -> {
-                if (page.kind() == HarvestSource.PageNode.Kind.GROUP) {
-                    tree.expandPath(path);
-                } else {
+                if (page.kind().hasOwnContent()) {
                     context.navigator().openFromTree(page.sourceId(), page.pageId());
+                } else {
+                    // Ein Ordner hat keinen eigenen Inhalt: Die Mitte zeigt ihn als leere Ebene statt der vorher
+                    // geöffneten Seite (Angelo 26.11.2026), für jede Quelle und in jeder Tiefe.
+                    if (page.kind() == HarvestSource.PageNode.Kind.GROUP) {
+                        tree.expandPath(path);
+                    }
+                    context.navigator().openContainerFromTree(page.sourceId(), page.spaceKey(), page.pageId(),
+                            page.title());
                 }
             }
             case MoreItem more -> loadMore((Node) node.getParent(), node, more, null);

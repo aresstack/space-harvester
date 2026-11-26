@@ -64,7 +64,7 @@ class ChatMarkdownBubbleTest {
     }
 
     @Test
-    void footerReservesRightEdgeForActionsAndWrapsSourcesWithoutOverlap() throws Exception {
+    void footerPutsActionsLeftUnderTheSourcesAtTheStartOfTheAnswer() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             MarkdownTheme theme = MarkdownTheme.forSurface(java.awt.Color.WHITE);
             AssistantMessageFooter footer = new AssistantMessageFooter(theme.getMutedForeground());
@@ -74,6 +74,8 @@ class ChatMarkdownBubbleTest {
             footer.setTimestamp(1700000000000L);
             javax.swing.JButton qr = new javax.swing.JButton("QR");
             footer.setQrAction(qr);
+            javax.swing.JButton copy = new javax.swing.JButton("Kopie");
+            footer.setCopyAction(copy);
             javax.swing.JPanel links = new javax.swing.JPanel();
             links.setPreferredSize(new java.awt.Dimension(300, 60));
             footer.setSources(links);
@@ -81,12 +83,20 @@ class ChatMarkdownBubbleTest {
                 footer.setSize(width, footer.preferredHeightForWidth(width));
                 footer.doLayout();
                 java.awt.Rectangle controls = qr.getParent().getBounds();
-                assertThat(controls.x + controls.width).isEqualTo(width);
+                // Angelo, 26.11.2026: Knöpfe und Uhrzeit beginnen links am Textanfang, nie allein am rechten Rand.
+                assertThat(controls.x).isLessThanOrEqualTo(0);
                 assertThat(links.getBounds().intersects(controls)).isFalse();
                 assertThat(links.getX()).isZero();
-                assertThat(links.getY() + links.getHeight()).isLessThanOrEqualTo(footer.getHeight());
+                assertThat(links.getWidth()).isEqualTo(width);
+                assertThat(controls.y).isGreaterThanOrEqualTo(links.getY() + links.getHeight());
+                assertThat(controls.y + controls.height).isLessThanOrEqualTo(footer.getHeight());
                 assertThat(qr.getParent().getComponent(qr.getParent().getComponentZOrder(qr) - 1))
                         .isInstanceOf(MessageTimestamp.class);
+                // Der Kopierknopf steht für sich ganz links, mit einer Lücke zum Rest; hinter dem QR-Knopf der Export.
+                assertThat(qr.getParent().getComponent(0)).isSameAs(copy);
+                assertThat(qr.getParent().getComponent(1)).isInstanceOf(javax.swing.Box.Filler.class);
+                assertThat(qr.getParent().getComponent(qr.getParent().getComponentCount() - 1)).isSameAs(actions.getParent());
+                assertThat(qr.getParent().getComponent(qr.getParent().getComponentCount() - 2)).isSameAs(qr);
             }
         });
     }
