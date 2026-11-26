@@ -3193,6 +3193,18 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
+     * {@link #cleanupPreview} für jeden abgeglichenen Bereich der Quelle, in der Reihenfolge der Bereiche.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne {@code SYNC} für die Quelle
+     */
+    public java.util.List<SpaceSyncJobs.CleanupPreview> cleanupPreviews(String sourceId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        requireActive(sourceId);
+        return syncs.confirmedSpaces().stream().filter(space -> space.sourceId().equals(sourceId))
+                .map(space -> syncs.cleanupPreview(sourceId, space.spaceKey())).toList();
+    }
+
+    /**
      * „Bereinigen“: entfernt von {@code pageIds} die Seiten, die nach einer neuen Inventur noch keinen Erwerbsgrund
      * haben, aus dem lokalen Bestand; Originale in der Quelle bleiben unberührt. Ein Abgleichsauftrag.
      *

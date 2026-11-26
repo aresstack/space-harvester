@@ -971,6 +971,35 @@ public final class Workspace {
     }
 
     /**
+     * Vorschau für „Bereinigen“ (ADR 0037, Punkt 3) je abgeglichenem Bereich der Quelle: Ressourcen ohne Erwerbsgrund
+     * und mit unbekanntem Grund nach einer frischen Inventur; schreibt nichts. Fragt die Quelle, also nie auf dem EDT.
+     */
+    public java.util.List<com.aresstack.spaceharvester.application.sync.SpaceSyncJobs.CleanupPreview> cleanupPreviews(
+            String sourceId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        return harvester.cleanupPreviews(sourceId);
+    }
+
+    /**
+     * „Bereinigen“: entfernt je Bereich die gewählten Ressourcen aus dem lokalen Bestand, soweit sie nach einer neuen
+     * Inventur noch keinen Erwerbsgrund haben; Originale in der Quelle bleiben. Ein Abgleichsauftrag je Bereich.
+     *
+     * @param pageIds je Bereich die zu bereinigenden Ressourcen; leere Bereiche werden übersprungen
+     */
+    public java.util.List<JobStatus> cleanUp(String sourceId, java.util.Map<String, java.util.Set<String>> pageIds) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        java.util.List<JobStatus> started = new java.util.ArrayList<>();
+        pageIds.forEach((spaceKey, ids) -> {
+            if (!ids.isEmpty()) {
+                JobStatus status = harvester.cleanUp(sourceId, spaceKey, ids);
+                activities.remember(status.id());
+                started.add(status);
+            }
+        });
+        return started;
+    }
+
+    /**
      * Was ein Paket „JSON mit Medien“ enthält und ob der Space in dieser Quelle schon Daten hat, vor dem Import
      * ({@code ExportPackageImport.preview}).
      */
