@@ -6,7 +6,6 @@ import com.aresstack.spaceharvester.deck.editor.DocumentHash;
 import com.aresstack.spaceharvester.deck.editor.DocumentStore;
 import com.aresstack.spaceharvester.deck.editor.EditorDocument;
 import com.aresstack.spaceharvester.deck.editor.SaveResult;
-import com.aresstack.spaceharvester.source.TikaDocumentText;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,16 +23,22 @@ public final class DocumentPreviewStore implements DocumentStore {
     /** Endungen, die als Dokument gelten (wie {@code BINARY_DOCUMENT_EXTENSIONS} in MainframeMate, dazu Mail/RTF). */
     public static final Set<String> DOCUMENTS = Set.of("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt",
             "ods", "odp", "rtf", "msg", "eml", "one");
-    private static final long MAX_BYTES = 50L * 1024 * 1024;
 
-    private final DocumentText text;
+    private final java.util.function.Supplier<DocumentText> text;
+    private final java.util.function.LongSupplier maxFileBytes;
 
+    /** Mit den Grenzen der Quellen ({@code space-harvester.assets.extraction.*}, {@link DocumentTexts}). */
     public DocumentPreviewStore() {
-        this(TikaDocumentText.shared());
+        this(DocumentTexts::text, () -> DocumentTexts.limits().maxFileBytes());
     }
 
     DocumentPreviewStore(DocumentText text) {
+        this(() -> text, () -> 0);
+    }
+
+    DocumentPreviewStore(java.util.function.Supplier<DocumentText> text, java.util.function.LongSupplier maxFileBytes) {
         this.text = text;
+        this.maxFileBytes = maxFileBytes;
     }
 
     /** Ob die Datei eine Vorschau als Dokument bekommt. */
@@ -57,8 +62,10 @@ public final class DocumentPreviewStore implements DocumentStore {
         Path path = Path.of(location);
         byte[] bytes;
         try {
-            if (Files.size(path) > MAX_BYTES) {
-                throw new DocumentException("Die Datei ist größer als 50 MB.");
+            long max = maxFileBytes.getAsLong();
+            if (max > 0 && Files.size(path) > max) {
+                throw new DocumentException("Die Datei ist größer als die eingestellte Grenze von " + max
+                        + " Bytes (space-harvester.assets.extraction.max-file-size).");
             }
             bytes = Files.readAllBytes(path);
         } catch (IOException e) {
@@ -66,8 +73,9 @@ public final class DocumentPreviewStore implements DocumentStore {
         }
         String name = path.getFileName() == null ? location : path.getFileName().toString();
         try {
-            Optional<String> type = text.detect(name, bytes);
-            DocumentText.Extracted extracted = text.extract(name, type.orElse(null), bytes);
+            DocumentText tika = text.get();
+            Optional<String> type = tika.detect(name, bytes);
+            DocumentText.Extracted extracted = tika.extract(name, type.orElse(null), bytes);
             String content = extracted.text().replace("\r\n", "\n").replace('\r', '\n');
             if (extracted.truncated()) {
                 content += "\n\n… (gekürzt)";

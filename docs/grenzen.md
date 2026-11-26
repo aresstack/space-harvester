@@ -580,7 +580,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `DiagramLabels.TIMEOUT_SECONDS` | `30` | fest | Timeout | einstellbar |
 | `DictationPreviewWindow.MAXIMUM` | `12 * RATE` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `DocumentPane.MAX_PILL` | `28` | fest | Invariante/Darstellung | im Code belassen |
-| `DocumentPreviewStore.MAX_BYTES` | `50L * 1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `DoubleShiftShortcut.MAX_INTERVAL_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_PRESS_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
 | `EakteDocumentContent.TIMEOUT_SECONDS` | `120` | fest | Timeout | einstellbar |
