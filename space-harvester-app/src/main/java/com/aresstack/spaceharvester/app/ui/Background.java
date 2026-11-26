@@ -14,8 +14,10 @@ import java.util.function.Consumer;
  */
 public final class Background {
 
+    private static final BackgroundActivity ACTIVITY = new BackgroundActivity();
+    private static final java.util.concurrent.ThreadFactory THREADS = Thread.ofVirtual().name("ui-task-", 0).factory();
     private static final ExecutorService EXECUTOR = Executors.newThreadPerTaskExecutor(
-            Thread.ofVirtual().name("ui-task-", 0).factory());
+            work -> THREADS.newThread(ACTIVITY.track(work)));
 
     private Background() {
     }
@@ -32,9 +34,9 @@ public final class Background {
         return EXECUTOR.submit(() -> {
             try {
                 T result = work.call();
-                SwingUtilities.invokeLater(() -> onSuccess.accept(result));
+                SwingUtilities.invokeLater(ACTIVITY.track(() -> onSuccess.accept(result)));
             } catch (Throwable e) {
-                SwingUtilities.invokeLater(() -> onFailure.accept(e));
+                SwingUtilities.invokeLater(ACTIVITY.track(() -> onFailure.accept(e)));
             }
         });
     }
@@ -53,6 +55,14 @@ public final class Background {
             work.run();
             return null;
         }, ignored -> onSuccess.run(), onFailure);
+    }
+
+    /** Await background tasks and their completion callbacks before closing test fixtures. */
+    static void awaitIdle(java.time.Duration timeout) throws InterruptedException, java.util.concurrent.TimeoutException {
+        if (SwingUtilities.isEventDispatchThread()) {
+            throw new IllegalStateException("Await background activity outside the event dispatch thread");
+        }
+        ACTIVITY.awaitIdle(timeout);
     }
 
     @FunctionalInterface

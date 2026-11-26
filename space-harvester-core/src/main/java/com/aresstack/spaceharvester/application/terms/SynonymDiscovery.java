@@ -261,8 +261,9 @@ public class SynonymDiscovery {
         Objects.requireNonNull(request, "request");
         SynonymScope scope = request.scope();
         if (scope.global()) {
+            // Keep the authorization boundary for a global write operation.
             List<HarvestSource> sources = catalog.all();
-            if (sources.isEmpty()) {
+            if (catalog.globalSearchSources().isEmpty()) {
                 throw new InvalidQueryException("Ein Lauf über alle Quellen braucht mindestens eine Quelle");
             }
             sources.forEach(source -> access.require(caller, ResourceScope.source(source.id()), AccessKind.SYNC));
@@ -419,11 +420,18 @@ public class SynonymDiscovery {
         return locks.computeIfAbsent(cacheKey(scope), ignored -> new Object());
     }
 
+    private boolean unchangedCorpus(SynonymScope scope, Set<String> initialSources) {
+        if (!initialSources.equals(Set.copyOf(sourceIds(scope)))) {
+            throw new JobFailedException("source-scope-changed", "Quellenumfang während des Laufs geändert");
+        }
+        return true;
+    }
+
     private List<String> sourceIds(SynonymScope scope) {
         if (scope.global()) {
             // Im Auftrag ohne die Quellen, deren Daten bei seinem Start gelöscht wurden (Abnahme #1090).
             java.util.Set<String> withheld = com.aresstack.spaceharvester.application.jobs.Jobs.withheldSources();
-            return catalog.all().stream().map(HarvestSource::id).filter(id -> !withheld.contains(id)).toList();
+            return catalog.globalSearchSources().stream().map(HarvestSource::id).filter(id -> !withheld.contains(id)).toList();
         }
         return catalog.find(scope.sourceId()).map(source -> List.of(source.id())).orElse(List.of());
     }
@@ -457,6 +465,8 @@ public class SynonymDiscovery {
     /** Der Lauf selbst; ohne Auftrag aufrufbar für Tests. */
     Outcome run(SynonymScope scope, SynonymBudget budget, JobContext context) {
         phase(context, PHASE + ": Kandidaten");
+        Set<String> initialSources = Set.copyOf(sourceIds(scope));
+        boolean completeCorpus = !scope.global() || initialSources.size() == catalog.all().size();
         SynonymCandidates.Collected collected = candidates.collect(scope, budget, context);
         RelationScope relationScope = scope.relationScope();
         String stamp = "@" + clock.instant();
@@ -514,12 +524,13 @@ public class SynonymDiscovery {
             }
             checkpoint(context);
             phase(context, PHASE + ": Abgleich");
+            boolean reconcile = unchangedCorpus(scope, initialSources) && completeCorpus;
             TermRelations.ProposalRun rules = relations.propose(ACTOR_RULE, RelationOrigin.RULE, relationScope,
-                    PRODUCED, ruleGeneration, ruleProposals);
+                    PRODUCED, ruleGeneration, ruleProposals, reconcile);
             // Lief Stufe B nicht (kein Modell, kein Budget, Dienst gestört), bleiben die bisherigen Vorschläge.
             TermRelations.ProposalRun embedding = collected.embeddingUsed()
                     ? relations.propose(ACTOR_AI, RelationOrigin.AI, relationScope, PRODUCED,
-                            "embedding" + stamp, embeddingProposals)
+                            "embedding" + stamp, embeddingProposals, reconcile)
                     : null;
             if (context != null) {
                 context.written(rules.added() + rules.updated()
@@ -635,12 +646,15 @@ public class SynonymDiscovery {
         // Abgleich erst, wenn jede Anfrage beantwortet ist: scheitert das Modell oder bricht der Auftrag ab, bleibt
         // auch der Stand der Regelvorschläge.
         phase(context, PHASE + ": Abgleich");
+        boolean reconcile = unchangedCorpus(scope, initialSources) && completeCorpus;
         TermRelations.ProposalRun rules = relations.propose(ACTOR_RULE, RelationOrigin.RULE, relationScope,
-                PRODUCED, ruleGeneration, ruleProposals);
+                PRODUCED, ruleGeneration, ruleProposals, reconcile);
         TermRelations.ProposalRun ai = relations.propose(ACTOR_AI, RelationOrigin.AI, relationScope, PRODUCED,
-                version + stamp, proposals);
+                version + stamp, proposals, reconcile);
         try {
-            cache.replace(cacheKey(scope), answered);
+            if (reconcile) {
+                cache.replace(cacheKey(scope), answered);
+            }
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Ergebnis-Cache der Synonymerkennung ({0}) nicht geschrieben ({1})",
                     describe(scope), e.getClass().getName());

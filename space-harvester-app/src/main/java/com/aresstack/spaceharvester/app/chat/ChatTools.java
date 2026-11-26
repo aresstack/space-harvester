@@ -190,11 +190,18 @@ final class ChatTools {
      * {@value #READ} lesbar; {@code null} schaltet das Werkzeug ab.
      */
     ChatTools appSearch(java.util.function.Supplier<Set<String>> sources) {
+        return appSearch(sources, sources);
+    }
+
+    ChatTools appSearch(java.util.function.Supplier<Set<String>> sources,
+                        java.util.function.Supplier<Set<String>> explicitSources) {
         this.appSources = sources;
+        this.explicitAppSources = explicitSources;
         return this;
     }
 
     private java.util.function.Supplier<Set<String>> appSources;
+    private java.util.function.Supplier<Set<String>> explicitAppSources;
 
     /**
      * Ist eine Sammlung der Bereich (ADR 0034 §5), liefert {@code nodes} ihre Ordner und Favoriten für {@value #LIST};
@@ -977,8 +984,8 @@ final class ChatTools {
             return "Bitte Suchbegriffe angeben.";
         }
         query = clampQuery(query);
-        Set<String> allowed = appSources.get();
         Set<String> wanted = strings(arguments.path("quellen"));
+        Set<String> allowed = wanted.isEmpty() ? appSources.get() : explicitAppSources.get();
         Set<String> searched = new java.util.TreeSet<>(allowed);
         if (!wanted.isEmpty()) {
             searched.retainAll(wanted);

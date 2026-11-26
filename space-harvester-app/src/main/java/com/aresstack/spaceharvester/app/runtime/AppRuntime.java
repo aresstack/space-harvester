@@ -552,7 +552,8 @@ public final class AppRuntime implements AutoCloseable {
                 case PAT -> new SourceSettingsConfig.Auth(auth.type(), null, null, secret);
             };
             return new SourceSettingsConfig(config.id(), config.type(), config.title(), config.baseUrl(), filled,
-                    config.options(), config.clientCertificate(), config.trustBundle());
+                    config.options(), config.clientCertificate(), config.trustBundle(),
+                    config.showInExplorer(), config.includeInGlobalSearch());
         }
 
         /** API-Key des KI-Dienstes für diese Sitzung oder {@code null}; das übergebene Feld wird geleert. */

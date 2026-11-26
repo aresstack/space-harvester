@@ -52,7 +52,8 @@ public class SourcesController {
             description = "Nur Quellen, für die der Client eine Metadaten-Freigabe hat.")
     public List<SourceResponse> sources(@Parameter(hidden = true) AccessContext caller) {
         return access.filter(caller, queries.sources(), AccessKind.METADATA,
-                source -> ResourceScope.source(source.id())).stream().map(SourceResponse::of).toList();
+                source -> ResourceScope.source(source.id())).stream().map(source -> SourceResponse.of(source, queries.showInExplorer(source.id()),
+                        queries.includeInGlobalSearch(source.id()))).toList();
     }
 
     @GetMapping("/types")
@@ -219,12 +220,13 @@ public class SourcesController {
      *                     {@code stored-page}, {@code async-stored-page}, {@code page-attachments}); fehlt eine,
      *                     antwortet die Abfrage mit 400 ({@code source-unsupported})
      */
-    public record SourceResponse(String id, String type, String title, List<String> capabilities) {
+    public record SourceResponse(String id, String type, String title, List<String> capabilities,
+                                 boolean showInExplorer, boolean includeInGlobalSearch) {
 
-        static SourceResponse of(HarvestSource source) {
+        static SourceResponse of(HarvestSource source, boolean showInExplorer, boolean includeInGlobalSearch) {
             return new SourceResponse(source.id(), source.type(), source.title(), source.capabilities().stream()
                     .sorted().map(capability -> capability.name().toLowerCase(java.util.Locale.ROOT).replace('_', '-'))
-                    .toList());
+                    .toList(), showInExplorer, includeInGlobalSearch);
         }
     }
 

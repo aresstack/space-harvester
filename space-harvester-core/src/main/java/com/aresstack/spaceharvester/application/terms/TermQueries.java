@@ -335,7 +335,7 @@ public class TermQueries {
                 search.kind() == null ? null : search.kind().id(), q, Boolean.toString(search.exact()), startsWith,
                 search.origin() == TermOrigin.PAGES ? null : search.origin().id()), search.pages());
         String after = search.cursor() == null ? null : decode(search.cursor(), fingerprint);
-        Set<String> sourceIds = within(scope(caller, search.sourceId(), search.spaceKey()), search.pages());
+        Set<String> sourceIds = within(scope(caller, search.sourceId(), search.spaceKey(), search.pages()), search.pages());
         TermIndex.Filter filter = new TermIndex.Filter(sourceIds, search.kind(), search.exact() ? q : null,
                 search.exact() ? null : q, processorVersion, startsWith, search.origin(), search.pages());
         Visibility visibility = new Visibility(caller, search.spaceKey());
@@ -422,7 +422,7 @@ public class TermQueries {
         String q = search.q() == null || search.q().isBlank() ? null : TermText.normalize(search.q());
         String startsWith = search.startsWith() == null || search.startsWith().isBlank() ? null
                 : TermText.normalize(search.startsWith());
-        Set<String> sourceIds = within(scope(caller, search.sourceId(), search.spaceKey()), search.pages());
+        Set<String> sourceIds = within(scope(caller, search.sourceId(), search.spaceKey(), search.pages()), search.pages());
         TermIndex.Filter filter = new TermIndex.Filter(sourceIds, search.kind(), search.exact() ? q : null,
                 search.exact() ? null : q, processorVersion, startsWith, search.origin(), search.pages());
         Optional<TermTotals> managed = managed(caller, search, q, startsWith, sourceIds, progress);
@@ -538,7 +538,7 @@ public class TermQueries {
         if (pages.size() == 0) {
             return Map.of();
         }
-        Set<String> sourceIds = within(scope(caller, null, null), pages);
+        Set<String> sourceIds = within(scope(caller, null, null, pages), pages);
         TermIndex.Filter filter = new TermIndex.Filter(sourceIds, null, null, null, processorVersion, null,
                 TermOrigin.PAGES, pages);
         Visibility visibility = new Visibility(caller, null);
@@ -576,7 +576,7 @@ public class TermQueries {
         if (pages.size() == 0) {
             return Map.of();
         }
-        Set<String> sourceIds = within(scope(caller, null, null), pages);
+        Set<String> sourceIds = within(scope(caller, null, null, pages), pages);
         TermIndex.Filter filter = new TermIndex.Filter(sourceIds, null, null, null, processorVersion, null,
                 TermOrigin.PAGES, pages);
         Visibility visibility = new Visibility(caller, null);
@@ -637,7 +637,7 @@ public class TermQueries {
                 throw new InvalidQueryException("cursor ist beschädigt");
             }
         }
-        Set<String> sourceIds = within(scope(caller, search.sourceId(), search.spaceKey()), search.pages());
+        Set<String> sourceIds = within(scope(caller, search.sourceId(), search.spaceKey(), search.pages()), search.pages());
         TermIndex.Filter filter = new TermIndex.Filter(sourceIds, search.kind(), normalized, null, processorVersion,
                 null, search.origin(), search.pages());
         Visibility visibility = new Visibility(caller, search.spaceKey());
@@ -800,7 +800,7 @@ public class TermQueries {
     }
 
     /** Die Quellen, wie {@code SearchScope}: mit {@code sourceId} geprüft, sonst still beschnitten. */
-    private Set<String> scope(AccessContext caller, String sourceId, String spaceKey) {
+    private Set<String> scope(AccessContext caller, String sourceId, String spaceKey, PageSet pages) {
         if (sourceId != null) {
             if (catalog.find(sourceId).isEmpty()) {
                 throw new UnknownSourceException(sourceId);
@@ -810,7 +810,10 @@ public class TermQueries {
             return Set.of(sourceId);
         }
         Set<String> visible = new TreeSet<>();
-        for (HarvestSource source : catalog.all()) {
+        for (HarvestSource source : pages == null ? catalog.globalSearchSources() : catalog.all()) {
+            if (pages != null && !pages.sourceIds().contains(source.id())) {
+                continue;
+            }
             ResourceScope scope = spaceKey == null ? ResourceScope.source(source.id())
                     : ResourceScope.space(source.id(), spaceKey);
             if (access.permits(caller, scope, AccessKind.METADATA)) {

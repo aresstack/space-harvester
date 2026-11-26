@@ -39,6 +39,20 @@ class SemanticPreparationTest {
     private final PageSnapshot snapshot = mock(PageSnapshot.class);
     private final PageSearchQuery query = mock(PageSearchQuery.class);
 
+    @org.junit.jupiter.api.BeforeEach
+    void allowPreparationByDefault() {
+        when(keywords.allowsPrefetch(any())).thenReturn(true);
+    }
+
+    @Test
+    void aSourceWithoutPrefetchDoesNotAcquireEmbeddingsDuringSearch() {
+        found(new KeywordSearch.Results(null, List.of(HIT), List.of(searched()), null, true, 0));
+        when(keywords.allowsPrefetch("wiki")).thenReturn(false);
+
+        assertThat(preparation().prepare(APP, query, "Nachtlauf")).isZero();
+        org.mockito.Mockito.verifyNoInteractions(enrichments);
+    }
+
     @Test
     void aFailedEmbeddingRunLeavesThePreparationIncomplete() {
         found(new KeywordSearch.Results(null, List.of(HIT), List.of(searched()), null, true, 0));

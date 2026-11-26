@@ -113,6 +113,23 @@ class NdvSessionsTest {
     }
 
     @Test
+    void rejectsAChangedPrincipalOnReconnect() throws IOException {
+        var principal = new java.util.concurrent.atomic.AtomicReference<>("pilot");
+        NdvSession session = sessions.open(new NdvProfile("10.0.0.7", NdvProfile.DEFAULT_PORT), "Host Lager",
+                () -> new ServerCredentials(new ServerAccount("Host Lager", "10.0.0.7", principal.get()),
+                        "geheim".toCharArray()));
+        queued.forEach(Runnable::run);
+        queued.clear();
+        assertThat(session.user()).isEqualTo("PILOT");
+        server.dropConnections();
+        principal.set("other");
+        assertThatThrownBy(() -> session.libraries("*")).isInstanceOf(IOException.class)
+                .hasMessageContaining("Benutzer geändert");
+        assertThat(server.connects()).isEqualTo(1);
+        assertThat(session.state()).isEqualTo(NdvState.FAILED);
+    }
+
+    @Test
     void failsWithAReasonWhenReconnectingFailsToo() {
         NdvSession session = connected();
         server.dropConnections();

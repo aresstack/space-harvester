@@ -137,7 +137,8 @@ public class KeywordSearch {
     private final AccessGuard access;
     private final PageTextIndex texts;
     private final Prefetch prefetch;
-    private final BooleanSupplier prefetching;
+    private final java.util.function.Predicate<String> prefetching;
+    private final java.util.function.Predicate<String> cataloguing;
     private final BeforeSearch before;
     private final int maxQueries;
     private final ExcerptPriority excerpts;
@@ -277,6 +278,16 @@ public class KeywordSearch {
                          int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
                          SearchRunLog runs, FindingCatalog findings, BooleanSupplier prefetching,
                          BeforeSearch before, SearchExpansion expansion, SearchExpansion glossarySynonyms) {
+        this(catalog, access, texts, prefetch, maxQueries, excerpts, selection, runs, findings,
+                sourceId -> prefetching.getAsBoolean(), before, expansion, glossarySynonyms, sourceId -> true);
+    }
+
+    public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
+                         int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
+                         SearchRunLog runs, FindingCatalog findings, java.util.function.Predicate<String> prefetching,
+                         BeforeSearch before, SearchExpansion expansion, SearchExpansion glossarySynonyms,
+                         java.util.function.Predicate<String> cataloguing) {
+        this.cataloguing = Objects.requireNonNull(cataloguing, "cataloguing");
         this.expansion = Objects.requireNonNull(expansion, "expansion");
         this.glossarySynonyms = Objects.requireNonNull(glossarySynonyms, "glossarySynonyms");
         this.before = Objects.requireNonNull(before, "before");
@@ -776,8 +787,11 @@ public class KeywordSearch {
         List<Hit> found = discovered.hits();
         ExcerptPriority.Priority priority = excerpts.prioritize(query.text(), found);
         List<Hit> ranked = priority.apply(found);
-        boolean loads = prefetch != null && prefetching.getAsBoolean();
-        List<Hit> toLoad = new ArrayList<>(loads ? select(found, ranked, priority.ranked()) : List.of());
+        boolean loads = prefetch != null;
+        List<Hit> eligible = found.stream().filter(hit -> allowsPrefetch(hit.sourceId())).toList();
+        List<Hit> eligibleRanked = ranked.stream().filter(hit -> allowsPrefetch(hit.sourceId())).toList();
+        List<Hit> toLoad = new ArrayList<>(eligible.isEmpty() ? List.of()
+                : select(eligible, eligibleRanked, priority.ranked()));
         if (!finalListOnly) {
             // Für Endnutzer sind die Funde ungeprüft: keine Zahl, auch nicht im Protokoll.
             tally.discovered = OptionalInt.of(found.size());
@@ -787,13 +801,14 @@ public class KeywordSearch {
             toLoad.forEach(hit -> seen.add(new PageKey(hit.sourceId(), hit.pageId())));
             for (Hit hit : position.pending()) {
                 if (sourceIds.contains(hit.sourceId()) && !unavailable.contains(hit.sourceId())
-                        && seen.add(new PageKey(hit.sourceId(), hit.pageId()))) {
+                        && allowsPrefetch(hit.sourceId()) && seen.add(new PageKey(hit.sourceId(), hit.pageId()))) {
                     toLoad.add(hit);
                 }
             }
         }
         List<Hit> stillLoading = List.of();
         Progress progress = null;
+        toLoad.removeIf(hit -> !allowsPrefetch(hit.sourceId()));
         if (loads && !toLoad.isEmpty()) {
             try {
                 Prefetch.Fill fill = prefetch.prefetch(caller, toLoad);
@@ -918,6 +933,9 @@ public class KeywordSearch {
         Set<PageKey> offered = searchId == null ? null
                 : offeredIn.computeIfAbsent(searchId, ignored -> ConcurrentHashMap.newKeySet());
         found.forEach((sourceId, matches) -> {
+            if (!allowsPrefetch(sourceId) || !cataloguing.test(sourceId)) {
+                return;
+            }
             try {
                 List<FindingCatalog.Finding> fresh = matches.stream()
                         .filter(match -> query.admits(sourceId, match.pageId()))
@@ -940,6 +958,16 @@ public class KeywordSearch {
     }
 
     /** Was jetzt lädt, nach der Strategie; scheitert sie, lädt nichts, die Funde bleiben vorläufig. */
+    /** Keep implicit search extensions inside the configured global source scope. */
+    public boolean includesSource(Query query, String sourceId) {
+        return query.sourceId() != null || !query.sourceIds().isEmpty() || query.pages() != null
+                || catalog.includeInGlobalSearch(sourceId);
+    }
+
+    public boolean allowsPrefetch(String sourceId) {
+        return prefetch != null && prefetching.test(sourceId);
+    }
+
     private List<Hit> select(List<Hit> found, List<Hit> ranked, boolean byExcerpt) {
         CandidateSelectionStrategy.Capacity capacity;
         try {
@@ -1584,7 +1612,7 @@ public class KeywordSearch {
 
         PageSearchQuery scope() {
             return new PageSearchQuery(sourceId, sourceIds, spaceKeys, List.of(), null, null, null, null, null,
-                    SearchSort.TITLE);
+                    SearchSort.TITLE, pages);
         }
     }
 

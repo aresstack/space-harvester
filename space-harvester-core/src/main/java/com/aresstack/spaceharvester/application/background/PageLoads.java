@@ -300,7 +300,7 @@ public final class PageLoads {
     private Joined joinLocked(AccessContext caller, String title, Collection<PageKey> keys, boolean refresh,
                               ChangeTrigger trigger) {
         // Ein Teil ohne refresh überspränge eine veraltete Seite im Cache: Nachladen schließt sich nur seinesgleichen an.
-        Map<PageKey, String> queued = queued(refresh);
+        Map<PageKey, String> queued = queued(refresh, trigger);
         Set<String> joined = new LinkedHashSet<>();
         Map<List<String>, Set<String>> bySpace = new LinkedHashMap<>();
         for (PageKey key : keys) {
@@ -422,7 +422,7 @@ public final class PageLoads {
      *                   laufende (Abnahme #1080): Ein angehaltener, etwa nach abgelaufener Anmeldung, lüde die als
      *                   veraltet gemeldeten Seiten nie
      */
-    private Map<PageKey, String> queued(boolean refreshing) {
+    private Map<PageKey, String> queued(boolean refreshing, ChangeTrigger trigger) {
         Map<PageKey, String> queued = new java.util.HashMap<>();
         List<com.aresstack.spaceharvester.application.jobs.JobStatus> parts;
         image.lock();
@@ -437,6 +437,7 @@ public final class PageLoads {
         for (com.aresstack.spaceharvester.application.jobs.JobStatus part : parts) {
             String pages = part.parameter(PAGES);
             if (!loading(part.state()) || pages == null || part.sourceId() == null
+                    || trigger != ChangeTrigger.SEARCH && ChangeTrigger.SEARCH.name().equals(part.parameter(CHANGE_TRIGGER))
                     || refreshing && (!"true".equals(part.parameter(REFRESH)) || part.state().terminal())) {
                 continue;
             }

@@ -812,7 +812,11 @@ public final class Harvester implements AutoCloseable {
                         if (fill != null) {
                             fill.offer(gaps);
                         }
-                    }, clock);
+                    }, clock, sourceId -> (manager != null && !builder.prefetchSearchHitsFixed
+                            ? this.settings.sync().override(sourceId).effectivePrefetch(this.settings.search().prefetchHits())
+                            : builder.prefetchSearchHits)
+                            && (manager != null && !builder.backgroundFillFixed
+                            ? this.settings.syncFor(sourceId).backgroundFill() : builder.backgroundFill));
             opened.add(findings);
             if (backgroundJobs != null) {
                 // Fundstelle 14: Funde katalogisieren als Hintergrundart „Funde katalogisieren“.
@@ -929,7 +933,17 @@ public final class Harvester implements AutoCloseable {
                     new AcquisitionScheduler.Limits(SEARCH_FILL_PARALLEL,
                             fillQueue != null ? backgroundParallelism : 0,
                             AcquisitionScheduler.Limits.DEFAULT.perSource(), AcquisitionScheduler.Limits.DEFAULT.capacity()),
-                    null, AcquisitionScheduler.DEFAULT_RESUME_DELAY);
+                    null, AcquisitionScheduler.DEFAULT_RESUME_DELAY, (sourceId, trigger) -> {
+                        if (trigger == ChangeTrigger.SEARCH) {
+                            return manager != null && !builder.prefetchSearchHitsFixed
+                                    ? this.settings.sync().override(sourceId).effectivePrefetch(this.settings.search().prefetchHits())
+                                    : builder.prefetchSearchHits;
+                        }
+                        if (trigger == ChangeTrigger.BACKGROUND) {
+                            return fillFollows ? this.settings.syncFor(sourceId).backgroundFill() : builder.backgroundFill;
+                        }
+                        return true;
+                    });
             opened.add(scheduler);
             this.acquisition = scheduler;
             this.pageLoads = new com.aresstack.spaceharvester.application.background.PageLoads(backgroundJobs,
@@ -987,12 +1001,15 @@ public final class Harvester implements AutoCloseable {
             this.keywordSearch = new KeywordSearch(catalog, access,
                     new PassageSnippets(textIndex, enrichmentStore::find), prefetch, builder.discoveryQueries,
                     excerpts, builder.selection(), runLog, findings,
-                    prefetchFollows ? () -> this.settings.search().prefetchHits() : () -> true, sourceIds -> {
+                    sourceId -> prefetchFollows
+                            ? this.settings.sync().override(sourceId).effectivePrefetch(this.settings.search().prefetchHits())
+                            : builder.prefetchSearchHits, sourceIds -> {
                         SyncBeforeSearch before = this.syncBeforeSearch;
                         if (before != null) {
                             before.searching(sourceIds);
                         }
-                    }, SearchExpansion.typed(termRelations::counterparts), glossarySynonyms.expansion());
+                    }, SearchExpansion.typed(termRelations::counterparts), glossarySynonyms.expansion(),
+                    sourceId -> fillFollows ? this.settings.syncFor(sourceId).backgroundFill() : builder.backgroundFill);
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
@@ -1006,7 +1023,7 @@ public final class Harvester implements AutoCloseable {
                     Enrichments.stop(renewals, Duration.ofSeconds(10));
                 });
                 // Fundstelle 10: Mit Hintergrundaufträgen sichtbar als „Veraltete Treffer nachladen“.
-                PageRenewal visible = new PageRenewal(pages, renewals, pageLoads);
+                PageRenewal visible = new PageRenewal(pages, renewals, pageLoads, keywordSearch::allowsPrefetch);
                 opened.add(visible);
                 renewal = visible;
             }
@@ -1043,7 +1060,7 @@ public final class Harvester implements AutoCloseable {
             Harvester searching = this;
             Holdings termHoldings = this.holdings;
             this.termSearch = new com.aresstack.spaceharvester.application.query.progressive.TermSearch(keywordSearch,
-                    (who, query) -> searchScope(termHoldings, catalog.all().stream().map(HarvestSource::id).toList(),
+                    (who, query) -> searchScope(termHoldings, catalog.globalSearchSources().stream().map(HarvestSource::id).toList(),
                             who, query),
                     com.aresstack.spaceharvester.application.query.progressive.TermSearch.Knowledge.of(
                             searching::termKnowledge, searching::termVocabulary));
@@ -1052,11 +1069,11 @@ public final class Harvester implements AutoCloseable {
                     new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
                     HitScorer.of(excerpts), runLog, new NeighborCandidates(pageConnections),
                     new com.aresstack.spaceharvester.application.query.progressive.BackgroundNeighborLoader(pageLoads,
-                            backgroundJobs), termSearch);
+                            backgroundJobs, keywordSearch::allowsPrefetch), termSearch, keywordSearch::includesSource);
             // R2: dieselbe Methode zur Schlagwortsuche ohne progressive Suche, als eigener Aufruf nach einem Stapel.
             this.neighborSearch = new NeighborSearch(keywordSearch, new NeighborCandidates(pageConnections),
                     new com.aresstack.spaceharvester.application.query.progressive.BackgroundNeighborLoader(pageLoads,
-                            backgroundJobs));
+                            backgroundJobs, keywordSearch::allowsPrefetch));
             opened.add(orchestrator);
             this.progressiveSearch = orchestrator;
             start.step("Suche");
@@ -1137,6 +1154,7 @@ public final class Harvester implements AutoCloseable {
                                     trustBundles, builder.userAgent)))
                     // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Rechners.
                     .perDay(java.time.ZoneId.systemDefault())
+                    .globalSources(catalog::includeInGlobalSearch)
                     // Bereichszusammenfassung (ADR 0034 §7, Angelo 24.11.2026): Bestand statt Änderungen, alle Seiten.
                     .areas(holdings);
             opened.add(changeLog);

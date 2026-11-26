@@ -210,7 +210,9 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
             }
             try {
                 // Eine Seite, die schon wartet oder lädt, teilt sich den Abruf; ein Stapel bricht nur seine Anfrage ab.
-                waiting.put(hit, scheduler.request(caller, key, AcquisitionScheduler.Priority.FOREGROUND));
+                waiting.put(hit, scheduler.request(caller, key, AcquisitionScheduler.Priority.FOREGROUND,
+                        new AcquisitionScheduler.Mode(false, false,
+                                com.aresstack.spaceharvester.application.changelog.ChangeTrigger.SEARCH)));
             } catch (RejectedExecutionException e) {
                 pending.add(hit);
             }

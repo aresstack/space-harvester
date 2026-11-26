@@ -618,7 +618,8 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                     read.strategy(SourceSyncOverride.key(id, SourceSyncOverride.REFRESH_STRATEGY)),
                     read.duration(SourceSyncOverride.key(id, SourceSyncOverride.MAX_AGE)),
                     read.duration(SourceSyncOverride.key(id, SourceSyncOverride.WITHHELD_RETENTION)),
-                    read.optionalBool(SourceSyncOverride.key(id, SourceSyncOverride.BACKGROUND_FILL)));
+                    read.optionalBool(SourceSyncOverride.key(id, SourceSyncOverride.BACKGROUND_FILL)),
+                    read.optionalBool(SourceSyncOverride.key(id, SourceSyncOverride.PREFETCH_HITS)));
             if (!override.equals(SourceSyncOverride.NONE)) {
                 overrides.put(id, override);
             }
@@ -629,7 +630,8 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
     private static final Set<String> SOURCE_FIELDS = Set.of(SourceSyncOverride.CHANGE_SEARCH_INTERVAL,
             SourceSyncOverride.INVENTORY_INTERVAL, SourceSyncOverride.EVENTS, SourceSyncOverride.CATCH_UP_ON_START,
             SourceSyncOverride.BEFORE_SEARCH, SourceSyncOverride.MODE, SourceSyncOverride.REFRESH_STRATEGY,
-            SourceSyncOverride.MAX_AGE, SourceSyncOverride.WITHHELD_RETENTION, SourceSyncOverride.BACKGROUND_FILL);
+            SourceSyncOverride.MAX_AGE, SourceSyncOverride.WITHHELD_RETENTION, SourceSyncOverride.BACKGROUND_FILL,
+            SourceSyncOverride.PREFETCH_HITS);
 
     private static String strip(String name) {
         return name.startsWith(PREFIX) ? name.substring(PREFIX.length()) : name;

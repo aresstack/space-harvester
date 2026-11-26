@@ -28,8 +28,15 @@ public final class BackgroundNeighborLoader implements NeighborLoader {
 
     private final PageLoads loads;
     private final BackgroundJobs background;
+    private final java.util.function.Predicate<String> acquisitionAllowed;
 
     public BackgroundNeighborLoader(PageLoads loads, BackgroundJobs background) {
+        this(loads, background, sourceId -> true);
+    }
+
+    public BackgroundNeighborLoader(PageLoads loads, BackgroundJobs background,
+                                    java.util.function.Predicate<String> acquisitionAllowed) {
+        this.acquisitionAllowed = Objects.requireNonNull(acquisitionAllowed, "acquisitionAllowed");
         this.loads = Objects.requireNonNull(loads, "loads");
         this.background = Objects.requireNonNull(background, "background");
     }
@@ -39,11 +46,16 @@ public final class BackgroundNeighborLoader implements NeighborLoader {
         if (caller.credential() != null || pages.isEmpty()) {
             return Optional.empty();
         }
-        PageLoads.Joined joined = loads.join(caller, TITLE, pages);
+        List<PageKey> eligible = pages.stream().filter(key -> acquisitionAllowed.test(key.sourceId())).toList();
+        if (eligible.isEmpty()) {
+            return Optional.empty();
+        }
+        PageLoads.Joined joined = loads.join(caller, TITLE, eligible, false,
+                com.aresstack.spaceharvester.application.changelog.ChangeTrigger.SEARCH);
         if (joined.groups().isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(new GroupsLoad(joined, pages.size()));
+        return Optional.of(new GroupsLoad(joined, eligible.size()));
     }
 
     /**

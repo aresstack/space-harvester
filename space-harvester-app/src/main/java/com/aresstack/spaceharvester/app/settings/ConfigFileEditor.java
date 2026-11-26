@@ -1061,6 +1061,7 @@ public final class ConfigFileEditor {
             line(yaml, field, SourceSyncOverride.MAX_AGE, rule.maxAge());
             line(yaml, field, SourceSyncOverride.WITHHELD_RETENTION, rule.withheldRetention());
             line(yaml, field, SourceSyncOverride.BACKGROUND_FILL, rule.backgroundFill());
+            line(yaml, field, SourceSyncOverride.PREFETCH_HITS, rule.prefetchHits());
         });
         return yaml.toString();
     }
