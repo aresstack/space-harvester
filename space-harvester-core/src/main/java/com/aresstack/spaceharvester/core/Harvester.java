@@ -986,6 +986,8 @@ public final class Harvester implements AutoCloseable {
                                 scheduler, AccessContext.technicalClient(OWNER),
                                 key -> cache.findHeader(key).map(header -> header.metadata().partitionKey()));
                 opened.add(hitLoads);
+                // Ohne Netz steht der Teil als „Wartet auf Netzverbindung“; der Planer wartet mit den Abrufen.
+                hitLoads.network(network);
                 prefetch.hitLoads(hitLoads);
             }
             SearchReranker reranker = builder.reranker;

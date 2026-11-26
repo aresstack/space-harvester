@@ -12,7 +12,6 @@ import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.observe.Coalescer;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
-import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -25,9 +24,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Function;
 
@@ -42,7 +39,10 @@ import java.util.function.Function;
  *   <li>{@link #offer} kehrt sofort zurück: Die Teile legt ein eigener Arbeiter an ({@link Coalescer}). Seiten, die
  *       ein offener Teil schon zählt, fallen heraus; die offenen Teile führt eine Karte aus den Auftragsmeldungen, nie
  *       ein Durchlauf über den Auftragsspeicher.</li>
- *   <li>Eine gescheiterte Seite zählt rot mit Grund; die übrigen laden weiter. Übernommene Abrufe bricht nur der
+ *   <li>Vorübergehend gescheiterte Seiten fordert der Planer selbst erneut an, ohne Netz wartet er (der Teil steht
+ *       dann als „Wartet auf Netzverbindung“, {@link #network}). Was danach noch scheitert, zählt rot mit Grund in
+ *       Worten ({@link PageFailures}); ↻ ({@link BackgroundJobs.Retry}) lädt nur diese Seiten im selben Eintrag
+ *       erneut (Angelo 26.11.2026). Die übrigen laden weiter. Übernommene Abrufe bricht nur der
  *       Benutzer ab (Anhalten oder Abbrechen des Teils, Abbrechen in der Trefferliste). Scheitert das Anlegen, laden sie
  *       unverändert weiter.</li>
  *   <li>Nach einem Neustart oder Fortsetzen fordert der Teil an, was noch fehlt, nachrangig im Vordergrund des Planers
@@ -99,6 +99,19 @@ public final class SearchHitLoads implements AutoCloseable {
     };
     private final Coalescer<String, Object> worker;
     private final Subscription parts;
+    /** Gescheiterte Seiten je Teil, für ↻; unter {@link #monitor}. */
+    private final Map<String, Set<PageKey>> failedOf = new LinkedHashMap<>() {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Set<PageKey>> eldest) {
+            return size() > REMEMBERED;
+        }
+    };
+    /** Von ↻ bereitgelegte Seiten je Teil, bis sein erneuter Lauf sie nimmt; unter {@link #monitor}. */
+    private final Map<String, Set<PageKey>> retrying = new HashMap<>();
+    /** Laufende Teile, für die Anzeige „Wartet auf Netzverbindung“; unter {@link #monitor}. */
+    private final Set<Run> running = new java.util.HashSet<>();
+    private volatile com.aresstack.spaceharvester.application.network.NetworkState network;
+    private volatile Subscription networkWatch = Subscription.NONE;
 
     /**
      * @param technical technischer Aufrufer für Teile, die nach einem Neustart fortsetzen
@@ -118,9 +131,57 @@ public final class SearchHitLoads implements AutoCloseable {
         this.technical = Objects.requireNonNull(technical, "technical");
         this.space = Objects.requireNonNull(space, "space");
         this.request = Objects.requireNonNull(request, "request");
+        background.registerRetry(KIND, new RetryFailed());
         background.register(new BackgroundKind(KIND, this::work, () -> true, false, true));
         this.worker = new Coalescer<>("search-hits", (token, ignored) -> flush(token));
         this.parts = background.subscribe(KIND, this::changed, this::ended);
+    }
+
+    /**
+     * Hängt den Netzzustand an: Solange das Netz weg ist, warten die Abrufe im Planer, und jeder laufende Teil steht
+     * als „Wartet auf Netzverbindung“ mit dem Grund in der Diagnose; nichts zählt als gescheitert.
+     */
+    public void network(com.aresstack.spaceharvester.application.network.NetworkState value) {
+        this.network = value;
+        Subscription previous = networkWatch;
+        networkWatch = value == null ? Subscription.NONE : value.subscribe(this::networkChanged);
+        previous.close();
+    }
+
+    private void networkChanged(com.aresstack.spaceharvester.application.network.NetworkState.Status status) {
+        List<Run> runs;
+        synchronized (monitor) {
+            runs = new ArrayList<>(running);
+        }
+        runs.forEach(run -> run.network(status));
+    }
+
+    /** ↻: Nur die gescheiterten Seiten eines Teils laufen im selben Eintrag erneut. */
+    private final class RetryFailed implements BackgroundJobs.Retry {
+
+        @Override
+        public boolean prepare(BackgroundPart part) {
+            synchronized (monitor) {
+                Set<PageKey> failed = failedOf.remove(part.jobId());
+                if (failed != null && !failed.isEmpty()) {
+                    retrying.put(part.jobId(), failed);
+                    return true;
+                }
+            }
+            // Nach einem Neustart weiß der Teil nicht mehr, welche scheiterten: Er lädt alle seine Seiten erneut, die
+            // schon geladenen kommen dabei aus dem Cache.
+            return !keys(part.sourceId(), part.parameter(PAGES)).isEmpty();
+        }
+
+        @Override
+        public void abandoned(BackgroundPart part) {
+            synchronized (monitor) {
+                Set<PageKey> failed = retrying.remove(part.jobId());
+                if (failed != null) {
+                    failedOf.put(part.jobId(), failed);
+                }
+            }
+        }
     }
 
     /**
@@ -251,16 +312,20 @@ public final class SearchHitLoads implements AutoCloseable {
     }
 
     private static List<PageKey> keys(JobStatus part) {
-        String pages = part.parameter(PAGES);
-        List<PageKey> keys = new ArrayList<>();
-        if (pages != null && part.sourceId() != null) {
+        return new ArrayList<>(keys(part.sourceId(), part.parameter(PAGES)));
+    }
+
+    /** Die Seiten eines Teils aus seiner Angabe {@value #PAGES}, ohne Doppelte, in ihrer Reihenfolge. */
+    private static List<PageKey> keys(String sourceId, String pages) {
+        Set<PageKey> keys = new java.util.LinkedHashSet<>();
+        if (pages != null && sourceId != null) {
             for (String pageId : pages.split("\n")) {
                 if (!pageId.isBlank()) {
-                    keys.add(new PageKey(part.sourceId(), pageId));
+                    keys.add(new PageKey(sourceId, pageId));
                 }
             }
         }
-        return keys;
+        return List.copyOf(keys);
     }
 
     /** Auftragsmeldung: Wartende und laufende Teile zählen ihre Seiten, alle übrigen nicht. */
@@ -322,6 +387,9 @@ public final class SearchHitLoads implements AutoCloseable {
         final Set<AcquisitionScheduler.Ticket> requestedTickets = new java.util.HashSet<>();
         final Deque<PageKey> toRequest = new ArrayDeque<>();
         final AccessContext caller;
+        final Map<AcquisitionScheduler.Ticket, PageKey> keyOf = new HashMap<>();
+        final Set<PageKey> failedKeys = new LinkedHashSet<>();
+        boolean offline;
         int remaining;
         int requested;
         long failed;
@@ -339,6 +407,11 @@ public final class SearchHitLoads implements AutoCloseable {
                 stopped = stopping;
                 if (!stopped) {
                     own.add(ticket);
+                }
+            }
+            if (!stopped) {
+                synchronized (this) {
+                    keyOf.put(ticket, key);
                 }
             }
             if (stopped) {
@@ -369,9 +442,13 @@ public final class SearchHitLoads implements AutoCloseable {
             } else {
                 synchronized (this) {
                     failed++;
+                    PageKey key = keyOf.get(ticket);
+                    if (key != null) {
+                        failedKeys.add(key);
+                    }
                 }
                 context.failed(1);
-                // Rot mit Grund; die übrigen Seiten laden weiter (Abnahme #1085).
+                // Rot mit Grund in Worten; die übrigen Seiten laden weiter (Abnahme #1085).
                 context.record(new JobEvent.Draft(JobEvent.Severity.ERROR, JobEvent.Category.SOURCE, COMPONENT,
                         PAGES_MISSING, "Ein Suchtreffer ließ sich nicht laden: " + reason(ticket, failure), null,
                         null, failure));
@@ -428,15 +505,63 @@ public final class SearchHitLoads implements AutoCloseable {
                 waiting.close();
             }
             long failures;
+            Set<PageKey> keys;
             synchronized (this) {
                 failures = failed;
+                keys = new LinkedHashSet<>(failedKeys);
             }
+            leave(keys);
             if (failures > 0) {
                 done.completeExceptionally(new JobFailedException(PAGES_MISSING, failures
                         + (failures == 1 ? " Suchtreffer ließ" : " Suchtreffer ließen")
-                        + " sich nicht laden; die nächste Suche versucht es erneut"));
+                        + " sich auch nach den Wiederholungen nicht laden. ↻ lädt nur "
+                        + (failures == 1 ? "ihn" : "diese") + " erneut; die Gründe stehen unter „Fehler diagnostizieren“"));
             } else {
                 done.complete(null);
+            }
+        }
+
+        /** Der Teil endet: aus der Anzeige des Netzes, die gescheiterten Seiten bleiben für ↻. */
+        void leave(Set<PageKey> keys) {
+            boolean wasOffline;
+            synchronized (monitor) {
+                running.remove(this);
+                if (!keys.isEmpty()) {
+                    failedOf.put(context.jobId(), keys);
+                }
+            }
+            synchronized (this) {
+                wasOffline = offline;
+                offline = false;
+            }
+            if (wasOffline) {
+                context.awaitingNetwork(false);
+            }
+        }
+
+        /** Netz weg: „Wartet auf Netzverbindung“ mit Grund, einmal je Ausfall; zurück: läuft wieder sichtbar. */
+        void network(com.aresstack.spaceharvester.application.network.NetworkState.Status status) {
+            boolean change;
+            synchronized (this) {
+                change = !stopping && offline == status.online();
+                if (change) {
+                    offline = !status.online();
+                }
+            }
+            if (!change) {
+                return;
+            }
+            context.awaitingNetwork(!status.online());
+            if (status.online()) {
+                context.record(new JobEvent.Draft(JobEvent.Severity.INFO, JobEvent.Category.NETWORK, COMPONENT,
+                        com.aresstack.spaceharvester.application.network.NetworkWait.ONLINE,
+                        "Netzverbindung zurück; die Suchtreffer laden hier weiter", null, null, null));
+            } else {
+                context.record(new JobEvent.Draft(JobEvent.Severity.WARNING, JobEvent.Category.NETWORK, COMPONENT,
+                        com.aresstack.spaceharvester.application.network.NetworkWait.OFFLINE, "Keine Netzverbindung ("
+                        + (status.reason() == null ? "Netz nicht erreichbar" : status.reason())
+                        + "): Die Suchtreffer warten, bis sie zurück ist, und laden dann von selbst hier weiter; "
+                        + "nichts zählt als gescheitert", null, null, null));
             }
         }
 
@@ -454,6 +579,11 @@ public final class SearchHitLoads implements AutoCloseable {
                 waiting.close();
             }
             tickets.forEach(AcquisitionScheduler.Ticket::cancel);
+            Set<PageKey> keys;
+            synchronized (this) {
+                keys = new LinkedHashSet<>(failedKeys);
+            }
+            leave(keys);
             try {
                 context.checkpoint();
                 done.complete(null);
@@ -464,34 +594,26 @@ public final class SearchHitLoads implements AutoCloseable {
     }
 
     private static String reason(AcquisitionScheduler.Ticket ticket, Throwable failure) {
-        Throwable cause = ticket.failure().map(Throwable.class::cast).orElse(failure);
-        if (cause instanceof CancellationException
-                || cause instanceof CompletionException && cause.getCause() instanceof CancellationException) {
-            return "Abruf zurückgezogen";
-        }
-        for (Throwable current = cause; current != null; current = current.getCause()) {
-            if (current instanceof SourceAccessException access) {
-                return access.reason().name();
-            }
-            if (current.getCause() == current) {
-                break;
-            }
-        }
-        return cause == null ? "unbekannt" : cause.getClass().getSimpleName();
+        return PageFailures.reason(ticket.failure().map(Throwable.class::cast).orElse(failure));
     }
 
     private JobTask work(BackgroundPart part) {
-        List<PageKey> keys = new ArrayList<>();
-        String pages = part.parameter(PAGES);
-        if (pages != null && part.sourceId() != null) {
-            for (String pageId : new LinkedHashSet<>(Arrays.asList(pages.split("\n")))) {
-                if (!pageId.isBlank()) {
-                    keys.add(new PageKey(part.sourceId(), pageId));
-                }
-            }
-        }
         return context -> {
+            List<PageKey> keys;
+            synchronized (monitor) {
+                // ↻: nur die gescheiterten Seiten; sonst (erster Lauf, Fortsetzen, Neustart) alle des Teils.
+                Set<PageKey> again = retrying.remove(part.jobId());
+                keys = again != null ? List.copyOf(again) : keys(part.sourceId(), part.parameter(PAGES));
+                failedOf.remove(part.jobId());
+            }
             Run run = new Run(context, technical);
+            synchronized (monitor) {
+                running.add(run);
+            }
+            com.aresstack.spaceharvester.application.network.NetworkState net = network;
+            if (net != null && !net.online()) {
+                run.network(net.status());
+            }
             Map<PageKey, AcquisitionScheduler.Ticket> mine = new LinkedHashMap<>();
             synchronized (monitor) {
                 Map<PageKey, AcquisitionScheduler.Ticket> group = adopted.get(part.groupId());
@@ -529,6 +651,7 @@ public final class SearchHitLoads implements AutoCloseable {
 
     @Override
     public void close() {
+        networkWatch.close();
         worker.close();
         parts.close();
     }
