@@ -500,6 +500,33 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     }
 
     /**
+     * Ändert nur den Anzeigenamen einer Quelle, ohne sie neu zu öffnen: Verbindung, Web-Sitzung, Zugangsdaten und
+     * Daten bleiben, ID und Ziel ändern sich nicht (Rechtsklick „Umbenennen“, Angelo 26.11.2026). Leer oder
+     * {@code null} zeigt wieder die ID.
+     *
+     * @return ob sich der Anzeigename geändert hat
+     * @throws UnknownSourceException ohne Quelle dieser ID
+     */
+    public synchronized boolean rename(String sourceId, String title) {
+        Opened previous = opened.get(sourceId);
+        if (previous == null) {
+            throw new UnknownSourceException(sourceId);
+        }
+        String wanted = title == null || title.isBlank() ? null : title.strip();
+        if (Objects.equals(previous.config().title(), wanted)) {
+            return false;
+        }
+        if (previous.source() instanceof KnowledgeSourceHarvestSource source) {
+            source.retitle(wanted == null ? sourceId : wanted);
+        }
+        Map<String, Opened> next = new LinkedHashMap<>(opened);
+        next.put(sourceId, new Opened(previous.config().withTitle(wanted), previous.source(), previous.delegated(),
+                previous.baseUrl(), previous.enabled()));
+        opened = Collections.unmodifiableMap(next);
+        return true;
+    }
+
+    /**
      * Entfernt eine Quelle; ab dann ist sie unbekannt, ihre Zugangsdaten sind vergessen. Abgeleitete Daten (Cache,
      * Assets, Anreicherungen) entfernt der Aufrufer.
      *
