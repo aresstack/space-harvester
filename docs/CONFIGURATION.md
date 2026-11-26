@@ -347,6 +347,7 @@ neue Route, Anmeldung und das neue Vertrauen ([ADR 0015, Nachtrag](adr/0015-konf
 | Parallelität der Hintergrundfüllung | `sync.background-parallelism` (Standard `2`, `1` bis `16`) | ja |
 | Abweichende Regeln je Quelle | `sync.sources.<Quelle>.*` (siehe unten) | ja |
 | Proxy und TLS | `network.proxy.*`, `network.tls.*` | ja, neue Verbindungen: gemerkte Routen samt PAC-Ergebnissen werden verworfen, Proxy-Anmeldung und Vertrauen ohne Bundle neu gesetzt, alle Quellen neu geöffnet (Trust-Bundles und Client-Zertifikate neu gelesen); laufende Anfragen enden über ihre Verbindung |
+| Netz-Fristen der Quellen: Prüfung mit dem Confluence-Token eines Nutzers (Standard 10 s), eine WebDAV-Anfrage an BSCW (90 s), jede Netzstufe der Verbindungsprüfung (15 s); Dauer wie `25s` oder `3m`. Im Core: `SourceTimeouts` | `network.timeouts.delegated-check`, `network.timeouts.webdav-request`, `network.timeouts.probe` | nein, Neustart |
 | Quellen | `sources[]` bzw. Quellenverwaltung | ja, über die Quellenverwaltung |
 | Freigegebene Ordner für lokale Dateien (siehe unten) | `local-files.allow-all` (Standard `false`), `local-files.roots` | ja, beim nächsten Dateizugriff |
 | Dateianhänge im Export (siehe unten) | `export.attachments.enabled` (Standard `true`), `export.attachments.media-types`, `export.attachments.max-size` (Standard `0`, ohne Grenze) | ja, beim nächsten Auftrag „Bilder beschaffen“ |

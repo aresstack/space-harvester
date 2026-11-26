@@ -31,9 +31,6 @@ import org.slf4j.LoggerFactory;
  */
 public final class SourceDiagnostics implements SourceDiagnoses {
 
-    /** Frist je Netzstufe. */
-    public static final Duration PROBE_TIMEOUT = Duration.ofSeconds(15);
-
     private static final Logger LOG = LoggerFactory.getLogger(SourceDiagnostics.class);
     private static final String NOT_CHECKED = "nicht geprüft";
 
@@ -41,7 +38,8 @@ public final class SourceDiagnostics implements SourceDiagnoses {
     private final Duration timeout;
 
     public SourceDiagnostics(ConfiguredSourceCatalog catalog) {
-        this(catalog, PROBE_TIMEOUT);
+        // Frist je Netzstufe: network.timeouts.probe, wie der Katalog sie bekommen hat.
+        this(catalog, catalog.timeouts().probe());
     }
 
     SourceDiagnostics(ConfiguredSourceCatalog catalog, Duration timeout) {

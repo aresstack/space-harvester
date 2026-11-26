@@ -42,7 +42,7 @@ public final class SourceCertificates {
     private final Duration timeout;
 
     public SourceCertificates(ConfiguredSourceCatalog catalog) {
-        this(catalog, SourceDiagnostics.PROBE_TIMEOUT);
+        this(catalog, catalog.timeouts().probe());
     }
 
     SourceCertificates(ConfiguredSourceCatalog catalog, Duration timeout) {

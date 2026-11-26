@@ -20,7 +20,7 @@ public record SpaceHarvesterProperties(List<Source> sources, Network network) {
 
     public SpaceHarvesterProperties {
         sources = sources == null ? List.of() : List.copyOf(sources);
-        network = network == null ? new Network(null, null, null) : network;
+        network = network == null ? new Network(null, null, null, null) : network;
     }
 
     /**
@@ -31,13 +31,30 @@ public record SpaceHarvesterProperties(List<Source> sources, Network network) {
      *                       WebClient (#47), mit derselben Route, demselben Vertrauen und demselben Client-Zertifikat;
      *                       {@code disabled}: Rückfall auf den synchronen Transport
      * @param tls            Vertrauen für Quellen und KI-Dienst ohne eigenes {@code trust-bundle} (#189)
+     * @param timeouts       Netz-Fristen der Quellen; leer: Vorgaben
      */
-    public record Network(Proxy proxy, ConfiguredSourceCatalog.AsyncTransport asyncTransport, Tls tls) {
+    public record Network(Proxy proxy, ConfiguredSourceCatalog.AsyncTransport asyncTransport, Tls tls,
+                          Timeouts timeouts) {
 
         public Network {
+            timeouts = timeouts == null ? new Timeouts(null, null, null) : timeouts;
             tls = tls == null ? new Tls(null, null, null, null) : tls;
             proxy = proxy == null ? new Proxy(null, null, null, null, null, null, null, null, null, null) : proxy;
             asyncTransport = asyncTransport == null ? ConfiguredSourceCatalog.AsyncTransport.WEB_CLIENT : asyncTransport;
+        }
+    }
+
+    /**
+     * Netz-Fristen der Quellen (Angelo 26.11.2026: keine fest eingebauten Werte).
+     *
+     * @param delegatedCheck Prüfung mit dem Confluence-Token eines Nutzers (Standard 10 s)
+     * @param webdavRequest  eine WebDAV-Anfrage an BSCW (Standard 90 s)
+     * @param probe          jede Netzstufe der Verbindungsprüfung (Standard 15 s)
+     */
+    public record Timeouts(Duration delegatedCheck, Duration webdavRequest, Duration probe) {
+
+        com.aresstack.spaceharvester.source.network.SourceTimeouts toSettings() {
+            return new com.aresstack.spaceharvester.source.network.SourceTimeouts(delegatedCheck, webdavRequest, probe);
         }
     }
 

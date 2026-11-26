@@ -117,6 +117,11 @@ class ConfigurationParityTest {
               query:
                 max-page-limit: 250
                 max-term-scan: 70000
+              network:
+                timeouts:
+                  delegated-check: 25s
+                  webdav-request: 3m
+                  probe: 40s
               jobs:
                 parallel-preparations: 3
                 parallel-downloads: 0
@@ -353,6 +358,14 @@ class ConfigurationParityTest {
                         environment.getProperty("space-harvester.query.max-page-limit", Integer.class),
                         environment.getProperty("space-harvester.query.max-term-scan", Integer.class)))
                 .isEqualTo(new com.aresstack.spaceharvester.application.query.QueryLimits(250, 70_000));
+
+        // Netz-Fristen der Quellen (Angelo 26.11.2026): beim Dienst SpaceHarvesterProperties.Network.
+        assertThat(app.storage().sourceTimeouts())
+                .isEqualTo(binder.bind("space-harvester.network.timeouts", SpaceHarvesterProperties.Timeouts.class)
+                        .get().toSettings())
+                .isEqualTo(new com.aresstack.spaceharvester.source.network.SourceTimeouts(
+                        java.time.Duration.ofSeconds(25), java.time.Duration.ofMinutes(3),
+                        java.time.Duration.ofSeconds(40)));
 
         // Terminal-Ausgabe (Angelo 12.11.2026): dieselbe Stufe wie die Konsolen-Schwelle, die Spring Boot setzt.
         assertThat(app.consoleOutput()).isEqualTo(ConsoleOutput.WARN);

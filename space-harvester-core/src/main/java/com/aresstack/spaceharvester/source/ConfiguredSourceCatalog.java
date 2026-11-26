@@ -175,6 +175,17 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
                                              TrustBundles trustBundles, ProxySettings proxy,
                                              AsyncTransport asyncTransport, List<? extends SourceAdapter> adapters,
                                              SourceSecrets secretProvider) {
+        return of(configs, userAgent, trustBundles, proxy, asyncTransport, adapters, secretProvider, null);
+    }
+
+    /**
+     * @param timeouts Netz-Fristen aller Quellen ({@code network.timeouts}); {@code null}: Vorgaben
+     */
+    public static ConfiguredSourceCatalog of(List<SourceSettingsConfig> configs, String userAgent,
+                                             TrustBundles trustBundles, ProxySettings proxy,
+                                             AsyncTransport asyncTransport, List<? extends SourceAdapter> adapters,
+                                             SourceSecrets secretProvider,
+                                             com.aresstack.spaceharvester.source.network.SourceTimeouts timeouts) {
         Map<String, SourceAdapter> byType = new LinkedHashMap<>();
         for (SourceAdapter adapter : adapters) {
             if (byType.putIfAbsent(adapter.type(), adapter) != null) {
@@ -191,7 +202,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
                 ? new AsyncSnapshotTransports(secrets, routes, userAgent, proxyCredentials) : null;
         LOG.info("Seiten-Snapshots: {}", async == null ? "synchron" : "asynchron über WebClient");
         SourceAdapter.Context context = new SourceAdapter.Context(secrets, routes, userAgent, trustBundles, async,
-                proxyCredentials);
+                proxyCredentials, timeouts);
         Map<String, Opened> opened = new LinkedHashMap<>();
         Set<String> seenIds = new HashSet<>();
         for (int i = 0; i < configs.size(); i++) {
@@ -573,9 +584,14 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         return probeUnchecked(config(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId)), use);
     }
 
+    /** Netz-Fristen der Quellen ({@code network.timeouts}). */
+    public com.aresstack.spaceharvester.source.network.SourceTimeouts timeouts() {
+        return context.timeouts();
+    }
+
     private <T> T probeUnchecked(SourceSettingsConfig config, Function<HarvestSource, T> use) {
         SourceAdapter.Context probing = new SourceAdapter.Context(secrets.fresh(), routes, context.userAgent(),
-                context.trustBundles(), null, context.proxyCredentials());
+                context.trustBundles(), null, context.proxyCredentials(), context.timeouts());
         Opened source = open(config, adapters.get(config.type()), probing);
         try {
             return use.apply(source.source());
