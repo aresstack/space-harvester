@@ -72,6 +72,11 @@ public interface SourceAdapter {
         return false;
     }
 
+    /** Vorbelegung neuer Quellen dieses Typs ({@link SourceType#defaults()}). */
+    default com.aresstack.spaceharvester.application.sources.SourceDefaults defaults() {
+        return com.aresstack.spaceharvester.application.sources.SourceDefaults.STANDARD;
+    }
+
     /** Expose the shared top-level base-url field in source editors. */
     default boolean usesBaseUrl() {
         return false;

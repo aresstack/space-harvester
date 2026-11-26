@@ -71,8 +71,8 @@ public class FtpTlsTest {
                 settings(null, null), null, (s, user, password) ->
                 CommonsNetFtpSession.open(s, "indexer", "secret".toCharArray()));
         try {
-            assertEquals(64 * 1024, pool.run(session -> session.sampleText("/large")).length());
-            assertEquals("small source", pool.run(session -> session.sampleText("/small")));
+            assertEquals(64 * 1024, pool.run(session -> session.sampleText("/large", 64 * 1024)).length());
+            assertEquals("small source", pool.run(session -> session.sampleText("/small", 64 * 1024)));
             assertEquals("small source", pool.run(session -> session.readText("/small")));
         } finally {
             pool.close();

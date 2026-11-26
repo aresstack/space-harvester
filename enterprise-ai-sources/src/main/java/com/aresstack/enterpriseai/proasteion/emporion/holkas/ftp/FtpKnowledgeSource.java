@@ -50,7 +50,7 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourc
     /** {@code host:port} klein, Teil jeder Ressourcen-ID ({@code ftp:host:port/HLQ.DATASET(MEMBER)}). */
     private final String locator;
     private final FtpSessionPool<FtpClientSession> sessions;
-    private final boolean programSourcesOnly;
+    private final FtpSourceEligibility eligibility;
 
     FtpKnowledgeSource(SourceAddress sourceId, FtpConnectionSettings settings,
                        FtpSessionPool<FtpClientSession> sessions) {
@@ -59,14 +59,20 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourc
 
     FtpKnowledgeSource(SourceAddress sourceId, FtpConnectionSettings settings,
                        FtpSessionPool<FtpClientSession> sessions, boolean programSourcesOnly) {
-        if (sourceId == null || settings == null || sessions == null) {
+        this(sourceId, settings, sessions, new FtpSourceEligibility(programSourcesOnly,
+                FtpSourceEligibility.DEFAULT_SAMPLE_KILOBYTES * 1024));
+    }
+
+    FtpKnowledgeSource(SourceAddress sourceId, FtpConnectionSettings settings,
+                       FtpSessionPool<FtpClientSession> sessions, FtpSourceEligibility eligibility) {
+        if (eligibility == null || sourceId == null || settings == null || sessions == null) {
             throw new IllegalArgumentException("sourceId, settings and sessions are required");
         }
         this.sourceId = sourceId;
         this.settings = settings;
         this.locator = SourceLocators.hostPort(settings.host, settings.port);
         this.sessions = sessions;
-        this.programSourcesOnly = programSourcesOnly;
+        this.eligibility = eligibility;
     }
 
     @Override
@@ -76,7 +82,7 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourc
 
     @Override
     public List<KnowledgeResource> discover(final SourceScope scope) throws KnowledgeSourceException {
-        return new FtpInventory(sessions, programSourcesOnly).discover(scope, this::resource);
+        return new FtpInventory(sessions, eligibility).discover(scope, this::resource);
     }
 
     @Override
@@ -87,8 +93,7 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourc
             if (path.isEmpty() || session.mvs() && MvsQuoteNormalizer.hasWildcard(path)) {
                 return null;
             }
-            if (programSourcesOnly && session.mvs() && FtpProgramClassifier.classify(session.sampleText(path))
-                    == FtpProgramClassifier.Kind.UNKNOWN) {
+            if (!eligibility.eligible(session, path)) {
                 return null;
             }
             return idOf(path);

@@ -13,6 +13,8 @@ import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
+import com.aresstack.spaceharvester.application.configuration.SyncPreset;
+import com.aresstack.spaceharvester.application.configuration.SearchSettings;
 import com.aresstack.spaceharvester.application.jobs.RetrySettings;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
@@ -952,6 +954,14 @@ final class SettingDialogs {
 
         String globally = global ? "" : "; wie global: ";
         Rows rows = new Rows();
+        if (!global) {
+            // Voreinstellungen über die vorhandenen Regeln (ADR 0037, Punkt 6, F37-2); die Schalter bleiben einzeln.
+            JComboBox<String> preset = presetChoice(mode, background, prefetch, sync);
+            rows.add(PRESET_TITLE, preset, "Vollständig: alle Inhalte des Umfangs, Hintergrundfüllung und Suchtreffer "
+                    + "nachladen an. Selektiv: nur gecachte Inhalte aktuell halten, nichts automatisch nachladen; in "
+                    + "den Bestand kommt nur, was ausdrücklich indexiert oder geöffnet wird. Abweichende Regeln heißen "
+                    + "„" + CUSTOM_PRESET + "“");
+        }
         rows.add("Erkennung", Comic.muted("Wie erfährt die App von neuen und geänderten Seiten?"), " ");
         rows.add(CHANGE_SEARCH_TITLE, changeSearch, "Abstand der CQL-Abfrage nach Änderungen, ohne "
                 + "Administratorrechte; mindestens eine Minute" + (global ? "" : globally + every(sync.interval())));
@@ -1089,6 +1099,63 @@ final class SettingDialogs {
         }, () -> global ? cache.equals(cacheDraft.get()) && sync.equals(syncDraft.get()) : current.equals(draft.get()),
                 context, saved);
         return shell;
+    }
+
+    static final String PRESET_TITLE = "Voreinstellung";
+    static final String CUSTOM_PRESET = "Benutzerdefiniert";
+
+    /**
+     * Auswahl „Vollständig“, „Selektiv“ oder „Benutzerdefiniert“: Eine Voreinstellung setzt Betriebsart,
+     * Hintergrundfüllung und „Suchtreffer nachladen“ ausdrücklich; jede Änderung an diesen Schaltern zeigt wieder, welcher
+     * Voreinstellung die wirksamen Werte entsprechen.
+     */
+    private static JComboBox<String> presetChoice(JComboBox<String> mode, JComboBox<String> background,
+                                                  JComboBox<String> prefetch, SyncSettings global) {
+        JComboBox<String> preset = Comic.combo();
+        preset.setName(PRESET_TITLE);
+        for (SyncPreset value : SyncPreset.values()) {
+            preset.addItem(value.label());
+        }
+        preset.addItem(CUSTOM_PRESET);
+        boolean[] adjusting = {false};
+        Runnable show = () -> {
+            SyncMode effectiveMode = switch ((String) mode.getSelectedItem()) {
+                case CATALOG_ONLY -> SyncMode.CATALOG_ONLY;
+                case SYNC_CACHE -> SyncMode.SYNC_CACHE;
+                case FULL -> SyncMode.FULL;
+                default -> global.mode();
+            };
+            Boolean fill = triValue(background);
+            Boolean hits = triValue(prefetch);
+            String label = SyncPreset.of(effectiveMode, fill == null ? global.backgroundFill() : fill,
+                    hits == null ? SearchSettings.DEFAULT.prefetchHits() : hits)
+                    .map(SyncPreset::label).orElse(CUSTOM_PRESET);
+            adjusting[0] = true;
+            try {
+                preset.setSelectedItem(label);
+            } finally {
+                adjusting[0] = false;
+            }
+        };
+        preset.addActionListener(e -> {
+            if (adjusting[0]) {
+                return;
+            }
+            for (SyncPreset value : SyncPreset.values()) {
+                if (value.label().equals(preset.getSelectedItem())) {
+                    SourceSyncOverride applied = value.applyTo(SourceSyncOverride.NONE);
+                    mode.setSelectedItem(modeLabel(applied.mode()));
+                    background.setSelectedItem(applied.backgroundFill() ? ON : OFF);
+                    prefetch.setSelectedItem(applied.prefetchHits() ? ON : OFF);
+                }
+            }
+            show.run();
+        });
+        for (JComboBox<String> box : List.of(mode, background, prefetch)) {
+            box.addActionListener(e -> show.run());
+        }
+        show.run();
+        return preset;
     }
 
     private static JComboBox<String> onOff(boolean value) {

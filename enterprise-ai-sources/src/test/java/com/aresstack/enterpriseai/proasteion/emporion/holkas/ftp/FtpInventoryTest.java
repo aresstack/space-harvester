@@ -69,6 +69,57 @@ public class FtpInventoryTest {
     }
 
     @Test
+    public void inventoryAndNavigationShareOneEligibilityCheckWithMetadataFirst() throws Exception {
+        // Angelo 26.11., Entscheidung 2 / F37-6: keine Ladebibliotheken, keine Binärinhalte; Metadaten zuerst,
+        // Leseprobe nur, wenn sie nicht entscheiden.
+        FakeSession session = new FakeSession();
+        session.children.put("HLQ", Arrays.asList(directory("HLQ.LOAD"), directory("HLQ.SRC"), directory("HLQ.OLD")));
+        session.children.put("HLQ.LOAD", Collections.singletonList(file("HLQ.LOAD(PGM1)")));
+        session.children.put("HLQ.SRC", Collections.singletonList(file("HLQ.SRC(PGM1)")));
+        session.children.put("HLQ.OLD", Arrays.asList(file("HLQ.OLD(TEXT)"), file("HLQ.OLD(BIN)")));
+        session.recordFormats.put("HLQ.LOAD", "U");
+        session.recordFormats.put("HLQ.SRC", "FB");
+        session.samples.put("HLQ.OLD(TEXT)", "Ordinary text\nsecond line");
+        session.samples.put("HLQ.OLD(BIN)", "MZ\u0000\u0001\u0002");
+        FtpKnowledgeSource source = source(session);
+
+        List<KnowledgeResource> result = source.discover(SourceScope.builder().startPoints("HLQ")
+                .maxDepth(Integer.MAX_VALUE).maxResources(Integer.MAX_VALUE).build());
+
+        assertEquals(Arrays.asList("HLQ.SRC(PGM1)", "HLQ.OLD(TEXT)"), paths(result));
+        assertFalse("RECFM U is decided by metadata alone", session.sampled.contains("HLQ.LOAD(PGM1)"));
+        assertFalse("a known text record format needs no sample", session.sampled.contains("HLQ.SRC(PGM1)"));
+        assertTrue(session.sampled.contains("HLQ.OLD(BIN)"));
+        // Navigation fill asks the very same check.
+        assertNull(source.navigationResource("HLQ.LOAD(PGM1)"));
+        assertNull(source.navigationResource("'HLQ.OLD(BIN)'"));
+        assertNotNull(source.navigationResource("HLQ.SRC(PGM1)"));
+    }
+
+    @Test
+    public void readsDatasetListLines() {
+        MvsDatasetListing.Dataset load = MvsDatasetListing.parse("VOL001 3390 2026/11/20 1 2 U 0 32760 PO HLQ.LOAD");
+        assertEquals("HLQ.LOAD", load.name());
+        assertEquals("U", load.recordFormat());
+        assertEquals("PO", load.organization());
+        assertEquals("2026/11/20", load.referred());
+        MvsDatasetListing.Dataset source = MvsDatasetListing.parse("VOL001 3390 2026/11/20 1 2 FB 80 3200 PS 'HLQ.SEQ'");
+        assertEquals(80, source.recordLength());
+        assertEquals("PS", source.organization());
+        assertTrue(MvsDatasetListing.parse("Migrated                                         HLQ.ARCH").migrated());
+        assertNull(MvsDatasetListing.parse("Volume Unit    Referred Ext Used Recfm Lrecl BlkSz Dsorg Dsname"));
+    }
+
+    private static List<String> paths(List<KnowledgeResource> resources) {
+        List<String> paths = new ArrayList<String>();
+        for (KnowledgeResource resource : resources) {
+            String id = resource.id().value();
+            paths.add(id.substring(id.lastIndexOf('/') + 1));
+        }
+        return paths;
+    }
+
+    @Test
     public void optionalFilterRecognizesProgramSourcesWithoutDownloadingTheWholeDocument() throws Exception {
         FakeSession session = new FakeSession();
         session.children.put("HLQ.DATA", Arrays.asList(file("HLQ.DATA(ABC)"), file("HLQ.DATA(DEF)"),
@@ -168,6 +219,8 @@ public class FtpInventoryTest {
         private final List<String> listed = new ArrayList<String>();
         private final List<String> sequential = new ArrayList<String>();
         private final Map<String, String> samples = new LinkedHashMap<String, String>();
+        private final Map<String, String> recordFormats = new LinkedHashMap<String, String>();
+        private final List<String> sampled = new ArrayList<String>();
         private final Map<String, String> contents = new LinkedHashMap<String, String>();
         private int downloads;
 
@@ -183,8 +236,15 @@ public class FtpInventoryTest {
         }
 
         @Override
-        public String sampleText(String path) {
-            return samples.get(path);
+        public String sampleText(String path, int maxBytes) {
+            sampled.add(path);
+            return samples.getOrDefault(path, "");
+        }
+
+        @Override
+        public String recordFormat(String path) {
+            String dataset = path.indexOf('(') >= 0 ? path.substring(0, path.indexOf('(')) : path;
+            return recordFormats.getOrDefault(dataset, "");
         }
 
         @Override

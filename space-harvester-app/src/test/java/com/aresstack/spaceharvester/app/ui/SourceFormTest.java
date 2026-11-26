@@ -541,6 +541,71 @@ class SourceFormTest {
                 .hasSize(context.runtime().workspace().sourceTypes().size());
     }
 
+    /** Angelo 26.11.: Neue SharePoint-Quellen beziehen die Zugangsdaten standardmäßig über die Windows-Anmeldung. */
+    @Test
+    void aNewSharePointSourceStartsWithWindowsLoginUnlessTheOriginWasChosenByHand() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        start(config, null);
+        AtomicReference<String> yaml = new AtomicReference<>();
+        AtomicReference<String> savedId = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = new SourceForm(context);
+            Object standard = f.origin.getSelectedItem();
+            f.kind.setSelectedItem("SharePoint");
+            assertThat(f.origin.getSelectedItem()).as("Vorgabe des Quellentyps").isEqualTo(SourceForm.WINDOWS_LOGIN);
+            assertThat(f.auth.isVisible()).isFalse();
+            f.kind.setSelectedItem("JES");
+            assertThat(f.origin.getSelectedItem()).as("andere Typen: wieder die allgemeine Vorgabe").isEqualTo(standard);
+            f.kind.setSelectedItem("SharePoint");
+            assertThat(f.origin.getSelectedItem()).isEqualTo(SourceForm.WINDOWS_LOGIN);
+            ((JTextField) f.fields.input("siteUrl")).setText("https://share.example.org/sites/team");
+            SourceDraft draft = f.draft();
+            assertThat(draft.extraOptions()).containsEntry("windowsLogin", "true");
+            yaml.set(draft.yaml("    "));
+            savedId.set(draft.id());
+
+            // Von Hand gewählt: bleibt, auch nach einem Wechsel der Art.
+            f.origin.setSelectedItem("Manuell");
+            f.kind.setSelectedItem("MediaWiki");
+            f.kind.setSelectedItem("SharePoint");
+            assertThat(f.origin.getSelectedItem()).isEqualTo("Manuell");
+        });
+        // Bestehende Quellen werden nicht umgestellt: ohne windowsLogin bleibt die gespeicherte Herkunft.
+        Files.writeString(config, "space-harvester:\n  sources:\n" + yaml.get().replace("windowsLogin", "unused"));
+        var editable = new ConfigFileEditor(context.loader()).editable(config, savedId.get());
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = new SourceForm(context, editable);
+            assertThat(f.origin.getSelectedItem()).isNotEqualTo(SourceForm.WINDOWS_LOGIN);
+        });
+    }
+
+    /** F37-11 (Angelo 26.11.): FTP, JES, NDV und BetaView gehören beim Anlegen nur zur gezielten Suche. */
+    @Test
+    void whetherANewSourceJoinsTheGlobalSearchComesFromItsType() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        start(config, null);
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = new SourceForm(context);
+            for (String kind : List.of("FTP", "JES", "NDV", "BetaView")) {
+                f.kind.setSelectedItem(kind);
+                assertThat(f.typeId()).as(kind).isNotEqualTo(SourceDraft.CONFLUENCE);
+                assertThat(f.draft().includeInGlobalSearch()).as(kind).isFalse();
+            }
+            for (String kind : List.of("SharePoint", "MediaWiki", "Git-Repository")) {
+                f.kind.setSelectedItem(kind);
+                assertThat(f.draft().includeInGlobalSearch()).as(kind).isTrue();
+            }
+        });
+    }
+
     private static List<String> items(JComboBox<String> combo) {
         List<String> items = new ArrayList<>();
         for (int i = 0; i < combo.getItemCount(); i++) {

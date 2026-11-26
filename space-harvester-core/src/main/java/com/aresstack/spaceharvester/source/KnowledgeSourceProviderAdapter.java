@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.aresstack.spaceharvester.application.sources.SourceDefaults;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.UnaryOperator;
@@ -82,6 +83,8 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
     private final boolean tokenAuth;
     /** Passt die geöffnete Quelle an, etwa Jira ({@link EacSourceAdapters#jira()}); sonst unverändert. */
     private final UnaryOperator<OpenedSource> opened;
+    /** Vorbelegung neuer Quellen des Typs. */
+    private final SourceDefaults defaults;
 
     public KnowledgeSourceProviderAdapter(KnowledgeSourceProvider provider) {
         this.fixed = Objects.requireNonNull(provider, "provider");
@@ -95,19 +98,20 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         this.displayName = null;
         this.tokenAuth = false;
         this.opened = UnaryOperator.identity();
+        this.defaults = SourceDefaults.STANDARD;
     }
 
     private KnowledgeSourceProviderAdapter(ConnectedProvider factory, String credentialKey, String titleField) {
         this(factory, Objects.requireNonNull(factory.provider(new Connection(KnowledgeSourceProviderAdapter::none,
                 HttpRoutePort.direct(), null, null)), "provider"), credentialKey, titleField, true, false, false, null, false,
-                UnaryOperator.identity());
+                UnaryOperator.identity(), SourceDefaults.STANDARD);
     }
 
     private KnowledgeSourceProviderAdapter(ConnectedProvider factory, KnowledgeSourceProvider unconnected,
                                            String credentialKey, String titleField, boolean tls,
                                            boolean credentialRefPassThrough, boolean needsCredentials,
                                            String displayName, boolean tokenAuth,
-                                           UnaryOperator<OpenedSource> opened) {
+                                           UnaryOperator<OpenedSource> opened, SourceDefaults defaults) {
         this.fixed = null;
         this.factory = Objects.requireNonNull(factory, "factory");
         this.unconnected = unconnected;
@@ -119,6 +123,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         this.displayName = displayName;
         this.tokenAuth = tokenAuth;
         this.opened = Objects.requireNonNull(opened, "opened");
+        this.defaults = Objects.requireNonNull(defaults, "defaults");
     }
 
     /**
@@ -140,7 +145,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
     public KnowledgeSourceProviderAdapter withoutTls() {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, false,
-                credentialRefPassThrough, needsCredentials, displayName, tokenAuth, opened);
+                credentialRefPassThrough, needsCredentials, displayName, tokenAuth, opened, defaults);
     }
 
     /**
@@ -154,14 +159,14 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
             throw new IllegalStateException("ohne Anmeldefeld gibt es keinen Verweis");
         }
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls, true,
-                needsCredentials, displayName, tokenAuth, opened);
+                needsCredentials, displayName, tokenAuth, opened, defaults);
     }
 
     /** Der Typ verlangt Zugangsdaten ({@link SourceAdapter#needsCredentials()}), etwa JES oder NDV. */
     public KnowledgeSourceProviderAdapter requiringCredentials() {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
-                credentialRefPassThrough, true, displayName, tokenAuth, opened);
+                credentialRefPassThrough, true, displayName, tokenAuth, opened, defaults);
     }
 
     /**
@@ -174,7 +179,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
             throw new IllegalStateException("ohne Anmeldefeld gibt es kein Token");
         }
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
-                credentialRefPassThrough, needsCredentials, displayName, true, opened);
+                credentialRefPassThrough, needsCredentials, displayName, true, opened, defaults);
     }
 
     /** Eigener Anzeigename für Auswahllisten statt dem des Upstream-Typs. */
@@ -182,7 +187,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
                 credentialRefPassThrough, needsCredentials, Objects.requireNonNull(displayName, "displayName"), tokenAuth,
-                opened);
+                opened, defaults);
     }
 
     /**
@@ -193,7 +198,20 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
                 credentialRefPassThrough, needsCredentials, displayName, tokenAuth,
-                Objects.requireNonNull(opened, "opened"));
+                Objects.requireNonNull(opened, "opened"), defaults);
+    }
+
+    /** Vorbelegung neuer Quellen dieses Typs, etwa Windows-Anmeldung oder nur gezielte Suche. */
+    public KnowledgeSourceProviderAdapter withDefaults(SourceDefaults defaults) {
+        requireConnected();
+        return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
+                credentialRefPassThrough, needsCredentials, displayName, tokenAuth, opened,
+                Objects.requireNonNull(defaults, "defaults"));
+    }
+
+    @Override
+    public SourceDefaults defaults() {
+        return defaults;
     }
 
     private void requireConnected() {

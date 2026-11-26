@@ -328,6 +328,49 @@ public class SharePointKnowledgeSourceTest {
     }
 
     @Test
+    public void aFullFirstPageWithoutContinuationIsReadCompletelyInsteadOfCountingAsTheWholeFolder() throws Exception {
+        // Angelo 26.11., Entscheidung 5: $top ist nur Stapelgröße; ohne __next darf eine volle Seite nie als vollständig gelten.
+        SharePointKnowledgeSource source = source();
+        com.aresstack.enterpriseai.source.api.NavigationNode root =
+                com.aresstack.enterpriseai.source.api.NavigationNode.root("root", "root", "root",
+                        com.aresstack.enterpriseai.source.api.NavigationNode.Children.UNKNOWN);
+        com.aresstack.enterpriseai.source.api.NavigationNode library = source.children(root, "").nodes().get(0);
+        String folders = API + "GetFolderByServerRelativeUrl('/sites/team/Dokumente')/Folders?$select=Name,ServerRelativeUrl&$top=100";
+        String files = API + "GetFolderByServerRelativeUrl('/sites/team/Dokumente')/Files"
+                + "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel&$top=100";
+        String allFiles = API + "GetFolderByServerRelativeUrl('/sites/team/Dokumente')/Files"
+                + "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel";
+        json.put(folders, "{\"d\":{\"results\":[]}}");
+        StringBuilder truncated = new StringBuilder();
+        StringBuilder all = new StringBuilder();
+        for (int i = 0; i < 130; i++) {
+            String row = file("/sites/team/Dokumente/file" + i + ".txt", 5);
+            if (i < 100) truncated.append(i > 0 ? "," : "").append(row);
+            all.append(i > 0 ? "," : "").append(row);
+        }
+        json.put(files, "{\"d\":{\"results\":[" + truncated + "]}}");
+        json.put(allFiles, "{\"d\":{\"results\":[" + all + "]}}");
+
+        java.util.Set<String> ids = new java.util.HashSet<String>();
+        com.aresstack.enterpriseai.source.api.NavigationChildren batch = source.children(library, "");
+        while (true) {
+            for (com.aresstack.enterpriseai.source.api.NavigationNode node : batch.nodes()) assertTrue(ids.add(node.resource().value()));
+            if (batch.complete()) break;
+            batch = source.children(library, batch.nextCursor());
+        }
+        assertEquals(130, ids.size());
+        assertTrue(requestedUris.contains(allFiles));
+    }
+
+    @Test
+    public void withoutTopKeepsEveryOtherParameter() {
+        assertEquals(URI.create("https://h/_api/x/Files?$select=Name&$skiptoken=2"),
+                SharePointKnowledgeSource.withoutTop(URI.create("https://h/_api/x/Files?$select=Name&$top=100&$skiptoken=2")));
+        assertEquals(URI.create("https://h/_api/x/Files"),
+                SharePointKnowledgeSource.withoutTop(URI.create("https://h/_api/x/Files?$top=100")));
+    }
+
+    @Test
     public void explorerDefersServerPagesAndLimitsLargeResponses() throws Exception {
         SharePointKnowledgeSource source = source();
         com.aresstack.enterpriseai.source.api.NavigationNode root =
