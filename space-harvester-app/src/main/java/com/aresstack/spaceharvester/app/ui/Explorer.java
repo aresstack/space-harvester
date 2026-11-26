@@ -107,6 +107,15 @@ public final class Explorer {
     static final String UNINDEX = "Nicht mehr indexieren";
     static final String UNINDEX_TIP = "Neue Seiten darunter kommen nur noch in den Katalog; was schon geladen ist, "
             + "bleibt und wird weiter aktuell gehalten";
+    /*
+     * Ausschließen (Angelo, 26.11.2026): für alle Quellen gleich. Der Knoten verschwindet aus Baum und Suche und wird
+     * nicht indexiert; gelöscht wird nichts. Wieder einblenden nur unter Wissensquellen › Ausgeschlossen.
+     */
+    static final String EXCLUDE = "Ausschließen";
+    static final String EXCLUDE_TIP = "Blendet den Knoten samt allem darunter aus Baum und Suche aus und indexiert "
+            + "ihn nicht mehr; Geladenes bleibt. Wieder einblenden unter Wissensquellen › Ausgeschlossen";
+    static final String EXCLUDED_NOTICE = "„%s“ ausgeschlossen · wieder einblenden unter Wissensquellen › "
+            + "Ausgeschlossen";
     static final String PAGE_ONLY = "Seite indexieren";
     static final String PAGE_ONLY_TIP = "Nur diese Seite ohne Unterseiten laden; Auftrag startet sofort";
     static final String INDEX_ALL = "Alles indexieren";
@@ -2137,6 +2146,83 @@ public final class Explorer {
         }
     }
 
+    /** Ausschließen gibt es für Spaces und Seiten bzw. Ordner; eine ganze Quelle blendet „Im Wissensbaum anzeigen“ aus. */
+    static boolean excludable(Item item) {
+        return item instanceof SpaceItem
+                || item instanceof PageItem page && page.kind() != HarvestSource.PageNode.Kind.GROUP;
+    }
+
+    /** Schließt den Knoten aus und nimmt ihn aus dem Baum; die Meldung nennt, wo man ihn wieder einblendet. */
+    private void exclude(Item item) {
+        com.aresstack.spaceharvester.app.runtime.AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            notice("Ausschließen nicht möglich: Die Laufzeit ist nicht gestartet", Severity.ERROR);
+            return;
+        }
+        String sourceId;
+        String spaceKey;
+        String pageId;
+        String title;
+        switch (item) {
+            case SpaceItem space -> {
+                sourceId = space.sourceId();
+                spaceKey = space.spaceKey();
+                pageId = null;
+                title = space.toString();
+            }
+            case PageItem page -> {
+                sourceId = page.sourceId();
+                spaceKey = page.spaceKey();
+                pageId = page.pageId();
+                title = page.title();
+            }
+            default -> {
+                return;
+            }
+        }
+        Background.run(() -> {
+            runtime.workspace().exclude(sourceId, spaceKey, pageId);
+            return Boolean.TRUE;
+        }, done -> {
+            removeShown(item);
+            notice(String.format(EXCLUDED_NOTICE, title), Severity.INFO);
+        }, error -> notice("Ausschließen ließ sich nicht speichern: " + Problems.describe(error).title(),
+                Severity.ERROR));
+    }
+
+    /**
+     * Lädt die Knoten der Quelle neu, ohne die Quelle abzugleichen, etwa nachdem in den Einstellungen etwas
+     * ausgeschlossen oder wieder eingeblendet wurde; eine aufgeklappte Quelle klappt wieder auf.
+     */
+    void reloadSource(String sourceId) {
+        for (int i = 0; i < top.getChildCount(); i++) {
+            if (top.getChildAt(i) instanceof Node node && node.item() instanceof SourceItem source
+                    && source.sourceId().equals(sourceId) && !node.loading) {
+                TreePath path = new TreePath(node.getPath());
+                boolean expanded = tree.isExpanded(path);
+                node.loaded = false;
+                node.removeAllChildren();
+                node.add(new Node(new Note(LOADING)));
+                model.nodeStructureChanged(node);
+                if (expanded) {
+                    tree.expandPath(path);
+                }
+            }
+        }
+    }
+
+    /** Nimmt jeden Knoten mit diesem Eintrag aus dem Baum, samt seinen Kindern. */
+    private void removeShown(Item item) {
+        List<Node> shown = new ArrayList<>();
+        java.util.Enumeration<javax.swing.tree.TreeNode> all = top.depthFirstEnumeration();
+        while (all.hasMoreElements()) {
+            if (all.nextElement() instanceof Node node && item.equals(node.item()) && node.getParent() != null) {
+                shown.add(node);
+            }
+        }
+        shown.forEach(model::removeNodeFromParent);
+    }
+
     /** Hebt die Markierung auf; an einer Quelle für jeden Space, den der Baum von ihr kennt. */
     private void unindex(Item item) {
         switch (item) {
@@ -2340,6 +2426,12 @@ public final class Explorer {
                         page.pageId(), false));
                 menu.add(only);
             }
+        }
+        if (excludable(item)) {
+            javax.swing.JMenuItem exclude = new javax.swing.JMenuItem(EXCLUDE);
+            exclude.setToolTipText(EXCLUDE_TIP);
+            exclude.addActionListener(e -> exclude(item));
+            menu.add(exclude);
         }
         if (starrable(item)) {
             javax.swing.JMenuItem star = new javax.swing.JMenuItem(isFavorite(item) ? UNFAVORITE : FAVORITE);

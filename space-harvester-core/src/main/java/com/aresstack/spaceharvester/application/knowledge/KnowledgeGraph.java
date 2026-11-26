@@ -616,7 +616,7 @@ public class KnowledgeGraph {
             return Optional.empty();
         }
         String reason = snapshot.isEmpty() ? PageStatements.PAGE_MISSING
-                : statements.reason(analysis, analysis.ofDocument() ? documentInputs.apply(analysis.document())
+                : statements.reason(caller, analysis, analysis.ofDocument() ? documentInputs.apply(analysis.document())
                 : input(snapshot.get()));
         PageRef ref = new PageRef(key, spaceKey, analysis.title(),
                 reason == null ? PageStatements.State.CURRENT : PageStatements.State.STALE, reason,

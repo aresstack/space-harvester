@@ -1442,6 +1442,11 @@ public final class MainWindow implements AppContext.Navigator {
                         Comic.RED));
     }
 
+    @Override
+    public void exclusionsChanged(String sourceId) {
+        explorer.reloadSource(sourceId);
+    }
+
     /** Kreispfeile hinter gescheiterten Abgleichen eines Updates: wie die Kreispfeile im Baum für diese Spaces. */
     @Override
     public void retrySyncs(String sourceId, List<String> spaceKeys) {

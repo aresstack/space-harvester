@@ -269,6 +269,7 @@ class SettingDialogsTest {
         SwingUtilities.invokeAndWait(() -> {
             shell[0] = SettingDialogs.syncRules(null, context, "wiki", done::countDown);
             assertThat(find(shell[0].body(), JComboBox.class))
+                    .filteredOn(box -> !SettingDialogs.PRESET_TITLE.equals(box.getName()))
                     .allMatch(box -> SettingDialogs.AS_GLOBAL.equals(box.getSelectedItem()));
             List<DurationField> durations = find(shell[0].body(), DurationField.class);
             assertThat(durations).as("Änderungssuche, Inventur, Frist, Sperrfrist").hasSize(4)
@@ -286,6 +287,45 @@ class SettingDialogsTest {
         assertThat(Files.readString(config)).contains("    sources:", "\"wiki\":", "inventory-interval: 1d",
                 "mode: sync-cache", "# Kommentar bleibt stehen").doesNotContain("        interval:");
         assertThat(context.settings().syncRule("wiki").inventoryInterval()).isEqualTo(java.time.Duration.ofDays(1));
+    }
+
+    /** F37-2 (ADR 0037, Punkt 6): Voreinstellungen setzen die vorhandenen Regeln, Abweichungen heißen „Benutzerdefiniert“. */
+    @Test
+    void aPresetSetsTheExistingRulesAndAnyDeviationIsCustom() throws Exception {
+        SettingDialogs.Shell[] shell = new SettingDialogs.Shell[1];
+        CountDownLatch done = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            shell[0] = SettingDialogs.syncRules(null, context, "wiki", done::countDown);
+            JComboBox<?> preset = find(shell[0].body(), JComboBox.class).stream()
+                    .filter(box -> SettingDialogs.PRESET_TITLE.equals(box.getName())).findFirst().orElseThrow();
+            assertThat(items(preset)).containsExactly("Vollständig", "Selektiv", SettingDialogs.CUSTOM_PRESET);
+            preset.setSelectedItem("Vollständig");
+            JComboBox<?> mode = combo(shell[0].body(), SettingDialogs.SYNC_CACHE);
+            assertThat(mode.getSelectedItem()).isEqualTo(SettingDialogs.FULL);
+            preset.setSelectedItem("Selektiv");
+            assertThat(mode.getSelectedItem()).isEqualTo(SettingDialogs.SYNC_CACHE);
+            assertThat(preset.getSelectedItem()).isEqualTo("Selektiv");
+            mode.setSelectedItem(SettingDialogs.FULL);
+            assertThat(preset.getSelectedItem()).as("FULL ohne Hintergrundfüllung").isEqualTo(SettingDialogs.CUSTOM_PRESET);
+            mode.setSelectedItem(SettingDialogs.SYNC_CACHE);
+            assertThat(preset.getSelectedItem()).isEqualTo("Selektiv");
+            shell[0].save();
+        });
+        assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
+        var rule = context.settings().syncRule("wiki");
+        assertThat(rule.mode()).isEqualTo(com.aresstack.spaceharvester.application.sync.SyncMode.SYNC_CACHE);
+        assertThat(rule.backgroundFill()).isFalse();
+        assertThat(rule.prefetchHits()).isFalse();
+        assertThat(context.settings().syncPreset("wiki"))
+                .contains(com.aresstack.spaceharvester.application.configuration.SyncPreset.SELECTIVE);
+    }
+
+    private static List<Object> items(JComboBox<?> box) {
+        List<Object> items = new java.util.ArrayList<>();
+        for (int i = 0; i < box.getItemCount(); i++) {
+            items.add(box.getItemAt(i));
+        }
+        return items;
     }
 
     @Test

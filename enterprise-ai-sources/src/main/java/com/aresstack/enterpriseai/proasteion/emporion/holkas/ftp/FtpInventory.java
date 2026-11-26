@@ -23,11 +23,11 @@ final class FtpInventory {
     }
 
     private final FtpSessionPool<FtpClientSession> sessions;
-    private final boolean programSourcesOnly;
+    private final FtpSourceEligibility eligibility;
 
-    FtpInventory(FtpSessionPool<FtpClientSession> sessions, boolean programSourcesOnly) {
+    FtpInventory(FtpSessionPool<FtpClientSession> sessions, FtpSourceEligibility eligibility) {
         this.sessions = sessions;
-        this.programSourcesOnly = programSourcesOnly;
+        this.eligibility = eligibility;
     }
 
     List<KnowledgeResource> discover(SourceScope scope, ResourceFactory resources) throws KnowledgeSourceException {
@@ -119,8 +119,7 @@ final class FtpInventory {
         if (!examined.add(identity)) {
             return;
         }
-        if (programSourcesOnly && mvs && FtpProgramClassifier.classify(
-                sessions.run(session -> session.sampleText(idPath))) == FtpProgramClassifier.Kind.UNKNOWN) {
+        if (!sessions.run(session -> eligibility.eligible(session, idPath))) {
             return;
         }
         found.put(identity, resources.create(idPath, name, modifiedMillis));

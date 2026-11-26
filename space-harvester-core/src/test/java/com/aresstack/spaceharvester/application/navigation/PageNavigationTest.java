@@ -131,6 +131,28 @@ class PageNavigationTest {
     }
 
     @Test
+    void excludedChildrenAreLeftOutUnlessTheSettingsAskForThem(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) {
+        com.aresstack.spaceharvester.application.sync.Exclusions exclusions =
+                new com.aresstack.spaceharvester.application.sync.Exclusions(
+                        new com.aresstack.spaceharvester.persistence.files.FileExclusionMarks(dir),
+                        (sourceId, pageId) -> null, (sourceId, pageId) -> null);
+        navigation.exclusions(exclusions);
+        exclusions.exclude("wiki", "DEV", "102");
+
+        assertThat(navigation.children(CLIENT, "wiki", null, "100", null).pages()).extracting(PageNode::pageId)
+                .containsExactly("101");
+        assertThat(navigation.children(CLIENT, "wiki", null, "100", null, true).pages())
+                .extracting(PageNode::pageId).containsExactly("102", "101");
+
+        // Wieder eingeblendet ist der Knoten sofort zurück; ein ganzer Space blendet seine Wurzeln aus.
+        exclusions.include("wiki", "DEV", "102");
+        assertThat(navigation.children(CLIENT, "wiki", null, "100", null).pages()).extracting(PageNode::pageId)
+                .containsExactly("102", "101");
+        exclusions.exclude("wiki", "DEV", null);
+        assertThat(navigation.children(CLIENT, "wiki", "DEV", null, null).pages()).isEmpty();
+    }
+
+    @Test
     void endUsersDoNotLearnThatOnlyLockedChildrenExist() {
         assertThat(navigation.children(USER, "wiki", null, "100", null).pages())
                 .extracting(PageNode::hasChildren).containsExactly(null, false);

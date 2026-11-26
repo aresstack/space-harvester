@@ -33,6 +33,8 @@ final class CommonsNetFtpSession implements FtpClientSession {
     private boolean mvs;
     private boolean recordStructure;
     private boolean closed;
+    /** Dataset lists per qualifier level ({@code HLQ.*}), read once per session for the RECFM. */
+    private final java.util.Map<String, FTPFile[]> datasetLevels = new java.util.HashMap<String, FTPFile[]>();
 
     private CommonsNetFtpSession(FtpConnectionSettings settings) throws IOException {
         this.settings = settings;
@@ -153,12 +155,12 @@ final class CommonsNetFtpSession implements FtpClientSession {
     }
 
     @Override
-    public String sampleText(String path) throws IOException {
+    public String sampleText(String path, int maxBytes) throws IOException {
         List<String> candidates = mvs ? dialect.resolveCandidates(path) : Collections.singletonList(unixPath(path));
         IOException last = null;
         for (String candidate : candidates) {
             try {
-                return RecordStructureText.decode(retrieveSample(candidate), settings.encoding, recordStructure);
+                return RecordStructureText.decode(retrieveSample(candidate, maxBytes), settings.encoding, recordStructure);
             } catch (FtpNotFoundException e) {
                 last = e;
             }
@@ -166,8 +168,10 @@ final class CommonsNetFtpSession implements FtpClientSession {
         throw last != null ? last : new FtpNotFoundException("Not found: " + path);
     }
 
-    private byte[] retrieveSample(String path) throws IOException {
-        final int sampleBytes = 64 * 1024;
+    private byte[] retrieveSample(String path, int sampleBytes) throws IOException {
+        if (sampleBytes < 1) {
+            throw new IllegalArgumentException("sampleBytes must be positive");
+        }
         InputStream stream = client.retrieveFileStream(path);
         if (stream == null) {
             throw new FtpNotFoundException("Not found: " + path + " (" + client.getReplyCode() + ")");
@@ -255,20 +259,46 @@ final class CommonsNetFtpSession implements FtpClientSession {
     }
 
     static boolean sequentialDataset(FTPFile[] files, String dataset) {
+        MvsDatasetListing.Dataset line = datasetLine(files, dataset);
+        return line != null && "PS".equalsIgnoreCase(line.organization());
+    }
+
+    private static MvsDatasetListing.Dataset datasetLine(FTPFile[] files, String dataset) {
         if (files == null) {
-            return false;
+            return null;
         }
         for (FTPFile file : files) {
-            if (file == null || file.getRawListing() == null) {
-                continue;
-            }
-            String[] columns = file.getRawListing().trim().split("\\s+");
-            if (columns.length >= 3 && "PS".equalsIgnoreCase(columns[columns.length - 2])
-                    && dataset.equalsIgnoreCase(MvsQuoteNormalizer.unquote(columns[columns.length - 1]))) {
-                return true;
+            MvsDatasetListing.Dataset line = file == null ? null : MvsDatasetListing.parse(file.getRawListing());
+            if (line != null && dataset.equalsIgnoreCase(line.name())) {
+                return line;
             }
         }
-        return false;
+        return null;
+    }
+
+    @Override
+    public String recordFormat(String path) throws IOException {
+        if (!mvs) {
+            return "";
+        }
+        String dataset = MvsQuoteNormalizer.unquote(path).toUpperCase(Locale.ROOT);
+        int member = dataset.indexOf('(');
+        if (member >= 0) {
+            dataset = dataset.substring(0, member);
+        }
+        int dot = dataset.lastIndexOf('.');
+        if (dot < 0) {
+            return "";
+        }
+        String level = dataset.substring(0, dot + 1) + "*";
+        FTPFile[] listed = datasetLevels.get(level);
+        if (listed == null) {
+            // One LIST per qualifier level and session: all members of a library share its RECFM.
+            listed = client.listFiles(dialect.toAbsolutePath(level));
+            datasetLevels.put(level, listed == null ? new FTPFile[0] : listed);
+        }
+        MvsDatasetListing.Dataset line = datasetLine(listed, dataset);
+        return line == null ? "" : line.recordFormat();
     }
 
     private List<FtpEntry> listUnix(String resolved) throws IOException {

@@ -11,7 +11,6 @@ import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSea
 import com.aresstack.spaceharvester.application.query.progressive.SearchOrchestrator;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
 import java.time.Duration;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,36 +22,63 @@ import java.util.function.Supplier;
 /**
  * Die laufenden und kürzlich beendeten progressiven Suchen des Servers (ADR 0017) für
  * {@code /api/v1/search/progressive}. Jede gehört dem Aufrufer, der sie gestartet hat ({@link AccessContext#jobOwner()});
- * ein anderer bekommt sie nie zu sehen, auch nicht, dass es sie gibt. Höchstens {@link #CAPACITY} Suchen sind
- * bekannt: Ist der Platz voll, weicht die älteste beendete; laufen alle noch, wird keine neue angenommen. Beendete
- * bleiben {@link #RETENTION} lang abrufbar.
+ * ein anderer bekommt sie nie zu sehen, auch nicht, dass es sie gibt. Die Grenzen sind getrennt einstellbar
+ * ({@link Limits}, {@code space-harvester.search.progressive.*}, F38-4): Höchstens {@code maxRunning} Suchen laufen
+ * zugleich, eine weitere wird ausdrücklich abgewiesen (wartende Suchen gibt es nicht). Beendete bleiben
+ * {@code retention} lang abrufbar. Eine neue Suche verdrängt nie eine andere, weder eine laufende noch eine beendete.
  *
  * <p>Unterwegs hält jede Suche den letzten Stand aus ihren Ereignissen (Suchanfragen und sortierte Liste), nach dem
  * Abschluss das fertige Ergebnis. Suchtexte und Seiten-IDs kommen nie ins Log.
  */
 public final class ProgressiveSearches implements AutoCloseable {
 
-    /** So viele Suchen sind höchstens bekannt. */
-    public static final int CAPACITY = 256;
-    /** So lange bleibt eine beendete Suche abrufbar. */
-    public static final Duration RETENTION = Duration.ofMinutes(5);
+    /** Standard für {@code space-harvester.search.progressive.max-running}. */
+    public static final int DEFAULT_MAX_RUNNING = 256;
+    /** Standard für {@code space-harvester.search.progressive.retention}. */
+    public static final Duration DEFAULT_RETENTION = Duration.ofMinutes(5);
+
+    /**
+     * Grenzen des Registers.
+     *
+     * @param maxRunning gleichzeitig laufende Suchen, mindestens 1
+     * @param retention  so lange bleibt eine beendete Suche abrufbar
+     */
+    public record Limits(int maxRunning, Duration retention) {
+
+        public static final Limits DEFAULTS = new Limits(DEFAULT_MAX_RUNNING, DEFAULT_RETENTION);
+
+        public Limits {
+            Objects.requireNonNull(retention, "retention");
+            if (maxRunning < 1 || retention.isNegative()) {
+                throw new IllegalArgumentException("maxRunning mindestens 1, retention nicht negativ");
+            }
+        }
+    }
 
     private final SearchOrchestrator orchestrator;
     private final Supplier<SearchProfile> defaults;
     private final LongSupplier nanos;
+    private final Limits limits;
     private final Map<String, Tracked> searches = new LinkedHashMap<>();
 
     /**
      * @param defaults das Standardprofil, etwa mit Varianten vom Chat-Modell, wenn die wirksame Konfiguration eines hat
      */
-    public ProgressiveSearches(SearchOrchestrator orchestrator, Supplier<SearchProfile> defaults) {
-        this(orchestrator, defaults, System::nanoTime);
+    public ProgressiveSearches(SearchOrchestrator orchestrator, Supplier<SearchProfile> defaults, Limits limits) {
+        this(orchestrator, defaults, limits, System::nanoTime);
     }
 
-    ProgressiveSearches(SearchOrchestrator orchestrator, Supplier<SearchProfile> defaults, LongSupplier nanos) {
+    ProgressiveSearches(SearchOrchestrator orchestrator, Supplier<SearchProfile> defaults, Limits limits,
+                        LongSupplier nanos) {
         this.orchestrator = Objects.requireNonNull(orchestrator, "orchestrator");
         this.defaults = Objects.requireNonNull(defaults, "defaults");
+        this.limits = Objects.requireNonNull(limits, "limits");
         this.nanos = Objects.requireNonNull(nanos, "nanos");
+    }
+
+    /** Die eingestellten Grenzen. */
+    public Limits limits() {
+        return limits;
     }
 
     /** Das Standardprofil der wirksamen Konfiguration. */
@@ -63,14 +89,14 @@ public final class ProgressiveSearches implements AutoCloseable {
     /**
      * Startet eine Suche für den Aufrufer.
      *
-     * @throws CapacityExceededException wenn {@link #CAPACITY} Suchen laufen
+     * @throws CapacityExceededException wenn schon {@code maxRunning} Suchen laufen
      */
     public Tracked start(AccessContext caller, KeywordSearch.Query query, SearchProfile profile) {
         Objects.requireNonNull(caller, "caller");
         Tracked tracked = new Tracked(caller.jobOwner(), profile, nanos.getAsLong());
         synchronized (searches) {
             purge();
-            if (searches.size() >= CAPACITY && !evictOldestFinished()) {
+            if (running() >= limits.maxRunning()) {
                 throw new CapacityExceededException();
             }
             // Ereignisse können kommen, bevor searchAsync zurückkehrt: Der Stand nimmt sie schon auf.
@@ -119,19 +145,12 @@ public final class ProgressiveSearches implements AutoCloseable {
         long now = nanos.getAsLong();
         searches.values().removeIf(tracked -> {
             Long finished = tracked.finishedAt;
-            return finished != null && now - finished >= RETENTION.toNanos();
+            return finished != null && now - finished >= limits.retention().toNanos();
         });
     }
 
-    private boolean evictOldestFinished() {
-        Iterator<Tracked> iterator = searches.values().iterator();
-        while (iterator.hasNext()) {
-            if (iterator.next().search.result().isDone()) {
-                iterator.remove();
-                return true;
-            }
-        }
-        return false;
+    private long running() {
+        return searches.values().stream().filter(tracked -> !tracked.search.result().isDone()).count();
     }
 
     /** Zu viele laufende Suchen. */

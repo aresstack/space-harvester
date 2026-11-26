@@ -242,7 +242,9 @@ class ExplorerTest {
             awaitChildren(library, 101);
             Explorer.Node retained = (Explorer.Node) library.getChildAt(1);
             site.removeFile("Datei-0000.txt");
-            site.failFileRequestAfter(1);
+            // Nach dem Entfernen kommt die erste Seite voll und ohne Fortsetzung: Die Quelle liest sie ohne $top
+            // vollständig nach (zweite Anfrage), erkennt daran den veralteten Cursor; erst die Wiederaufnahme scheitert.
+            site.failFileRequestAfter(2);
             SwingUtilities.invokeAndWait(() -> clickMore(explorer, library, 100));
             awaitChildren(library, 101);
             assertThat(moreItem(library).cursor()).isNull();

@@ -16,8 +16,23 @@ import java.util.List;
 
 /** Resume from the server continuation and a verified offset, without storing open folders. */
 final class SharePointNavigationPages {
-    static final int BATCH_SIZE = 100;
+    /** Default of the source setting {@code navigationBatchSize}: entries per Explorer request and REST {@code $top}. */
+    static final int DEFAULT_BATCH_SIZE = 100;
     private final SharePointNavigationCursor cursors = new SharePointNavigationCursor();
+    private final int batchSize;
+
+    SharePointNavigationPages() {
+        this(DEFAULT_BATCH_SIZE);
+    }
+
+    SharePointNavigationPages(int batchSize) {
+        if (batchSize < 1) throw new IllegalArgumentException("batchSize must be positive");
+        this.batchSize = batchSize;
+    }
+
+    int batchSize() {
+        return batchSize;
+    }
 
     interface Loader {
         Page load(URI first, URI current, boolean folders) throws KnowledgeSourceException;
@@ -38,7 +53,7 @@ final class SharePointNavigationPages {
         State state = cursor == null || cursor.isEmpty()
                 ? start(parent, true, folders) : cursors.decode(parent, cursor);
         List<NavigationNode> result = new ArrayList<NavigationNode>();
-        while (state != null && result.size() < BATCH_SIZE) {
+        while (state != null && result.size() < batchSize) {
             if (Thread.currentThread().isInterrupted()) {
                 throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNAVAILABLE, "SharePoint: Abruf abgebrochen");
             }
@@ -50,7 +65,7 @@ final class SharePointNavigationPages {
             if (state.offset > page.nodes.size() || (state.offset > 0 && !fingerprint.equals(state.fingerprint))) {
                 throw new InvalidNavigationCursorException("SharePoint: REST-Seite wurde seit dem letzten Abruf verändert; Ordner neu laden");
             }
-            int end = state.offset + Math.min(BATCH_SIZE - result.size(), page.nodes.size() - state.offset);
+            int end = state.offset + Math.min(batchSize - result.size(), page.nodes.size() - state.offset);
             result.addAll(page.nodes.subList(state.offset, end));
             if (end < page.nodes.size()) {
                 state = new State(parent, state.folders, state.current, end, fingerprint,

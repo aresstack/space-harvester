@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.application.configuration.SyncPreset;
+import com.aresstack.spaceharvester.application.configuration.SearchSettings;
 import com.aresstack.spaceharvester.ai.AiProvider;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
@@ -530,6 +532,20 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
     /** Was für diese Quelle wirkt: ihre Regeln, wo gesetzt, sonst die globalen Werte ({@code SyncSettings.forSource}). */
     public SyncSettings effectiveSync(String sourceId) {
         return sync.withSource(sourceId, syncRule(sourceId)).forSource(sourceId);
+    }
+
+    /**
+     * Ob die Quelle Suchtreffer nachlädt: ihre Regel, sonst die globale Suchvorgabe. Die App setzt die Suchvorgaben des
+     * Kerns unverändert ein ({@code AppRuntime.configuration}: {@link SearchSettings#DEFAULT}).
+     */
+    public boolean effectivePrefetch(String sourceId) {
+        return syncRule(sourceId).effectivePrefetch(SearchSettings.DEFAULT.prefetchHits());
+    }
+
+    /** Die Voreinstellung, der die wirksamen Regeln der Quelle entsprechen; leer heißt „Benutzerdefiniert“. */
+    public java.util.Optional<SyncPreset> syncPreset(String sourceId) {
+        SyncSettings effective = effectiveSync(sourceId);
+        return SyncPreset.of(effective.mode(), effective.backgroundFill(), effectivePrefetch(sourceId));
     }
 
     /** Ob die Quelle eingerichtet, aber abgeschaltet ist. */
