@@ -26,7 +26,10 @@ class FtpNavigationReconciliationTest {
     void fullInventoryDoesNotDiscardAnIndependentlyAcquiredPageOutsideItsStartPoints() throws Exception {
         try (ParityFtp server = ParityFtp.start();
              Harvester harvester = harvester(server, "/parity/docs")) {
-            String pageId = pageId(server, "parity/README.txt");
+            String pageId = harvester.sources().sources().stream()
+                    .filter(source -> source.id().equals("ftp-test")).findFirst().orElseThrow()
+                    .navigationPageId("/parity/README.txt").orElseThrow();
+            assertThat(pageId).isEqualTo(pageId(server, "parity/README.txt"));
             BackgroundGroup group = harvester.pageLoads()
                     .load(harvester.caller(), "FTP navigation", List.of(new PageKey("ftp-test", pageId)))
                     .orElseThrow();
@@ -41,6 +44,25 @@ class FtpNavigationReconciliationTest {
                     Duration.ofSeconds(60)).state()).isEqualTo(JobState.COMPLETED);
             assertThat(harvester.pages().cached(harvester.caller(), "ftp-test", pageId)).isPresent();
 
+            assertThat(harvester.await(harvester.sync("ftp-test", "ftp-test").id(),
+                    Duration.ofSeconds(60)).state()).isEqualTo(JobState.COMPLETED);
+            assertThat(harvester.pages().cached(harvester.caller(), "ftp-test", pageId)).isPresent();
+        }
+    }
+
+    @Test
+    void navigationOnlySourceDoesNotNeedAnInventoryStartPoint() throws Exception {
+        try (ParityFtp server = ParityFtp.start(); Harvester harvester = harvester(server, "")) {
+            String pageId = harvester.sources().sources().stream()
+                    .filter(source -> source.id().equals("ftp-test")).findFirst().orElseThrow()
+                    .navigationPageId("/parity/README.txt").orElseThrow();
+            BackgroundGroup group = harvester.pageLoads()
+                    .load(harvester.caller(), "FTP navigation", List.of(new PageKey("ftp-test", pageId)))
+                    .orElseThrow();
+            for (String jobId : group.jobIds()) {
+                assertThat(harvester.await(jobId, Duration.ofSeconds(60)).state())
+                        .isEqualTo(JobState.COMPLETED);
+            }
             assertThat(harvester.await(harvester.sync("ftp-test", "ftp-test").id(),
                     Duration.ofSeconds(60)).state()).isEqualTo(JobState.COMPLETED);
             assertThat(harvester.pages().cached(harvester.caller(), "ftp-test", pageId)).isPresent();
