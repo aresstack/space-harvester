@@ -2193,6 +2193,9 @@ public final class ChatPanel extends JPanel {
                     : new com.aresstack.spaceharvester.application.snapshot.PageKey(open.sourceId(),
                             open.pageId()));
             turn.releasing(releases(runtime, open));
+            // Die Wurzeln der Auswahl wie im Baum: Was der Katalog davon nicht kennt (etwa ein SharePoint-Ordner),
+            // erschließen die Werkzeuge über die Navigation (Angelo 26.11.2026).
+            turn.area(chatRoots(runtime, open));
             // ADR 0034 §5: Ein Favoriten-Ordner nennt seine Unterordner und Favoriten in seiten_auflisten.
             if (open instanceof Selection.Collection collection) {
                 turn.collection(collectionNodes(context.favorites(), collection));
@@ -2233,6 +2236,19 @@ public final class ChatPanel extends JPanel {
         send.setToolTipText("Antwort abbrechen");
         turn.inView(view);
         turn.start();
+    }
+
+    /** Die Wurzeln der Auswahl für den Chat; leer ohne Auswahl oder wenn sie sich nicht bestimmen lassen. */
+    static List<com.aresstack.spaceharvester.application.holdings.Selection.Root> chatRoots(AppRuntime runtime,
+                                                                                         Selection open) {
+        if (runtime == null || open == null) {
+            return List.of();
+        }
+        try {
+            return open.roots(runtime);
+        } catch (RuntimeException gone) {
+            return List.of();
+        }
     }
 
     /** Die Werkzeugrunden je Antwort aus dem Menü am Pfeil der Websuche, in den erlaubten Grenzen. */

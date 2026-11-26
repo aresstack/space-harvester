@@ -179,7 +179,7 @@ public final class ChatTurn {
     private final String effort;
     private final List<ChatRecord.Message> history;
     private final String question;
-    private final PageSelection scope;
+    private PageSelection scope;
     /** Der gewählte Bereich in Worten für die Systemnachricht; {@code null} ohne Auswahl. */
     private final String area;
     private final Kind kind;
@@ -323,6 +323,31 @@ public final class ChatTurn {
     }
 
     private boolean glossarySynonyms;
+
+    /**
+     * Die Wurzeln der Auswahl links (Quelle, Space, Seite samt Unterseiten), wie der Baum sie zeigt. Solange der
+     * Katalog die Auswahl nicht vollständig kennt (etwa ein SharePoint-Ordner, ADR 0040 Punkt 3, oder ein nur teilweise
+     * geladener Space), ergänzen die Werkzeuge ihn über die gemeinsame Navigation ({@link LiveArea}); ein solcher
+     * Bereich ist ein Bereich, auch wenn der Katalog dort keine Seite kennt (Angelo 26.11.2026: bei SharePoint antwortete der Chat trotz Auswahl, ihm lägen
+     * keine Wissensquellen vor).
+     */
+    public ChatTurn area(List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots) {
+        this.liveRoots = LiveArea.complementing(scope, roots);
+        if (scope == null && !liveRoots.isEmpty()) {
+            scope = new PageSelection(com.aresstack.spaceharvester.application.snapshot.PageSet.EMPTY,
+                    com.aresstack.spaceharvester.application.holdings.HoldingCounts.ZERO, List.of(), false);
+        }
+        return this;
+    }
+
+    private List<com.aresstack.spaceharvester.application.holdings.Selection.Root> liveRoots = List.of();
+    private LiveArea.Navigation navigation;
+
+    /** Für Tests: eine andere Navigation für {@link #area}. */
+    ChatTurn navigation(LiveArea.Navigation navigation) {
+        this.navigation = Objects.requireNonNull(navigation, "navigation");
+        return this;
+    }
 
     /** Die KI-Freigabe dieses Turns; ohne Aufruf trägt er nichts ein. */
     public ChatTurn releasing(Releases releases) {
@@ -605,7 +630,9 @@ public final class ChatTurn {
                     reportProgress();
                 }
             }
-        }).neighbors(neighbors).glossarySynonyms(glossarySynonyms).collection(collection);
+        }).neighbors(neighbors).glossarySynonyms(glossarySynonyms).collection(collection)
+                .liveArea(liveRoots.isEmpty() ? LiveArea.NONE : new LiveArea(navigation != null ? navigation
+                        : LiveArea.of(workspace), liveRoots));
         if (termLookup != null) {
             running.termLookup(termLookup);
         }

@@ -21,7 +21,7 @@ final class NeighborScope {
                 : !query.sourceIds().isEmpty() && !query.sourceIds().contains(key.sourceId())) {
             return false;
         }
-        if (query.pages() != null && !query.pages().contains(key)) {
+        if (!query.admits(key.sourceId(), key.pageId())) {
             return false;
         }
         String spaceKey = place == null ? null : place.spaceKey();
