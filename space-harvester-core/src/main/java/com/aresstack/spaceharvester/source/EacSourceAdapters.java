@@ -60,7 +60,7 @@ public final class EacSourceAdapters {
                 .withDefaults(SourceDefaults.TARGETED_SEARCH);
     }
 
-    public static SourceAdapter sharePoint() {
+    public static KnowledgeSourceProviderAdapter sharePoint() {
         return KnowledgeSourceProviderAdapter.connected(connection -> new SharePointSourceProvider(
                 ref -> sharePointCredentials(connection.secrets(), ref), connection.routes(), connection.tls(),
                 connection.userAgent(), new OneNoteContentDetector(DocumentExtraction.detector()),

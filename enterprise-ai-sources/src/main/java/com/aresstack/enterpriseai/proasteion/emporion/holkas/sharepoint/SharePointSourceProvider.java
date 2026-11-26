@@ -25,7 +25,8 @@ import java.util.function.Function;
  * KeePass-Eintrag), {@code credentialRef} (KeePass-Eintrag; leer = Windows-Anmeldung des JDK),
  * {@code startPoints} (Standard {@code .} = alle Dokumentbibliotheken), {@code maxDepth} (Standard 10),
  * {@code maxResources} (Standard 2000), {@code maxFileMegabytes} (Standard 50); nur in der Datei:
- * {@code connectTimeoutMillis}, {@code readTimeoutMillis}, {@code userAgent}.
+ * {@code connectTimeoutMillis}, {@code readTimeoutMillis}, {@code userAgent}, {@code maxRetries} (wie oft ein
+ * abgerissener Inhalt oder Download je Abruf ab dem letzten Byte fortgesetzt wird, 0 bis 10, Standard 0).
  */
 public final class SharePointSourceProvider implements KnowledgeSourceProvider {
 
@@ -57,6 +58,8 @@ public final class SharePointSourceProvider implements KnowledgeSourceProvider {
             .build();
 
     private static final int MAX_TIMEOUT = 600000;
+    /** Höchstzahl der Fortsetzungen je Abruf, wie {@code maxRetries} der übrigen REST-Adapter. */
+    private static final int MAX_RESUMES = 10;
     /** Input bound for navigationBatchSize: the SharePoint list view threshold. */
     private static final int MAX_NAVIGATION_BATCH_SIZE = 5000;
 
@@ -120,6 +123,7 @@ public final class SharePointSourceProvider implements KnowledgeSourceProvider {
         SecretRef credentialRef = reader.secretRef("credentialRef");
         long maxFileBytes = maxFileBytes(reader);
         int[] timeouts = timeouts(reader);
+        int resumes = reader.integer("maxRetries", 0, 0, MAX_RESUMES);
         String userAgent = reader.text("userAgent", defaultUserAgent);
         SourceScope configuredScope = scope(reader);
         int navigationBatchSize = reader.integer("navigationBatchSize", SharePointNavigationPages.DEFAULT_BATCH_SIZE,
@@ -130,7 +134,8 @@ public final class SharePointSourceProvider implements KnowledgeSourceProvider {
         SharePointCredentialsProvider provider = credentialRef == null ? SharePointCredentialsProvider.none()
                 : credentials.apply(credentialRef);
         return new SharePointKnowledgeSource(sourceId, siteUrl, provider,
-                new UrlConnectionSharePointTransport(routes, sslSocketFactory, userAgent, timeouts[0], timeouts[1]),
+                new UrlConnectionSharePointTransport(routes, sslSocketFactory, userAgent, timeouts[0], timeouts[1],
+                        resumes),
                 detector, extraction, maxFileBytes, configuredScope, navigationBatchSize);
     }
 

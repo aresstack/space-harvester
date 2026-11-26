@@ -8,6 +8,7 @@ import javax.swing.text.StyledDocument;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Insets;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.util.ArrayList;
@@ -79,6 +80,20 @@ public class MarkdownTablePanelTest {
     }
 
     @Test
+    public void listAtTheEndOfACellLeavesNoEmptyLineBelow() throws Exception {
+        String markdown = "| A | B |\n|---|---|\n| 1 | <ul><li>neu</li><li>geändert</li></ul> |\n";
+        MarkdownTheme theme = MarkdownTheme.forSurface(Color.WHITE);
+        Container rendered = new FlexmarkSwingRenderer(theme, url -> { }, null).render(markdown, true);
+        JTable table = find(rendered, JTable.class);
+        assertNotNull(table);
+        MarkdownTablePanel.RichCell cell = (MarkdownTablePanel.RichCell) table.getValueAt(0, 1);
+        StyledDocument document = cell.pane.getStyledDocument();
+        assertEquals("• neu\n• geändert", document.getText(0, document.getLength()));
+        int lineHeight = cell.pane.getFontMetrics(cell.pane.getFont()).getHeight();
+        assertTrue(cell.pane.heightForWidth(300) < 3 * lineHeight, "Zwei Listenpunkte, zwei Zeilen");
+    }
+
+    @Test
     public void inlineHtmlInParagraphIsFormattedNotShownAsSource() throws BadLocationException {
         MarkdownTheme theme = MarkdownTheme.forBubble(Color.WHITE, Color.BLACK);
         Container rendered = new FlexmarkSwingRenderer(theme, DesktopLinkOpener.systemDefault(), null)
@@ -94,7 +109,7 @@ public class MarkdownTablePanelTest {
     }
 
     @Test
-    public void longTablesShowEveryRowAndReserveSpaceForHorizontalScrolling() throws Exception {
+    public void longTablesShowEveryRowAndFitTheAvailableWidth() throws Exception {
         javax.swing.SwingUtilities.invokeAndWait(() -> {
             StringBuilder markdown = new StringBuilder("| Spalte A | Spalte B |\n|---|---|\n");
             for (int row = 0; row < 50; row++) {
@@ -116,7 +131,9 @@ public class MarkdownTablePanelTest {
                 assertTrue(height > 320);
                 assertEquals(javax.swing.JScrollPane.VERTICAL_SCROLLBAR_NEVER, panel.getVerticalScrollBarPolicy());
                 assertFalse(panel.getVerticalScrollBar().isVisible());
-                assertEquals(width == 260, panel.getHorizontalScrollBar().isVisible());
+                assertFalse(panel.getHorizontalScrollBar().isVisible(), "Fit the table into width " + width);
+                Insets insets = panel.getInsets();
+                assertEquals(width - insets.left - insets.right, table.getColumnModel().getTotalColumnWidth());
                 Rectangle last = table.getCellRect(table.getRowCount() - 1, 0, true);
                 assertTrue(panel.getViewport().getExtentSize().height >= last.y + last.height,
                         "Display the entire last row at width " + width);

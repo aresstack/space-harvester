@@ -90,8 +90,9 @@ class SourceConfiguration {
     }
 
     @Bean
-    SourceAdapter sharePointSourceAdapter() {
-        return EacSourceAdapters.sharePoint();
+    SourceAdapter sharePointSourceAdapter(JobsProperties jobs) {
+        // Abgerissene Inhalte ab dem letzten Byte fortsetzen, so oft wie space-harvester.jobs.retry.max-attempts.
+        return EacSourceAdapters.sharePoint().withRetry(jobs.retry().toSettings());
     }
 
     @Bean

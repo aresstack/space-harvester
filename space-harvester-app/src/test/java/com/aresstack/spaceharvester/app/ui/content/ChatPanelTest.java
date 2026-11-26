@@ -393,8 +393,10 @@ class ChatPanelTest {
     }
 
     @Test
-    void theMenuAtTheTriangleOffersThreeSeparateParallelLimitsWithTheChoicesOfTheJobs() throws Exception {
-        // Angelo 24.11.2026: nicht in den Einstellungen, sondern im Dreieck-Menü, mit dem Code der Aufträge.
+    void theMenuAtTheTriangleOffersTheParallelLimitsAndTheRoundsWithoutAnythingNewWithTheChoicesOfTheJobs()
+            throws Exception {
+        // Angelo 24.11.2026: nicht in den Einstellungen, sondern im Dreieck-Menü, mit dem Code der Aufträge; dazu seit
+        // 26.11.2026 die „Runden ohne Neues“ (Stillstand wie askai statt fester Rundengrenze).
         Path config = home.resolve("app.yml");
         Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
@@ -411,7 +413,8 @@ class ChatPanelTest {
             }
         });
         assertThat(menus).extracting(labels -> labels.get(0).substring(0, labels.get(0).indexOf(':')))
-                .containsExactly(ChatPanel.PARALLEL_TABS, ChatPanel.PARALLEL_AGENTS, ChatPanel.PARALLEL_FILES);
+                .containsExactly(ChatPanel.PARALLEL_TABS, ChatPanel.PARALLEL_AGENTS, ChatPanel.PARALLEL_FILES,
+                        ChatPanel.QUIET_ROUNDS);
         assertThat(menus).allSatisfy(labels -> assertThat(labels.subList(1, 8))
                 .containsExactly("1", "2", "4", "8", "16", "32", "64"))
                 .allSatisfy(labels -> assertThat(labels.get(8))

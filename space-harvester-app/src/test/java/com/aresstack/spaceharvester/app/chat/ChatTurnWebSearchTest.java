@@ -74,7 +74,6 @@ class ChatTurnWebSearchTest {
         ChatTurn turn = new ChatTurn(workspace(), port, "modell", null, List.of(), "Wie ist das Wetter?", null, "Test",
                 events, Runnable::run).withToolset(base, "System").webSearch(new ChatTurn.WebSearch(browser,
                 "[Browserprofil] Extern", 30, () -> order.add("begin"), ended::countDown));
-        assertThat(turn.maxToolRounds()).isEqualTo(30);
         turn.start();
         assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(ended.await(10, TimeUnit.SECONDS)).isTrue();
@@ -89,15 +88,6 @@ class ChatTurnWebSearchTest {
         List<AiChat.Message> second = port.requests.get(1).messages();
         assertThat(second.get(second.size() - 1).text()).contains("Sonne");
         assertThat(events.using).containsExactly("Öffnet eine Seite im Browser");
-    }
-
-    @Test
-    void withoutWebSearchNothingChangesAndTheBudgetNeverLowersTheRounds() throws Exception {
-        ChatTurn plain = new ChatTurn(workspace(), new ScriptedChat(List.of()), "modell", null, List.of(), "Hallo", null,
-                "Test", new TerminalMaskFixture.Events(), Runnable::run);
-        assertThat(plain.maxToolRounds()).isEqualTo(ChatTurn.MAX_TOOL_ROUNDS);
-        plain.webSearch(new ChatTurn.WebSearch(new BrowserChatTools(List.of()), null, 1, null, null));
-        assertThat(plain.maxToolRounds()).isEqualTo(ChatTurn.MAX_TOOL_ROUNDS);
     }
 
     @Test
