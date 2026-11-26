@@ -56,6 +56,9 @@ public final class CobolSearch {
         this.hierarchy = new CobolCallHierarchy(this.facts);
     }
 
+    /** Reuse the immutable stored fact set for language-neutral search adapters. */
+    public List<Fact> facts() { return facts; }
+
     public Result search(Mode mode, String query, int limit, int offset) {
         Objects.requireNonNull(mode);
         if (limit < 1 || limit > 500 || offset < 0) {

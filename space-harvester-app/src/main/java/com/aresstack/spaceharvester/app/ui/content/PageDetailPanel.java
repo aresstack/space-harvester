@@ -518,7 +518,7 @@ public final class PageDetailPanel extends JPanel {
     private boolean originalProgramShown;
     private final javax.swing.JButton recomputeProgram = new javax.swing.JButton("Programmanalyse berechnen");
     private final javax.swing.JButton recomputeBusiness = new javax.swing.JButton("Fachliche KI-Analyse");
-    private final javax.swing.JButton searchPrograms = new javax.swing.JButton("COBOL-Suche");
+    private final javax.swing.JButton searchPrograms = new javax.swing.JButton("Programmsuche");
     private java.util.concurrent.Future<?> programSearchTask;
     private int programSearchGeneration;
     private ProgramFocus pendingProgramFocus;
@@ -1428,7 +1428,8 @@ public final class PageDetailPanel extends JPanel {
         subpages.box().setVisible(!program);
         recomputeProgram.setVisible(program);
         recomputeBusiness.setVisible(program && com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot).isPresent());
-        searchPrograms.setVisible(snapshot.metadata().attributes().containsKey("ftp.path"));
+        searchPrograms.setVisible(snapshot.metadata().attributes().containsKey("ftp.path")
+                || snapshot.metadata().attributes().containsKey("ndv.library"));
         showRelations();
     }
 
@@ -2684,7 +2685,7 @@ public final class PageDetailPanel extends JPanel {
     private void searchStoredPrograms() {
         if (programSearchTask != null) {
             cancelProgramSearch();
-            feedback.info("COBOL-Suche abgebrochen", null);
+            feedback.info("Programmsuche abgebrochen", null);
             return;
         }
         AppRuntime runtime = context.runtime();
@@ -2693,20 +2694,21 @@ public final class PageDetailPanel extends JPanel {
         int current = request;
         int generation = ++programSearchGeneration;
         searchPrograms.setText("Suche abbrechen");
-        feedback.working("Gespeicherte COBOL-Analysen werden gelesen …");
-        programSearchTask = Background.start(() -> runtime.workspace().storedCobolSearch(source,
+        feedback.working("Gespeicherte Programmanalysen werden gelesen …");
+        var sources = runtime.workspace().programSearchSources();
+        programSearchTask = Background.start(() -> runtime.workspace().storedProgramSearch(java.util.Set.copyOf(sources),
                 () -> Thread.currentThread().isInterrupted()), snapshot -> {
             if (current != request || context.runtime() != runtime || generation != programSearchGeneration) return;
             programSearchTask = null;
-            searchPrograms.setText("COBOL-Suche");
+            searchPrograms.setText("Programmsuche");
             feedback.clear();
-            new StoredCobolSearchDialog(snapshot).show(this).ifPresent(fact -> {
+            new StoredProgramSearchDialog(snapshot, sources, source).show(this).ifPresent(fact -> {
                 if (current == request && context.runtime() == runtime) openStoredProgramHit(runtime, fact, current);
             });
         }, error -> {
             if (current != request || context.runtime() != runtime || generation != programSearchGeneration) return;
             programSearchTask = null;
-            searchPrograms.setText("COBOL-Suche");
+            searchPrograms.setText("Programmsuche");
             feedback.problem(error);
         });
     }
@@ -2717,26 +2719,22 @@ public final class PageDetailPanel extends JPanel {
             programSearchTask.cancel(true);
             programSearchTask = null;
         }
-        searchPrograms.setText("COBOL-Suche");
+        searchPrograms.setText("Programmsuche");
     }
 
     private void openStoredProgramHit(AppRuntime runtime,
-            com.aresstack.spaceharvester.mainframe.cobol.CobolSearch.Fact fact, int current) {
-        String source = fact.attributes().get("SOURCE_ID");
-        String id = fact.attributes().get("PAGE_ID");
-        String hash = fact.attributes().get("SOURCE_RAW_SHA256");
-        if (source == null || id == null || hash == null) {
-            feedback.info("Keine verifizierte Quellposition verfügbar", null);
-            return;
-        }
-        Background.run(() -> runtime.workspace().cachedPage(source, id)
-                .filter(stored -> hash.equals(stored.snapshot().payload().rawSha256())).isPresent(), valid -> {
+            com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch.Fact fact, int current) {
+        var location = fact.location();
+        String source = location.key().sourceId();
+        String id = location.key().pageId();
+        String hash = location.rawSha256();
+        Background.run(() -> runtime.workspace().programFactCurrent(fact), valid -> {
             if (current != request || context.runtime() != runtime) return;
             if (!valid) {
-                feedback.warning("Fundstelle nicht mehr aktuell", "COBOL-Suche erneut öffnen.");
+                feedback.warning("Fundstelle nicht mehr aktuell", "Programmsuche erneut öffnen.");
                 return;
             }
-            context.navigator().openProgram(source, id, hash, fact.line());
+            context.navigator().openProgram(source, id, hash, location.line());
         }, error -> {
             if (current == request && context.runtime() == runtime) feedback.problem(error);
         });

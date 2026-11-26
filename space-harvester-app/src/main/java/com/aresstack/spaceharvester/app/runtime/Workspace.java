@@ -559,6 +559,53 @@ public final class Workspace {
                 visitor -> harvester.pages().visitCachedHeaders(caller, sourceId, visitor, cancelled), cancelled);
     }
 
+    public List<String> programSearchSources() {
+        return sources().stream()
+                .filter(source -> "ftp".equalsIgnoreCase(source.type()) || "ndv".equalsIgnoreCase(source.type()))
+                .filter(source -> sourceEnabled(source.id()) && !sourceDataBeingDeleted(source.id())
+                        && access.permits(caller, ResourceScope.source(source.id()), AccessKind.CONTENT))
+                .map(source -> source.id()).sorted().toList();
+    }
+
+    public boolean programFactCurrent(com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch.Fact fact) {
+        var location = fact.location();
+        var available = new java.util.HashSet<>(programSearchSources());
+        if (!available.contains(location.key().sourceId())) return false;
+        if (cachedPage(location.key().sourceId(), location.key().pageId())
+                .filter(page -> location.rawSha256().equals(page.snapshot().payload().rawSha256())).isEmpty()) return false;
+        for (var origin : fact.evidence()) {
+            if (!available.contains(origin.key().sourceId())
+                    || cachedPage(origin.key().sourceId(), origin.key().pageId())
+                    .filter(page -> origin.rawSha256().equals(page.snapshot().payload().rawSha256())).isEmpty()) return false;
+        }
+        return true;
+    }
+
+    /** Combine authorized, already stored program analyses across the requested sources. */
+    public com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch.Snapshot storedProgramSearch(
+            java.util.Set<String> sourceIds, java.util.function.BooleanSupplier cancelled) {
+        var search = new com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch(
+                key -> cachedPage(key.sourceId(), key.pageId()), this::enrichments);
+        var configured = harvester.sourceManagement().sources();
+        for (String sourceId : sourceIds.stream().sorted().toList()) {
+            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+                throw new java.util.concurrent.CancellationException();
+            }
+            access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
+            var config = configured.stream().filter(source -> source.id().equals(sourceId)).findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Unbekannte Wissensquelle"));
+            boolean ndv = "ndv".equalsIgnoreCase(config.type());
+            if (!ndv && !"ftp".equalsIgnoreCase(config.type())) throw new IllegalArgumentException("Keine Programmquelle");
+            if (!sourceEnabled(sourceId) || sourceDataBeingDeleted(sourceId)) {
+                throw new IllegalStateException("Wissensquelle nicht verfügbar");
+            }
+            if (!ndv) search.addCobol(storedCobolSearch(sourceId, cancelled), cancelled);
+            search.addSource(sourceId, ndv, visitor -> harvester.pages().visitCachedHeaders(
+                    caller, sourceId, visitor, cancelled), cancelled);
+        }
+        return search.snapshot();
+    }
+
     public Optional<DeliveredPage> cachedPage(String sourceId, String pageId) {
         try {
             return harvester.pages().cached(caller, sourceId, pageId);

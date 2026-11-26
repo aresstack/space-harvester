@@ -317,6 +317,7 @@ public final class CommandDeck {
     /** Der Proxy-Weg der App für NDV-Verbindungen, die ihn gewählt haben (Vorgabe direkt). */
     public void ftpStoredSearch(com.aresstack.spaceharvester.app.ui.AppContext context) {
         ftp.storedCobolSearch(context, () -> area == DeckArea.FTP);
+        ndv.storedProgramSearch(context, () -> area == DeckArea.NDV);
     }
 
     public void ftpNavigation(FtpNavigationObserver observer) {
