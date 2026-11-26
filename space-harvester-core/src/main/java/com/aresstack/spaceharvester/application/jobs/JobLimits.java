@@ -19,10 +19,15 @@ import java.util.Objects;
  * @param downloadConnections gleichzeitige Verbindungen aller ladenden Downloads zusammen
  *                      ({@code jobs.download-connections}, Angelo 11.11.2026), nur Bilder und Anhänge, nach Restzeit
  *                      auf sie verteilt; 0 lädt keine Bilder und Anhänge; bis {@value #MAX_DOWNLOAD_CONNECTIONS}
+ * @param maxOpenBackground höchstens zugleich offene Hintergrundaufträge ({@code jobs.max-open-background}, eigener
+ *                      Vorrat neben dem der Benutzer); darüber wird ein weiterer abgelehnt, die Arbeit holt der nächste
+ *                      Anlass nach
+ * @param maxWaitingPrefetches höchstens wartende Anhänge je Quelle und Space beim Vorabladen
+ *                      ({@code jobs.max-waiting-prefetches}, nur App); darüber lädt der Aufrufer wie bisher selbst
  */
 public record JobLimits(int maxQueued, Duration maxRunTime, Duration retention,
         int maxOpenPerOwner, RetrySettings retry, int parallelPreparations, int parallelDownloads,
-        int downloadConnections) {
+        int downloadConnections, int maxOpenBackground, int maxWaitingPrefetches) {
 
     public static final String PARALLEL_PREPARATIONS = "parallel-preparations";
     public static final String PARALLEL_DOWNLOADS = "parallel-downloads";
@@ -36,6 +41,19 @@ public record JobLimits(int maxQueued, Duration maxRunTime, Duration retention,
 
     /** Standard für {@link #retention()}. */
     public static final Duration DEFAULT_RETENTION = Duration.ofDays(7);
+    /** Standard für {@link #maxQueued()} ({@code jobs.max-queued}). */
+    public static final int DEFAULT_MAX_QUEUED = 20;
+    /** Standard für {@link #maxRunTime()} ({@code jobs.max-run-time}). */
+    public static final Duration DEFAULT_MAX_RUN_TIME = Duration.ofHours(6);
+    /** Standard für {@link #maxOpenPerOwner()} im Dienst ({@code jobs.max-open-per-owner}). */
+    public static final int DEFAULT_MAX_OPEN_PER_OWNER = 4;
+    /** Standard für {@link #maxOpenBackground()}: je Space einer, also auch für viele Spaces genug. */
+    public static final int DEFAULT_MAX_OPEN_BACKGROUND = 1000;
+    /** Standard für {@link #maxWaitingPrefetches()}. */
+    public static final int DEFAULT_MAX_WAITING_PREFETCHES = 5_000;
+    /** Die Standardgrenzen der App (ein Bediener: die Grenze je Auslöser ist die Gesamtgrenze). */
+    public static final JobLimits DEFAULTS = new JobLimits(DEFAULT_PARALLEL_PREPARATIONS, DEFAULT_MAX_QUEUED,
+            DEFAULT_MAX_RUN_TIME);
 
     /*
      * #944 (Angelo 17.11.2026): keine festen Auftragsplätze. Alle Aufträge laufen nach „Vorbereitung“
@@ -64,22 +82,41 @@ public record JobLimits(int maxQueued, Duration maxRunTime, Duration retention,
                 DEFAULT_PARALLEL_DOWNLOADS, DEFAULT_DOWNLOAD_CONNECTIONS);
     }
 
+    /** Mit dem Standard für {@link #maxOpenBackground()}. */
+    public JobLimits(int maxQueued, Duration maxRunTime, Duration retention, int maxOpenPerOwner, RetrySettings retry,
+                     int parallelPreparations, int parallelDownloads, int downloadConnections) {
+        this(maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, parallelPreparations, parallelDownloads,
+                downloadConnections, DEFAULT_MAX_OPEN_BACKGROUND, DEFAULT_MAX_WAITING_PREFETCHES);
+    }
+
+    /** Dieselben Grenzen mit einem anderen Vorrat für Hintergrundaufträge. */
+    public JobLimits withBackground(int openBackground) {
+        return new JobLimits(maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, parallelPreparations,
+                parallelDownloads, downloadConnections, openBackground, maxWaitingPrefetches);
+    }
+
+    /** Dieselben Grenzen mit einer anderen Grenze wartender Anhänge beim Vorabladen. */
+    public JobLimits withWaitingPrefetches(int waiting) {
+        return new JobLimits(maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, parallelPreparations,
+                parallelDownloads, downloadConnections, maxOpenBackground, waiting);
+    }
+
     /** Dieselben Grenzen mit anderen Wiederholungen. */
     public JobLimits withRetry(RetrySettings value) {
         return new JobLimits(maxQueued, maxRunTime, retention, maxOpenPerOwner, value, parallelPreparations,
-                parallelDownloads, downloadConnections);
+                parallelDownloads, downloadConnections, maxOpenBackground, maxWaitingPrefetches);
     }
 
     /** Dieselben Grenzen mit anderen Grenzen für Vorbereitung und Downloads. */
     public JobLimits withParallel(int preparations, int downloads) {
         return new JobLimits(maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, preparations, downloads,
-                downloadConnections);
+                downloadConnections, maxOpenBackground, maxWaitingPrefetches);
     }
 
     /** Dieselben Grenzen mit einem anderen Gesamtbudget an Verbindungen. */
     public JobLimits withConnections(int connections) {
         return new JobLimits(maxQueued, maxRunTime, retention, maxOpenPerOwner, retry, parallelPreparations,
-                parallelDownloads, connections);
+                parallelDownloads, connections, maxOpenBackground, maxWaitingPrefetches);
     }
 
     /** @throws IllegalArgumentException außerhalb von 0 bis {@value #MAX_DOWNLOAD_CONNECTIONS} */
@@ -124,6 +161,12 @@ public record JobLimits(int maxQueued, Duration maxRunTime, Duration retention,
         }
         if (maxOpenPerOwner < 1) {
             throw new IllegalArgumentException("maxOpenPerOwner muss mindestens 1 sein");
+        }
+        if (maxOpenBackground < 1) {
+            throw new IllegalArgumentException("max-open-background muss mindestens 1 sein");
+        }
+        if (maxWaitingPrefetches < 1) {
+            throw new IllegalArgumentException("max-waiting-prefetches muss mindestens 1 sein");
         }
         requirePreparations(parallelPreparations);
         requireDownloads(parallelDownloads);

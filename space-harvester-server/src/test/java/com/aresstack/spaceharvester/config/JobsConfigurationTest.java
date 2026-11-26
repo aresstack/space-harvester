@@ -22,7 +22,7 @@ class JobsConfigurationTest {
     @Test
     void defaults() {
         context.run(app -> assertThat(app.getBean(JobsProperties.class))
-                .isEqualTo(new JobsProperties(20, Duration.ofHours(6), Duration.ofDays(7), 4, null, null, null, null)));
+                .isEqualTo(new JobsProperties(20, Duration.ofHours(6), Duration.ofDays(7), 4, null, null, null, null, null, null)));
     }
 
     @Test
@@ -30,7 +30,7 @@ class JobsConfigurationTest {
         context.withPropertyValues("space-harvester.jobs.max-queued=0",
                         "space-harvester.jobs.max-run-time=30m", "space-harvester.jobs.retention=1d")
                 .run(app -> assertThat(app.getBean(JobsProperties.class))
-                        .isEqualTo(new JobsProperties(0, Duration.ofMinutes(30), Duration.ofDays(1), 4, null, null, null, null)));
+                        .isEqualTo(new JobsProperties(0, Duration.ofMinutes(30), Duration.ofDays(1), 4, null, null, null, null, null, null)));
     }
 
     @Test

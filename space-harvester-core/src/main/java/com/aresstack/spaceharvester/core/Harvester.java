@@ -537,8 +537,9 @@ public final class Harvester implements AutoCloseable {
             // Angelo 22.11.2026: ohne Netz warten statt scheitern; ein Netzzustand für alle Netz-Aufträge.
             this.network = new com.aresstack.spaceharvester.application.network.NetworkState();
             opened.add(network);
+            // jobs.max-waiting-prefetches, wirkt beim Start.
             this.attachmentPrefetches = new com.aresstack.spaceharvester.application.background.AttachmentPrefetches(
-                    backgroundJobs);
+                    backgroundJobs, builder.jobLimits.maxWaitingPrefetches());
             opened.add(attachmentPrefetches);
             attachmentPrefetches.network(network);
 
@@ -3542,7 +3543,7 @@ public final class Harvester implements AutoCloseable {
         private TrustSettings trust = TrustSettings.jvm();
         private ConfiguredSourceCatalog.AsyncTransport asyncTransport = ConfiguredSourceCatalog.AsyncTransport.WEB_CLIENT;
         private AccessPolicy accessPolicy = new TrustedCaller();
-        private JobLimits jobLimits = new JobLimits(2, 20, Duration.ofHours(6));
+        private JobLimits jobLimits = JobLimits.DEFAULTS;
         private Duration searchTimeout = Duration.ofSeconds(5);
         private Duration checkTimeout = PageFreshness.DEFAULT_TIMEOUT;
         private Duration largeFileTimeout = PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT;

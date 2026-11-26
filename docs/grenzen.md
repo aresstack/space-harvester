@@ -61,7 +61,7 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Abschnitte je Dokument (`EmbeddingProcessor.MAX_CHUNKS`) | 200 | nur die ersten etwa 70.000 Token waren semantisch suchbar | **beseitigt**: alle Abschnitte; es gilt nur das einstellbare `enrichment.documents.embedding-max-chars` |
 | Wartende Funde (`FindingCataloging.CAPACITY`, `REMEMBERED`) | 1000 / 10.000 | weitere Funde fallen weg | beseitigen: zurückstellen statt verwerfen |
 | Webhook-Warteschlange (`ChangeEvents.MAX_QUEUED`, `MAX_BODY_BYTES`) | 10.000 Seiten / 1 MiB | Meldungen fallen weg, erst die Inventur holt sie nach | Warteschlange beseitigen (eine Zeile je Seite), Rumpfgröße einstellbar |
-| Hintergrundaufträge, Vorabladen (`Jobs.BACKGROUND_CAPACITY`, `AttachmentPrefetches.MAX_WAITING`) | 1000 / 5000 | weitere Aufträge werden abgewiesen; beim Vorabladen lädt der Aufrufer selbst | einstellbar unter `space-harvester.jobs` |
+| Hintergrundaufträge, Vorabladen (`JobLimits.DEFAULT_MAX_OPEN_BACKGROUND`, `DEFAULT_MAX_WAITING_PREFETCHES`) | 1000 / 5000 | weitere Aufträge werden abgewiesen; beim Vorabladen lädt der Aufrufer selbst | **einstellbar**: `space-harvester.jobs.max-open-background`, `.max-waiting-prefetches` (nur App) |
 | Absätze und Sätze (`PassageProcessor.MAX_PASSAGES`, `PassageSegmentation.MAX_EMBEDDED_SENTENCES`) | 5000 / 2000 | bei langen Dokumenten fehlen die übrigen Absätze | beseitigen |
 | Begriffe, Entitäten, Relationen, Akronyme je Dokument (`TermProcessor`, `EntityProcessor`, `RelationProcessor`, `PropertyProcessor`, `ActivityProcessor`, `AcronymProcessor`) | 500 bis 50.000 | die übrigen fehlen ohne Hinweis | beseitigen oder sichtbar markieren |
 | Fakten je Ergebnis und Seite (`EnrichmentFacts.MAX_PER_RESULT`, `LuceneEnrichmentStore.MAX_PER_PAGE`) | 2000 / 1000 | Fakten darüber werden nicht geliefert | beseitigen: paginieren |
@@ -151,7 +151,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `Assets.MAX_CONCURRENT_DOWNLOADS` | `4` | fest | Parallelität | einstellbar |
 | `Assets.MAX_IN_MEMORY_BYTES` | `100L * 1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `Assets.UNLIMITED` | `Long.MAX_VALUE` | fest | Invariante/Darstellung | im Code belassen |
-| `AttachmentPrefetches.MAX_WAITING` | `5_000` | fest | Timeout | einstellbar |
 | `BackgroundFill.DEFAULT_PARALLELISM` | `2` | Vorgabe | Parallelität | einstellbar |
 | `BackgroundFill.MAX_PARALLELISM` | `16` | fest | Parallelität | einstellbar |
 | `BackgroundFill.SETTLE` | `Duration.ofSeconds(1)` | fest | Cache-Aufbewahrung | einstellbar |
@@ -236,13 +235,17 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `Holdings.MAX_PAGES_PER_MESSAGE` | `1000` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `ImageSettings.DEFAULT_MAX_PER_RUN` | `500` | Vorgabe | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `JobEvent.MAX_DETAIL_CHARS` | `16_000` | fest | Invariante/Darstellung | im Code belassen |
+| `JobLimits.DEFAULT_MAX_OPEN_BACKGROUND` | `1000` | Vorgabe | Warteschlange | einstellbar: `space-harvester.jobs.max-open-background` |
+| `JobLimits.DEFAULT_MAX_OPEN_PER_OWNER` | `4` | Vorgabe | Warteschlange | einstellbar: `space-harvester.jobs.max-open-per-owner` |
+| `JobLimits.DEFAULT_MAX_QUEUED` | `20` | Vorgabe | Warteschlange | einstellbar: `space-harvester.jobs.max-queued` |
+| `JobLimits.DEFAULT_MAX_RUN_TIME` | `Duration.ofHours(6)` | Vorgabe | Timeout | einstellbar: `space-harvester.jobs.max-run-time` |
+| `JobLimits.DEFAULT_MAX_WAITING_PREFETCHES` | `5_000` | Vorgabe | Warteschlange | einstellbar: `space-harvester.jobs.max-waiting-prefetches` (nur App) |
 | `JobLimits.DEFAULT_PARALLEL_DOWNLOADS` | `4` | Vorgabe | Parallelität | einstellbar |
 | `JobLimits.DEFAULT_PARALLEL_PREPARATIONS` | `2` | Vorgabe | Parallelität | einstellbar |
 | `JobLimits.DEFAULT_RETENTION` | `Duration.ofDays(7)` | Vorgabe | Cache-Aufbewahrung | einstellbar |
 | `JobLimits.MAX_DOWNLOAD_CONNECTIONS` | `64` | fest | Obergrenze einer Einstellung | prüfen: entfallen oder einstellbar |
 | `JobLimits.MAX_PARALLEL_DOWNLOADS` | `64` | fest | Parallelität | einstellbar |
 | `JobLimits.MAX_PARALLEL_PREPARATIONS` | `16` | fest | Parallelität | einstellbar |
-| `Jobs.BACKGROUND_CAPACITY` | `1000` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `Jobs.RETRY_AFTER_PASS_ATTEMPTS` | `48` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `KeywordSearch.DEFAULT_MAX_QUERIES` | `4` | Vorgabe | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `KeywordSearch.MARK_BYTES` | `6` | fest | Invariante/Darstellung | im Code belassen |
