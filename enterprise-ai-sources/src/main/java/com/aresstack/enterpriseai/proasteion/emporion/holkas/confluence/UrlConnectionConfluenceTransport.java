@@ -1,6 +1,7 @@
 package com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence;
 
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
+import com.aresstack.enterpriseai.proasteion.platform.network.ResumableDownload;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLSocketFactory;
@@ -22,6 +23,9 @@ import java.util.Map;
  * keine globalen Proxy-Einstellungen und setzt nichts prozessweit. Weiterleitungen werden nicht verfolgt, damit ein
  * {@code Authorization}-Header nie an ein anderes Ziel geht; Confluence DC leitet nicht angemeldete Zugriffe auf
  * die Login-Seite um, das meldet der Adapter als verweigerten Zugriff.
+ *
+ * <p>Reißt ein Download ({@link #download}) ab, setzt der Transport ihn mit {@link ResumableDownload} ab dem letzten
+ * Byte fort, höchstens {@link Builder#resumes(int)} Mal je Abruf (Angelo 26.11.2026, WLAN).
  */
 public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTransport {
 
@@ -32,6 +36,7 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
     private final String userAgent;
     private final int connectTimeoutMillis;
     private final int readTimeoutMillis;
+    private final int resumes;
     private final java.util.concurrent.atomic.AtomicBoolean factoryLogged =
             new java.util.concurrent.atomic.AtomicBoolean();
 
@@ -46,6 +51,7 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
         this.userAgent = builder.userAgent;
         this.connectTimeoutMillis = builder.connectTimeoutMillis;
         this.readTimeoutMillis = builder.readTimeoutMillis;
+        this.resumes = builder.resumes;
     }
 
     public static Builder builder() {
@@ -164,16 +170,8 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
         if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)) {
             throw new IOException("nur http/https unterstützt: " + scheme);
         }
-        HttpURLConnection connection = open(uri, tls);
+        HttpURLConnection connection = prepared(method, uri, headers, tls);
         try {
-            connection.setRequestMethod(method);
-            connection.setInstanceFollowRedirects(false);
-            connection.setConnectTimeout(connectTimeoutMillis);
-            connection.setReadTimeout(readTimeoutMillis);
-            connection.setUseCaches(false);
-            for (Map.Entry<String, String> header : headers.entrySet()) {
-                connection.setRequestProperty(header.getKey(), header.getValue());
-            }
             if (body != null) {
                 connection.setDoOutput(true);
                 connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
@@ -199,7 +197,9 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
                     return new ConfluenceHttpResponse(status, connection.getContentType(), new byte[0], location[0],
                             setCookies(connection.getHeaderFields()));
                 }
-                long copied = copy(stream, sink);
+                long copied = "GET".equals(method) && status == 200
+                        ? resumed(connection, stream, uri, headers, tls, sink)
+                        : copy(stream, sink);
                 return new ConfluenceHttpResponse(status, connection.getContentType(), new byte[0], location[0],
                         setCookies(connection.getHeaderFields())).streamed(copied);
             }
@@ -209,6 +209,70 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
         } finally {
             connection.disconnect();
         }
+    }
+
+    /** Eine Verbindung mit Methode, Zeitgrenzen und Kopfzeilen, noch nicht abgeschickt. */
+    private HttpURLConnection prepared(String method, URI uri, Map<String, String> headers, SSLSocketFactory tls)
+            throws IOException {
+        HttpURLConnection connection = open(uri, tls);
+        connection.setRequestMethod(method);
+        connection.setInstanceFollowRedirects(false);
+        connection.setConnectTimeout(connectTimeoutMillis);
+        connection.setReadTimeout(readTimeoutMillis);
+        connection.setUseCaches(false);
+        for (Map.Entry<String, String> header : headers.entrySet()) {
+            connection.setRequestProperty(header.getKey(), header.getValue());
+        }
+        return connection;
+    }
+
+    /**
+     * Kopiert einen Download nach {@code sink} und fordert nach einem Abriss den Rest mit denselben Kopfzeilen ab dem
+     * letzten Byte an ({@link ResumableDownload}).
+     */
+    private long resumed(HttpURLConnection connection, InputStream stream, final URI uri,
+                         final Map<String, String> headers, final SSLSocketFactory tls, java.io.OutputStream sink)
+            throws IOException {
+        ResumableDownload.Response first = response(connection, stream);
+        return ResumableDownload.copy(first, new ResumableDownload.Source() {
+            @Override
+            public ResumableDownload.Response open(long from, String validator) throws IOException {
+                final HttpURLConnection rest = prepared("GET", uri, headers, tls);
+                for (Map.Entry<String, String> header : ResumableDownload.rangeHeaders(from, validator).entrySet()) {
+                    rest.setRequestProperty(header.getKey(), header.getValue());
+                }
+                int status;
+                try {
+                    status = rest.getResponseCode();
+                } catch (IOException e) {
+                    rest.disconnect();
+                    throw e;
+                }
+                InputStream body = status >= 400 ? rest.getErrorStream() : rest.getInputStream();
+                ResumableDownload.Response response = response(rest, body);
+                return new ResumableDownload.Response(response.status(), response.contentRange(),
+                        response.validator(), response.body(), response.length()) {
+                    @Override
+                    public void close() throws IOException {
+                        try {
+                            super.close();
+                        } finally {
+                            rest.disconnect();
+                        }
+                    }
+                };
+            }
+        }, ResumableDownload.sink(sink), Long.MAX_VALUE, resumes);
+    }
+
+    private static ResumableDownload.Response response(final HttpURLConnection connection, InputStream body)
+            throws IOException {
+        return ResumableDownload.response(connection.getResponseCode(), new ResumableDownload.Headers() {
+            @Override
+            public String header(String name) {
+                return connection.getHeaderField(name);
+            }
+        }, body);
     }
 
     /** Siehe {@link ConfluenceRedirects#setCookies(Map)}. */
@@ -280,6 +344,7 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
         private String userAgent;
         private int connectTimeoutMillis = 15000;
         private int readTimeoutMillis = 60000;
+        private int resumes;
 
         private Builder() {
         }
@@ -327,6 +392,15 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
 
         public Builder readTimeoutMillis(int value) {
             this.readTimeoutMillis = positive(value, "readTimeoutMillis");
+            return this;
+        }
+
+        /** Wie oft ein abgerissener Download je Abruf höchstens fortgesetzt wird; 0 (Standard) für nie. */
+        public Builder resumes(int value) {
+            if (value < 0) {
+                throw new IllegalArgumentException("resumes darf nicht negativ sein");
+            }
+            this.resumes = value;
             return this;
         }
 

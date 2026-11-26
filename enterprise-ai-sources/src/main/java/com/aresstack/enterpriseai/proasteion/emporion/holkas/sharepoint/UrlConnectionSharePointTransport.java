@@ -51,19 +51,9 @@ final class UrlConnectionSharePointTransport implements SharePointTransport {
                 return new Response(status, connection.getContentType(), read(in, maxBytes));
             }
             String contentType = connection.getContentType();
-            final ByteArrayOutputStream out = new ByteArrayOutputStream();
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
             ResumableDownload.copy(response(connection), rest(uri, accept, authorization),
-                    new ResumableDownload.Sink() {
-                        @Override
-                        public void write(byte[] buffer, int offset, int length) {
-                            out.write(buffer, offset, length);
-                        }
-
-                        @Override
-                        public void restart() {
-                            out.reset();
-                        }
-                    }, maxBytes, resumes);
+                    ResumableDownload.sink(out), maxBytes, resumes);
             return new Response(status, contentType, out.toByteArray());
         } catch (ResumableDownload.TooLargeException e) {
             throw new IOException(e.getMessage(), e);
@@ -73,16 +63,15 @@ final class UrlConnectionSharePointTransport implements SharePointTransport {
     }
 
     /** Die Antwort einer offenen Verbindung für {@link ResumableDownload}. */
-    private static ResumableDownload.Response response(HttpURLConnection connection) throws IOException {
+    private static ResumableDownload.Response response(final HttpURLConnection connection) throws IOException {
         int status = connection.getResponseCode();
-        String validator = connection.getHeaderField("ETag");
-        if (validator == null) {
-            validator = connection.getHeaderField("Last-Modified");
-        }
         InputStream body = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-        String contentRange = connection.getHeaderField("Content-Range");
-        long length = status == 206 ? -1 : connection.getContentLengthLong();
-        return new ResumableDownload.Response(status, contentRange, validator, body, length);
+        return ResumableDownload.response(status, new ResumableDownload.Headers() {
+            @Override
+            public String header(String name) {
+                return connection.getHeaderField(name);
+            }
+        }, body);
     }
 
     /** Folgeanfragen ab einem Byte, mit derselben Anmeldung. */
@@ -91,9 +80,9 @@ final class UrlConnectionSharePointTransport implements SharePointTransport {
             @Override
             public ResumableDownload.Response open(long from, String validator) throws IOException {
                 HttpURLConnection connection = UrlConnectionSharePointTransport.this.open(uri, accept, authorization);
-                connection.setRequestProperty("Range", "bytes=" + from + "-");
-                if (validator != null) {
-                    connection.setRequestProperty("If-Range", validator);
+                for (java.util.Map.Entry<String, String> header
+                        : ResumableDownload.rangeHeaders(from, validator).entrySet()) {
+                    connection.setRequestProperty(header.getKey(), header.getValue());
                 }
                 final HttpURLConnection opened = connection;
                 ResumableDownload.Response response = response(connection);
@@ -150,29 +139,12 @@ final class UrlConnectionSharePointTransport implements SharePointTransport {
         try {
             int status = connection.getResponseCode();
             if (status == 200) {
-                final java.nio.channels.FileChannel output = java.nio.channels.FileChannel.open(target,
+                java.nio.channels.FileChannel output = java.nio.channels.FileChannel.open(target,
                         java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE,
                         java.nio.file.StandardOpenOption.TRUNCATE_EXISTING);
                 try {
                     ResumableDownload.copy(response(connection), rest(uri, null, authorization),
-                            new ResumableDownload.Sink() {
-                                @Override
-                                public void write(byte[] buffer, int offset, int length) throws IOException {
-                                    if (Thread.currentThread().isInterrupted()) {
-                                        throw new java.io.InterruptedIOException("Download interrupted");
-                                    }
-                                    java.nio.ByteBuffer bytes = java.nio.ByteBuffer.wrap(buffer, offset, length);
-                                    while (bytes.hasRemaining()) {
-                                        output.write(bytes);
-                                    }
-                                }
-
-                                @Override
-                                public void restart() throws IOException {
-                                    output.truncate(0);
-                                    output.position(0);
-                                }
-                            }, maxBytes, resumes);
+                            ResumableDownload.sink(output), maxBytes, resumes);
                 } catch (ResumableDownload.TooLargeException e) {
                     throw new IOException("Download exceeds expected size", e);
                 } finally {

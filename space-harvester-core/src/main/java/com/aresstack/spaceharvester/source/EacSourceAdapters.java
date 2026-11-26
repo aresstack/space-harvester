@@ -86,7 +86,7 @@ public final class EacSourceAdapters {
      * (siehe {@link KnowledgeSourceProviderAdapter}); das eigene Feld des Typs bleibt deshalb ungenutzt. Abgelegt wird
      * der Lesetext samt aller Kommentare, ohne Startpunkte gilt die Liste je Projekt ({@code JiraSnapshots}).
      */
-    public static SourceAdapter jira() {
+    public static KnowledgeSourceProviderAdapter jira() {
         return KnowledgeSourceProviderAdapter.connected(connection -> new JiraSourceProvider(connection.secrets(),
                 connection.routes(), connection.tls(), connection.userAgent(), (alias, keyStoreFile, passwordRef) -> {
                     throw new IllegalArgumentException("Client-Zertifikat für Jira unter client-certificate angeben");

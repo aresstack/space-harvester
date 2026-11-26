@@ -218,6 +218,8 @@ public final class ConfluenceSourceProvider implements KnowledgeSourceProvider, 
                 .routes(routes)
                 .connectTimeoutMillis(timeouts[0])
                 .readTimeoutMillis(timeouts[1])
+                // Abgerissene Anhänge so oft ab dem letzten Byte fortsetzen, wie die Quelle Wiederholungen erlaubt.
+                .resumes(config.maxRetries())
                 .anonymousSslSocketFactory(sslSocketFactory); // fremde Hosts nie mit Client-Zertifikat
         if (userAgent != null) {
             transport.userAgent(userAgent);

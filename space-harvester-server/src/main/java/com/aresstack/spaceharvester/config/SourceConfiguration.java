@@ -110,8 +110,9 @@ class SourceConfiguration {
 
     /** Quellentyp {@code jira}: Vorgänge von Jira Data Center über die REST-API 2, nur lesend. */
     @Bean
-    SourceAdapter jiraSourceAdapter() {
-        return EacSourceAdapters.jira();
+    SourceAdapter jiraSourceAdapter(JobsProperties jobs) {
+        // jobs.retry.max-attempts als maxRetries: Wiederholungen und Fortsetzen abgerissener Anhänge.
+        return EacSourceAdapters.jira().withRetry(jobs.retry().toSettings());
     }
 
     /**
