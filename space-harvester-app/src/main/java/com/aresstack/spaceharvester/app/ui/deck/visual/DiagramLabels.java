@@ -38,7 +38,6 @@ public final class DiagramLabels implements BlockLabelSummarizer {
             + "LABEL = eine Substantiv-Phrase (z.B. \"Validierung der Eingabe\"). "
             + "SENTENCE = ein Satz. "
             + "BULLETS = kurze Bullet-Liste mit \"- \" Präfix.";
-    static final long TIMEOUT_SECONDS = 30;
     private static final int CACHE_SIZE = 1000;
 
     /**
@@ -147,9 +146,11 @@ public final class DiagramLabels implements BlockLabelSummarizer {
             }
         });
         try {
-            if (!done.await(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            long timeout = com.aresstack.spaceharvester.app.ui.AppTimeouts.shared()
+                    .get(com.aresstack.spaceharvester.app.ui.AppTimeouts.Value.DIAGRAM_LABELS).toSeconds();
+            if (!done.await(timeout, TimeUnit.SECONDS)) {
                 task.cancel();
-                lastProblem = "Keine Antwort in " + TIMEOUT_SECONDS + " s";
+                lastProblem = "Keine Antwort in " + timeout + " s";
                 return null;
             }
         } catch (InterruptedException e) {
