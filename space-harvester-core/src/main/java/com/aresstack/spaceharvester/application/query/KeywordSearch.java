@@ -1656,8 +1656,10 @@ public class KeywordSearch {
         }
 
         PageSearchQuery scope() {
+            // Mit Teilbaum-Grenze bestimmen Quellen und Spaces den Umfang; die Seitenmenge kennt nicht jede Seite der
+            // Grenze, und welche Funde bleiben, entscheidet admits.
             return new PageSearchQuery(sourceId, sourceIds, spaceKeys, List.of(), null, null, null, null, null,
-                    SearchSort.TITLE, pages);
+                    SearchSort.TITLE, boundary != null ? null : pages);
         }
     }
 

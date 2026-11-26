@@ -127,6 +127,11 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
     danach lokal und wird vor dem Senden freigegeben wie jede andere (ADR 0028 bleibt: Freigegeben wird nur, was
     lokal liegt). Alle Rollen mit Wissen aus dem Bestand tragen die Regel „Erfinde nichts“: Ohne Treffer oder ohne
     Zugriff sagt das Modell das klar und gibt kein eigenes Wissen als Inhalt der Quellen aus.
+    Ergänzt nach Angelos Prüfung (26.11.2026): Lokaler Bestand und Live-Zugriff ergänzen sich, solange der Katalog die
+    Auswahl nicht vollständig kennt (`PageSelection.complete()`), auch bei bekannten Wurzeln. Die Grenze des Teilbaums
+    greift im Core schon in der Suche (`KeywordSearch.Query.bounded` mit `SearchBoundary`): Funde außerhalb werden
+    weder katalogisiert noch geladen, im Volltextindex vor der Rangfolge verworfen und nie Nachbarn. Die Auswahl im Baum
+    beschafft nichts; gelesen und freigegeben wird nur, was das Modell für die Frage tatsächlich liest.
 
 ## Folgen
 

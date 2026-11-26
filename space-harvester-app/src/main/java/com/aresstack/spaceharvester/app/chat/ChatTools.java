@@ -541,23 +541,26 @@ final class ChatTools {
      * auszugeben.
      */
     private Listing withLive(Listing listing, PageKey parent) {
-        List<Entry> entries = new ArrayList<>(listing.entries());
-        Set<String> seen = new java.util.HashSet<>();
-        entries.forEach(entry -> seen.add(entry.ref()));
+        Map<String, Entry> entries = new java.util.LinkedHashMap<>();
+        listing.entries().forEach(entry -> entries.put(entry.ref(), entry));
         boolean failed = listing.failed();
         try {
             for (LiveArea.Node node : live.children(parent, () -> cancelled)) {
                 String ref = ref(node.key());
-                if (seen.add(ref)) {
-                    entries.add(new Entry(ref, node.title(), Boolean.TRUE.equals(node.children()) ? -1 : 1,
+                Entry known = entries.get(ref);
+                if (known == null) {
+                    entries.put(ref, new Entry(ref, node.title(), Boolean.TRUE.equals(node.children()) ? -1 : 1,
                             node.folder()));
+                } else if (known.title() == null) {
+                    // Der Katalog kennt die Seite ohne Titel in der Seitenliste; die Quelle nennt ihn.
+                    entries.put(ref, new Entry(ref, node.title(), known.size(), known.folder() || node.folder()));
                 }
             }
         } catch (RuntimeException e) {
             diagnosis.accept("Chat-Werkzeug " + LIST + ": Navigation gescheitert: " + e.getClass().getSimpleName());
             failed = true;
         }
-        return new Listing(entries, listing.unreadable(), failed);
+        return new Listing(new ArrayList<>(entries.values()), listing.unreadable(), failed);
     }
 
     /**
