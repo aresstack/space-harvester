@@ -602,6 +602,7 @@ public final class Harvester implements AutoCloseable {
             List<EnrichmentProcessor> processors = new ArrayList<>(List.of(acronyms,
                     new OutlineProcessor(), new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(),
                     new RelationProcessor(), termProcessor));
+            processors.addAll(builder.additionalProcessors);
             if (embedding != null) {
                 processors.add(embedding);
             }
@@ -3531,6 +3532,7 @@ public final class Harvester implements AutoCloseable {
         private int chunkTokens = KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS;
         private int chunkOverlapSentences = KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES;
         private final List<SourceAdapter> sourceAdapters = new ArrayList<>();
+        private final List<EnrichmentProcessor> additionalProcessors = new ArrayList<>();
         private SourceSecrets secretProvider;
         private EmbeddingProvider embeddingProvider;
         private Predicate<String> embeddingSources;
@@ -3883,6 +3885,11 @@ public final class Harvester implements AutoCloseable {
         /** Eine Quelle wie unter {@code space-harvester.sources}. */
         public Builder source(SourceSettingsConfig source) {
             sources.add(Objects.requireNonNull(source, "source"));
+            return this;
+        }
+
+        public Builder enrichmentProcessor(EnrichmentProcessor processor) {
+            additionalProcessors.add(java.util.Objects.requireNonNull(processor));
             return this;
         }
 

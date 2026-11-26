@@ -1,0 +1,133 @@
+package com.aresstack.spaceharvester.app.ui.content;
+
+import com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment;
+import com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource;
+import com.aresstack.spaceharvester.app.ui.PillTabs;
+import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
+import com.aresstack.spaceharvester.application.snapshot.NativePayload;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
+import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
+import java.awt.Component;
+import java.awt.Container;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import javax.swing.JPanel;
+import javax.swing.JTable;
+import javax.swing.SwingUtilities;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import static org.assertj.core.api.Assertions.assertThat;
+
+class ProgramAnalysisTabsTest {
+    private static final String MEMBER = "APP.COBOL(DEMO)";
+    private static final String CODE = "       IDENTIFICATION DIVISION.\n"
+            + "       PROGRAM-ID. DEMO.\n"
+            + "       DATA DIVISION.\n"
+            + "       WORKING-STORAGE SECTION.\n"
+            + "       01 CUSTOMER PIC X(10).\n"
+            + "       PROCEDURE DIVISION.\n"
+            + "           CALL 'BOOKING'.\n"
+            + "           GOBACK.\n";
+    @TempDir Path home;
+
+    @Test
+    void reopensStoredParserFactsAndSwitchesToolbarWithoutLosingTextTabs() throws Exception {
+        PageSnapshot program = snapshot("ftp", CODE, CODE);
+        PageSnapshot changed = snapshot("ftp", CODE.replace("BOOKING", "PAYMENT"), CODE.replace("BOOKING", "PAYMENT"));
+        assertThat(StoredCobolSource.read(program)).hasValueSatisfying(source ->
+                assertThat(source.content()).isEqualTo(CODE));
+
+        try (var store = LuceneEnrichmentStore.open(home)) {
+            Enrichments enrichments = enrichments(store);
+            assertThat(enrichments.refresh(program).computed()).isEqualTo(1);
+            assertThat(enrichments.refresh(program).current()).isEqualTo(1);
+            store.flush();
+        }
+        try (var store = LuceneEnrichmentStore.open(home)) {
+            Enrichments enrichments = enrichments(store);
+            var views = enrichments.view(program);
+            assertThat(views).singleElement().satisfies(view -> {
+                assertThat(view.freshness()).isEqualTo(Enrichment.Freshness.CURRENT);
+                var artifact = CobolProgramEnrichment.read(view.enrichment().payloadJson());
+                assertThat(artifact.analysis().calls()).singleElement().satisfies(call -> {
+                    assertThat(call.target()).isEqualTo("BOOKING");
+                    assertThat(call.span().start().line()).isEqualTo(7);
+                });
+            });
+            assertThat(enrichments.view(changed)).singleElement().satisfies(view ->
+                    assertThat(view.freshness()).isEqualTo(Enrichment.Freshness.STALE));
+            SwingUtilities.invokeAndWait(() -> {
+                PillTabs tabs = new PillTabs().tab("Absätze", new JPanel()).tab("Aussagen", new JPanel());
+                tabs.detachBar();
+                ProgramAnalysisTabs analysis = new ProgramAnalysisTabs(tabs);
+                assertThat(tabs.names()).containsExactly("Absätze", "Aussagen");
+                assertThat(analysis.show(program, views)).isTrue();
+                assertThat(tabs.names()).containsExactly("Programmstruktur", "Datenstrukturen", "Copybooks", "Aufrufe", "Diagnosen");
+                tabs.select("Aufrufe");
+                assertThat(cells(tabs)).contains("BOOKING");
+                assertThat(analysis.show(changed, enrichments.view(changed))).isTrue();
+                assertThat(tabs.selected()).isEqualTo("Aufrufe");
+                assertThat(cells(tabs)).doesNotContain("BOOKING");
+                analysis.reset();
+                assertThat(tabs.names()).containsExactly("Absätze", "Aussagen");
+                assertThat(tabs.selected()).isEqualTo("Absätze");
+                tabs.select("Aufrufe");
+                assertThat(tabs.selected()).isEqualTo("Absätze");
+            });
+        }
+    }
+
+    @Test
+    void rejectsAlteredPayloadAndNonProgramSource() throws Exception {
+        assertThat(StoredCobolSource.read(snapshot("ftp", CODE.replace("BOOKING", "PAYMENT"), CODE))).isEmpty();
+        PageSnapshot jcl = snapshot("ftp", "//JOB JOB\n//STEP EXEC PGM=DEMO\n", "//JOB JOB\n//STEP EXEC PGM=DEMO\n");
+        assertThat(StoredCobolSource.read(jcl)).isEmpty();
+        try (var store = LuceneEnrichmentStore.open(home)) {
+            Enrichments enrichments = enrichments(store);
+            assertThat(enrichments.refresh(jcl).computed()).isZero();
+            assertThat(enrichments.refresh(snapshot("wiki", CODE, CODE)).computed()).isZero();
+        }
+    }
+
+    private static Enrichments enrichments(LuceneEnrichmentStore store) {
+        return new Enrichments(new KnowledgeDocumentTextProjector(), List.of(new CobolProgramEnrichment(Set.of("ftp"))),
+                store, Clock.systemUTC());
+    }
+
+    private static PageSnapshot snapshot(String source, String code, String original) throws Exception {
+        String revision = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                .digest(original.getBytes(StandardCharsets.UTF_8)));
+        PageMetadata metadata = new PageMetadata("demo", "ftp:host/" + MEMBER, "DEMO", source, null, revision,
+                null, null, PageMetadata.sorted(Map.of("ftp.path", MEMBER)));
+        String payload = "# " + MEMBER + "\n\n```\n" + code + "\n```";
+        return PageSnapshot.of(source, metadata,
+                new NativePayload(payload.getBytes(StandardCharsets.UTF_8), "text/markdown", NativePayload.DOCUMENT_TEXT),
+                Instant.now());
+    }
+
+    private static List<Object> cells(Component component) {
+        List<Object> values = new ArrayList<>();
+        if (component instanceof JTable table) {
+            for (int row = 0; row < table.getRowCount(); row++) {
+                for (int column = 0; column < table.getColumnCount(); column++) {
+                    values.add(table.getValueAt(row, column));
+                }
+            }
+        }
+        if (component instanceof Container container) {
+            for (Component child : container.getComponents()) values.addAll(cells(child));
+        }
+        return values;
+    }
+}

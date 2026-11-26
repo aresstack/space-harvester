@@ -300,6 +300,7 @@ public final class PageDetailPanel extends JPanel {
     private final JComponent tabIcons;
     /** Zweite Reiterzeile unter „Analysen“ (#499): Absätze, Begriffe, Verweise, Bilder und Aussagen. */
     private final PillTabs analysisTabs = new PillTabs();
+    private final ProgramAnalysisTabs programAnalysisTabs;
     /**
      * Ablage der Aussagenanalyse oben rechts in Aussagen und Graph (Fahrplan A3), also überall, wo der Inhalt von
      * der Ablage abhängt (UX). „Beziehungen“ liest nur Glossar-Beziehungen und Analyseschritte, nicht die Ablage.
@@ -514,6 +515,8 @@ public final class PageDetailPanel extends JPanel {
             String mediaType) {
     }
     private boolean originalLinkShown;
+    private boolean originalProgramShown;
+    private final javax.swing.JButton recomputeProgram = new javax.swing.JButton("Programmanalyse berechnen");
     /** Hilfetext der Leseansicht einer Seite; nur sichtbar, solange sie gezeigt wird. */
     static final String READING_HELP = "Die Leseansicht zeigt die Seite, wie die Quelle sie darstellt. Liegt sie im "
             + "Cache, erscheint sie sofort; die Prüfung bei der Quelle läuft im Hintergrund.\n\n"
@@ -806,9 +809,13 @@ public final class PageDetailPanel extends JPanel {
                 .tab(STATEMENTS, withBelow(statements, statementsBelow))
                 .tab(GRAPH, withBelow(graph, graphBelow))
                 .tab(RELATIONS, analysisView);
+        programAnalysisTabs = new ProgramAnalysisTabs(analysisTabs);
         // Die Unterreiter mittig, „mit Unterseiten“ rechts in der unteren Leiste mit der Lupe (Angelo 23.11.2026); die
         // übrigen Aktionen in der Kopfzeile links vom Stern. „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange
         // „Beziehungen“ gewählt ist (BG2b).
+        analysisActions.add(recomputeProgram);
+        recomputeProgram.setVisible(false);
+        recomputeProgram.addActionListener(event -> recompute(com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment.ID));
         analysisActions.add(storeField);
         analysisActions.add(analysisView.proposeIcon());
         analysisActions.add(analysisView.createIcon());
@@ -1065,6 +1072,9 @@ public final class PageDetailPanel extends JPanel {
         sourceId = null;
         pageId = null;
         page = null;
+        programAnalysisTabs.reset();
+        recomputeProgram.setVisible(false);
+        subpages.box().setVisible(true);
         // Der Graph verlässt die Seite vor den Unterseiten: Deren Abmeldung soll für die alte Seite nichts mehr laden.
         graphView.page(null);
         subpages.page(null, null, null, null);
@@ -1388,6 +1398,13 @@ public final class PageDetailPanel extends JPanel {
      * Der Unterreiter „Beziehungen“ unter „Analysen“ liest nur, solange er zu sehen ist; seine beiden Aktionen stehen
      * nur dann in der Reiterzeile. Ohne Seite steht er beim Stand und erfährt dort, ob er zu sehen ist.
      */
+    private void showProgramAnalysis(PageSnapshot snapshot) {
+        boolean program = programAnalysisTabs.show(snapshot, views);
+        subpages.box().setVisible(!program);
+        recomputeProgram.setVisible(program);
+        showRelations();
+    }
+
     private void showRelations() {
         String sub = analysisTabs.selected();
         storeField.setVisible(STATEMENTS.equals(sub) || GRAPH.equals(sub));
@@ -1716,6 +1733,7 @@ public final class PageDetailPanel extends JPanel {
         this.referencesLoaded = false;
         this.imagesLoaded = false;
         this.page = null;
+        programAnalysisTabs.pending();
         // Die Meldung von „Anhänge ablegen“ gehört zu ihrer Seite; läuft hier noch einer, erscheint sie wieder.
         leaveHarvest();
         // Ebenso die Rückmeldung von „Anhänge vorladen“: Eine fremde soll die neue Seite nicht neu laden.
@@ -2563,6 +2581,8 @@ public final class PageDetailPanel extends JPanel {
 
         showReader(loaded.reader(), page.live());
         showOriginalContent(viewable(metadata, snapshot.metadata()), snapshot.payload());
+        com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot)
+                .ifPresent(this::showOriginalProgram);
         showTextOriginal(loaded.reader());
         raw.setText(loaded.display());
         raw.setCaretPosition(0);
@@ -2603,6 +2623,7 @@ public final class PageDetailPanel extends JPanel {
 
         analysisView.steps(views, this::stepResult);
         analysisView.scope(pageScope(snapshot.key()));
+        showProgramAnalysis(snapshot);
         setActionsEnabled(true);
         browse.setEnabled(metadata.url() != null && Desktop.isDesktopSupported());
     }
@@ -2628,6 +2649,19 @@ public final class PageDetailPanel extends JPanel {
         return new PageMetadata(header.pageId(), header.resourceId(), header.title(), header.partitionKey(),
                 header.parentPageId(), header.version(), header.modifiedAt(),
                 header.url() != null ? header.url() : snapshot.url(), attributes);
+    }
+
+    private void showOriginalProgram(com.aresstack.spaceharvester.mainframe.cobol.CobolSource source) {
+        com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.register();
+        var editor = new org.fife.ui.rsyntaxtextarea.RSyntaxTextArea();
+        editor.setSyntaxEditingStyle(com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.COBOL);
+        editor.setEditable(false);
+        editor.setText(source.content());
+        editor.setCaretPosition(0);
+        fileContent.add(new org.fife.ui.rtextarea.RTextScrollPane(editor), BorderLayout.CENTER);
+        originalProgramShown = true;
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        updateFootTools(tabs.selected());
     }
 
     void showOriginalContent(PageMetadata metadata, NativePayload payload) {
@@ -3157,6 +3191,7 @@ public final class PageDetailPanel extends JPanel {
             originalVideoViewer = null;
         }
         originalLinkShown = false;
+        originalProgramShown = false;
         videoTranscriptShown = false;
         videoFrames = null;
         stopTranscriptWatch();
@@ -3454,7 +3489,7 @@ public final class PageDetailPanel extends JPanel {
         if (ATTACHMENTS.equals(visible)) {
             loadAssets(false);
         }
-        if (READING.equals(visible) && originalFileViewer == null && originalVideoViewer == null && !originalLinkShown) {
+        if (READING.equals(visible) && originalFileViewer == null && originalVideoViewer == null && !originalLinkShown && !originalProgramShown) {
             loadReading();
         }
         if (REFERENCES.equals(visible)) {
@@ -3628,7 +3663,7 @@ public final class PageDetailPanel extends JPanel {
      */
     private void loadReading() {
         AppRuntime runtime = context.runtime();
-        if (runtime == null || page == null || readingLoaded || originalFileViewer != null || originalLinkShown) {
+        if (runtime == null || page == null || readingLoaded || originalFileViewer != null || originalLinkShown || originalProgramShown) {
             return;
         }
         readingLoaded = true;
@@ -4731,6 +4766,7 @@ public final class PageDetailPanel extends JPanel {
             }
             views = result.views();
             analysisView.steps(views, this::stepResult);
+            if (page != null) showProgramAnalysis(page.snapshot());
             showReader(result.reader(), page.live());
             statementsView.page(page.snapshot(), result.reader() == null ? null : result.reader().text());
         }, error -> {
@@ -5771,6 +5807,10 @@ public final class PageDetailPanel extends JPanel {
     }
 
     void recompute() {
+        recompute(null);
+    }
+
+    private void recompute(String processor) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || page == null) {
             return;
@@ -5784,7 +5824,7 @@ public final class PageDetailPanel extends JPanel {
         feedback.working("Analysen werden berechnet …");
         Background.run(() -> {
             // Abnahme #1078: Wartet der Auftrag hinter laufenden Folgeaufträgen, sagt die Statuszeile es.
-            Enrichments.Run run = runtime.workspace().recomputeEnrichments(source, id, null, state ->
+            Enrichments.Run run = runtime.workspace().recomputeEnrichments(source, id, processor, state ->
                     javax.swing.SwingUtilities.invokeLater(() -> {
                         if (current == request) {
                             feedback.working(state == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED
@@ -5805,6 +5845,7 @@ public final class PageDetailPanel extends JPanel {
             Enrichments.Run run = result.run();
             views = result.views();
             analysisView.steps(views, this::stepResult);
+            if (page != null) showProgramAnalysis(page.snapshot());
             int caret = reader.getCaretPosition();
             showReader(result.reader(), live);
             reader.setCaretPosition(Math.min(caret, reader.getDocument().getLength()));
@@ -5884,6 +5925,7 @@ public final class PageDetailPanel extends JPanel {
         updatePreviewEnabled();
         recompute.setEnabled(enabled);
         recomputeReader.setEnabled(enabled);
+        recomputeProgram.setEnabled(enabled);
     }
 
     /** Die Überschrift der Seite für die Zeile der Bereichsanzeige; öffnet beim Überfahren die Details. */
