@@ -103,6 +103,76 @@ class StoredProgramSearchTest {
         }
     }
 
+    @Test
+    void ftpSourceIsTraversedOnceAndUnchangedAnalysesAreNotDecodedAgain() throws Exception {
+        var cobol = ftp("ftp", "APP.COBOL(BOOKING)", """
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. BOOKING.
+                       DATA DIVISION.
+                       WORKING-STORAGE SECTION.
+                       01 BOOKING-ID PIC 9.
+                       PROCEDURE DIVISION.
+                           CALL 'LEDGER'.
+                           GOBACK.
+                """);
+        var jcl = ftp("ftp", "APP.JCL(JOB1)", "//JOB1 JOB\n//STEP EXEC PGM=BOOKING\n");
+        try (var cache = LucenePageCache.open(home.resolve("pages")); var store = LuceneEnrichmentStore.open(home.resolve("analyses"))) {
+            var enrichments = enrichments(cache, store);
+            for (var page : List.of(cobol, jcl)) {
+                cache.save(page);
+                assertThat(enrichments.refresh(page).computed()).isEqualTo(1);
+            }
+            var reader = new LucenePageCacheReader(cache);
+            var loads = new java.util.concurrent.ConcurrentHashMap<PageKey, Integer>();
+            Function<PageKey, Optional<DeliveredPage>> pages = key -> {
+                loads.merge(key, 1, Integer::sum);
+                return reader.page(key).map(DeliveredPage::cached);
+            };
+            Function<DeliveredPage, List<Enrichments.View>> analyses = page -> enrichments.view(page.snapshot());
+            java.util.function.Consumer<java.util.function.Consumer<com.aresstack.spaceharvester.application.snapshot.PageHeader>> visit =
+                    visitor -> reader.sourceHeaders("ftp", null, 50).forEach(visitor);
+            var memo = new ProgramFactMemo();
+
+            var single = new StoredProgramSearch(pages, analyses, memo);
+            single.addFtp("ftp", new StoredCobolSearch(pages, analyses, memo), List.of(), visit, () -> false);
+            // Each stored page is loaded once for COBOL and JCL together, each analysis decoded once.
+            assertThat(loads).containsEntry(cobol.key(), 1).containsEntry(jcl.key(), 1);
+            assertThat(memo.derivations()).isEqualTo(2);
+
+            // Same result and order as the former two traversals.
+            var separate = new StoredProgramSearch(pages, analyses);
+            separate.addCobol(new StoredCobolSearch(pages, analyses).build("ftp", List.of(), visit, () -> false), () -> false);
+            separate.addSource("ftp", false, visit, () -> false);
+            assertThat(single.snapshot().search(Mode.ALL, null, null, "", 500, 0).hits())
+                    .isNotEmpty().isEqualTo(separate.snapshot().search(Mode.ALL, null, null, "", 500, 0).hits());
+            assertThat(single.snapshot().coverage()).isEqualTo(separate.snapshot().coverage());
+
+            // A second search reuses everything; a changed job decodes only that job again.
+            new StoredProgramSearch(pages, analyses, memo)
+                    .addFtp("ftp", new StoredCobolSearch(pages, analyses, memo), List.of(), visit, () -> false);
+            assertThat(memo.derivations()).isEqualTo(2);
+            var changed = ftp("ftp", "APP.JCL(JOB1)", "//JOB1 JOB\n//STEP EXEC PGM=LEDGER\n");
+            cache.save(changed);
+            assertThat(enrichments.refresh(changed).computed()).isEqualTo(1);
+            var after = new StoredProgramSearch(pages, analyses, memo);
+            after.addFtp("ftp", new StoredCobolSearch(pages, analyses, memo), List.of(), visit, () -> false);
+            assertThat(memo.derivations()).isEqualTo(3);
+            assertThat(after.snapshot().search(Mode.CANDIDATES, Language.JCL, null, "LEDGER", 20, 0).total()).isZero();
+            assertThat(after.snapshot().search(Mode.CALLERS, Language.JCL, null, "LEDGER", 20, 0).total()).isEqualTo(1);
+            assertThat(after.snapshot().search(Mode.CALLERS, Language.JCL, null, "BOOKING", 20, 0).total()).isZero();
+
+            // Pages a completed search no longer sees are forgotten; other sources stay.
+            memo.retain("ftp", List.of(cobol.key()));
+            assertThat(memo.size()).isEqualTo(1);
+            memo.retainSources(List.of("ndv"));
+            assertThat(memo.size()).isZero();
+
+            assertThatThrownBy(() -> new StoredProgramSearch(pages, analyses, memo)
+                    .addFtp("ftp", new StoredCobolSearch(pages, analyses, memo), List.of(), visit, () -> true))
+                    .isInstanceOf(java.util.concurrent.CancellationException.class);
+        }
+    }
+
     private static Enrichments enrichments(LucenePageCache cache, LuceneEnrichmentStore store) {
         return new Enrichments(new KnowledgeDocumentTextProjector(), List.of(
                 new CobolProgramEnrichment(Map.of("ftp", List.of(), "ftp2", List.of()), cache::find),

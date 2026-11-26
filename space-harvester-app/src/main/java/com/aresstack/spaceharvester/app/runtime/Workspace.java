@@ -100,6 +100,9 @@ public final class Workspace {
     private final AccessContext caller;
     private final GlossaryAccess glossary;
     private final ActivityLog activities;
+    /** Decoded program analyses of earlier program searches, reused while unchanged (#1486, P2). */
+    private final com.aresstack.spaceharvester.app.runtime.program.ProgramFactMemo programFacts =
+            new com.aresstack.spaceharvester.app.runtime.program.ProgramFactMemo();
 
     public Workspace(Harvester harvester, AccessGuard access, ActivityLog activities) {
         this.harvester = Objects.requireNonNull(harvester, "harvester");
@@ -538,10 +541,6 @@ public final class Workspace {
         return harvester.pages().page(caller, sourceId, pageId, refresh);
     }
 
-    /**
-     * Die lokal gespeicherte Seite, nur aus dem Cache und ohne Abruf oder Prüfung bei der Quelle; leer, wenn sie
-     * nicht lokal liegt oder nicht lesbar ist. Das Wissen des Chats liest so (ADR 0028: nur Lokales geht an die KI).
-     */
     /** Build a read-only query view of current COBOL artifacts in one configured FTP source. */
     public com.aresstack.spaceharvester.app.runtime.program.StoredCobolSearch.Snapshot storedCobolSearch(
             String sourceId, java.util.function.BooleanSupplier cancelled) {
@@ -552,11 +551,31 @@ public final class Workspace {
         if (!sourceEnabled(sourceId) || sourceDataBeingDeleted(sourceId)) {
             throw new IllegalStateException("Wissensquelle nicht verfügbar");
         }
-        var search = new com.aresstack.spaceharvester.app.runtime.program.StoredCobolSearch(
-                key -> cachedPage(key.sourceId(), key.pageId()), this::enrichments);
-        return search.build(sourceId,
-                com.aresstack.spaceharvester.app.runtime.program.StoredCopybooks.libraries(config.options().get("syslib")),
-                visitor -> harvester.pages().visitCachedHeaders(caller, sourceId, visitor, cancelled), cancelled);
+        var seen = new java.util.HashSet<com.aresstack.spaceharvester.application.snapshot.PageKey>();
+        var snapshot = storedCobol().build(sourceId, syslib(config),
+                visitor -> visitProgramHeaders(sourceId, seen, visitor, cancelled), cancelled);
+        programFacts.retain(sourceId, seen);
+        return snapshot;
+    }
+
+    private com.aresstack.spaceharvester.app.runtime.program.StoredCobolSearch storedCobol() {
+        return new com.aresstack.spaceharvester.app.runtime.program.StoredCobolSearch(
+                key -> cachedPage(key.sourceId(), key.pageId()), this::enrichments, programFacts);
+    }
+
+    private static List<String> syslib(SourceSettingsConfig config) {
+        return com.aresstack.spaceharvester.app.runtime.program.StoredCopybooks.libraries(config.options().get("syslib"));
+    }
+
+    /** Visit the stored headers of a program source and note every page seen, so the memo can drop vanished ones. */
+    private void visitProgramHeaders(String sourceId,
+                                     java.util.Set<com.aresstack.spaceharvester.application.snapshot.PageKey> seen,
+                                     java.util.function.Consumer<com.aresstack.spaceharvester.application.snapshot.PageHeader> visitor,
+                                     java.util.function.BooleanSupplier cancelled) {
+        harvester.pages().visitCachedHeaders(caller, sourceId, header -> {
+            seen.add(header.key());
+            visitor.accept(header);
+        }, cancelled);
     }
 
     public java.util.Set<String> programChatSources() {
@@ -603,8 +622,9 @@ public final class Workspace {
     public com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch.Snapshot storedProgramSearch(
             java.util.Set<String> sourceIds, java.util.function.BooleanSupplier cancelled) {
         var search = new com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch(
-                key -> cachedPage(key.sourceId(), key.pageId()), this::enrichments);
+                key -> cachedPage(key.sourceId(), key.pageId()), this::enrichments, programFacts);
         var configured = harvester.sourceManagement().sources();
+        programFacts.retainSources(configured.stream().map(source -> source.id()).toList());
         for (String sourceId : sourceIds.stream().sorted().toList()) {
             if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
                 throw new java.util.concurrent.CancellationException();
@@ -617,13 +637,23 @@ public final class Workspace {
             if (!sourceEnabled(sourceId) || sourceDataBeingDeleted(sourceId)) {
                 throw new IllegalStateException("Wissensquelle nicht verfügbar");
             }
-            if (!ndv) search.addCobol(storedCobolSearch(sourceId, cancelled), cancelled);
-            search.addSource(sourceId, ndv, visitor -> harvester.pages().visitCachedHeaders(
-                    caller, sourceId, visitor, cancelled), cancelled);
+            // One traversal per source: COBOL and JCL of an FTP source share every page load (#1486, P2).
+            var seen = new java.util.HashSet<com.aresstack.spaceharvester.application.snapshot.PageKey>();
+            if (ndv) {
+                search.addSource(sourceId, true, visitor -> visitProgramHeaders(sourceId, seen, visitor, cancelled), cancelled);
+            } else {
+                search.addFtp(sourceId, storedCobol(), syslib(config),
+                        visitor -> visitProgramHeaders(sourceId, seen, visitor, cancelled), cancelled);
+            }
+            programFacts.retain(sourceId, seen);
         }
         return search.snapshot();
     }
 
+    /**
+     * Die lokal gespeicherte Seite, nur aus dem Cache und ohne Abruf oder Prüfung bei der Quelle; leer, wenn sie
+     * nicht lokal liegt oder nicht lesbar ist. Das Wissen des Chats liest so (ADR 0028: nur Lokales geht an die KI).
+     */
     public Optional<DeliveredPage> cachedPage(String sourceId, String pageId) {
         try {
             return harvester.pages().cached(caller, sourceId, pageId);

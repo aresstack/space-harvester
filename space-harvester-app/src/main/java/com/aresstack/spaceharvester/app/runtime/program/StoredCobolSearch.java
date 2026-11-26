@@ -23,19 +23,31 @@ public final class StoredCobolSearch {
     private static final Pattern MEMBER = Pattern.compile("(.+)\\(([A-Z@#$][A-Z0-9@#$-]{0,7})\\)");
     private final Function<PageKey, Optional<DeliveredPage>> pages;
     private final Function<DeliveredPage, List<Enrichments.View>> analyses;
+    private final ProgramFactMemo memo;
 
     public StoredCobolSearch(Function<PageKey, Optional<DeliveredPage>> pages,
                              Function<DeliveredPage, List<Enrichments.View>> analyses) {
+        this(pages, analyses, new ProgramFactMemo());
+    }
+
+    /** @param memo facts derived by earlier searches, reused for unchanged analyses (#1486, P2) */
+    public StoredCobolSearch(Function<PageKey, Optional<DeliveredPage>> pages,
+                             Function<DeliveredPage, List<Enrichments.View>> analyses, ProgramFactMemo memo) {
         this.pages = pages;
         this.analyses = analyses;
+        this.memo = memo;
     }
 
     public Snapshot build(String sourceId, List<String> syslib,
                           Consumer<Consumer<PageHeader>> visitHeaders, BooleanSupplier cancelled) {
-        Collector collector = new Collector(sourceId, List.copyOf(syslib), cancelled);
-        visitHeaders.accept(collector::accept);
-        collector.checkCancelled();
+        Collector collector = collector(sourceId, syslib, cancelled);
+        visitHeaders.accept(header -> collector.accept(header, () -> pages.apply(header.key())));
         return collector.result();
+    }
+
+    /** Collect the COBOL view of one source while another traversal of the same headers loads each page once. */
+    public Collector collector(String sourceId, List<String> syslib, BooleanSupplier cancelled) {
+        return new Collector(sourceId, List.copyOf(syslib), cancelled);
     }
 
     /**
@@ -79,7 +91,8 @@ public final class StoredCobolSearch {
         }
     }
 
-    private final class Collector {
+    /** The COBOL view of one source, fed header by header. */
+    public final class Collector {
         private final String sourceId;
         private final List<String> syslib;
         private final BooleanSupplier cancelled;
@@ -93,13 +106,14 @@ public final class StoredCobolSearch {
             this.cancelled = cancelled;
         }
 
-        void accept(PageHeader header) {
+        /** @param load the readable stored page of this header; called only for dataset members */
+        public void accept(PageHeader header, java.util.function.Supplier<Optional<DeliveredPage>> load) {
             checkCancelled();
             if (!sourceId.equals(header.key().sourceId())) return;
             String path = header.metadata().attributes().getOrDefault("ftp.path", "");
             var member = MEMBER.matcher(path);
             if (!member.matches()) return;
-            var stored = pages.apply(header.key());
+            var stored = load.get();
             if (stored.isEmpty()) {
                 missingContent++;
                 return;
@@ -136,7 +150,7 @@ public final class StoredCobolSearch {
             }
             var origins = dependencies.get();
             origins.put(source.name(), page);
-            var programFacts = CobolSearch.programFacts(source.name(), page.snapshot().revision(), value.analysis());
+            var programFacts = stored.get().facts(page.snapshot().revision());
             if (programFacts.isEmpty()) {
                 missingAnalysis++;
                 return;
@@ -165,8 +179,6 @@ public final class StoredCobolSearch {
             if (value.analysis().isPartial()) partial++;
         }
 
-        private record Current(CobolProgramEnrichment.Artifact artifact, String identity) { }
-
         private Optional<Current> current(DeliveredPage page, CobolSource source) {
             var view = analyses.apply(page).stream().filter(item ->
                     CobolProgramEnrichment.ID.equals(item.enrichment().processorId())).findFirst().orElse(null);
@@ -175,11 +187,14 @@ public final class StoredCobolSearch {
                     || view.enrichment().status() != Enrichment.Status.OK
                     || !CobolProgramEnrichment.VERSION.equals(view.enrichment().processorVersion())) return Optional.empty();
             try {
-                var artifact = CobolProgramEnrichment.read(view.enrichment().payloadJson());
+                // The identity covers processor, version and payload, so an unchanged analysis is decoded once.
+                String identity = ProgramAnalysisAccess.identity(view.enrichment());
+                Current current = memo.facts(page.snapshot().key(), identity,
+                        () -> new Current(CobolProgramEnrichment.read(view.enrichment().payloadJson()), identity));
+                var artifact = current.artifact();
                 return page.snapshot().payload().rawSha256().equals(artifact.rawSha256())
                         && source.name().equals(artifact.source()) && syslib.equals(artifact.syslib())
-                        ? Optional.of(new Current(artifact, ProgramAnalysisAccess.identity(view.enrichment())))
-                        : Optional.empty();
+                        ? Optional.of(current) : Optional.empty();
             } catch (RuntimeException invalid) {
                 return Optional.empty();
             }
@@ -212,8 +227,34 @@ public final class StoredCobolSearch {
                     java.util.stream.Stream.concat(left.stream(), right.stream()).distinct().toList());
         }
 
-        private Snapshot result() {
+        /** The view after all headers were fed; fails if the search was cancelled meanwhile. */
+        public Snapshot result() {
+            checkCancelled();
             return new Snapshot(new CobolSearch(facts), sourceId, programs, partial, missingAnalysis, missingContent, candidates, evidence);
+        }
+    }
+
+    /** A decoded current analysis and, per page revision, the search facts derived from it. */
+    private static final class Current {
+        private final CobolProgramEnrichment.Artifact artifact;
+        private final String identity;
+        private volatile String revision;
+        private volatile List<CobolSearch.Fact> facts;
+
+        Current(CobolProgramEnrichment.Artifact artifact, String identity) {
+            this.artifact = artifact;
+            this.identity = identity;
+        }
+
+        CobolProgramEnrichment.Artifact artifact() { return artifact; }
+        String identity() { return identity; }
+
+        synchronized List<CobolSearch.Fact> facts(String pageRevision) {
+            if (facts == null || !java.util.Objects.equals(revision, pageRevision)) {
+                facts = List.copyOf(CobolSearch.programFacts(artifact.source(), pageRevision, artifact.analysis()));
+                revision = pageRevision;
+            }
+            return facts;
         }
     }
 

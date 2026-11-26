@@ -131,21 +131,57 @@ public final class StoredProgramSearch {
     private final List<Fact> facts = new ArrayList<>();
     private final Map<String, StoredCobolSearch.Snapshot> cobol = new LinkedHashMap<>();
     private final List<String> coverage = new ArrayList<>();
+    private final ProgramFactMemo memo;
 
     public StoredProgramSearch(Function<PageKey, Optional<DeliveredPage>> pages,
                                Function<DeliveredPage, List<Enrichments.View>> analyses) {
+        this(pages, analyses, new ProgramFactMemo());
+    }
+
+    /** @param memo analyses decoded by earlier searches, reused while unchanged (#1486, P2) */
+    public StoredProgramSearch(Function<PageKey, Optional<DeliveredPage>> pages,
+                               Function<DeliveredPage, List<Enrichments.View>> analyses, ProgramFactMemo memo) {
         this.pages = pages;
         this.analyses = analyses;
+        this.memo = memo;
     }
 
     public void addCobol(StoredCobolSearch.Snapshot snapshot, BooleanSupplier cancelled) {
+        addCobol(facts.size(), coverage.size(), snapshot, cancelled);
+    }
+
+    private void addCobol(int factIndex, int coverageIndex, StoredCobolSearch.Snapshot snapshot, BooleanSupplier cancelled) {
         cobol.put(snapshot.sourceId(), snapshot);
-        coverage.add(snapshot.sourceId() + " / COBOL: " + snapshot.coverage());
+        coverage.add(coverageIndex, snapshot.sourceId() + " / COBOL: " + snapshot.coverage());
+        var converted = new ArrayList<Fact>();
         for (var fact : snapshot.search().facts()) {
             checkpoint(cancelled);
-            var converted = cobolFact(snapshot, fact);
-            if (converted != null) facts.add(converted);
+            var item = cobolFact(snapshot, fact);
+            if (item != null) converted.add(item);
         }
+        facts.addAll(factIndex, converted);
+    }
+
+    /**
+     * COBOL and JCL of one FTP source in a single traversal of its headers, loading each stored page once (#1486, P2).
+     * Results and their order equal {@link #addCobol} followed by {@link #addSource}.
+     */
+    public void addFtp(String sourceId, StoredCobolSearch cobolSearch, List<String> syslib,
+                       Consumer<Consumer<PageHeader>> visitHeaders, BooleanSupplier cancelled) {
+        int factIndex = facts.size();
+        int coverageIndex = coverage.size();
+        var collector = cobolSearch.collector(sourceId, syslib, cancelled);
+        int[] counts = new int[3];
+        visitHeaders.accept(header -> {
+            checkpoint(cancelled);
+            if (!sourceId.equals(header.key().sourceId())) return;
+            var stored = pages.apply(header.key());
+            collector.accept(header, () -> stored);
+            program(false, header, stored, counts);
+        });
+        checkpoint(cancelled);
+        addCobol(factIndex, coverageIndex, collector.result(), cancelled);
+        coverage(sourceId, false, counts);
     }
 
     private static Fact cobolFact(StoredCobolSearch.Snapshot snapshot, CobolSearch.Fact fact) {
@@ -177,45 +213,52 @@ public final class StoredProgramSearch {
         visitHeaders.accept(header -> {
             checkpoint(cancelled);
             if (!sourceId.equals(header.key().sourceId())) return;
-            var stored = pages.apply(header.key());
-            if (stored.isEmpty() || !header.key().equals(stored.get().snapshot().key())
-                    || !header.key().equals(stored.get().header().key())) {
-                counts[2]++;
-                return;
-            }
-            var page = stored.get();
-            if (ndv) {
-                var code = StoredNaturalSource.read(page.snapshot());
-                if (code.isEmpty()) { counts[2]++; return; }
-                var analysis = current(page, NaturalProgramEnrichment.ID, NaturalProgramEnrichment.VERSION,
-                        NaturalProgramEnrichment::read);
-                var artifact = analysis.map(Stored::artifact);
-                if (artifact.isEmpty() || !page.snapshot().payload().rawSha256().equals(artifact.get().rawSha256())
-                        || !code.get().library().equals(artifact.get().analysis().library())
-                        || !code.get().name().equals(artifact.get().analysis().name())
-                        || !code.get().extension().equals(artifact.get().analysis().extension())) {
-                    counts[1]++;
-                    return;
-                }
-                natural(page, artifact.get().analysis(), analysis.get().identity());
-            } else {
-                var code = JclProgramEnrichment.source(page.snapshot());
-                if (code.isEmpty()) return;
-                var analysis = current(page, JclProgramEnrichment.ID, JclProgramEnrichment.VERSION, JclProgramEnrichment::read);
-                var artifact = analysis.map(Stored::artifact);
-                if (artifact.isEmpty() || !page.snapshot().payload().rawSha256().equals(artifact.get().rawSha256())
-                        || !code.get().path().equals(artifact.get().analysis().source())) {
-                    counts[1]++;
-                    return;
-                }
-                jcl(page, artifact.get().analysis(), analysis.get().identity());
-            }
-            counts[0]++;
+            program(ndv, header, pages.apply(header.key()), counts);
         });
         checkpoint(cancelled);
+        coverage(sourceId, ndv, counts);
+    }
+
+    private void coverage(String sourceId, boolean ndv, int[] counts) {
         coverage.add(sourceId + (ndv ? " / Natural" : " / JCL") + ": " + counts[0]
                 + " aktuelle Analysen · " + counts[1] + " ohne aktuelle Analyse · " + counts[2]
                 + " nicht verfügbare oder nicht unterstützte Objekte");
+    }
+
+    private void program(boolean ndv, PageHeader header, Optional<DeliveredPage> stored, int[] counts) {
+        if (stored.isEmpty() || !header.key().equals(stored.get().snapshot().key())
+                || !header.key().equals(stored.get().header().key())) {
+            counts[2]++;
+            return;
+        }
+        var page = stored.get();
+        if (ndv) {
+            var code = StoredNaturalSource.read(page.snapshot());
+            if (code.isEmpty()) { counts[2]++; return; }
+            var analysis = current(page, NaturalProgramEnrichment.ID, NaturalProgramEnrichment.VERSION,
+                    NaturalProgramEnrichment::read);
+            var artifact = analysis.map(Stored::artifact);
+            if (artifact.isEmpty() || !page.snapshot().payload().rawSha256().equals(artifact.get().rawSha256())
+                    || !code.get().library().equals(artifact.get().analysis().library())
+                    || !code.get().name().equals(artifact.get().analysis().name())
+                    || !code.get().extension().equals(artifact.get().analysis().extension())) {
+                counts[1]++;
+                return;
+            }
+            natural(page, artifact.get().analysis(), analysis.get().identity());
+        } else {
+            var code = JclProgramEnrichment.source(page.snapshot());
+            if (code.isEmpty()) return;
+            var analysis = current(page, JclProgramEnrichment.ID, JclProgramEnrichment.VERSION, JclProgramEnrichment::read);
+            var artifact = analysis.map(Stored::artifact);
+            if (artifact.isEmpty() || !page.snapshot().payload().rawSha256().equals(artifact.get().rawSha256())
+                    || !code.get().path().equals(artifact.get().analysis().source())) {
+                counts[1]++;
+                return;
+            }
+            jcl(page, artifact.get().analysis(), analysis.get().identity());
+        }
+        counts[0]++;
     }
 
     private record Stored<T>(T artifact, String identity) { }
@@ -227,8 +270,12 @@ public final class StoredProgramSearch {
                 && version.equals(view.enrichment().processorVersion())
                 && page.snapshot().key().equals(view.enrichment().key())).findFirst();
         try {
-            return stored.map(view -> new Stored<>(decode.apply(view.enrichment().payloadJson()),
-                    ProgramAnalysisAccess.identity(view.enrichment())));
+            // The identity covers processor, version and payload, so an unchanged analysis is decoded once.
+            return stored.map(view -> {
+                String identity = ProgramAnalysisAccess.identity(view.enrichment());
+                return memo.facts(page.snapshot().key(), identity,
+                        () -> new Stored<>(decode.apply(view.enrichment().payloadJson()), identity));
+            });
         } catch (RuntimeException invalid) {
             return Optional.empty();
         }
