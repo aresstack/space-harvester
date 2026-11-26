@@ -641,6 +641,10 @@ public final class CommandDeck {
     }
 
     /** Woher der Bereich Dateien die freigegebenen Ordner (Einstellungen › Dateizugriff) als Orte nimmt. */
+    public void folderIndexAction(com.aresstack.spaceharvester.app.ui.LocalFolderIndexAction action) {
+        files.folderIndexAction((parent, location) -> action.start(parent, location, files::indexStatus));
+    }
+
     public void sharedFolders(java.util.function.Supplier<java.util.List<java.nio.file.Path>> folders) {
         sharedFolders = folders == null ? java.util.List::of : folders;
     }

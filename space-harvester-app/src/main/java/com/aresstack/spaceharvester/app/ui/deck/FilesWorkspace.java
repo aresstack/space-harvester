@@ -185,6 +185,8 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
     private final JPanel browserActions;
     private final JPanel documentActions;
     private final javax.swing.JButton open;
+    private final javax.swing.JButton indexFolder;
+    private java.util.function.BiConsumer<Component, String> indexAction;
     private final javax.swing.JButton delete;
     private final javax.swing.JButton save;
     private final javax.swing.JButton reload;
@@ -280,7 +282,9 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         var newFolder = DeckBars.action(FilesIcons.newFolder(), "Neuer Ordner", () -> askName(true));
         var newFile = DeckBars.action(FilesIcons.newFile(), "Neue Datei", () -> askName(false));
         delete = DeckBars.action(Glyph.TRASH, "Gewählte Einträge löschen (Entf)", this::deleteSelected);
-        browserActions = DeckBars.tools(open, newFolder, newFile, delete);
+        indexFolder = DeckBars.action(Glyph.GRAPH_PLUS, "Ordner im Space Harvester indexieren", this::indexSelectedFolder);
+        browserActions = DeckBars.tools(open, newFolder, newFile, delete, indexFolder);
+        indexFolder.setVisible(false);
         save = DeckBars.action(FilesIcons.save(), "Änderungen speichern (Strg+S)", () -> {
             if (selected != null) {
                 selected.save();
@@ -699,6 +703,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         int count = table.getSelectedRowCount();
         open.setEnabled(count == 1);
         delete.setEnabled(count > 0);
+        indexFolder.setEnabled(indexAction != null && indexTarget().isPresent());
         if (selected != null) {
             EditorSession.State state = selected.state();
             save.setEnabled(selected.dirty() && (state == EditorSession.State.READY
@@ -1301,6 +1306,10 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                     () -> toggleBookmark(entry.location())));
             menu.addSeparator();
         }
+        if (indexAction != null && indexTarget().isPresent()) {
+            menu.add(item("Ordner indexieren …", this::indexSelectedFolder));
+            menu.addSeparator();
+        }
         menu.add(item("Alles auswählen", table::selectAll));
         menu.add(item("Nichts auswählen", table::clearSelection));
         menu.addSeparator();
@@ -1312,6 +1321,39 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                     this::deleteSelected));
         }
         menu.show(table, event.getX(), event.getY());
+    }
+
+    public void folderIndexAction(java.util.function.BiConsumer<Component, String> action) {
+        indexAction = action;
+        indexFolder.setVisible(action != null);
+        showActions();
+    }
+
+    private Optional<String> indexTarget() {
+        if (selected != null || browser.loading() || browser.failure().isPresent()) {
+            return Optional.empty();
+        }
+        List<FileEntry> chosen = selectedEntries();
+        String location = chosen.isEmpty() ? browser.location().orElse(null)
+                : chosen.size() == 1 && chosen.getFirst().directory() ? chosen.getFirst().location() : null;
+        if (location == null || location.startsWith("\\\\") || SharePointPaths.isWebUrl(location)) {
+            return Optional.empty();
+        }
+        try {
+            return java.nio.file.Path.of(location).isAbsolute() ? Optional.of(location) : Optional.empty();
+        } catch (java.nio.file.InvalidPathException invalid) {
+            return Optional.empty();
+        }
+    }
+
+    private void indexSelectedFolder() {
+        if (indexAction != null) {
+            indexTarget().ifPresent(location -> indexAction.accept(this, location));
+        }
+    }
+
+    public void indexStatus(String message, boolean error) {
+        status(message, error);
     }
 
     private void showPlaces(Component anchor) {
