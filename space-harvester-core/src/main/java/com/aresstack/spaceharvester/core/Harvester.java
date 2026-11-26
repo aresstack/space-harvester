@@ -3679,6 +3679,18 @@ public final class Harvester implements AutoCloseable {
         }
 
         /**
+         * Die Quellentypen, die ein so gebauter Harvester mit {@link Harvester#sourceTypes()} meldet, ohne ihn zu
+         * starten: für Oberflächen, die die Liste auch ohne laufende Laufzeit brauchen (Quellenformular). Verlangt wie
+         * {@link #build()} ein {@link #dataDirectory}.
+         */
+        public List<SourceType> sourceTypes() {
+            if (dataDirectory == null) {
+                throw new IllegalStateException("dataDirectory fehlt");
+            }
+            return ConfiguredSourceCatalog.types(adapters());
+        }
+
+        /**
          * Die Quellentypen: die des Core, ein ersetzter an seinem Platz, eigene neue dahinter. Mit
          * {@link #configuration} liest der eingebaute Typ {@code files} die freigegebenen Ordner bei jedem Zugriff aus
          * der wirksamen Konfiguration, ohne sie keine.

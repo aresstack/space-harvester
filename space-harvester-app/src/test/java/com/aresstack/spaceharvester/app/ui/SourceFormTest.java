@@ -511,6 +511,36 @@ class SourceFormTest {
         });
     }
 
+    /**
+     * Ohne laufende Laufzeit (noch beim Start, nach einem gescheiterten Neustart) zeigte „Art“ nur Confluence und
+     * Lokale Dateien, weil das Formular dann eine eigene Zweierliste nahm. Jetzt kommt die Liste immer aus denselben
+     * Adaptern wie die der Laufzeit.
+     */
+    @Test
+    void withoutRuntimeTheKindListsEveryTypeOfTheRuntime() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        assertThat(context.runtime()).as("Laufzeit läuft nicht").isNull();
+
+        AtomicReference<List<String>> without = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> without.set(items(new SourceForm(context).kind)));
+        assertThat(without.get()).startsWith("Confluence (Data Center/Server)", "Lokale Dateien (Ordner)")
+                .contains("SharePoint", "JES");
+
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(context.runtime()).isNotNull();
+        AtomicReference<List<String>> with = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> with.set(items(new SourceForm(context).kind)));
+        assertThat(with.get()).as("dieselbe Liste mit und ohne Laufzeit").isEqualTo(without.get())
+                .hasSize(context.runtime().workspace().sourceTypes().size());
+    }
+
     private static List<String> items(JComboBox<String> combo) {
         List<String> items = new ArrayList<>();
         for (int i = 0; i < combo.getItemCount(); i++) {

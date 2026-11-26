@@ -183,7 +183,7 @@ final class SourceForm {
         Comic.style(sessionValue);
         PasswordReveal.install(sessionValue);
 
-        for (SourceType type : sourceTypes(context)) {
+        for (SourceType type : context.sourceTypes()) {
             String label = label(type);
             types.put(label, type);
             kind.addItem(label);
@@ -922,28 +922,6 @@ final class SourceForm {
     private boolean usesBaseUrl() {
         SourceType type = selectedType();
         return type != null && type.baseUrl();
-    }
-
-    /**
-     * Die Typen des Core ({@code Harvester.sourceTypes()}, #375) in seiner Reihenfolge; ohne Laufzeit nur Confluence
-     * und Ordner.
-     */
-    private static List<SourceType> sourceTypes(AppContext context) {
-        AppRuntime runtime = context.runtime();
-        if (runtime != null) {
-            try {
-                List<SourceType> listed = runtime.workspace().sourceTypes();
-                if (!listed.isEmpty()) {
-                    return listed;
-                }
-            } catch (RuntimeException e) {
-                // Ohne Liste bleiben die beiden Arten mit eigenem Formular.
-            }
-        }
-        return List.of(new SourceType(SourceDraft.CONFLUENCE, "Confluence", false, null, List.of(),
-                        List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC, SourceType.AuthMode.PAT),
-                        false, true),
-                new SourceType(SourceDraft.FILES, "Ordner", false, "directory", List.of(), List.of()));
     }
 
     /** Confluence und Ordner mit den bisherigen Worten, sonst der Anzeigename des Core. */
