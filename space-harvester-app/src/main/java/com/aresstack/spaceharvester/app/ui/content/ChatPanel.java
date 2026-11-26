@@ -283,6 +283,7 @@ public final class ChatPanel extends JPanel {
     private JLayeredPane transcriptLayers;
     private final JLabel emptyNote = Comic.muted(EMPTY_TRANSCRIPT);
     private final JScrollPane transcriptScroll;
+    private final com.aresstack.spaceharvester.app.ui.controls.BottomFollow bottom;
     private final BubblePalette bubbles = BubblePalette.windowsPhoneInspired();
     /** Die stille Statuszeile des Wissens über dem Composer. */
     private final JTextArea knowledge = Comic.note(" ");
@@ -449,6 +450,9 @@ public final class ChatPanel extends JPanel {
         transcriptScroll = Comic.scroll(transcriptHolder);
         transcriptScroll.setBorder(BorderFactory.createEmptyBorder());
         transcriptScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        // Angelo 26.11.2026: Während der Antwort nur mitrollen, solange er unten steht; hochrollen hält es an.
+        bottom = com.aresstack.spaceharvester.app.ui.controls.BottomFollow.install(
+                transcriptScroll.getVerticalScrollBar());
         // Reserve a separate right-hand lane for playback while keeping its alignment with the reader.
         transcriptLayers = new JLayeredPane() {
             @Override
@@ -2133,6 +2137,7 @@ public final class ChatPanel extends JPanel {
         addAreaMark(lastQuestion(chat), area, scopeKey);
         long now = System.currentTimeMillis();
         addBubble(BubbleSide.RIGHT, bubbles.getUserBackground(), bubbles.getUserForeground(), "Du", question, now);
+        bottom.jump(); // die eigene Frage steht unten, die Antwort darunter rollt wieder mit
         if (home == null) {
             home = store.folder(stored());
         }
@@ -3057,11 +3062,10 @@ public final class ChatPanel extends JPanel {
         showChatName();
     }
 
+    /** Rollt mit, solange der Nutzer unten steht; hat er hochgerollt, bleibt der Verlauf stehen
+     * ({@link com.aresstack.spaceharvester.app.ui.controls.BottomFollow}). */
     private void scrollDown() {
-        SwingUtilities.invokeLater(() -> {
-            javax.swing.JScrollBar bar = transcriptScroll.getVerticalScrollBar();
-            bar.setValue(bar.getMaximum());
-        });
+        bottom.follow();
     }
 
     // ------------------------------------------------------------------ Chats des Bereichs
@@ -3109,6 +3113,7 @@ public final class ChatPanel extends JPanel {
         }
         transcript.revalidate();
         transcript.repaint();
+        bottom.jump(); // ein geöffneter Chat steht unten, auch wenn im vorigen hochgerollt war
         status.setText(" ");
         editor.setText("");
         showChatName();
