@@ -65,6 +65,23 @@ public final class Background {
         ACTIVITY.awaitIdle(timeout);
     }
 
+    /**
+     * Begin a new mark for {@link #awaitIdle(long, java.time.Duration)}: work started from now on (and its completions
+     * and follow-ups) belongs to it, work still running from earlier does not.
+     */
+    static long mark() {
+        return ACTIVITY.mark();
+    }
+
+    /** Await the background tasks and completion callbacks started since {@code mark}, before closing test fixtures. */
+    static void awaitIdle(long mark, java.time.Duration timeout)
+            throws InterruptedException, java.util.concurrent.TimeoutException {
+        if (SwingUtilities.isEventDispatchThread()) {
+            throw new IllegalStateException("Await background activity outside the event dispatch thread");
+        }
+        ACTIVITY.awaitIdle(mark, timeout);
+    }
+
     @FunctionalInterface
     public interface ThrowingRunnable {
         void run() throws Exception;
