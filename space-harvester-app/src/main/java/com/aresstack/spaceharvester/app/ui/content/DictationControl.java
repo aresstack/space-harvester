@@ -23,8 +23,16 @@ public interface DictationControl {
         default void partial(String text) {
         }
 
-        /** Replace the provisional preview; do not commit it to the draft. */
-        default void preview(String text) { }
+        /**
+         * „Live mitschreiben“: ersetzt den Live-Text dieser Aufnahme im Entwurf. {@code committed} steht fest,
+         * {@code provisional} kann die nächste Erkennung noch ändern.
+         */
+        default void live(String committed, String provisional) {
+        }
+
+        /** Der Live-Text ist fertig ({@code text}); danach eintreffende Abschnitte folgen dahinter. */
+        default void liveDone(String text) {
+        }
 
         void recognized(String text);
 
@@ -36,6 +44,10 @@ public interface DictationControl {
 
     /** Tooltip-Zusatz des Knopfs: das Modell oder, wenn nicht verfügbar, der Grund. */
     String description();
+
+    /** Schaltet zwischen „erst komplett“ und „live mitschreiben“ um, auch während der Aufnahme. */
+    default void setLive(boolean live) {
+    }
 
     /** Öffnet das Mikrofon und nimmt auf; Fehler (kein Mikrofon) kommen über {@link Result#failed}. */
     void start(Result result);

@@ -64,10 +64,24 @@ final class WhisperDictationService {
         return live.finish().getText();
     }
 
-    /** Decode a frozen short sample using the existing guarded and padded Whisper pipeline. */
-    synchronized String preview(WhisperAudioSource window) throws IOException {
+    /**
+     * Erkennt den Ausschnitt {@code [start, end)} der Aufnahme mit derselben Pipeline (Hochpass, VAD, geschützter
+     * Decoder) und liefert die Segmente mit Positionen in Abtastwerten der Aufnahme; für {@link LiveTranscript}.
+     */
+    synchronized List<LiveTranscript.Segment> decode(WhisperAudioSource recording, long start, long end)
+            throws IOException {
         load();
-        return audioPipeline.transcribe(window, transcriber, ignored -> { }).getText();
+        TranscriptionResult result = audioPipeline.transcribe(AudioWindow.capture(recording, start, end), transcriber,
+                ignored -> { });
+        List<LiveTranscript.Segment> segments = new java.util.ArrayList<>();
+        for (TranscriptionSegment segment : result.getSegments()) {
+            segments.add(new LiveTranscript.Segment(start + segment.getStartMillis() * SAMPLE_RATE / 1000,
+                    start + segment.getEndMillis() * SAMPLE_RATE / 1000, segment.getText()));
+        }
+        if (segments.isEmpty() && !result.getText().isBlank()) {
+            segments.add(new LiveTranscript.Segment(start, end, result.getText()));
+        }
+        return segments;
     }
 
     private void load() throws IOException {
@@ -85,6 +99,22 @@ final class WhisperDictationService {
 
     synchronized String transcribe(RecordedSpeech speech) throws IOException {
         return transcribe(speech, ignored -> { });
+    }
+
+    /** Wie {@link #transcribe(RecordedSpeech, java.util.function.Consumer)}, aber erst ab Abtastwert {@code from}. */
+    synchronized String transcribe(RecordedSpeech speech, long from, java.util.function.Consumer<String> onWindow)
+            throws IOException {
+        if (from <= 0) {
+            return transcribe(speech, onWindow);
+        }
+        load();
+        LOG.info("Spracheingabe: Rest ab " + seconds(from * 1000L / SAMPLE_RATE) + " wird vollständig erkannt");
+        return audioPipeline.transcribe(AudioWindow.capture(speech, from, speech.sampleCount()), transcriber, window -> {
+            logWindow(window);
+            if (!window.getText().isBlank()) {
+                onWindow.accept(window.getText());
+            }
+        }).getText();
     }
 
     /** Erkennt die Aufnahme und meldet den Text jedes fertigen Fensters, sobald es erkannt ist. */

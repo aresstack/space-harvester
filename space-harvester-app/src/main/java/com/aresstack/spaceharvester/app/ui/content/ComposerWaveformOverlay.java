@@ -18,7 +18,8 @@ import java.awt.event.MouseEvent;
  * Hintergrund, nur die Live-Balken (dunkles Comic-Grün, neueste rechts) als Berge von einer flachen Grundlinie, damit
  * Text und Cursor sichtbar und bearbeitbar bleiben. Dazu die rote Signalschwelle, die der Benutzer während der
  * Aufnahme hoch- und runterzieht: darunter gilt der Pegel als Hintergrundrauschen (blasse Balken), darüber als
- * Sprache. Nur das Greifband der Linie nimmt Mausereignisse an, alles andere geht an den Editor durch.
+ * Sprache. Ein Klick auf die Balken schaltet zwischen „erst komplett“ und „live mitschreiben“ um (Angelo 26.11.2026,
+ * wie ChatGPT). Nur das Greifband der Linie und die Balken nehmen Mausereignisse an, alles andere geht an den Editor.
  */
 final class ComposerWaveformOverlay extends JComponent {
 
@@ -37,14 +38,27 @@ final class ComposerWaveformOverlay extends JComponent {
     private boolean active;
     private int thresholdPercent = 8;
     private boolean dragging;
+    private boolean live;
+    private String liveName = "";
+    private String completeName = "";
+    private Runnable toggle = () -> { };
 
     ComposerWaveformOverlay() {
         setOpaque(false);
         MouseAdapter mouse = new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent event) {
-                dragging = true;
-                applyDrag(event.getY());
+                if (onGate(event.getY())) {
+                    dragging = true;
+                    applyDrag(event.getY());
+                }
+            }
+
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (!onGate(event.getY()) && onBars(event.getX(), event.getY())) {
+                    toggle.run();
+                }
             }
 
             @Override
@@ -62,12 +76,35 @@ final class ComposerWaveformOverlay extends JComponent {
 
             @Override
             public void mouseMoved(MouseEvent event) {
-                Cursors.set(ComposerWaveformOverlay.this, Cursor.getPredefinedCursor(Cursor.N_RESIZE_CURSOR));
+                Cursors.set(ComposerWaveformOverlay.this, Cursor.getPredefinedCursor(onGate(event.getY())
+                        ? Cursor.N_RESIZE_CURSOR : Cursor.HAND_CURSOR));
             }
         };
         addMouseListener(mouse);
         addMouseMotionListener(mouse);
-        setToolTipText("Signalschwelle – ziehen: alles darunter gilt als Hintergrundrauschen");
+        setToolTipText("");
+    }
+
+    /** Die gewählte Art der Spracheingabe und ihre beiden Namen (für den Tooltip). */
+    void setLive(boolean value, String liveLabel, String completeLabel) {
+        live = value;
+        liveName = liveLabel;
+        completeName = completeLabel;
+        repaint();
+    }
+
+    /** Wird bei einem Klick auf die Balken ausgeführt. */
+    void onToggle(Runnable action) {
+        toggle = action == null ? () -> { } : action;
+    }
+
+    @Override
+    public String getToolTipText(MouseEvent event) {
+        if (onGate(event.getY())) {
+            return "Signalschwelle – ziehen: alles darunter gilt als Hintergrundrauschen";
+        }
+        return "Spracheingabe: " + (live ? liveName : completeName) + " – Klick: "
+                + (live ? completeName : liveName);
     }
 
     /** Aufnahme läuft: einschalten leert den Verlauf, ausschalten blendet alles aus. */
@@ -101,7 +138,19 @@ final class ComposerWaveformOverlay extends JComponent {
     /** Nur das Greifband der Schwelle ist bedienbar; der Rest gehört dem Editor. */
     @Override
     public boolean contains(int x, int y) {
-        return active && Math.abs(y - thresholdY()) <= GRAB_BAND;
+        return active && (onGate(y) || onBars(x, y));
+    }
+
+    private boolean onGate(int y) {
+        return Math.abs(y - thresholdY()) <= GRAB_BAND;
+    }
+
+    /** Die Fläche der gezeigten Balken: von der Grundlinie bis oben, so breit wie die Balken reichen. */
+    private boolean onBars(int x, int y) {
+        int slots = Math.max(1, (getWidth() - 8) / (BAR_WIDTH + BAR_GAP));
+        int shown = Math.min(levelCount, slots);
+        int left = getWidth() - 8 - shown * (BAR_WIDTH + BAR_GAP);
+        return shown > 0 && x >= left && x <= getWidth() && y >= PAD_V && y <= getHeight() - PAD_V;
     }
 
     @Override
