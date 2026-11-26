@@ -5,6 +5,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiChatException;
+import com.aresstack.spaceharvester.app.runtime.ModelBudget;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.holdings.HoldingState;
@@ -57,8 +58,11 @@ public final class ChatTurn {
     static final int WHOLE_PAGES = 3;
     /** Längstens so lange wartet der Turn auf die Suche; danach zählen die bis dahin bewerteten Treffer. */
     public static final long SEARCH_SECONDS = 90;
-    /** Die Suche nimmt höchstens so viele Zeichen Frage an ({@code KeywordSearch.MAX_TEXT_LENGTH}). */
-    static final int MAX_QUERY_CHARS = 500;
+    /**
+     * Die Suche nimmt höchstens so viele Zeichen Frage an; früher stand hier fest 500, die Suche lehnte über 200 ab und
+     * eine lange Frage fand nichts.
+     */
+    static final int MAX_QUERY_CHARS = KeywordSearch.MAX_TEXT_LENGTH;
 
     /** Welche Art Turn: eine freie Frage oder „Was ist neu?“ aus dem Änderungsprotokoll (ADR 0030). */
     public enum Kind {
@@ -83,8 +87,11 @@ public final class ChatTurn {
     static final int CHANGED_PAGES = ChatKnowledge.MAX_SOURCES;
     static final DateTimeFormatter CHANGE_DATE = DateTimeFormatter.ofPattern("d.M.yyyy HH:mm");
 
-    /** So viele Zeichen der offenen Seite gehen im Volltext mit; der Rest per {@code seite_lesen} (ADR 0033). */
-    static final int OPEN_PAGE_CHARS = 24_000;
+    /**
+     * Tokenbudget des Chat-Modells (Kontextlänge und Ausgabelimit aus den Einstellungen), {@code null} unbekannt: Daraus
+     * folgt, wie viel der offenen Seite und jedes Werkzeugergebnisses mitgeht ({@link ChatRoom}).
+     */
+    private ModelBudget budget;
     /** Höchstens so viele Werkzeugrunden je Frage; die letzte Runde geht ohne Werkzeuge, damit eine Antwort kommt. */
     static final int MAX_TOOL_ROUNDS = 8;
     /**
@@ -258,6 +265,15 @@ public final class ChatTurn {
         };
         this.listener = Objects.requireNonNull(listener, "listener");
         this.ui = Objects.requireNonNull(ui, "ui");
+    }
+
+    /**
+     * Das Tokenbudget des Chat-Modells; ohne ({@code null}) gehen offene Seite und Werkzeugergebnisse ganz mit. Die
+     * offene Seite geht so weit mit, wie sie in die erste Anfrage passt, der Rest per {@code seite_lesen} (ADR 0033).
+     */
+    public ChatTurn budget(ModelBudget budget) {
+        this.budget = budget;
+        return this;
     }
 
     /** Für Tests: ein anderer Zugriff auf das Änderungsprotokoll. */
@@ -686,8 +702,10 @@ public final class ChatTurn {
             }
             if (released) {
                 total = page.text().length();
-                String head = total <= OPEN_PAGE_CHARS ? page.text() : ChatKnowledge.excerpt(page.text(),
-                        OPEN_PAGE_CHARS).replaceAll(" …$", "");
+                int room = ChatRoom.left(budget, conversation(ChatKnowledge.toolSystemMessage(area, null, 0, 0,
+                        null, appSources != null), question), toolset.definitions(), 1);
+                String head = total <= room ? page.text() : ChatKnowledge.excerpt(page.text(), room)
+                        .replaceAll(" …$", "");
                 shown = head.length();
                 open = new ChatKnowledge.Excerpt(page.title(), openPage.sourceId(), page.location(), head,
                         openPage.pageId());
@@ -807,6 +825,8 @@ public final class ChatTurn {
     private void runTools(List<AiChat.Message> messages, String text, List<AiChat.ToolCall> calls, int round) {
         List<AiChat.Message> next = new ArrayList<>(messages);
         next.add(AiChat.Message.assistant(text == null ? "" : text, calls));
+        // Die Aufrufe dieser Runde teilen sich, was in der Anfrage noch Platz hat (ChatRoom).
+        int room = ChatRoom.left(budget, next, toolset.definitions(), calls.size());
         // Mehrere Aufrufe einer Runde laufen gleichzeitig (höchstens „Parallele Agenten“); Browser-Aufrufe bleiben
         // nacheinander, der Browser eines Chats bedient eine Aktion nach der anderen. Die Antworten bleiben in der
         // Reihenfolge der Aufrufe.
@@ -833,7 +853,7 @@ public final class ChatTurn {
                         listener.toolStarted(key, call.name(), what);
                     });
                     try {
-                        results[index] = toolset.run(call);
+                        results[index] = ChatRoom.within(room, () -> toolset.run(call));
                     } finally {
                         onUi(() -> listener.toolFinished(key));
                     }

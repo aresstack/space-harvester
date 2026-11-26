@@ -49,8 +49,8 @@ public final class FtpChatTools implements ChatToolset {
                         + "partitionierten Datasets.", "{\"type\":\"object\",\"properties\":{\"pfad\":{\"type\":"
                                 + "\"string\",\"description\":\"Dataset, Muster oder Verzeichnis\"}},"
                                 + "\"required\":[\"pfad\"]}"),
-                new AiChat.Tool(READ, "Liest ein sequentielles Dataset oder ein Member als Text, höchstens "
-                        + DeckChatTools.TEXT_CHARS + " Zeichen je Aufruf, mit ab weiter.",
+                new AiChat.Tool(READ, "Liest ein sequentielles Dataset oder ein Member als Text, "
+                        + DeckChatTools.PIECE,
                         "{\"type\":\"object\",\"properties\":{\"pfad\":{\"type\":\"string\",\"description\":"
                                 + "\"etwa USER.SOURCE(PGM1)\"},\"ab\":{\"type\":\"integer\"}},"
                                 + "\"required\":[\"pfad\"]}"));

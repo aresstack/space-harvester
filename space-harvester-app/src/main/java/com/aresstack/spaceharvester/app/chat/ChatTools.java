@@ -47,7 +47,8 @@ import java.util.function.BooleanSupplier;
  * <ul>
  *   <li>{@value #LIST}: die Kinder eines Knotens (ohne Angabe die Startseiten des Bereichs), nach Titel, blätternd,
  *   mit Kennzeichen „hat Unterseiten“, wie der Baum links; Titel aus den Kopfdaten, nie aus dem Lesetext.</li>
- *   <li>{@value #READ}: der Lesetext einer Seite in Stücken von {@value #READ_CHARS} Zeichen mit Versatz.</li>
+ *   <li>{@value #READ}: der Lesetext einer Seite in Stücken mit Versatz, je Stück so viel, wie in die Anfrage passt
+ *   ({@link ChatRoom}).</li>
  *   <li>{@value #SEARCH}: dieselbe Suche wie die Suche mit Auswahl links, nie über den Bereich hinaus.</li>
  *   <li>{@value #TERM}: was der Wissensgraph im Bereich über einen bestätigten Fachbegriff weiß (Paket W7, auf
  *   {@link TermKnowledge#answer}): Aussagen mit Stufe und Belegseiten, Synonyme, Nachbarbegriffe und was gekappt
@@ -74,10 +75,6 @@ final class ChatTools {
     /** Präfix der virtuellen Ordnerknoten einer Sammlung in {@value #LIST} (ADR 0034 §5). */
     static final String FOLDER = "ordner/";
 
-    /** So viele Einträge je Blatt der Liste. */
-    static final int PAGE_SIZE = 100;
-    /** So viele Zeichen liefert ein Lesen höchstens; der Rest folgt mit Versatz. */
-    static final int READ_CHARS = 12_000;
     /**
      * So viele Treffer nennt die Suche höchstens über die Liste der Suchleiste hinaus (die Funde der progressiven Suche:
      * Varianten, Bewertung, Nachbarn); die Liste der Suchleiste nennt sie immer ganz ({@link #barHits}).
@@ -256,7 +253,7 @@ final class ChatTools {
     /** {@value #READ}: liest eine Seite des Bereichs oder einen Treffer der internen Suche im Volltext. */
     static AiChat.Tool readDefinition() {
         return new AiChat.Tool(READ, "Liest den Text einer Seite des gewählten Bereichs oder eines Suchtreffers, "
-                + "höchstens " + READ_CHARS + " Zeichen je Aufruf; lange Seiten mit versatz weiterlesen. Liefert die "
+                + "so viel, wie in die Anfrage passt; lange Seiten mit versatz weiterlesen. Liefert die "
                 + "Quellennummer, mit der du die Seite zitierst.",
                 "{\"type\":\"object\",\"properties\":{\"kennung\":{\"type\":\"string\"},"
                         + "\"versatz\":{\"type\":\"integer\",\"minimum\":0}},\"required\":[\"kennung\"]}");
@@ -322,16 +319,16 @@ final class ChatTools {
                 new AiChat.Tool(LIST, collection
                         ? "Listet den gewählten Favoriten-Ordner wie einen Baum: ohne knoten seine Unterordner "
                         + "(Kennung " + FOLDER + "…) und Favoriten, mit knoten den Inhalt eines Unterordners oder "
-                        + "die Unterseiten einer Seite. Je Aufruf höchstens " + PAGE_SIZE + " Einträge; weitere mit "
-                        + "blatt."
+                        + "die Unterseiten einer Seite. Je Aufruf so viele Einträge, wie in die Anfrage passen; "
+                        + "weitere mit ab."
                         : "Listet die Seiten des gewählten Bereichs wie einen Baum: ohne knoten die "
-                        + "Startseiten, mit knoten dessen Unterseiten. Je Aufruf höchstens " + PAGE_SIZE
-                        + " Einträge; weitere mit blatt.",
+                        + "Startseiten, mit knoten dessen Unterseiten. Je Aufruf so viele Einträge, wie in die Anfrage "
+                        + "passen; weitere mit ab.",
                         "{\"type\":\"object\",\"properties\":{\"knoten\":{\"type\":\"string\","
                                 + "\"description\":\"" + (collection ? "Kennung einer Seite oder eines Ordners"
                                 : "Kennung einer Seite") + "; leer für die Startseiten\"},"
-                                + "\"blatt\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Blattnummer, "
-                                + "ab 1\"}}}"),
+                                + "\"ab\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"ab diesem "
+                                + "Eintrag, Vorgabe 0\"}}}"),
                 readDefinition(),
                 new AiChat.Tool(TERM, "Schlägt einen Fachbegriff im gewählten Bereich nach: was der Wissensgraph "
                         + "dort über ihn weiß, als Aussagen mit Verb, Vertrauensstufe und Belegseiten, dazu seine "
@@ -378,7 +375,7 @@ final class ChatTools {
         try {
             return switch (call.name()) {
                 case SEARCH -> search(arguments.path("text").asString(""));
-                case LIST -> list(arguments.path("knoten").asString(""), Math.max(1, arguments.path("blatt").asInt(1)));
+                case LIST -> list(arguments.path("knoten").asString(""), Math.max(0, arguments.path("ab").asInt(0)));
                 case READ -> read(arguments.path("kennung").asString(""), Math.max(0, arguments.path("versatz")
                         .asInt(0)));
                 case TERM -> term(arguments.path("begriff").asString(""));
@@ -461,7 +458,11 @@ final class ChatTools {
         }
         String text = page.text();
         int from = Math.min(offset, text.length());
-        int to = Math.min(text.length(), from + READ_CHARS);
+        int room = ChatRoom.chars();
+        if (room == 0) {
+            return ChatRoom.FULL;
+        }
+        int to = (int) Math.min(text.length(), (long) from + room);
         String spaceKey = spaceOf(key);
         if (spaceKey == null) {
             spaceKey = page.spaceKey();
@@ -513,12 +514,12 @@ final class ChatTools {
 
     // ------------------------------------------------------------------ Liste
 
-    String list(String node, int sheet) {
+    String list(String node, int from) {
         if (scope == null) {
             return "Es ist kein Bereich gewählt.";
         }
         if (nodes != null && (node.isBlank() || node.strip().startsWith(FOLDER))) {
-            return listFolder(node.isBlank() ? null : node.strip().substring(FOLDER.length()), sheet);
+            return listFolder(node.isBlank() ? null : node.strip().substring(FOLDER.length()), from);
         }
         PageKey parent = null;
         if (!node.isBlank()) {
@@ -532,7 +533,7 @@ final class ChatTools {
             listing = withLive(listing, parent);
         }
         return sheet(listing, parent == null ? "Startseiten des Bereichs" : "Unterseiten",
-                parent == null ? "Der Bereich enthält keine Seiten." : "Diese Seite hat keine Unterseiten.", sheet);
+                parent == null ? "Der Bereich enthält keine Seiten." : "Diese Seite hat keine Unterseiten.", from);
     }
 
     /**
@@ -567,7 +568,7 @@ final class ChatTools {
      * Ein Ordner der Sammlung (ADR 0034 §5): seine Unterordner als virtuelle Knoten, danach je direkter Favorit die Seite
      * samt Unterseiten bzw. die Startseiten seines Space oder seiner Quelle; nur Seiten des Bereichs.
      */
-    private String listFolder(String folderId, int sheet) {
+    private String listFolder(String folderId, int from) {
         CollectionNodes.Content content = nodes.content(folderId);
         if (content == null) {
             return UNAVAILABLE;
@@ -588,7 +589,7 @@ final class ChatTools {
             }
         }
         return sheet(new Listing(entries, unreadable), folderId == null ? "Favoriten des Bereichs"
-                : "Inhalt des Ordners", "Dieser Ordner enthält keine Favoriten.", sheet);
+                : "Inhalt des Ordners", "Dieser Ordner enthält keine Favoriten.", from);
     }
 
     /**
@@ -637,36 +638,53 @@ final class ChatTools {
         return root.sourceId().equals(sourceId) && (root.spaceKey() == null || root.spaceKey().equals(spaceKey));
     }
 
-    /** Ein Blatt der Liste in fester Reihenfolge: Ordner zuerst, dann nach Titel wie im Baum, dann nach Kennung. */
-    private static String sheet(Listing listing, String heading, String empty, int sheet) {
+    /**
+     * Ein Abschnitt der Liste in fester Reihenfolge (Ordner zuerst, dann nach Titel wie im Baum, dann nach Kennung): ab
+     * Eintrag {@code from} so viele Einträge, wie in die Anfrage passen ({@link ChatRoom}), mindestens einer.
+     */
+    private static String sheet(Listing listing, String heading, String empty, int from) {
         List<Entry> entries = new ArrayList<>(listing.entries());
         entries.sort(Comparator.comparing((Entry entry) -> !entry.folder())
                 .thenComparing(entry -> entry.title() == null ? "\uffff"
                         : entry.title().toLowerCase(java.util.Locale.ROOT)).thenComparing(Entry::ref));
-        int sheets = Math.max(1, (entries.size() + PAGE_SIZE - 1) / PAGE_SIZE);
         if (entries.isEmpty()) {
             return listing.failed() ? NAVIGATION_FAILED : listing.unreadable() ? TOO_LARGE : empty;
         }
-        if (sheet > sheets) {
-            return "Blatt " + sheet + " gibt es nicht; es gibt " + sheets + ".";
+        if (from >= entries.size()) {
+            return "Ab Eintrag " + from + " gibt es nichts; es gibt " + entries.size() + " Einträge (ab 0 gezählt).";
         }
-        StringBuilder b = new StringBuilder();
-        b.append(heading).append(", Blatt ").append(sheet).append(" von ").append(sheets).append(" (")
-                .append(entries.size()).append(" Einträge)\n");
-        for (Entry entry : entries.subList((sheet - 1) * PAGE_SIZE, Math.min(entries.size(), sheet * PAGE_SIZE))) {
-            b.append("- ").append(entry.ref()).append(" | ")
+        int room = ChatRoom.chars();
+        if (room == 0) {
+            return ChatRoom.FULL;
+        }
+        List<String> lines = new ArrayList<>();
+        long used = heading.length() + 64L;
+        int to = from;
+        while (to < entries.size()) {
+            Entry entry = entries.get(to);
+            StringBuilder line = new StringBuilder("- ").append(entry.ref()).append(" | ")
                     .append(entry.title() == null ? "(nicht lokal gespeichert)" : oneLine(entry.title()));
             if (entry.folder()) {
-                b.append(" | Ordner");
+                line.append(" | Ordner");
             } else if (entry.size() > 1) {
-                b.append(" | hat Unterseiten (").append(entry.size() - 1).append(')');
+                line.append(" | hat Unterseiten (").append(entry.size() - 1).append(')');
             } else if (entry.size() < 0) {
-                b.append(" | hat Unterseiten");
+                line.append(" | hat Unterseiten");
             }
-            b.append('\n');
+            line.append('\n');
+            if (!lines.isEmpty() && used + line.length() > room) {
+                break;
+            }
+            used += line.length();
+            lines.add(line.toString());
+            to++;
         }
-        if (sheet < sheets) {
-            b.append("(weiter mit blatt ").append(sheet + 1).append(")\n");
+        StringBuilder b = new StringBuilder();
+        b.append(heading).append(", Einträge ").append(from + 1).append(" bis ").append(to).append(" von ")
+                .append(entries.size()).append('\n');
+        lines.forEach(b::append);
+        if (to < entries.size()) {
+            b.append("(weiter mit ab ").append(to).append(")\n");
         }
         if (listing.failed()) {
             b.append("Hinweis: Die Quelle lieferte nicht alle Einträge; nutze auch ").append(SEARCH).append(".\n");
