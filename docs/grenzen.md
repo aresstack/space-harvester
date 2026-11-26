@@ -602,7 +602,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `InfoPopup.MAX_WIDTH` | `480` | fest | Invariante/Darstellung | im Code belassen |
 | `MailMessage.MAX_DEPTH` | `8` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `MarkdownMessageView.MAX_STREAM_RENDER_DELAY_MILLIS` | `2000` | fest | Timeout | einstellbar |
-| `MarkdownTablePanel.MAX_COLUMN_WIDTH` | `420` | fest | Invariante/Darstellung | im Code belassen |
 | `MediaStreamBridge.CHUNK_BYTES` | `256 * 1024` | fest | Stapel-/Seitengröße | einstellbar |
 | `MermaidDiagramPanel.MAX_RENDER_WIDTH` | `2400` | fest | Invariante/Darstellung | im Code belassen |
 | `ModelRetry.MAX` | `Duration.ofSeconds(60)` | fest | Timeout | einstellbar |
