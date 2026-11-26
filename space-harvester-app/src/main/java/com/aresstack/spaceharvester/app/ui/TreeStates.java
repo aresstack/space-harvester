@@ -488,8 +488,17 @@ final class TreeStates {
         };
     }
 
+    /**
+     * Dateien, die überhaupt indexierbar sind (Angelo 26.11., Entscheidung 4): „kein durchsuchbarer Text“ (etwa ein
+     * Bild ohne Text) verhindert grün nicht. Fehlgeschlagene und gesperrte Dateien zählen weiter mit und halten den
+     * Ordner unter grün.
+     */
+    private static int indexable(IndexCoverage coverage) {
+        return coverage.files() - coverage.count(IndexState.NO_TEXT);
+    }
+
     private static HoldingCounts indexDisplayCounts(IndexCoverage coverage) {
-        return new HoldingCounts(coverage.files(), coverage.count(IndexState.INDEXED),
+        return new HoldingCounts(indexable(coverage), coverage.count(IndexState.INDEXED),
                 coverage.count(IndexState.PARTIAL) + coverage.count(IndexState.OUTDATED), 0);
     }
 
@@ -500,7 +509,7 @@ final class TreeStates {
         }
         int indexed = coverage.count(IndexState.INDEXED);
         int partial = coverage.count(IndexState.PARTIAL) + coverage.count(IndexState.OUTDATED);
-        if (coverage.files() > 0 && indexed == coverage.files()) {
+        if (coverage.files() > 0 && indexed == indexable(coverage)) {
             return new Badge(Kind.FULL, Glyph.CIRCLE_FULL, Comic.GREEN, tip);
         }
         if (indexed > 0 || partial > 0) {
@@ -511,7 +520,7 @@ final class TreeStates {
 
     static String indexTooltip(IndexCoverage coverage) {
         StringBuilder tip = new StringBuilder().append(coverage.count(IndexState.INDEXED)).append(" von ")
-                .append(coverage.files()).append(" Dateien vollständig und aktuell indexiert");
+                .append(indexable(coverage)).append(" indexierbaren Dateien vollständig und aktuell indexiert");
         appendCount(tip, coverage, IndexState.PARTIAL, "teilweise extrahiert");
         appendCount(tip, coverage, IndexState.OUTDATED, "veraltet");
         appendCount(tip, coverage, IndexState.NOT_INDEXED, "nicht indexiert");
