@@ -31,11 +31,25 @@ class TreeStatesTest {
         assertThat(TreeStates.indexLeaf(IndexState.INDEXED, true).kind()).isEqualTo(TreeStates.Kind.LOADING);
         var coverage = IndexCoverage.of(IndexState.INDEXED).plus(IndexCoverage.of(IndexState.FOLDER))
                 .plus(IndexCoverage.of(IndexState.NO_TEXT));
-        assertThat(TreeStates.indexNode(coverage, false).kind()).isEqualTo(TreeStates.Kind.PARTIAL);
+        // Angelo 26.11., Entscheidung 4: Nicht Indexierbares (Bild ohne Text) verhindert grün nicht.
+        assertThat(TreeStates.indexNode(coverage, false).kind()).isEqualTo(TreeStates.Kind.FULL);
         assertThat(TreeStates.indexNode(coverage, false).tooltip())
-                .contains("1 von 2 Dateien", "1 ohne durchsuchbaren Text");
+                .contains("1 von 1 indexierbaren Dateien", "1 ohne durchsuchbaren Text");
         var complete = IndexCoverage.of(IndexState.INDEXED).plus(IndexCoverage.of(IndexState.FOLDER));
         assertThat(TreeStates.indexNode(complete, false).kind()).isEqualTo(TreeStates.Kind.FULL);
+    }
+
+    @Test
+    void failedOrLockedFilesKeepAFolderBelowGreen() {
+        var failed = IndexCoverage.of(IndexState.INDEXED).plus(IndexCoverage.of(IndexState.FAILED))
+                .plus(IndexCoverage.of(IndexState.NO_TEXT));
+        assertThat(TreeStates.indexNode(failed, false).kind()).isEqualTo(TreeStates.Kind.PARTIAL);
+        assertThat(TreeStates.indexNode(failed, false).tooltip())
+                .contains("1 von 2 indexierbaren Dateien", "1 Extraktion fehlgeschlagen");
+        var locked = IndexCoverage.of(IndexState.INDEXED).plus(IndexCoverage.of(IndexState.LOCKED));
+        assertThat(TreeStates.indexNode(locked, false).kind()).isEqualTo(TreeStates.Kind.PARTIAL);
+        var notYet = IndexCoverage.of(IndexState.INDEXED).plus(IndexCoverage.of(IndexState.NOT_INDEXED));
+        assertThat(TreeStates.indexNode(notYet, false).kind()).isEqualTo(TreeStates.Kind.PARTIAL);
     }
 
     @Test
