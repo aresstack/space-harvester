@@ -746,6 +746,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      *                      {@code podcast-voice-*}, {@code read-aloud-*}); {@code null}: automatisch
      * @param diagnosis     Zeile „Diagnose“: Schalter „Diagnose per KI“ und Modell ({@code diagnosis-*});
      *                      {@code null}: eingeschaltet, Vorbelegung des Core
+     * @param timeouts      Fristen einzelner KI-Aufgaben ({@code summary-timeout}, {@code label-timeout},
+     *                      {@code expansion-timeout}); {@code null}: Vorgaben des Core
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
@@ -757,7 +759,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                              AiServiceSettings.ModelUse summary, AiServiceSettings.ModelUse summaryPlan,
                              AiServiceSettings.ModelUse podcast, AiServiceSettings.ModelUse imagePlan,
                              AiServiceSettings.ModelUse deadline, AiServiceSettings.Speech speech,
-                             AiServiceSettings.Diagnosis diagnosis) {
+                             AiServiceSettings.Diagnosis diagnosis, AiServiceSettings.Timeouts timeouts) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
@@ -771,6 +773,25 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
             deadline = deadline == null ? AiServiceSettings.ModelUse.DEFAULT : deadline;
             speech = speech == null ? AiServiceSettings.Speech.AUTOMATIC : speech;
             diagnosis = diagnosis == null ? AiServiceSettings.Diagnosis.DEFAULT : diagnosis;
+            timeouts = timeouts == null ? AiServiceSettings.Timeouts.DEFAULT : timeouts;
+        }
+
+        /** Ohne eigene Fristen der KI-Aufgaben. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
+                          Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                          Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking,
+                          Integer parallel, Integer visionMaxTokens, String imageModel, Integer imageMaxTokens,
+                          String visionThinking, String imageThinking, AiServiceSettings.ModelUse summary,
+                          AiServiceSettings.ModelUse summaryPlan, AiServiceSettings.ModelUse podcast,
+                          AiServiceSettings.ModelUse imagePlan, AiServiceSettings.ModelUse deadline,
+                          AiServiceSettings.Speech speech, AiServiceSettings.Diagnosis diagnosis) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider,
+                    contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel, visionMaxTokens,
+                    imageModel, imageMaxTokens, visionThinking, imageThinking, summary, summaryPlan, podcast,
+                    imagePlan, deadline, speech, diagnosis, null);
         }
 
         /** Ohne eigene Zeile der Diagnose. */

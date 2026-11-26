@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.app.settings.AiDraft;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
+import com.aresstack.spaceharvester.app.ui.controls.DurationField;
 import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
 import com.aresstack.spaceharvester.app.ui.controls.ThinkingBox;
 import com.aresstack.spaceharvester.app.ui.controls.TokenLengthBox;
@@ -230,6 +231,10 @@ final class AiSettingsPanel {
     final TokenLengthBox diagnosisMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
             AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS, TOKENS_LIKE_CHAT);
     final ThinkingBox diagnosisThinking = new ThinkingBox();
+    /** Fristen je Anfrage einzelner KI-Aufgaben (Angelo 26.11.2026: keine fest eingebauten Werte). */
+    final DurationField summaryTimeout = new DurationField(TIMEOUT_MAX_AMOUNT);
+    final DurationField labelTimeout = new DurationField(TIMEOUT_MAX_AMOUNT);
+    final DurationField expansionTimeout = new DurationField(TIMEOUT_MAX_AMOUNT);
     final ComposerButton pickDiagnosis = Comic.button("▾", "Modell der Diagnose aus der Liste des Dienstes wählen");
     /**
      * Sprachausgabe (Angelo 24.11.2026: „für jeden eine eigene Einstellung“): Podcast und Vorlesen (Chat, Leseansicht)
@@ -609,6 +614,9 @@ final class AiSettingsPanel {
         // Eine Zeile (UX-Manager 21.11.): Die Obergrenze gehört zur Checkbox und bleibt immer bedienbar.
         modelRows.add(AUTOMATIC_IMAGES_LABEL, Comic.row(automaticImages, Comic.text(IMAGES_PER_RUN_BEFORE),
                 imagesPerRun, Comic.text(IMAGES_PER_RUN_AFTER), automaticImagesHelp), null);
+        modelRows.add(TIMEOUTS_LABEL, Comic.row(Comic.text("Update-Zusammenfassung"), summaryTimeout,
+                Comic.text("Abschnittsnamen"), labelTimeout, Comic.text("Akronyme"), expansionTimeout,
+                new HelpButton(Dialogs.CLOSE_SIZE, TIMEOUTS_LABEL, TIMEOUTS_HELP)), null);
         modelRows.add(RETRIES_LABEL, retries, RETRIES_HINT);
         modelRows.add(PARALLEL_LABEL, parallel, PARALLEL_HINT);
         {
@@ -787,6 +795,9 @@ final class AiSettingsPanel {
         // Die Vorbelegung steht sichtbar im Feld (Angelo 26.11.2026: „vorbelegen, GPT OSS“).
         diagnosisModel.setText(current.diagnosisSettings().model());
         diagnosisEnabled.setSelected(current.diagnosisSettings().on());
+        summaryTimeout.value(current.timeouts().summaryTimeout());
+        labelTimeout.value(current.timeouts().labelTimeout());
+        expansionTimeout.value(current.timeouts().expansionTimeout());
         podcastSpeechModel.setText(text(current.speech().podcastModel()));
         podcastHost.setSelectedItem(text(current.speech().podcastHost()));
         podcastCohost.setSelectedItem(text(current.speech().podcastCohost()));
@@ -1118,7 +1129,16 @@ final class AiSettingsPanel {
                         own(podcastAttempts, AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS),
                         own(podcastWorkers, AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS)),
                 new AiDraft.Use(ownDiagnosisModel(), diagnosisMaxTokens.text(), diagnosisThinking.level()),
-                diagnosisEnabled.isSelected());
+                diagnosisEnabled.isSelected(), new AiServiceSettings.Timeouts(
+                        own(summaryTimeout, AiServiceSettings.Timeouts.DEFAULT_SUMMARY),
+                        own(labelTimeout, AiServiceSettings.Timeouts.DEFAULT_LABEL),
+                        own(expansionTimeout, AiServiceSettings.Timeouts.DEFAULT_EXPANSION)));
+    }
+
+    /** Die Frist eines Felds; die Vorgabe oder 0 heißt nichts eingestellt ({@code null}), dann gilt die des Core. */
+    private static Duration own(DurationField field, Duration fallback) {
+        Duration value = field.value();
+        return value == null || value.isZero() || value.equals(fallback) ? null : value;
     }
 
     /** Das Modell der Diagnose; die Vorbelegung heißt nichts eingestellt, dann gilt die des Core. */
@@ -1899,6 +1919,15 @@ final class AiSettingsPanel {
             + "\n\n" + TOKENS_HELP_TAIL + "\n\nStandard " + AiServiceSettings.DEFAULT_DEADLINE_MAX_TOKENS
             + " Tokens, denkt nicht. Schlüssel in der Konfigurationsdatei: space-harvester.ai.deadline-model, "
             + ".deadline-max-tokens und .deadline-thinking.";
+    static final String TIMEOUTS_LABEL = "Fristen je Anfrage";
+    /** Größte Zahl im Feld einer Frist (in der gewählten Einheit). */
+    static final int TIMEOUT_MAX_AMOUNT = 999;
+    static final String TIMEOUTS_HELP = "So lange wartet die App höchstens auf eine Antwort des Modells, getrennt je "
+            + "Aufgabe: Update-Zusammenfassung (Vorgabe 5 Minuten; ein längerer allgemeiner Timeout gewinnt), Namen "
+            + "der Themenabschnitte in der Gliederung (Vorgabe 60 Sekunden) und Auflösung von Akronymen (Vorgabe "
+            + "90 Sekunden). Große Modelle oder ein langsamer Dienst brauchen mehr.\n\nGilt ab der nächsten "
+            + "Anfrage. Schlüssel in der Konfigurationsdatei: space-harvester.ai.summary-timeout, .label-timeout und "
+            + ".expansion-timeout.";
     static final String DIAGNOSIS_LABEL = "Diagnose";
     static final String DIAGNOSIS_TEXT = "Diagnose per KI";
     static final String DIAGNOSIS_TIP = "Ohne Häkchen verschwinden alle KI-Erweiterungen der Diagnose, etwa "

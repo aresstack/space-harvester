@@ -13,6 +13,27 @@ import org.junit.jupiter.api.Test;
 class AiServiceSettingsTest {
 
     @Test
+    void taskTimeoutsComeFromTheSettingsOrTheirDefaults() {
+        AiServiceSettings.Timeouts preset = AiServiceSettings.NONE.timeouts();
+        assertThat(preset.summaryTimeout()).isEqualTo(Duration.ofMinutes(5));
+        assertThat(preset.labelTimeout()).isEqualTo(Duration.ofSeconds(60));
+        assertThat(preset.expansionTimeout()).isEqualTo(Duration.ofSeconds(90));
+
+        Properties properties = new Properties();
+        properties.setProperty(AiServiceSettings.PREFIX + AiServiceSettings.BASE_URL, "http://localhost:11434/v1");
+        properties.setProperty(AiServiceSettings.PREFIX + AiServiceSettings.SUMMARY_TIMEOUT, "PT12M");
+        AiServiceSettings.Timeouts own = AiServiceSettings.fromProperties(properties).timeouts();
+        assertThat(own.summaryTimeout()).isEqualTo(Duration.ofMinutes(12));
+        assertThat(own.labelTimeout()).isEqualTo(AiServiceSettings.Timeouts.DEFAULT_LABEL);
+
+        assertThatThrownBy(() -> new AiServiceSettings.Timeouts(Duration.ZERO, null, null))
+                .hasMessageContaining(AiServiceSettings.SUMMARY_TIMEOUT);
+        properties.setProperty(AiServiceSettings.PREFIX + AiServiceSettings.LABEL_TIMEOUT, "lang");
+        assertThatThrownBy(() -> AiServiceSettings.fromProperties(properties))
+                .hasMessageContaining(AiServiceSettings.LABEL_TIMEOUT);
+    }
+
+    @Test
     void diagnosisIsOnWithThePresetModelUnlessConfigured() {
         AiServiceSettings.Diagnosis preset = AiServiceSettings.NONE.diagnosis();
         assertThat(preset.on()).isTrue();

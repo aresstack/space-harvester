@@ -1198,11 +1198,14 @@ class ConfigFileEditorTest {
                         new AiDraft.Use("podcast-modell", "8192", null))
                 .withImagePlan(new AiDraft.Use("schaubild-plan", "32768", "none"))
                 .withDeadline(new AiDraft.Use("fristen-modell", "4096", "low"))
-                .withDiagnosis(false, new AiDraft.Use("diagnose-modell", "2048", "high"));
+                .withDiagnosis(false, new AiDraft.Use("diagnose-modell", "2048", "high"))
+                .withTimeouts(new com.aresstack.spaceharvester.ai.AiServiceSettings.Timeouts(
+                        java.time.Duration.ofMinutes(7), null, java.time.Duration.ofSeconds(120)));
 
         editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
 
-        assertThat(Files.readString(file)).contains("diagnosis-enabled: false",
+        assertThat(Files.readString(file)).contains("diagnosis-enabled: false", "summary-timeout: 420000ms",
+                "expansion-timeout: 120000ms",
                 "diagnosis-model: \"diagnose-modell\"", "diagnosis-max-tokens: 2048", "diagnosis-thinking: high","summary-max-tokens: 65536", "summary-thinking: low",
                 "summary-plan-model: \"plan-modell\"", "summary-plan-thinking: high",
                 "podcast-model: \"podcast-modell\"", "podcast-max-tokens: 8192",
@@ -1220,6 +1223,9 @@ class ConfigFileEditorTest {
         assertThat(settings.ai().deadline()).isEqualTo(
                 new com.aresstack.spaceharvester.ai.AiServiceSettings.ModelUse("fristen-modell", 4096, "low"));
         assertThat(settings.ai().diagnosis().on()).isFalse();
+        assertThat(settings.ai().timeouts().summaryTimeout()).isEqualTo(java.time.Duration.ofMinutes(7));
+        assertThat(settings.ai().timeouts().labelTimeout()).as("leer: Vorgabe")
+                .isEqualTo(com.aresstack.spaceharvester.ai.AiServiceSettings.Timeouts.DEFAULT_LABEL);
         assertThat(settings.ai().diagnosis().model()).isEqualTo("diagnose-modell");
         assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
         assertThat(ai.withDiagnosis(true, AiDraft.Use.EMPTY).yaml("")).doesNotContain("diagnosis-");

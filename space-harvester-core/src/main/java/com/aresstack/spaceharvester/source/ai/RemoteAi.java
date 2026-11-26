@@ -382,12 +382,9 @@ public final class RemoteAi {
         };
     }
 
-    /** Eigene Frist je Anfrage der Akronymauflösung, unabhängig von {@code ai.timeout} (#122). */
-    public static final Duration EXPANSION_TIMEOUT = Duration.ofSeconds(90);
-
     /**
      * Das Chat-Modell als Ausschreiber von Akronymen ({@code POST /chat/completions}, #122) über den unveränderten
-     * {@code OpenAiCompatibleChatAdapter}, mit eigener Frist ({@link #EXPANSION_TIMEOUT}). An den Dienst gehen nur die
+     * {@code OpenAiCompatibleChatAdapter}, mit eigener Frist ({@code ai.expansion-timeout}, {@link AiServiceSettings.Timeouts#expansionTimeout()}). An den Dienst gehen nur die
      * kurzen Fundstellen, die der Auftrag freigegebener Quellen zusammenstellt; geprüft wird die Antwort dort. Scheitert
      * ein Aufruf, meldet das Modell {@link AiServiceException} ohne Text, Antwort oder Key.
      *
@@ -420,7 +417,7 @@ public final class RemoteAi {
         ChatOptions options = builder.build();
         return (instructions, input) -> {
             ChatCompletionPort adapter = chatPort(settings.chatModel(),
-                    awaitedTimeout(settings.chatModel(), (int) EXPANSION_TIMEOUT.toMillis()));
+                    awaitedTimeout(settings.chatModel(), (int) settings.timeouts().expansionTimeout().toMillis()));
             try {
                 return complete(streamed(adapter, new ChatRequest(
                         List.of(ChatMessage.system(instructions), ChatMessage.user(input)), options)), maxTokens, true);
@@ -430,8 +427,6 @@ public final class RemoteAi {
         };
     }
 
-    /** Frist je Anfrage der Update-Zusammenfassung: lange Eingaben und Antworten mit Themen und Details. */
-    public static final Duration SUMMARY_TIMEOUT = Duration.ofMinutes(5);
     /** Nur für Echttests kleiner: so lässt sich das Abschneiden am Ausgabelimit gezielt hervorrufen. */
     static volatile int summaryMaxTokensForTest;
 
@@ -439,7 +434,7 @@ public final class RemoteAi {
      * Wie {@link #termCompletions()} für die Update-Zusammenfassung (ADR 0030, update-summary-v2): Tokenlänge und
      * Nachdenken kommen aus den Einstellungen, mit denen dieser Zugang gebaut ist; der Aufrufer reicht
      * {@link AiServiceSettings#summary()} (Standard 32768 Tokens, Nachdenken aus; Angelo 22.11.2026: mit Nachdenken lief
-     * die Antwort bei 32768 Tokens ins Limit). Frist mindestens {@link #SUMMARY_TIMEOUT} (oder {@code ai.timeout},
+     * die Antwort bei 32768 Tokens ins Limit). Frist mindestens {@code ai.summary-timeout} (Vorgabe 5 Minuten, oder {@code ai.timeout},
      * wenn länger) statt der 90 Sekunden der Akronymauflösung.
      */
     public BinaryOperator<String> summaryCompletions() {
@@ -451,7 +446,7 @@ public final class RemoteAi {
         ChatOptions.Builder builder = ChatOptions.builder().temperature(0.0).maxTokens(maxTokens);
         builder.reasoningEffort(effort(thinking));
         ChatOptions options = builder.build();
-        int timeout = (int) Math.min(Integer.MAX_VALUE, Math.max(SUMMARY_TIMEOUT.toMillis(), timeoutMillis()));
+        int timeout = (int) Math.min(Integer.MAX_VALUE, Math.max(settings.timeouts().summaryTimeout().toMillis(), timeoutMillis()));
         return (instructions, input) -> {
             ChatCompletionPort adapter = chatPort(settings.chatModel(), awaitedTimeout(settings.chatModel(), timeout));
             try {
@@ -462,9 +457,6 @@ public final class RemoteAi {
             }
         };
     }
-
-    /** Eigene Frist je Anfrage der Abschnittsbenennung, unabhängig von {@code ai.timeout} (#181). */
-    public static final Duration LABEL_TIMEOUT = Duration.ofSeconds(60);
 
     /**
      * Benennt Themenabschnitte der Dokumentnavigation mit dem Chat-Modell ({@code POST /chat/completions}, #181,
@@ -480,7 +472,7 @@ public final class RemoteAi {
         if (!settings.chat()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
-        ChatCompletionPort adapter = chatPort(settings.chatModel(), (int) LABEL_TIMEOUT.toMillis());
+        ChatCompletionPort adapter = chatPort(settings.chatModel(), (int) settings.timeouts().labelTimeout().toMillis());
         AtomicBoolean failed = new AtomicBoolean();
         ChatCompletionPort port = new ChatCompletionPort() {
             @Override
