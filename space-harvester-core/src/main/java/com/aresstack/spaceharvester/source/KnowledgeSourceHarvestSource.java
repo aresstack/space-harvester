@@ -765,20 +765,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 return false;
             }
         }
-        if (!"ftp".equals(type) || scope == null) {
-            return true;
-        }
-        try {
-            KnowledgeResourceId resourceId = resourceIdOf(pageId);
-            if (ownResource(resourceId.value()).isEmpty()) {
-                return false;
-            }
-            String specific = resourceId.schemeSpecificPart();
-            String path = specific.substring(port.sourceId().locator().length() + 1);
-            return FtpInventoryCoverage.covers(scope, path);
-        } catch (SourceAccessException e) {
-            return false;
-        }
+        return true;
     }
 
     /**

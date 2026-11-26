@@ -1,4 +1,4 @@
-# upstream https://github.com/aresstack/enterprise-ai-client.git e5c96c9439062851bf000ee8e0efe4d94750b11f
+# upstream https://github.com/aresstack/enterprise-ai-client.git f97942224394ad59f422dd8b9c3b79821ea80777
 51b332c97f18977459a53e680970e822e6ea8cfbb12b5fd63ea88ad65eb9c2d4 *LICENSE
 09426dae09fca081ecbd3ce1d43ae3f1697bdffd6b615599c3e294aebac58b94 *src/main/java/com/aresstack/enterpriseai/adyton/SecretEntry.java
 56bd1f03e6f1c152ec55b70cac06a5cf77164dd32772445fcc938a00692bb865 *src/main/java/com/aresstack/enterpriseai/adyton/SecretFunction.java
@@ -180,8 +180,9 @@ eec6a3a134944e45614f8bd23f5038c99af374ba5f5f433826d7bd0c75aca53f *src/main/java/
 ad6ef023aac0a596d3a5bbbb692820be48f02aa76afcaf7e4432031427cfc5df *src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/CommonsNetFtpSession.java
 969b969109e41ec6dbeca0368cdc966e66788944affb8b19cada4a6f75a29735 *src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpClientSession.java
 3b4a39f9ed5a01d99154f433382ed454bf9322e57e48e9b99b0270f96e11c5c6 *src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpConnectionSettings.java
-c9277e30038b9f80c4f1ceac442a4f26562e2b7f8d4ae0294bb4f14105dd9ba3 *src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpInventory.java
-f22c1c33a21ff3147eedbc53e025eb9b18573e7dce1ed5e2d9274e934f7c94e2 *src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpKnowledgeSource.java
+7c483905c50f87dbabe8e13ed783154dcfc7013b80f87c0fa9a18a8baab05934 *src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpInventory.java
+e08d3ad34d41ad8d76563b7580bf6b3c886712c7c5874810565e8dc8707e00d9 *src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpInventoryCoverage.java
+5d03fc1c4f49e42b9b4d28501471f92eb19f8b74023704a78b5308794e83df90 *src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpKnowledgeSource.java
 2d3e0ff678fea87556b2850e20abc90295c5c731049b6d37ba41d258afc554f5 *src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpProgramClassifier.java
 8226dea2a698c73fc39a90f67fee63ad65e8fb4a25470e74b6b71e1e54b8314d *src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpSessionPool.java
 20924addb9db263b885907b593dd9ae31a12eb4e0abe5940a955f42b0958b2d7 *src/main/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpSourceEligibility.java
@@ -569,7 +570,7 @@ c36b9c182b1d8497259c8118e7af0e409e171c93fd4fdc3f67f4e6e2ba9eb037 *src/test/java/
 6142c0d412df03c62684b4d6d84e0d5f614f20190f8442643e504d7bff25f821 *src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/confluence/RecordingSecretProvider.java
 4bc9ad2e45f4786fa3abe9fb62ee5cbbd548c9e6a095289c5bf4584547796ea5 *src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/confluence/UrlConnectionConfluenceTransportTest.java
 9565e30e1d1d101c383099d610dfdda82a929b1171f103af40b8bf6e784b1add *src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FakeFtpsServer.java
-4c647fb341d81fc89a9ac11e3d6bfef42add500fc72809aa3a75b1cf88b06b4e *src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpInventoryTest.java
+95451f3311377c1e89fcd464c12f1f963c1ac2f4f403497f52b67e3b4470b47b *src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpInventoryTest.java
 9c9372f6b7f4c01a92af3d87b8c4317c0175c1abe16febd22460de084c12de21 *src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpProgramClassifierTest.java
 9f7b8eec1ca3ecef6f6164d0bff415a39ecf50ca0906d18b50ce3d0e313864f3 *src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpSourceScopeTest.java
 62e98eee0b9cfe8b0db8917717510521b59f52787da8b9e6d838c87e8117363e *src/test/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/FtpTlsTest.java
