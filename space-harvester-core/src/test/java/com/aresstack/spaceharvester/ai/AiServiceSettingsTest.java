@@ -13,6 +13,29 @@ import org.junit.jupiter.api.Test;
 class AiServiceSettingsTest {
 
     @Test
+    void diagnosisIsOnWithThePresetModelUnlessConfigured() {
+        AiServiceSettings.Diagnosis preset = AiServiceSettings.NONE.diagnosis();
+        assertThat(preset.on()).isTrue();
+        assertThat(preset.model()).isEqualTo(AiServiceSettings.DEFAULT_DIAGNOSIS_MODEL);
+        assertThat(preset.isModel("openai/GPT-OSS-120B")).as("Anbieter-Präfix und Schreibweise zählen nicht").isTrue();
+        assertThat(preset.isModel("gemma4:12b")).isFalse();
+        assertThat(preset.isModel(null)).isFalse();
+
+        Properties properties = new Properties();
+        properties.setProperty(AiServiceSettings.PREFIX + AiServiceSettings.DIAGNOSIS_ENABLED, "false");
+        properties.setProperty(AiServiceSettings.PREFIX + AiServiceSettings.DIAGNOSIS_MODEL, "gemma4:12b");
+        properties.setProperty(AiServiceSettings.PREFIX + AiServiceSettings.BASE_URL, "http://localhost:11434/v1");
+        AiServiceSettings.Diagnosis own = AiServiceSettings.fromProperties(properties).diagnosis();
+        assertThat(own.on()).isFalse();
+        assertThat(own.isModel("gemma4:12b")).isTrue();
+        assertThat(own.isModel("gpt-oss-120b")).as("die Vorbelegung gilt nicht mehr").isFalse();
+
+        properties.setProperty(AiServiceSettings.PREFIX + AiServiceSettings.DIAGNOSIS_ENABLED, "vielleicht");
+        assertThatThrownBy(() -> AiServiceSettings.fromProperties(properties))
+                .hasMessageContaining(AiServiceSettings.DIAGNOSIS_ENABLED);
+    }
+
+    @Test
     void theNumberOfRequestsAtOnceIsASettingWithFourAsDefault() {
         Properties properties = new Properties();
         properties.setProperty("space-harvester.ai.base-url", "http://localhost:11434");
