@@ -113,6 +113,7 @@ public final class PageCacheSchema {
     static final String PAYLOAD_BYTES = "payloadBytes";
     static final String MEDIA_TYPE = "mediaType";
     static final String NATIVE_FORMAT = "nativeFormat";
+    static final String LOCAL_EXTRACTION_STATUS = "localExtractionStatus";
     static final String RETRIEVED_AT = "retrievedAt";
 
     // Bestätigte Generation
@@ -134,6 +135,7 @@ public final class PageCacheSchema {
     static final String WITHHELD = "withheld";
     /** Reihenfolge der Kinder eines Knotens, wie die Quelle sie zuletzt lieferte. */
     static final String CHILD_ORDER = "childOrder";
+    private static final String CHILD_ORDER_REVISION = "childOrderRevision";
     static final String CHILD_ORDER_PAGE = CHILD_ORDER + ".pageId";
 
     /** Gespeicherte Felder der aktuellen Kopfdaten und des Payload-Hashs, damit Listen die Bytes nicht laden. */
@@ -217,14 +219,20 @@ public final class PageCacheSchema {
     }
 
     /** Seiten-IDs der Kinder in der Reihenfolge der Quelle, nur gespeichert; Lucene behält die Reihenfolge der Werte. */
-    static Document childOrder(String sourceId, String spaceKey, String parentPageId, List<String> pageIds) {
+    static Document childOrder(String sourceId, String spaceKey, String parentPageId, List<String> pageIds,
+                               String revision) {
         Document doc = new Document();
         doc.add(new StringField(TYPE, CHILD_ORDER, Field.Store.NO));
         doc.add(new StringField(ID, childOrderTerm(sourceId, spaceKey, parentPageId).text(), Field.Store.NO));
+        doc.add(new StoredField(CHILD_ORDER_REVISION, revision));
         for (String pageId : pageIds) {
             doc.add(new StoredField(CHILD_ORDER_PAGE, pageId));
         }
         return doc;
+    }
+
+    static String childOrderRevision(Document doc) {
+        return doc.get(CHILD_ORDER_REVISION);
     }
 
     static List<String> childOrder(Document doc) {
@@ -291,6 +299,9 @@ public final class PageCacheSchema {
             doc.add(new StoredField(PAYLOAD_BYTES, payload.length()));
             doc.add(new StoredField(MEDIA_TYPE, payload.mediaType()));
             doc.add(new StoredField(NATIVE_FORMAT, payload.nativeFormat()));
+            com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.read(payload)
+                    .ifPresent(reference -> doc.add(new StoredField(LOCAL_EXTRACTION_STATUS,
+                            reference.status().name())));
             doc.add(new StoredField(RETRIEVED_AT, snapshot.retrievedAt().toString()));
             doc.add(new StoredField(RAW_JSON, payload.bytes()));
         }

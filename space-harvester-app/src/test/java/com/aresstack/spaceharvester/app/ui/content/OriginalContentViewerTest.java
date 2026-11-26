@@ -19,7 +19,7 @@ import java.util.Map;
 import java.util.List;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
-import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
+import com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -90,7 +90,9 @@ final class OriginalContentViewerTest {
                 && panel.originalViewer().showsPicture()));
         PageSnapshot snapshot = context.runtime().workspace().cachedPage("docs", id).orElseThrow().snapshot();
         assertThat(snapshot.metadata().attributes()).containsEntry(PageMetadata.RESOURCE_KIND, PageMetadata.FILE_KIND);
-        assertThat(new LocalFilesTextProjector().project(snapshot).orElseThrow().text()).contains("Lokaler PDF Beleg");
+        assertThat(LocalOriginalReference.read(snapshot.payload())).isPresent();
+        assertThat(context.runtime().workspace().pageText(snapshot)).isNotNull();
+        assertThat(context.runtime().workspace().pageText(snapshot).text()).contains("Lokaler PDF Beleg");
         onEdt(() -> {
             panel.load("docs", csvId, false);
             return null;
@@ -108,6 +110,54 @@ final class OriginalContentViewerTest {
         });
         await(() -> onEdt(() -> panel.originalViewer() != null && panel.originalViewer().pageCount() == 1
                 && panel.originalViewer().showsPicture()));
+    }
+
+    @Test
+    void localReferenceShowsTheOriginalInsteadOfTheExtractedPreview() throws Exception {
+        Path directory = Files.createDirectories(home.resolve("documents"));
+        Files.writeString(directory.resolve("Original.txt"), "Original text distinct from the preview");
+        PageDetailPanel panel = panel("""
+                space-harvester:
+                  sources:
+                    - id: docs
+                      type: files
+                      options:
+                        directory: %s
+                """.formatted(directory.toString().replace('\\', '/')));
+        String id = context.runtime().workspace().children("docs", "docs", null, null).pages().stream()
+                .filter(node -> node.title().equals("Original.txt")).findFirst().orElseThrow().pageId();
+        onEdt(() -> {
+            panel.tabs().select("Leseansicht");
+            panel.load("docs", id, false);
+            return null;
+        });
+        await(() -> onEdt(() -> panel.originalViewer() != null && panel.originalViewer().isShowingText()));
+        PageMetadata metadata = context.runtime().workspace().cachedPage("docs", id).orElseThrow().snapshot().metadata();
+        AttachmentViewerPanel previous = onEdt(panel::originalViewer);
+        NativePayload reference = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference(
+                null, "text/plain", null,
+                com.aresstack.spaceharvester.application.assets.ExtractionStatus.OK, null,
+                "Short preview", true).payload();
+        onEdt(() -> {
+            panel.showOriginalContent(metadata, reference);
+            return null;
+        });
+        await(() -> onEdt(() -> panel.originalViewer() != null && panel.originalViewer() != previous
+                && panel.originalViewer().isShowingText()));
+        assertThat(onEdt(() -> panel.originalViewer().textContent()))
+                .isEqualTo("Original text distinct from the preview");
+    }
+
+    @Test
+    void unsupportedLocalReferenceExplainsStorageInsteadOfClaimingTheFileIsTooLarge() throws Exception {
+        PageDetailPanel panel = panel();
+        onEdt(() -> {
+            panel.showOriginalContent(metadata("projekt.bin", PageMetadata.FILE_KIND),
+                    com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.unsupported().payload());
+            return null;
+        });
+        assertThat(onEdt(() -> panel.originalViewer().statusText())).contains("Original verbleibt im lokalen Ordner")
+                .doesNotContain("zu groß für den Cache");
     }
 
     @Test

@@ -31,7 +31,7 @@ final class NdvSourceRules implements NdvSearchLink {
 
     static final String TYPE = "ndv";
     static final String START_POINTS = "startPoints";
-    private static final int DEFAULT_PORT = 2700;
+    private static final int DEFAULT_PORT = NdvProfile.DEFAULT_PORT;
 
     private final AppContext context;
 
@@ -46,21 +46,47 @@ final class NdvSourceRules implements NdvSearchLink {
 
     @Override
     public Optional<Rule> rule(NdvProfile profile) {
+        return Optional.empty();
+    }
+
+    @Override
+    public Optional<Rule> rule(NdvProfile profile, String account) {
         AppSettings settings = context.settings();
         if (settings == null || profile == null) {
             return Optional.empty();
         }
-        for (AppSettings.SourceEntry entry : settings.sources()) {
-            SourceSettingsConfig config = entry.config();
-            if (matches(config, profile)) {
-                return Optional.of(new Rule(config.id(), config.title() == null || config.title().isBlank()
-                        ? config.id() : config.title(), libraries(config.options().get(START_POINTS))));
-            }
+        List<SourceSettingsConfig> matching = settings.sources().stream()
+                .map(AppSettings.SourceEntry::config)
+                .filter(config -> matches(config, profile)
+                        && sameAccount(config, settings.keePassEntry(config.id()), account))
+                .toList();
+        if (matching.size() > 1) {
+            throw new IllegalStateException("Mehrere passende NDV-Quellen. Bitte in der Quellenverwaltung auswählen.");
         }
-        return Optional.empty();
+        if (matching.isEmpty()) {
+            return Optional.empty();
+        }
+        SourceSettingsConfig config = matching.getFirst();
+        if (context.runtime() == null || context.runtime().workspace().sources().stream()
+                .noneMatch(source -> source.id().equals(config.id()))) {
+            throw new IllegalStateException("Passende NDV-Quelle ist deaktiviert oder nicht verfügbar.");
+        }
+        return Optional.of(new Rule(config.id(), config.title() == null || config.title().isBlank()
+                ? config.id() : config.title(), libraries(config.options().get(START_POINTS)), Boolean.parseBoolean(config.options().get("allLibraries"))));
     }
 
-    /** Gleicher Typ, Host (ohne Groß-/Kleinschreibung) und Port (Vorgabe 2700). */
+    static boolean sameAccount(SourceSettingsConfig config, String configuredAccount, String account) {
+        if (account == null || account.isBlank()) {
+            return false;
+        }
+        if (configuredAccount != null) {
+            return account.equals(configuredAccount);
+        }
+        return config.auth().type() == SourceSettingsConfig.AuthType.NONE
+                && ("keepass:" + account).equals(config.options().get("credentialRef"));
+    }
+
+    /** Match the actual NDV default port and canonical host. */
     static boolean matches(SourceSettingsConfig config, NdvProfile profile) {
         if (config == null || !TYPE.equals(config.type())) {
             return false;
@@ -84,10 +110,14 @@ final class NdvSourceRules implements NdvSearchLink {
     static List<String> libraries(String startPoints) {
         Set<String> found = new LinkedHashSet<>();
         if (startPoints != null) {
-            for (String part : startPoints.split(",")) {
+            for (String part : startPoints.split("[;,\\r\\n]+")) {
                 String library = part.strip();
                 int slash = library.indexOf('/');
                 if (slash >= 0) {
+                    String filter = library.substring(slash + 1).strip();
+                    if (!filter.isEmpty() && !"*".equals(filter)) {
+                        continue;
+                    }
                     library = library.substring(0, slash).strip();
                 }
                 if (!library.isEmpty()) {
@@ -102,7 +132,7 @@ final class NdvSourceRules implements NdvSearchLink {
     static String withLibraries(String startPoints, List<String> wanted) {
         List<String> parts = new ArrayList<>();
         if (startPoints != null) {
-            for (String part : startPoints.split(",")) {
+            for (String part : startPoints.split("[;,\\r\\n]+")) {
                 if (!part.isBlank()) {
                     parts.add(part.strip());
                 }
@@ -121,7 +151,10 @@ final class NdvSourceRules implements NdvSearchLink {
     @Override
     public void createRule(Component parent, NdvProfile profile, String account, List<String> libraries,
                            Consumer<String> saved) {
-        Optional<Rule> existing = rule(profile);
+        if (account == null || account.isBlank()) {
+            throw new IllegalStateException("Für die automatische Zuordnung bitte einen KeePass-Eintrag wählen.");
+        }
+        Optional<Rule> existing = rule(profile, account);
         if (existing.isPresent()) {
             SourceDraft.Editable editable;
             try {
@@ -148,8 +181,40 @@ final class NdvSourceRules implements NdvSearchLink {
         SourceDraft draft = new SourceDraft(d.id(), d.type(), d.title(), d.baseUrl(), d.directory(), d.include(),
                 d.authType(), d.username(), d.secretVariable(), d.certificateType(), d.certificatePath(),
                 d.certificatePasswordVariable(), d.certificateAlias(), d.thumbprint(), d.trustBundle(), options,
-                d.baseUrlType());
+                d.baseUrlType(), d.showInExplorer(), d.includeInGlobalSearch());
         return new SourceDraft.Editable(draft, editable.plaintextSecrets());
+    }
+
+    @Override
+    public void visited(NdvProfile profile, String account, List<String> paths) {
+        AppSettings settings = context.settings();
+        AppRuntime runtime = context.runtime();
+        if (settings == null || runtime == null || paths.isEmpty() || account == null || account.isBlank()) {
+            return;
+        }
+        List<String> targets = settings.sources().stream()
+                .filter(entry -> !entry.secretMissing() && !settings.disabledSources().contains(entry.id()))
+                .map(AppSettings.SourceEntry::config)
+                .filter(config -> matches(config, profile)
+                        && sameAccount(config, settings.keePassEntry(config.id()), account)
+                        && Boolean.parseBoolean(config.options().get("navigationFill")))
+                .map(SourceSettingsConfig::id).toList();
+        if (targets.isEmpty()) {
+            return;
+        }
+        Thread.startVirtualThread(() -> {
+            for (String sourceId : targets) {
+                if (context.runtime() != runtime) {
+                    return;
+                }
+                try {
+                    runtime.workspace().acquireVisitedResources(sourceId, paths);
+                } catch (RuntimeException failure) {
+                    org.slf4j.LoggerFactory.getLogger(NdvSourceRules.class)
+                            .warn("NDV navigation acquisition failed for source {}", sourceId, failure);
+                }
+            }
+        });
     }
 
     @Override

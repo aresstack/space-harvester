@@ -64,6 +64,39 @@ class MainframeMateFeaturesTest {
     }
 
     @Test
+    void binarySampleAndDownloadKeepEmbeddedControlBytes() throws Exception {
+        byte[] raw = new byte[27998];
+        java.util.Arrays.fill(raw, (byte) 0x40);
+        raw[0] = 0;
+        raw[1] = (byte) 0xff;
+        raw[2] = 1;
+        raw[3] = (byte) 0xff;
+        raw[4] = 2;
+        host.dataset("KKR.DATA.MIXED", new String(raw, java.nio.charset.StandardCharsets.ISO_8859_1));
+        try (FileConnection files = files(host.profile())) {
+            var sample = files.readBinarySample("'KKR.DATA.MIXED'", 16);
+            assertThat(sample.totalBytes()).isEqualTo(raw.length);
+            assertThat(sample.capturedBytes()).isEqualTo(16);
+            assertThat(sample.slice(0, 16)).isEqualTo(java.util.Arrays.copyOf(raw, 16));
+            assertThat(sample.sha256()).isEqualTo(java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(raw)));
+            var out = new java.io.ByteArrayOutputStream();
+            files.downloadBinary("'KKR.DATA.MIXED'", out);
+            assertThat(out.toByteArray()).isEqualTo(raw);
+            assertThat(files.readBinary("'KKR.DATA.MIXED'")).isEqualTo(raw);
+            assertThat(files.datasetDetails("'KKR.DATA.MIXED'").organization()).isEqualTo("PS");
+            var textProjection = files.read("'KKR.DATA.MIXED'");
+            assertThat(textProjection.writeRestriction()).contains("Binärdaten");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    files.writeIfUnchanged("'KKR.DATA.MIXED'", "changed", textProjection.hash()))
+                    .isInstanceOf(java.io.IOException.class).hasMessageContaining("Binärdaten");
+            assertThat(files.readBinary("'KKR.DATA.MIXED'")).isEqualTo(raw);
+            assertThat(files.read("'KKR.JCL(BUILD)'").text()).contains("//BUILD");
+            assertThat(host.commands()).contains("TYPE I", "STRU F", "TYPE A", "STRU R");
+        }
+    }
+
+    @Test
     void createsDatasetsWithTheirAttributes() throws Exception {
         try (FileConnection files = files(host.profile())) {
             files.createDataset("'KKR.NEU.PDS'", DatasetAttributes.DEFAULT);

@@ -34,6 +34,21 @@ class NeighborSearchTest {
 
     private final KeywordSearch keywords = mock(KeywordSearch.class);
     private final List<Collection<PageKey>> loaded = new ArrayList<>();
+
+    @org.junit.jupiter.api.BeforeEach
+    void allowDefaultScope() {
+        when(keywords.includesSource(any(), any())).thenReturn(true);
+    }
+
+    @Test
+    void excludedSourcesCannotBeSearchedOrLoadedAsNeighbors() {
+        when(keywords.includesSource(any(), org.mockito.ArgumentMatchers.eq("wiki"))).thenReturn(false);
+        var result = new NeighborSearch(keywords, neighbors, loader)
+                .search(APP, KeywordSearch.Query.of("Nachtlauf"), List.of(hit("o")), true);
+        assertThat(result.hits()).isEmpty();
+        assertThat(loaded).isEmpty();
+        org.mockito.Mockito.verify(keywords, org.mockito.Mockito.never()).search(any(), any(), isNull(), anyInt());
+    }
     private final NeighborLoader loader = (caller, pages) -> {
         loaded.add(List.copyOf(pages));
         return Optional.of(new NeighborLoader.Load() {

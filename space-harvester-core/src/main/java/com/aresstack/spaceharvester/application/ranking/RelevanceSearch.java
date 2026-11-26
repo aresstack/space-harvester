@@ -147,6 +147,11 @@ public class RelevanceSearch {
     private final SearchRunLog runs;
     private final BooleanSupplier documents;
     private final DocumentTexts documentTexts;
+    private volatile java.util.function.BiPredicate<PageKey, String> localExtraction = (key, basis) -> false;
+
+    public void localOriginals(java.util.function.BiPredicate<PageKey, String> current) {
+        localExtraction = Objects.requireNonNull(current, "current");
+    }
 
     /**
      * Ohne Live-Prüfung je Treffer: Rechte nur gegen die Zugriffspolicy und die Kopfdaten im Index. Für Tests und
@@ -589,7 +594,8 @@ public class RelevanceSearch {
                         score.document() == null ? null : score.document().part().map(PartId::value).orElse(null),
                         score.document() == null ? null : score.section(),
                         score.document() == null ? null : score.attachmentTitle(),
-                        score.document() == null || score.document().part().isEmpty() ? null : score.partTitle()));
+                        score.document() == null || score.document().part().isEmpty() ? null : score.partTitle(),
+                        score.document() != null && score.document().localOriginal()));
     }
 
     private static String indexed(SearchHit hit) {
@@ -760,7 +766,8 @@ public class RelevanceSearch {
         List<Enrichment> documentResults = store.findDocuments(header.key());
         for (Enrichment found : documentResults) {
             if (!"embedding".equals(found.processorId()) || found.status() != Enrichment.Status.OK
-                    || !found.processorVersion().equals(model.version())) {
+                    || !found.processorVersion().equals(model.version())
+                    || found.document().localOriginal() && !localExtraction.test(header.key(), found.extraction())) {
                 continue;
             }
             Chunk chunk = best(found, vector);
@@ -838,11 +845,12 @@ public class RelevanceSearch {
      */
     public String documentExcerpt(RankedHit ranked, int maxChars) {
         Relevance relevance = ranked.relevance();
-        if (relevance == null || relevance.attachmentId() == null || store == null) {
+        if (relevance == null || relevance.attachmentId() == null && !relevance.localOriginal() || store == null) {
             return "";
         }
         PageKey page = ranked.hit().page().header().key();
-        DocumentKey document = DocumentKey.attachment(page, relevance.attachmentId());
+        DocumentKey document = relevance.localOriginal() ? DocumentKey.localOriginal(page)
+                : DocumentKey.attachment(page, relevance.attachmentId());
         if (relevance.partId() != null) {
             document = document.child(PartId.parse(relevance.partId()));
         }
@@ -987,7 +995,13 @@ public class RelevanceSearch {
      */
     public record Relevance(double similarity, int charStart, int charEnd, Freshness freshness, String passageId,
                             String attachmentId, String partId, Integer section, String attachmentTitle,
-                            String partTitle) {
+                            String partTitle, boolean localOriginal) {
+
+        public Relevance(double similarity, int charStart, int charEnd, Freshness freshness, String passageId,
+                         String attachmentId, String partId, Integer section, String attachmentTitle, String partTitle) {
+            this(similarity, charStart, charEnd, freshness, passageId, attachmentId, partId, section,
+                    attachmentTitle, partTitle, false);
+        }
 
         public Relevance(double similarity, int charStart, int charEnd, Freshness freshness, String passageId) {
             this(similarity, charStart, charEnd, freshness, passageId, null, null, null, null, null);

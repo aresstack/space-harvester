@@ -83,6 +83,13 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     private static final String SPACE_KEY = "spaceKey";
     private static final String TITLE = "title";
     private static final String TEXT = "text";
+    private static final String HAS_TEXT = "hasSearchableText";
+    private volatile com.aresstack.spaceharvester.application.holdings.HoldingsChanges holdings =
+            com.aresstack.spaceharvester.application.holdings.HoldingsChanges.NONE;
+
+    public void holdingsChanges(com.aresstack.spaceharvester.application.holdings.HoldingsChanges changes) {
+        holdings = Objects.requireNonNull(changes, "changes");
+    }
     private static final String INPUT_SHA256 = "inputSha256";
     /** Art des Dokuments: {@value #PAGE_KIND} oder {@value #ATTACHMENT_KIND}. */
     private static final String KIND = "kind";
@@ -164,9 +171,52 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     public synchronized void put(Entry entry) {
         Objects.requireNonNull(entry, "entry");
         requireOpen();
+        replacePageSections(entry.key(), List.of(entry));
+    }
+
+    @Override
+    public synchronized void replacePageSections(PageKey page, Iterable<Entry> sections) {
+        Objects.requireNonNull(page, "page");
+        Objects.requireNonNull(sections, "sections");
+        requireOpen();
+        String[] space = {null};
+        Iterable<Document> documents = () -> new java.util.Iterator<>() {
+            private final java.util.Iterator<Entry> source = sections.iterator();
+
+            @Override
+            public boolean hasNext() {
+                return source.hasNext();
+            }
+
+            @Override
+            public Document next() {
+                Entry entry = source.next();
+                if (!page.equals(entry.key()) || space[0] != null && !space[0].equals(entry.spaceKey())) {
+                    throw new IllegalArgumentException("Section belongs to a different page or space");
+                }
+                space[0] = entry.spaceKey();
+                return pageDocument(entry);
+            }
+        };
+        try {
+            writer.updateDocuments(new Term(ID, id(page)), documents);
+            changed();
+        } catch (IOException e) {
+            throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
+        }
+        if (space[0] != null) {
+            holdings.pagesChanged(page.sourceId(), space[0], List.of(page.pageId()));
+            respace(page, space[0]);
+        } else {
+            holdings.sourceChanged(page.sourceId());
+        }
+    }
+
+    private Document pageDocument(Entry entry) {
         String text = entry.text().length() > MAX_TEXT_CHARS ? entry.text().substring(0, MAX_TEXT_CHARS)
                 : entry.text();
         Document doc = new Document();
+        // Give all page sections the same replacement key; attachment IDs have a separate namespace.
         doc.add(new StringField(ID, id(entry.key()), Field.Store.NO));
         doc.add(new StringField(KIND, PAGE_KIND, Field.Store.YES));
         doc.add(new StringField(PAGE, id(entry.key()), Field.Store.NO));
@@ -175,17 +225,13 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         doc.add(new StringField(SPACE_KEY, entry.spaceKey(), Field.Store.YES));
         doc.add(new TextField(TITLE, entry.title(), Field.Store.YES));
         doc.add(new TextField(TEXT, text, Field.Store.YES));
+        doc.add(new StoredField(HAS_TEXT, Boolean.toString(
+                !terms(text.substring(Math.min(text.length(), entry.metadataPrefixChars()))).isEmpty())));
         doc.add(new StoredField(INPUT_SHA256, entry.inputSha256()));
         if (!entry.mediaType().isEmpty()) {
             doc.add(new StoredField(MEDIA_TYPE, entry.mediaType()));
         }
-        try {
-            writer.updateDocument(new Term(ID, id(entry.key())), doc);
-            changed();
-        } catch (IOException e) {
-            throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
-        }
-        respace(entry.key(), entry.spaceKey());
+        return doc;
     }
 
     /**
@@ -371,6 +417,46 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     }
 
     @Override
+    public Map<String, ContentState> contentStates(String sourceId, String spaceKey) {
+        requireOpen();
+        return read(searcher -> {
+            Query query = new BooleanQuery.Builder()
+                    .add(new TermQuery(new Term(SOURCE_ID, sourceId)), BooleanClause.Occur.FILTER)
+                    .add(new TermQuery(new Term(SPACE_KEY, spaceKey)), BooleanClause.Occur.FILTER)
+                    .add(new TermQuery(new Term(KIND, PAGE_KIND)), BooleanClause.Occur.FILTER).build();
+            Map<String, ContentState> states = new java.util.HashMap<>();
+            StoredFields fields = searcher.storedFields();
+            ScoreDoc after = null;
+            while (true) {
+                TopDocs batch = searcher.searchAfter(after, query, 1024);
+                for (ScoreDoc hit : batch.scoreDocs) {
+                    Document doc = fields.document(hit.doc, Set.of(PAGE_ID, INPUT_SHA256, HAS_TEXT));
+                    String hasText = doc.get(HAS_TEXT);
+                    // Do not infer content from an older entry that may contain only embedded file names.
+                    ContentState state = new ContentState(doc.get(INPUT_SHA256),
+                            Boolean.parseBoolean(hasText), hasText != null);
+                    states.merge(doc.get(PAGE_ID), state, (a, b) -> {
+                        if (!a.inputSha256().equals(b.inputSha256())) {
+                            return new ContentState("", false, false);
+                        }
+                        return new ContentState(a.inputSha256(), a.hasText() || b.hasText(),
+                                a.verified() && b.verified());
+                    });
+                }
+                if (batch.scoreDocs.length < 1024) {
+                    return Map.copyOf(states);
+                }
+                after = batch.scoreDocs[batch.scoreDocs.length - 1];
+            }
+        });
+    }
+
+    @Override
+    public boolean contentStateKnown(PageKey key) {
+        return stored(id(key), HAS_TEXT).isPresent();
+    }
+
+    @Override
     public Optional<String> inputSha256(PageKey key) {
         Objects.requireNonNull(key, "key");
         requireOpen();
@@ -410,9 +496,11 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         Objects.requireNonNull(key, "key");
         requireOpen();
         try {
+            Optional<String> space = stored(id(key), SPACE_KEY);
             // Die Seite und ihre Anhänge; Einträge von vor v2 hat das Öffnen schon verworfen.
             writer.deleteDocuments(new Term(PAGE, id(key)));
             changed();
+            space.ifPresent(value -> holdings.pagesChanged(key.sourceId(), value, List.of(key.pageId())));
         } catch (IOException e) {
             throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
         }
@@ -427,6 +515,7 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
             writer.commit();
             uncommitted = 0;
             searchers.maybeRefreshBlocking();
+            holdings.sourceChanged(sourceId);
         } catch (IOException e) {
             throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
         }

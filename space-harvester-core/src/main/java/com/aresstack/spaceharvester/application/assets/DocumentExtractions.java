@@ -67,6 +67,11 @@ public final class DocumentExtractions {
         return structure.version();
     }
 
+    /** Maximum size of the compatibility reader projection, not of the section index. */
+    public int maxTextChars() {
+        return maxTextChars;
+    }
+
     /** Die Grenzen, unter denen gelesen wird. */
     public ExtractionLimits limits() {
         return limits;
@@ -80,6 +85,11 @@ public final class DocumentExtractions {
     /** Die abgelegte Extraktion dieser Bytes; liest nichts. */
     public Optional<StoredExtraction> stored(String sha256) {
         return extractions.find(key(sha256));
+    }
+
+    /** Find exactly the extraction referenced by a snapshot, not a different generation of the bytes. */
+    public Optional<StoredExtraction> stored(ExtractionKey key) {
+        return extractions.find(key);
     }
 
     /**
@@ -141,6 +151,88 @@ public final class DocumentExtractions {
                     document.directory(), target.blocks, target.chars));
         } catch (UncheckedIOException e) {
             throw new AssetStoreException("Dokument nicht lesbar", e.getCause());
+        }
+    }
+
+    /**
+     * Stage an extraction of an original outside the asset store. Publish only after the owning source
+     * has validated the read. Close an uncommitted stage to discard every block and embedded part.
+     */
+    PreparedOriginal prepareOriginal(Path original, String title, String mediaType, String originalSha256) {
+        ExtractionKey key = key(originalSha256);
+        Optional<StoredExtraction> known = extractions.find(key);
+        if (known.isPresent()) {
+            return new PreparedOriginal(known.get(), null, null);
+        }
+        Target target = new Target(() -> extractions.writer(key));
+        try {
+            StructuredDocument document = structure.extract(original, title, mediaType, limits, target,
+                    rules.forContainer(originalSha256));
+            Optional<Outcome> temporaryFailure = transientFailure(document);
+            if (temporaryFailure.isPresent()) {
+                throw failure(temporaryFailure.get());
+            }
+            return new PreparedOriginal(null, target, document);
+        } catch (RuntimeException | Error failure) {
+            target.close();
+            throw failure;
+        }
+    }
+
+    /** A bounded compatibility projection; the complete structured extraction remains in the extraction store. */
+    public OriginalPreview originalPreview(StoredExtraction extraction) {
+        return originalText(extraction, Math.min(maxTextChars, 8192));
+    }
+
+    /** Read the retained text from the extraction, not the snapshot preview. */
+    public OriginalPreview originalText(StoredExtraction extraction) {
+        return originalText(extraction, maxTextChars);
+    }
+
+    /** Read retained text using the caller's explicit character budget, independently of the reader preview. */
+    public OriginalPreview originalText(StoredExtraction extraction, int maxChars) {
+        if (maxChars < 1) {
+            throw new IllegalArgumentException("maxChars must be positive");
+        }
+        TextCollector text = new TextCollector(maxChars);
+        if (usable(extraction.document().outcome())) {
+            collect(extraction, text);
+        }
+        return new OriginalPreview(text.text.toString(), text.cut || extraction.document().outcome().truncated());
+    }
+
+    public record OriginalPreview(String text, boolean truncated) {
+    }
+
+    static final class PreparedOriginal implements AutoCloseable {
+
+        private StoredExtraction committed;
+        private final Target target;
+        private final StructuredDocument document;
+
+        private PreparedOriginal(StoredExtraction committed, Target target, StructuredDocument document) {
+            this.committed = committed;
+            this.target = target;
+            this.document = document;
+        }
+
+        StoredExtraction commit() {
+            if (committed == null) {
+                committed = target.writer.commit(new StructuredDocument(document.head(), document.outcome(),
+                        document.directory(), target.blocks, target.chars));
+            }
+            return committed;
+        }
+
+        boolean alreadyStored() {
+            return target == null;
+        }
+
+        @Override
+        public void close() {
+            if (target != null) {
+                target.close();
+            }
         }
     }
 
@@ -804,6 +896,9 @@ public final class DocumentExtractions {
             int separator = text.isEmpty() ? 0 : PARAGRAPH_BREAK.length();
             if (text.length() + separator + piece.length() > max) {
                 int room = max - text.length() - separator;
+                if (room > 0 && Character.isHighSurrogate(piece.charAt(room - 1))) {
+                    room--;
+                }
                 if (room > 0) {
                     text.append(separator > 0 ? PARAGRAPH_BREAK : "").append(piece, 0, room);
                 }

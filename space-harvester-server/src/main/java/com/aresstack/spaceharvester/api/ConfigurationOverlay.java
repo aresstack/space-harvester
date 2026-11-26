@@ -316,6 +316,7 @@ public final class ConfigurationOverlay {
         putField(fields, SourceSyncOverride.MAX_AGE, o.maxAge());
         putField(fields, SourceSyncOverride.WITHHELD_RETENTION, o.withheldRetention());
         putField(fields, SourceSyncOverride.BACKGROUND_FILL, o.backgroundFill());
+        putField(fields, SourceSyncOverride.PREFETCH_HITS, o.prefetchHits());
         return fields;
     }
 

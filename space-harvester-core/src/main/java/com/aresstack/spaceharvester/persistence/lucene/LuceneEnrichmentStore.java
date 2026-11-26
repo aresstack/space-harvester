@@ -152,6 +152,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     private static final String DOCUMENT = "documentKey";
     private static final String DOCUMENT_PROCESSOR = "documentProcessor";
     private static final String ATTACHMENT_ID = "documentAttachmentId";
+    private static final String LOCAL_ORIGINAL = "documentLocalOriginal";
     private static final String PART_ID = "documentPartId";
     private static final String SECTION = "documentSection";
     private static final String DOCUMENT_EXTRACTION = "documentExtraction";
@@ -198,6 +199,9 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     private static final String TERM_DOCUMENT_ATTACHMENT = "termDocumentAttachment";
     /** Ergebnis ({@link #ID}), zu dem ein Faktendokument gehört. */
     private static final String FACT_OF = "factOf";
+    private static final String FACT_DOCUMENT_KEY = "factDocumentKey";
+    private static final String FACT_DOCUMENT_ATTACHMENT = "factDocumentAttachment";
+    private static final String FACT_PROCESSOR = "factProcessor";
     /** Seite eines Faktendokuments; getrennt von {@link #PAGE}, damit {@link #find} nur Ergebnisse sieht. */
     private static final String FACT_PAGE = "factPage";
     private static final String FACT_SOURCE = "factSource";
@@ -429,7 +433,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             for (Enrichment enrichment : find(document)) {
                 if (enrichment.section() == section) {
                     String id = id(enrichment);
-                    writer.deleteDocuments(new Term(ID, id), new Term(VECTOR_OF, id), new Term(TERM_OF, id));
+                    writer.deleteDocuments(new Term(ID, id), new Term(VECTOR_OF, id), new Term(TERM_OF, id),
+                            new Term(FACT_OF, id));
                 }
             }
             changed();
@@ -451,14 +456,16 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                     writer.deleteDocuments(new Term(ID, id), new Term(VECTOR_OF, id), new Term(TERM_OF, id),
                             new Term(FACT_OF, id));
                 }
-            } else if (document.isEmbedded() || document.attachmentId().isEmpty()) {
+            } else if (document.isEmbedded() || document.attachmentId().isEmpty() && !document.localOriginal()) {
                 writer.deleteDocuments(new Term(DOCUMENT, document.value()),
-                        new Term(VECTOR_DOCUMENT_KEY, document.value()), new Term(TERM_DOCUMENT_KEY, document.value()));
+                        new Term(VECTOR_DOCUMENT_KEY, document.value()), new Term(TERM_DOCUMENT_KEY, document.value()),
+                        new Term(FACT_DOCUMENT_KEY, document.value()));
             } else {
                 // Ein Anhang samt seinen enthaltenen Dateien.
                 writer.deleteDocuments(new Term(DOCUMENT_ATTACHMENT, attachment(document)),
                         new Term(VECTOR_DOCUMENT_ATTACHMENT, attachment(document)),
-                        new Term(TERM_DOCUMENT_ATTACHMENT, attachment(document)));
+                        new Term(TERM_DOCUMENT_ATTACHMENT, attachment(document)),
+                        new Term(FACT_DOCUMENT_ATTACHMENT, attachment(document)));
             }
             changed();
             termChanges.fire(document.page().sourceId(), document.page().pageId());
@@ -499,10 +506,11 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             writer.deleteDocuments(new BooleanQuery.Builder()
                     .add(new TermQuery(new Term(DOCUMENT_PAGE, page(key))), BooleanClause.Occur.FILTER)
                     .add(new TermQuery(new Term(DOCUMENT_PROCESSOR, processorId)), BooleanClause.Occur.FILTER).build());
+            writer.deleteDocuments(new BooleanQuery.Builder()
+                    .add(new TermQuery(new Term(FACT_PAGE, page(key))), BooleanClause.Occur.FILTER)
+                    .add(new TermQuery(new Term(FACT_PROCESSOR, processorId)), BooleanClause.Occur.FILTER).build());
             if (TermPayload.PROCESSOR.equals(processorId)) {
-                writer.deleteDocuments(new BooleanQuery.Builder()
-                        .add(new TermQuery(new Term(TERM_PAGE, page(key))), BooleanClause.Occur.FILTER)
-                        .add(new TermQuery(new Term(TERM_DOCUMENT, "1")), BooleanClause.Occur.FILTER).build());
+                writer.deleteDocuments(new Term(TERM_PAGE, page(key)));
             }
             if (EMBEDDING.equals(processorId)) {
                 writer.deleteDocuments(new BooleanQuery.Builder()
@@ -711,15 +719,17 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     /** Revision, Eingabe-Hash und Extraktion eines Eintrags als ein Wert; je Seite gleich, also klein im Index. */
     private static String stamp(TermPosting posting) {
         return (posting.revision() == null ? "" : "r" + posting.revision()) + SEPARATOR + posting.inputSha256()
-                + SEPARATOR + (posting.extraction() == null ? "" : "e" + posting.extraction());
+                + SEPARATOR + (posting.extraction() == null ? "" : "e" + posting.extraction())
+                + SEPARATOR + (posting.document().localOriginal() ? "local" : "");
     }
 
     private static TermKey key(String sortKey, String stamp) {
         String[] parts = sortKey.split(String.valueOf(SEPARATOR), 5);
-        String[] stand = stamp.split(String.valueOf(SEPARATOR), 3);
+        String[] stand = stamp.split(String.valueOf(SEPARATOR), 4);
+        boolean localOriginal = stand.length > 3 && "local".equals(stand[3]);
         return new TermKey(new PageKey(parts[2], parts[3]), TermKind.of(parts[1]), parts[0],
-                stand[0].isEmpty() ? null : stand[0].substring(1), stand[1], parts.length > 4,
-                stand[2].isEmpty() ? null : stand[2].substring(1), sortKey);
+                stand[0].isEmpty() ? null : stand[0].substring(1), stand[1], parts.length > 4 && !localOriginal,
+                stand[2].isEmpty() ? null : stand[2].substring(1), sortKey, localOriginal);
     }
 
     private static org.apache.lucene.search.Query termQuery(Filter filter, String from, boolean inclusive) {
@@ -887,7 +897,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     }
 
     private static String attachment(DocumentKey document) {
-        return page(document.page()) + SEPARATOR + document.attachmentId().orElse("");
+        return page(document.page()) + SEPARATOR + (document.localOriginal()
+                ? String.valueOf(SEPARATOR) + SEPARATOR + "local-original" : document.attachmentId().orElse(""));
     }
 
     private static Document document(Enrichment enrichment) {
@@ -1007,7 +1018,9 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             }
             doc.add(new StoredField(TERM_OCCURRENCES, packed.array()));
             if (enrichment.ofDocument()) {
-                doc.add(new StringField(TERM_DOCUMENT, "1", Field.Store.NO));
+                if (!enrichment.document().localOriginal()) {
+                    doc.add(new StringField(TERM_DOCUMENT, "1", Field.Store.NO));
+                }
                 doc.add(new StringField(TERM_DOCUMENT_KEY, enrichment.document().value(), Field.Store.NO));
                 doc.add(new StringField(TERM_DOCUMENT_ATTACHMENT, attachment(enrichment.document()), Field.Store.NO));
                 storeDocument(doc, enrichment);
@@ -1019,19 +1032,24 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
 
     /** Ein Dokument je Fakt des Ergebnisses ({@link EnrichmentFacts}); andere Prozessoren tragen keine. */
     private static List<Document> facts(Enrichment enrichment) {
-        if (enrichment.ofDocument()) {
+        if (enrichment.ofDocument() && !enrichment.document().localOriginal()) {
             return List.of();
         }
         List<MetadataFact> facts = EnrichmentFacts.of(enrichment);
         if (facts.isEmpty()) {
             return List.of();
         }
-        String id = id(enrichment.key(), enrichment.processorId());
+        String id = id(enrichment);
         List<Document> docs = new ArrayList<>(facts.size());
         for (int i = 0; i < facts.size(); i++) {
             MetadataFact fact = facts.get(i);
             Document doc = new Document();
             doc.add(new StringField(FACT_OF, id, Field.Store.NO));
+            doc.add(new StringField(FACT_PROCESSOR, enrichment.processorId(), Field.Store.NO));
+            if (enrichment.document().localOriginal()) {
+                doc.add(new StringField(FACT_DOCUMENT_KEY, enrichment.document().value(), Field.Store.NO));
+                doc.add(new StringField(FACT_DOCUMENT_ATTACHMENT, attachment(enrichment.document()), Field.Store.NO));
+            }
             doc.add(new StringField(FACT_PAGE, page(enrichment.key()), Field.Store.NO));
             doc.add(new StringField(FACT_SOURCE, enrichment.key().sourceId(), Field.Store.NO));
             doc.add(new StringField(FACT_TYPE, fact.type(), Field.Store.NO));
@@ -1092,6 +1110,10 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             origin.put("revision", provenance.revision());
         }
         origin.put("computedAt", provenance.computedAt().toString());
+        if (provenance.localSection() != null) {
+            origin.put("localSection", provenance.localSection());
+            origin.put("localPartId", provenance.localPartId());
+        }
         if (fact.anchor() != null) {
             ObjectNode anchor = node.putObject("anchor");
             if (fact.anchor().section() != null) {
@@ -1124,7 +1146,9 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                     arguments, new MetadataFact.Provenance(origin.path("processorId").asString(),
                     origin.path("processorVersion").asString(), origin.path("inputSha256").asString(),
                     origin.hasNonNull("revision") ? origin.get("revision").asString() : null,
-                    Instant.parse(origin.path("computedAt").asString())),
+                    Instant.parse(origin.path("computedAt").asString()),
+                    origin.hasNonNull("localPartId") ? origin.get("localPartId").asString() : null,
+                    origin.hasNonNull("localSection") ? origin.get("localSection").asInt() : null),
                     anchor == null ? null : new MetadataFact.Anchor(
                             anchor.hasNonNull("section") ? anchor.get("section").asString() : null,
                             anchor.hasNonNull("charStart") ? anchor.get("charStart").asInt() : null,
@@ -1208,6 +1232,9 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
 
     /** Anhang, Teil und Abschnitt getrennt gespeichert (Schlüsselform, ADR 0026); nie aus einer Zeichenkette zerlegt. */
     private static void storeDocument(Document doc, Enrichment enrichment) {
+        if (enrichment.document().localOriginal()) {
+            doc.add(new StoredField(LOCAL_ORIGINAL, "true"));
+        }
         enrichment.document().attachmentId().ifPresent(id -> doc.add(new StoredField(ATTACHMENT_ID, id)));
         enrichment.document().part().ifPresent(id -> doc.add(new StoredField(PART_ID, id.value())));
         doc.add(new StoredField(SECTION, enrichment.section()));
@@ -1217,7 +1244,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     private static DocumentKey documentKey(PageKey page, Document doc) {
         String partId = doc.get(PART_ID);
         return new DocumentKey(page, Optional.ofNullable(doc.get(ATTACHMENT_ID)),
-                Optional.ofNullable(partId).map(PartId::parse));
+                Optional.ofNullable(partId).map(PartId::parse), "true".equals(doc.get(LOCAL_ORIGINAL)));
     }
 
     private static int section(Document doc) {

@@ -14,12 +14,25 @@ import java.util.Optional;
  * @param attachmentId Anhangskennung der Quelle, wenn das Dokument ein Anhang oder darin enthalten ist
  * @param part         Teilkennung im äußeren Behälter, wenn das Dokument eine enthaltene Datei ist
  */
-public record DocumentKey(PageKey page, Optional<String> attachmentId, Optional<PartId> part) {
+public record DocumentKey(PageKey page, Optional<String> attachmentId, Optional<PartId> part,
+                          boolean localOriginal) {
+
+    public DocumentKey(PageKey page, Optional<String> attachmentId, Optional<PartId> part) {
+        this(page, attachmentId, part, false);
+    }
+
+    /** The sectioned original of a local file, distinct from its page-level summary and real attachments. */
+    public static DocumentKey localOriginal(PageKey page) {
+        return new DocumentKey(page, Optional.empty(), Optional.empty(), true);
+    }
 
     public DocumentKey {
         Objects.requireNonNull(page, "page");
         attachmentId = attachmentId == null ? Optional.empty() : attachmentId;
         part = part == null ? Optional.empty() : part;
+        if (localOriginal && attachmentId.isPresent()) {
+            throw new IllegalArgumentException("Local original cannot have an attachment ID");
+        }
         if (attachmentId.filter(String::isBlank).isPresent()) {
             throw new IllegalArgumentException("Anhangskennung darf nicht leer sein");
         }
@@ -45,11 +58,11 @@ public record DocumentKey(PageKey page, Optional<String> attachmentId, Optional<
         if (this.part.isPresent()) {
             throw new IllegalStateException("Teilkennungen gelten je äußerem Behälter, nicht verschachtelt");
         }
-        return new DocumentKey(page, attachmentId, Optional.of(Objects.requireNonNull(part, "part")));
+        return new DocumentKey(page, attachmentId, Optional.of(Objects.requireNonNull(part, "part")), localOriginal);
     }
 
     public boolean isPage() {
-        return attachmentId.isEmpty() && part.isEmpty();
+        return !localOriginal && attachmentId.isEmpty() && part.isEmpty();
     }
 
     public boolean isEmbedded() {
@@ -66,7 +79,9 @@ public record DocumentKey(PageKey page, Optional<String> attachmentId, Optional<
         StringBuilder value = new StringBuilder(page.sourceId()).append(SEPARATOR).append(page.pageId());
         // Ein Teil direkt in der Seite (ohne Anhang) behält den leeren Platz des Anhangs: sonst fiele er mit einem
         // Anhang zusammen, dessen Kennung zufällig wie eine Teilkennung aussieht. Anhangskennungen sind nie leer.
-        if (attachmentId.isPresent() || part.isPresent()) {
+        if (localOriginal) {
+            value.append(SEPARATOR).append(SEPARATOR).append(SEPARATOR).append("local-original");
+        } else if (attachmentId.isPresent() || part.isPresent()) {
             value.append(SEPARATOR).append(attachmentId.orElse(""));
         }
         part.ifPresent(id -> value.append(SEPARATOR).append(id.value()));
@@ -79,6 +94,9 @@ public record DocumentKey(PageKey page, Optional<String> attachmentId, Optional<
      * {@link PartId#fileName()}. Die Kennung der Quelle wird nie selbst ein Pfad.
      */
     public String fileName() {
+        if (localOriginal) {
+            return "local-original" + part.map(id -> "-" + id.fileName()).orElse("");
+        }
         if (attachmentId.isEmpty()) {
             return part.map(PartId::fileName).orElse("");
         }
@@ -96,6 +114,9 @@ public record DocumentKey(PageKey page, Optional<String> attachmentId, Optional<
             return "";
         }
         StringBuilder path = new StringBuilder(DOCUMENTS);
+        if (localOriginal) {
+            path.append("/local-original");
+        }
         attachmentId.ifPresent(id -> path.append('/').append(ATTACHMENT_PREFIX).append(sha256(id)));
         part.ifPresent(id -> path.append("/parts/").append(id.fileName()));
         return path.toString();
@@ -109,7 +130,9 @@ public record DocumentKey(PageKey page, Optional<String> attachmentId, Optional<
      */
     public String hash() {
         StringBuilder input = new StringBuilder(page.sourceId()).append('\n').append(page.pageId());
-        if (attachmentId.isPresent() || part.isPresent()) {
+        if (localOriginal) {
+            input.append("\n\n\nlocal-original");
+        } else if (attachmentId.isPresent() || part.isPresent()) {
             input.append('\n').append(attachmentId.orElse(""));
         }
         part.ifPresent(id -> input.append('\n').append(id.value()));

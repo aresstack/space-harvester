@@ -24,6 +24,7 @@ configurations {
 dependencies {
     antlr libs.antlr
     implementation libs.antlr.runtime
+    implementation project(':proleap-parser')
     // nur das Paket ...mainframe.syntax
     api libs.rsyntaxtextarea
 

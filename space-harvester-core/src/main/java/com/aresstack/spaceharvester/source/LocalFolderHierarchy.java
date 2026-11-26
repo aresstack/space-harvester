@@ -61,7 +61,8 @@ import java.util.Objects;
  * The navigation reads only immediate children and never traverses unopened directories.
  */
 final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListingSource, ResourceMetadataSource,
-        StoredContentSource, PageNavigationSource, ResourceNodeKindSource, OriginalFileSource, SourceMediaRange {
+        StoredContentSource, PageNavigationSource, ResourceNodeKindSource, OriginalFileSource, DirectOriginalFileSource, SourceMediaRange,
+        com.aresstack.enterpriseai.source.api.PartitionInventorySource {
 
     /** {@link StoredContent#nativeFormat()} eines Ordners: kein Inhalt. */
     static final String FOLDER_FORMAT = "local-folder";
@@ -170,6 +171,20 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
     }
 
     @Override
+    public void visitInventory(String partitionKey, Runnable checkpoint,
+                               java.util.function.Consumer<KnowledgeResource> found) throws KnowledgeSourceException {
+        java.util.Set<String> emittedFolders = new java.util.HashSet<>();
+        port.visitInventory(partitionKey, checkpoint, file -> {
+            for (String parent : folders(pathOf(file))) {
+                if (emittedFolders.add(parent)) {
+                    found.accept(folder(parent));
+                }
+            }
+            found.accept(describeFile(file));
+        });
+    }
+
+    @Override
     public String localId(KnowledgeResourceId resourceId) {
         return metadata.localId(resourceId);
     }
@@ -191,9 +206,16 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
             return new StoredContent(resource, new byte[0], "application/x-space-harvester-remote-media",
                     "remote-media-metadata", Instant.now());
         }
-        StoredContent content = stored.storedContent(localId);
-        return new StoredContent(describeFile(content.resource()), content.payload(), content.mediaType(),
-                content.nativeFormat(), content.retrievedAt());
+        try {
+            StoredContent content = stored.storedContent(localId);
+            return new StoredContent(describeFile(content.resource()), content.payload(), content.mediaType(),
+                    content.nativeFormat(), content.retrievedAt());
+        } catch (com.aresstack.enterpriseai.source.api.ResponseTooLargeException oversized) {
+            // Retain the file as a metadata-only resource when its source read limit is lower than the cache limit.
+            return new StoredContent(resource, new byte[0],
+                    com.aresstack.spaceharvester.application.snapshot.LargeFiles.MEDIA_TYPE,
+                    com.aresstack.spaceharvester.application.snapshot.LargeFiles.FORMAT, Instant.now());
+        }
     }
 
     @Override
@@ -203,6 +225,16 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
             return Optional.empty();
         }
         return port.copyOriginal(localId, target, wanted, maxBytes);
+    }
+
+    @Override
+    public <T> Optional<T> readOriginalInPlace(String localId, Predicate<String> wanted, long maxBytes,
+                                               DirectOriginalFileSource.Reader<T> reader) throws KnowledgeSourceException {
+        if (folderOf(localId) != null) {
+            return Optional.empty();
+        }
+        return port.readOriginal(localId, wanted, maxBytes,
+                (original, resource) -> reader.read(original, describeFile(resource)));
     }
 
     @Override
@@ -334,7 +366,12 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
             attributes = attributes.with(PageMetadata.REMOTE_MEDIA, "true")
                     .with(PageMetadata.REMOTE_MEDIA_TYPE, videoType);
         }
-        KnowledgeResource.Builder builder = file.toBuilder().metadata(attributes);
+        // The upstream version is the file size; include the modification time to detect same-size edits.
+        KnowledgeRevision revision = file.revision();
+        String version = "local-file/v1:" + revision.version() + ":"
+                + revision.modifiedAt().map(Instant::toString).orElse("unknown");
+        KnowledgeResource.Builder builder = file.toBuilder().metadata(attributes)
+                .revision(KnowledgeRevision.of(revision.modifiedAt().orElse(null), version));
         String path = pathOf(file);
         String parent = path == null ? null : parentOf(path);
         if (parent != null) {
@@ -420,7 +457,7 @@ final class LocalFolderHierarchy implements KnowledgeSourcePort, PartitionListin
         return folders;
     }
 
-    private static String encode(String path) {
+    static String encode(String path) {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(path.getBytes(StandardCharsets.UTF_8));
     }
 

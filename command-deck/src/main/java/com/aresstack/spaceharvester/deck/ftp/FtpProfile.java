@@ -25,7 +25,7 @@ import java.util.Objects;
  */
 public record FtpProfile(String host, int port, String encoding, int connectTimeoutSeconds, int controlTimeoutSeconds,
                          int dataTimeoutSeconds, TransferOptions transfer, RetryPolicy retry, String startHlq,
-                         SpoolNaming spoolNaming, boolean useProxy) {
+                         SpoolNaming spoolNaming, boolean useProxy, java.util.List<String> syslib) {
 
     public static final int DEFAULT_PORT = 21;
     public static final String DEFAULT_ENCODING = "ISO-8859-1";
@@ -50,6 +50,31 @@ public record FtpProfile(String host, int port, String encoding, int connectTime
         retry = Objects.requireNonNullElse(retry, RetryPolicy.DEFAULT);
         startHlq = startHlq == null ? "" : startHlq.trim().toUpperCase(java.util.Locale.ROOT);
         spoolNaming = Objects.requireNonNullElse(spoolNaming, SpoolNaming.DEFAULT);
+        syslib = normalizeSyslib(syslib);
+    }
+
+    public FtpProfile(String host, int port, String encoding, int connectTimeoutSeconds, int controlTimeoutSeconds,
+                      int dataTimeoutSeconds, TransferOptions transfer, RetryPolicy retry, String startHlq,
+                      SpoolNaming spoolNaming, boolean useProxy) {
+        this(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
+                transfer, retry, startHlq, spoolNaming, useProxy, java.util.List.of());
+    }
+
+    public FtpProfile withSyslib(java.util.List<String> libraries) {
+        return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
+                transfer, retry, startHlq, spoolNaming, useProxy, libraries);
+    }
+
+    private static java.util.List<String> normalizeSyslib(java.util.List<String> libraries) {
+        if (libraries == null) {
+            return java.util.List.of();
+        }
+        return libraries.stream().map(MvsPath::unquote).filter(name -> !name.isBlank())
+                .map(name -> name.toUpperCase(java.util.Locale.ROOT)).peek(name -> {
+                    if (name.length() > 44 || !name.matches("[A-Z@#$][A-Z0-9@#$-]{0,7}(\\.[A-Z@#$][A-Z0-9@#$-]{0,7})*")) {
+                        throw new IllegalArgumentException("Ungültige SYSLIB: " + name);
+                    }
+                }).distinct().toList();
     }
 
     /** Ein Zeitlimit für alles, sonst die Vorgaben. */
@@ -65,27 +90,27 @@ public record FtpProfile(String host, int port, String encoding, int connectTime
 
     public FtpProfile withTransfer(TransferOptions value) {
         return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
-                value, retry, startHlq, spoolNaming, useProxy);
+                value, retry, startHlq, spoolNaming, useProxy, syslib);
     }
 
     public FtpProfile withRetry(RetryPolicy value) {
         return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
-                transfer, value, startHlq, spoolNaming, useProxy);
+                transfer, value, startHlq, spoolNaming, useProxy, syslib);
     }
 
     public FtpProfile withStartHlq(String value) {
         return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
-                transfer, retry, value, spoolNaming, useProxy);
+                transfer, retry, value, spoolNaming, useProxy, syslib);
     }
 
     public FtpProfile withSpoolNaming(SpoolNaming value) {
         return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
-                transfer, retry, startHlq, value, useProxy);
+                transfer, retry, startHlq, value, useProxy, syslib);
     }
 
     public FtpProfile withUseProxy(boolean value) {
         return new FtpProfile(host, port, encoding, connectTimeoutSeconds, controlTimeoutSeconds, dataTimeoutSeconds,
-                transfer, retry, startHlq, spoolNaming, value);
+                transfer, retry, startHlq, spoolNaming, value, syslib);
     }
 
     public Charset charset() {

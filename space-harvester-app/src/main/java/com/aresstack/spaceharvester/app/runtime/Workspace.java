@@ -600,6 +600,30 @@ public final class Workspace {
      * Lädt die Lese-Ansichten dieser Seiten im Hintergrund vor, etwa die Kinder eines eben aufgeklappten Knotens
      * ({@code ReadingViews.prefetch}); kehrt sofort zurück.
      */
+    /** Schedule direct native resources through the shared acquisition and index pipeline. */
+    public void acquireVisitedResources(String sourceId, java.util.Collection<String> paths) {
+        HarvestSource source = sources().stream().filter(candidate -> candidate.id().equals(sourceId))
+                .findFirst().orElse(null);
+        if (source == null) {
+            return;
+        }
+        java.util.Set<PageKey> keys = new java.util.LinkedHashSet<>();
+        for (String path : paths) {
+            try {
+                source.navigationPageId(path).ifPresent(pageId -> {
+                    access.require(caller, ResourceScope.page(sourceId, sourceId, pageId), AccessKind.CONTENT);
+                    keys.add(new PageKey(sourceId, pageId));
+                });
+            } catch (com.aresstack.spaceharvester.application.sources.SourceAccessException | AccessDeniedException e) {
+                org.slf4j.LoggerFactory.getLogger(Workspace.class).warn(
+                        "Navigation acquisition skipped for source {}: {}", sourceId, e.getMessage());
+            }
+        }
+        if (!keys.isEmpty()) {
+            harvester.pageLoads().join(caller, "Besuchte Quelltexte laden", keys);
+        }
+    }
+
     public void prefetchReadingViews(String sourceId, java.util.Collection<String> pageIds) {
         harvester.readingViews().prefetch(caller, sourceId, pageIds);
     }
@@ -842,6 +866,12 @@ public final class Workspace {
     /** Seite zu einer Quell-URL mit Seiten-ID ({@code …/pages/by-url}). */
     public DeliveredPage pageByUrl(String sourceId, String url, boolean refresh) {
         return harvester.pages().pageByUrl(caller, sourceId, url, refresh);
+    }
+
+    /** Read local section analyses only after page content access has been checked. */
+    public Optional<com.aresstack.spaceharvester.application.enrichment.LocalReaderAnalyses.Result> localReading(
+            DeliveredPage page) {
+        return harvester.enrichments().localReading(page.snapshot());
     }
 
     /** Anreicherungen einer gelieferten Seite ({@code view=extended}); das Lesen der Seite hat CONTENT geprüft. */

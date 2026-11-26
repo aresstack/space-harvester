@@ -88,7 +88,7 @@ import java.nio.channels.SeekableByteChannel;
  * </ul>
  */
 public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, PartitionListingSource,
-        ResourceMetadataSource, StoredContentSource {
+        ResourceMetadataSource, StoredContentSource, com.aresstack.enterpriseai.source.api.PartitionInventorySource {
 
     static final String SCHEME = "file";
     /** Standardobergrenze je Datei. */
@@ -132,6 +132,7 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
     private final Supplier<LocalFileAccessPolicy> access;
     private final FilePatterns patterns;
     private final BiFunction<String, String, String> streamingType;
+    private final boolean inventoryAllFiles;
 
     public LocalFilesKnowledgeSource(SourceAddress sourceId, Path root, ContentDetector detector,
                                      ExtractionRegistry extractors, long maxFileBytes) {
@@ -155,6 +156,15 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
                                      ExtractionRegistry extractors, long maxFileBytes,
                                      Supplier<LocalFileAccessPolicy> access, List<String> includes,
                                      List<String> excludes, BiFunction<String, String, String> streamingType) {
+        this(sourceId, root, detector, extractors, maxFileBytes, access, includes, excludes, streamingType, false);
+    }
+
+    /** Admit all regular visible files for inventory without relaxing bounded content reads. */
+    public LocalFilesKnowledgeSource(SourceAddress sourceId, Path root, ContentDetector detector,
+                                     ExtractionRegistry extractors, long maxFileBytes,
+                                     Supplier<LocalFileAccessPolicy> access, List<String> includes,
+                                     List<String> excludes, BiFunction<String, String, String> streamingType,
+                                     boolean inventoryAllFiles) {
         if (sourceId == null || root == null || detector == null || extractors == null) {
             throw new IllegalArgumentException("sourceId, root, detector and extractors are required");
         }
@@ -167,6 +177,7 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         this.detector = detector;
         this.extractors = extractors;
         this.maxFileBytes = maxFileBytes;
+        this.inventoryAllFiles = inventoryAllFiles;
         this.streamingType = java.util.Objects.requireNonNull(streamingType, "streamingType");
         this.access = access == null ? LocalFileAccessPolicy::none : access;
         this.patterns = new FilePatterns(includes == null ? Collections.<String>emptyList() : includes,
@@ -319,6 +330,59 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
     }
 
     /**
+     * Traverse the partition once without collecting or sorting all paths.
+     * Fail incomplete inventories instead of silently treating inaccessible files as deleted.
+     */
+    @Override
+    public void visitInventory(String partitionKey, Runnable checkpoint,
+                               java.util.function.Consumer<KnowledgeResource> found) throws KnowledgeSourceException {
+        if (!sourceId.value().equals(partitionKey)) {
+            throw new KnowledgeSourceException(Kind.NOT_FOUND, "Keine Partition dieser Quelle: " + partitionKey);
+        }
+        final LocalFileAccessPolicy access = policy();
+        try {
+            if (!Files.isDirectory(root, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("Inventurwurzel ist kein direktes Verzeichnis");
+            }
+            Files.walkFileTree(root, EnumSet.noneOf(FileVisitOption.class), PARTITION_DEPTH + 1,
+                    new SimpleFileVisitor<Path>() {
+                        @Override
+                        public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attributes) {
+                            checkpoint.run();
+                            return dir.equals(root) || !dir.getFileName().toString().startsWith(".")
+                                    && patterns.entersFolder(relative(dir))
+                                    ? FileVisitResult.CONTINUE : FileVisitResult.SKIP_SUBTREE;
+                        }
+
+                        @Override
+                        public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+                            checkpoint.run();
+                            if (file.equals(root)) {
+                                throw new IOException("Inventurwurzel ist kein direktes Verzeichnis");
+                            }
+                            if (attributes.isRegularFile() && patterns.acceptsFile(relative(file))
+                                    && candidate(file, attributes.size())) {
+                                if (!access.isAllowed(file)) {
+                                    throw new java.nio.file.AccessDeniedException(file.toString());
+                                }
+                                found.accept(resource(file, typeByName(file), false, attributes));
+                            }
+                            return FileVisitResult.CONTINUE;
+                        }
+
+                        @Override
+                        public FileVisitResult visitFileFailed(Path file, IOException failure) throws IOException {
+                            checkpoint.run();
+                            throw failure;
+                        }
+                    });
+        } catch (IOException | SecurityException failure) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE, "Inventur unvollständig: " + failure.getMessage(),
+                    failure);
+        }
+    }
+
+    /**
      * Die Dateien der Partition nach relativem Pfad sortiert, so wie {@link #discover} sie mit Startpunkt {@code .}
      * und Tiefe {@value #PARTITION_DEPTH} findet, aber ohne Gesamtgrenze. Der Cursor nennt die letzte gelieferte
      * Datei: Neue oder gelöschte Dateien verschieben keinen Stapel.
@@ -460,28 +524,36 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
     }
 
     private boolean candidate(Path file) {
+        try {
+            return candidate(file, Files.size(file));
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private boolean candidate(Path file, long size) throws IOException {
         String name = file.getFileName().toString();
         if (name.startsWith("~$")) {
             return false;
         }
-        // Versteckte Dateien und alles in versteckten Ordnern (.git, .docker, .ssh) unterhalb der Wurzel nie.
         for (String segment : relative(file).split("/")) {
             if (segment.startsWith(".")) {
                 return false;
             }
         }
-        try {
-            long size = Files.size(file);
-            if (Files.isHidden(file) || size == 0) {
-                return false;
-            }
-            if (streamType(file) != null) {
-                return true;
-            }
-            return size <= maxFileBytes && (ownType(file) != null || INDEXABLE.contains(typeByName(file).category()));
-        } catch (IOException e) {
+        if (Files.isHidden(file)) {
             return false;
         }
+        if (inventoryAllFiles) {
+            return true;
+        }
+        if (size == 0) {
+            return false;
+        }
+        if (streamType(file) != null) {
+            return true;
+        }
+        return size <= maxFileBytes && (ownType(file) != null || INDEXABLE.contains(typeByName(file).category()));
     }
 
     private String streamType(Path file) {
@@ -513,6 +585,61 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         }
     }
 
+    /**
+     * Read an admitted local original in place. Keep the path inside the synchronous reader;
+     * do not retain it or publish it in metadata. Discard the result if the source changes
+     * or its access grant is revoked during the read.
+     *
+     * @param maxBytes caller's size limit; non-positive means no additional limit
+     */
+    public <T> Optional<T> readOriginal(String localId, Predicate<String> wanted, long maxBytes,
+                                       OriginalReader<T> reader) throws KnowledgeSourceException {
+        java.util.Objects.requireNonNull(wanted, "wanted");
+        java.util.Objects.requireNonNull(reader, "reader");
+        Path file = readable(localId);
+        DetectedContentType type = typeByName(file);
+        if (streamType(file) != null || !wanted.test(type.mimeType())) {
+            return Optional.empty();
+        }
+        long limit = inventoryAllFiles ? (maxBytes > 0 ? maxBytes : Long.MAX_VALUE)
+                : (maxBytes > 0 ? Math.min(maxFileBytes, maxBytes) : maxFileBytes);
+        try {
+            Path original = checkedRealPath(file);
+            BasicFileAttributes before = Files.readAttributes(original, BasicFileAttributes.class);
+            if (!before.isRegularFile() || before.size() > limit) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "Datei größer als die erlaubte Grenze oder keine reguläre Datei");
+            }
+            T result = reader.read(original, resource(file, type, false, before));
+            Path current = checkedRealPath(readable(localId));
+            BasicFileAttributes after = Files.readAttributes(current, BasicFileAttributes.class);
+            if (!original.equals(current) || !sameOriginal(before, after)) {
+                throw new KnowledgeSourceException(Kind.UNAVAILABLE, "Datei hat sich beim Lesen geändert");
+            }
+            return Optional.of(java.util.Objects.requireNonNull(result, "reader result"));
+        } catch (IOException e) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE, localId + " nicht lesbar", e);
+        }
+    }
+
+    @FunctionalInterface
+    public interface OriginalReader<T> {
+        T read(Path original, KnowledgeResource resource) throws IOException, KnowledgeSourceException;
+    }
+
+    private Path checkedRealPath(Path file) throws IOException, KnowledgeSourceException {
+        Path real = file.toRealPath();
+        if (!policy().isAllowed(real)) {
+            throw new KnowledgeSourceException(Kind.ACCESS_DENIED, "Original liegt außerhalb der freigegebenen Ordner");
+        }
+        return real;
+    }
+
+    private static boolean sameOriginal(BasicFileAttributes before, BasicFileAttributes after) {
+        return after.isRegularFile() && before.size() == after.size()
+                && before.lastModifiedTime().equals(after.lastModifiedTime())
+                && java.util.Objects.equals(before.fileKey(), after.fileKey());
+    }
+
     /** Copy an admitted document directly to a file without materializing it in memory. */
     public Optional<String> copyOriginal(String localId, Path target, Predicate<String> wanted, long maxBytes)
             throws KnowledgeSourceException {
@@ -521,7 +648,9 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         if (streamType(file) != null || !wanted.test(type)) {
             return Optional.empty();
         }
-        long limit = maxBytes > 0 ? Math.min(maxFileBytes, maxBytes) : maxFileBytes;
+        // Apply the caller's bound for disk copies, never the in-memory limit in inventory mode.
+        long limit = inventoryAllFiles ? (maxBytes > 0 ? maxBytes : Long.MAX_VALUE)
+                : (maxBytes > 0 ? Math.min(maxFileBytes, maxBytes) : maxFileBytes);
         try {
             long size = Files.size(file);
             if (size > limit) {
@@ -595,7 +724,11 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
      *                 relativ)
      */
     private KnowledgeResource resource(Path file, DetectedContentType type, boolean location) throws IOException {
-        BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class);
+        return resource(file, type, location, Files.readAttributes(file, BasicFileAttributes.class));
+    }
+
+    private KnowledgeResource resource(Path file, DetectedContentType type, boolean location,
+                                       BasicFileAttributes attributes) {
         String relative = relative(file);
         Map<String, String> metadata = new LinkedHashMap<String, String>();
         metadata.put("file.path", relative);

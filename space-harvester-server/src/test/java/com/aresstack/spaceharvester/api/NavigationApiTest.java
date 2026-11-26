@@ -138,8 +138,9 @@ class NavigationApiTest {
         assertThat(get("/api/v1/sources/wiki/pages/200/children", DEV_TOKEN).statusCode()).isEqualTo(404);
         assertThat(get("/api/v1/sources/wiki/pages/200/ancestors", DEV_TOKEN).statusCode()).isEqualTo(404);
         assertThat(get("/api/v1/sources/wiki/spaces/HR/children", DEV_TOKEN).statusCode()).isEqualTo(403);
-        assertThat(get("/api/v1/sources/wiki/pages/100/children?cursor=fremd", DEV_TOKEN).statusCode())
-                .isEqualTo(400);
+        HttpResponse<String> invalid = get("/api/v1/sources/wiki/pages/100/children?cursor=fremd", DEV_TOKEN);
+        assertThat(invalid.statusCode()).isEqualTo(400);
+        assertThat(json.readTree(invalid.body()).get("type").asString()).endsWith("invalid-navigation-cursor");
     }
 
     @Test

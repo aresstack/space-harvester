@@ -243,7 +243,9 @@ public class TermRelations {
             this.term = search.term() == null || search.term().isBlank() ? null : TermText.normalize(search.term());
             this.prefix = search.startsWith() == null || search.startsWith().isBlank() ? null
                     : TermText.normalize(search.startsWith());
-            this.visibility = new Visibility(caller);
+            this.visibility = new Visibility(caller, id -> search.sourceId() != null && search.sourceId().equals(id)
+                    || search.pages() != null && search.pages().sourceIds().contains(id)
+                    || catalog.includeInGlobalSearch(id));
             this.occurrences = search.pages() == null ? null : new Occurrences(caller, search.pages());
         }
 
@@ -302,7 +304,7 @@ public class TermRelations {
      */
     public List<String> expansions(AccessContext caller, String term, String sourceId, String spaceKey) {
         String normalized = TermText.normalize(term);
-        Visibility visibility = new Visibility(caller);
+        Visibility visibility = new Visibility(caller, id -> id.equals(sourceId) || catalog.includeInGlobalSearch(id));
         Set<String> found = new LinkedHashSet<>();
         for (TermRelation relation : store.all()) {
             RelationScope scope = relation.scope();
@@ -324,7 +326,7 @@ public class TermRelations {
     public List<SearchExpansion.Counterpart> counterparts(AccessContext caller, String term, String sourceId,
                                                           String spaceKey) {
         String normalized = TermText.normalize(term);
-        Visibility visibility = new Visibility(caller);
+        Visibility visibility = new Visibility(caller, id -> id.equals(sourceId) || catalog.includeInGlobalSearch(id));
         Map<String, SearchExpansion.Counterpart> found = new LinkedHashMap<>();
         for (TermRelation relation : store.all()) {
             RelationScope scope = relation.scope();
@@ -346,7 +348,7 @@ public class TermRelations {
      */
     public List<String> proposedSynonyms(AccessContext caller, String term, String sourceId, String spaceKey) {
         String normalized = TermText.normalize(term);
-        Visibility visibility = new Visibility(caller);
+        Visibility visibility = new Visibility(caller, id -> id.equals(sourceId) || catalog.includeInGlobalSearch(id));
         Set<String> found = new LinkedHashSet<>();
         for (TermRelation relation : store.all()) {
             RelationScope scope = relation.scope();
@@ -363,7 +365,7 @@ public class TermRelations {
 
     public List<String> expansions(AccessContext caller, String term, String sourceId) {
         String normalized = TermText.normalize(term);
-        Visibility visibility = new Visibility(caller);
+        Visibility visibility = new Visibility(caller, id -> id.equals(sourceId) || catalog.includeInGlobalSearch(id));
         Set<String> found = new LinkedHashSet<>();
         for (TermRelation relation : store.all()) {
             if (relation.status() == ReviewStatus.CONFIRMED && relation.type().expandsSearch()
@@ -502,6 +504,13 @@ public class TermRelations {
      */
     public synchronized ProposalRun propose(String actor, RelationOrigin origin, RelationScope scope,
                                             Set<RelationType> types, String generation, List<Proposal> proposals) {
+        return propose(actor, origin, scope, types, generation, proposals, true);
+    }
+
+    /** Preserve existing proposals and evidence when the run covers only part of the corpus. */
+    public synchronized ProposalRun propose(String actor, RelationOrigin origin, RelationScope scope,
+                                            Set<RelationType> types, String generation, List<Proposal> proposals,
+                                            boolean reconcileExisting) {
         Objects.requireNonNull(actor, "actor");
         Objects.requireNonNull(scope, "scope");
         Objects.requireNonNull(generation, "generation");
@@ -549,7 +558,7 @@ public class TermRelations {
                 put.put(id, created);
                 audit.add(new TermRelationStore.AuditEntry(id, "propose", actor, now, ReviewStatus.PROPOSED, 1));
                 added++;
-            } else if (current.status() == ReviewStatus.REJECTED || current.origin() != origin) {
+            } else if (!reconcileExisting || current.status() == ReviewStatus.REJECTED || current.origin() != origin) {
                 // Benutzerentscheidungen und andere Herkunft haben Vorrang.
                 suppressed++;
             } else if (current.evidence().equals(proposal.evidence()) && !current.evidenceStale()) {
@@ -564,7 +573,7 @@ public class TermRelations {
             }
         }
         for (TermRelation relation : existing.values()) {
-            if (relation.origin() != origin || !relation.scope().equals(scope) || !types.contains(relation.type())
+            if (!reconcileExisting || relation.origin() != origin || !relation.scope().equals(scope) || !types.contains(relation.type())
                     || named.contains(relation.id())) {
                 continue;
             }
@@ -790,11 +799,17 @@ public class TermRelations {
     private final class Visibility {
 
         private final AccessContext caller;
+        private final java.util.function.Predicate<String> included;
         private final Map<RelationScope, Boolean> scopes = new HashMap<>();
         private final Map<PageKey, Boolean> pages = new HashMap<>();
 
         Visibility(AccessContext caller) {
+            this(caller, id -> true);
+        }
+
+        Visibility(AccessContext caller, java.util.function.Predicate<String> included) {
             this.caller = caller;
+            this.included = included;
         }
 
         Optional<TermRelation> visible(TermRelation relation) {
@@ -819,7 +834,7 @@ public class TermRelations {
                 return caller != null;
             }
             // Abgeschaltete Quellen nehmen an nichts teil, auch nicht mit schon abgelegten Beziehungen.
-            if (catalog.find(scope.sourceId()).isEmpty()) {
+            if (!included.test(scope.sourceId()) || catalog.find(scope.sourceId()).isEmpty()) {
                 return false;
             }
             return access.permits(caller, scope.spaceKey() == null ? ResourceScope.source(scope.sourceId())
@@ -828,7 +843,8 @@ public class TermRelations {
 
         private boolean readable(RelationEvidence evidence) {
             PageKey key = new PageKey(evidence.sourceId(), evidence.pageId());
-            return pages.computeIfAbsent(key, page -> catalog.find(page.sourceId()).isPresent() && headers.apply(page)
+            return pages.computeIfAbsent(key, page -> included.test(page.sourceId())
+                    && catalog.find(page.sourceId()).isPresent() && headers.apply(page)
                     .map(header -> access.canRead(caller, page.sourceId(), header.metadata().partitionKey(),
                             page.pageId()))
                     .orElse(false));

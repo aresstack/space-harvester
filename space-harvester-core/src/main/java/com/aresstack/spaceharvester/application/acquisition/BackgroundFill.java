@@ -1260,7 +1260,9 @@ public final class BackgroundFill implements AutoCloseable {
             }
             AcquisitionScheduler.Ticket ticket;
             try {
-                ticket = scheduler.request(caller, gap.key(), AcquisitionScheduler.Priority.BACKGROUND);
+                ticket = scheduler.request(caller, gap.key(), AcquisitionScheduler.Priority.BACKGROUND,
+                        new AcquisitionScheduler.Mode(false, false,
+                                com.aresstack.spaceharvester.application.changelog.ChangeTrigger.BACKGROUND));
             } catch (RejectedExecutionException e) {
                 // Der Planer ist voll: seine nächste Änderung weckt die Füllung (plannerChanged).
                 synchronized (monitor) {

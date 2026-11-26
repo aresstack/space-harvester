@@ -44,6 +44,7 @@ import com.aresstack.spaceharvester.application.terms.PageTerms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.PageBookmark;
+import com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.knowledge.GraphNeighbourhood;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -1834,7 +1835,8 @@ public final class PageDetailPanel extends JPanel {
                     null, checked, passage, unchecked);
         }
         List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
-        ReaderDocument document = document(source, id, enrichments, text, font);
+        ReaderDocument document = localDocument(runtime.workspace(), delivered, font)
+                .orElseGet(() -> document(source, id, enrichments, text, font));
         relations(runtime, document, source, delivered.header().metadata().partitionKey());
         navigation(runtime, document, source, id);
         return new Loaded(delivered, enrichments, document,
@@ -2402,7 +2404,8 @@ public final class PageDetailPanel extends JPanel {
         if (text == null) {
             return List.of();
         }
-        PagePassages found = PagePassages.read(key, workspace.enrichments(page), text);
+        PagePassages found = workspace.localReading(page).map(result -> result.passages())
+                .orElseGet(() -> PagePassages.read(key, workspace.enrichments(page), text));
         if (found.state() != PagePassages.State.CURRENT) {
             return null;
         }
@@ -2641,6 +2644,15 @@ public final class PageDetailPanel extends JPanel {
             showOriginalVideo(metadata);
             return;
         }
+        if (LocalOriginalReference.recognizes(payload)) {
+            readingPane.clear(" ");
+            if (!showLargeOriginal(metadata)) {
+                showOriginalWithoutPreview(metadata, "Das Original verbleibt im lokalen Ordner und wird nicht "
+                        + "im Cache gespeichert. Für dieses Format oder diese Größe ist keine Vorschau verfügbar. "
+                        + "Öffnen und Speichern greifen bei Bedarf auf das Original zu.");
+            }
+            return;
+        }
         if (com.aresstack.spaceharvester.application.snapshot.LargeFiles.placeholder(payload)) {
             readingPane.clear(" ");
             if (!showLargeOriginal(metadata)) {
@@ -2657,7 +2669,8 @@ public final class PageDetailPanel extends JPanel {
         if (fileSize <= 0) {
             try {
                 fileSize = Long.parseLong(metadata.attributes().getOrDefault("dav.contentLength",
-                        metadata.attributes().getOrDefault("fileSize", "-1")));
+                        metadata.attributes().getOrDefault("file.size",
+                                metadata.attributes().getOrDefault("fileSize", "-1"))));
             } catch (NumberFormatException ignored) {
                 fileSize = -1L;
             }
@@ -2943,6 +2956,12 @@ public final class PageDetailPanel extends JPanel {
                 + (textOnly ? "\nDer Textauszug steht im Reiter „Podcast-Ansicht“, die Suche findet die Datei darüber."
                 : "\nAbgelegt sind nur ihre Kopfdaten (kein lesbarer Text oder größer als die Grenze zum Laden).")
                 + "\nGrenzen unter Einstellungen › Daten › „Größte Datei im Cache“.";
+        showOriginalWithoutPreview(metadata, reason);
+    }
+
+    /** Show an original that can be opened or saved but has no in-memory preview. */
+    private void showOriginalWithoutPreview(PageMetadata metadata, String reason) {
+        long size = com.aresstack.spaceharvester.application.snapshot.LargeFiles.size(metadata);
         AppRuntime runtime = context.runtime();
         String type = com.aresstack.spaceharvester.application.snapshot.LargeFiles.viewableType(metadata);
         ReaderAttachment attachment = new ReaderAttachment(metadata.pageId(), metadata.title(),
@@ -3075,6 +3094,7 @@ public final class PageDetailPanel extends JPanel {
     private static boolean isNativePreview(PageSnapshot snapshot) {
         String kind = snapshot.metadata().attributes().get(PageMetadata.RESOURCE_KIND);
         String largeType = com.aresstack.spaceharvester.application.snapshot.LargeFiles.placeholder(snapshot.payload())
+                || LocalOriginalReference.recognizes(snapshot.payload())
                 ? com.aresstack.spaceharvester.application.snapshot.LargeFiles.viewableType(snapshot.metadata()) : null;
         return PageMetadata.LINK_KIND.equals(kind)
                 || "true".equals(snapshot.metadata().attributes().get(PageMetadata.REMOTE_MEDIA))
@@ -3325,6 +3345,12 @@ public final class PageDetailPanel extends JPanel {
     static boolean recomputeOffered(PageAcronyms.State acronyms, PagePassages.State passages) {
         return acronyms != PageAcronyms.State.CURRENT
                 || passages == PagePassages.State.STALE || passages == PagePassages.State.FAILED;
+    }
+
+    private static java.util.Optional<ReaderDocument> localDocument(
+            com.aresstack.spaceharvester.app.runtime.Workspace workspace, DeliveredPage page, Font font) {
+        return workspace.localReading(page).map(result -> ReaderDocument.build(result.text(),
+                result.acronyms(), result.terms(), font).withPassages(result.passages()));
     }
 
     /** Baut den Lesetext mit den Akronymen der Seite {@code sourceId}/{@code pageId}; außerhalb des EDT. */
@@ -5767,7 +5793,8 @@ public final class PageDetailPanel extends JPanel {
                     }));
             DeliveredPage cached = runtime.workspace().page(source, id, false);
             List<Enrichments.View> updated = runtime.workspace().enrichments(cached);
-            ReaderDocument document = document(source, id, updated, text, font);
+            ReaderDocument document = localDocument(runtime.workspace(), cached, font)
+                    .orElseGet(() -> document(source, id, updated, text, font));
             relations(runtime, document, source, cached.header().metadata().partitionKey());
             navigation(runtime, document, source, id);
             return new Recomputed(run, updated, document);

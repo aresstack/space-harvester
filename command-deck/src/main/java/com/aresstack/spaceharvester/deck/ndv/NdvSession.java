@@ -248,6 +248,9 @@ public final class NdvSession {
             if (name.isBlank()) {
                 throw new IOException("Der KeePass-Eintrag hat keinen Benutzer");
             }
+            if (!user().isEmpty() && !user().equalsIgnoreCase(name)) {
+                throw new IOException("NDV-Benutzer geändert – bitte eine neue Sitzung öffnen");
+            }
             char[] password = credentials.copyPassword();
             try {
                 created = connector.connect(profile, name, password);

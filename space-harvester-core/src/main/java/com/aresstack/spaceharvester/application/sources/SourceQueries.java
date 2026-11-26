@@ -26,6 +26,14 @@ public class SourceQueries {
         return catalog.all();
     }
 
+    public boolean showInExplorer(String sourceId) {
+        return catalog.showInExplorer(sourceId);
+    }
+
+    public boolean includeInGlobalSearch(String sourceId) {
+        return catalog.includeInGlobalSearch(sourceId);
+    }
+
     /** Die Quellentypen, die der Katalog kennt, in Registrierungsreihenfolge (#187). */
     public List<SourceType> types() {
         return catalog.types();
@@ -179,6 +187,10 @@ public class SourceQueries {
         return source(sourceId).outsideScope(pageId);
     }
 
+    public boolean inventoryCovers(String sourceId, String pageId) {
+        return source(sourceId).inventoryCovers(pageId);
+    }
+
     /**
      * Die vollständige Anhangsliste einer Seite, live aus der Quelle (#9), mit dem aktuellen Space der Seite für die
      * Rechteprüfung. Lädt keine Dateien.
@@ -214,6 +226,15 @@ public class SourceQueries {
         source.attachmentsOf(pageIds, spaceKey).forEach((pageId, attachments) ->
                 lists.put(pageId, new PageAttachmentList(source.id(), spaceKey, attachments, now)));
         return lists;
+    }
+
+    /** Use a source's optional single-pass inventory without changing its public cursor API. */
+    public boolean visitInventory(String sourceId, String partitionKey, Runnable checkpoint,
+                                  java.util.function.Consumer<PageMetadataListing.Entry> found) {
+        HarvestSource source = source(sourceId);
+        return source.visitInventory(partitionKey, checkpoint,
+                page -> found.accept(new PageMetadataListing.Entry(page, MetadataHash.of(source.id(), page),
+                        AttributesHash.of(source.id(), page))));
     }
 
     private HarvestSource source(String sourceId) {

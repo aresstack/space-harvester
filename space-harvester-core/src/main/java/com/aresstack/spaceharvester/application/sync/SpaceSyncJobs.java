@@ -954,6 +954,13 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                                                           Predicate<PageHeader>> counting) {
         Set<String> visible = ConcurrentHashMap.newKeySet();
         return new SyncListener() {
+            private int inventoried;
+
+            @Override
+            public void inventoryProgress(List<PageMetadataListing.Entry> entries) {
+                inventoried += entries.size();
+                context.phase(COMPONENT, "Inventur: " + inventoried + " Einträge gefunden");
+            }
 
             @Override
             public void inventoried(Inventory inventory) {
@@ -1018,6 +1025,19 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         found.addAll(counted);
         Set<String> done = ConcurrentHashMap.newKeySet();
         return new SyncListener() {
+
+            @Override
+            public void inventoryProgress(List<PageMetadataListing.Entry> entries) {
+                int fresh = 0;
+                for (PageMetadataListing.Entry entry : entries) {
+                    if (found.add(entry.page().pageId())) {
+                        fresh++;
+                    }
+                }
+                if (fresh > 0) {
+                    context.discovered(fresh);
+                }
+            }
 
             @Override
             public void inventoried(int pages) {

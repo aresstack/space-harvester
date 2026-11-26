@@ -28,6 +28,8 @@ import com.aresstack.spaceharvester.application.observe.Coalescer;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference;
+import java.util.function.Function;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -115,6 +117,147 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
     private final Map<String, Integer> removals = new HashMap<>();
     /** Anhänge für den Bestand ({@link #catchUp}); ohne sie holt der Lauf nichts nach. */
     private volatile DocumentInventory assets;
+    private volatile LocalDocuments localDocuments;
+
+    private record LocalDocuments(Function<PageKey, Optional<PageSnapshot>> snapshots,
+                                  DocumentExtractions extractions) {
+    }
+
+    public void localDocuments(Function<PageKey, Optional<PageSnapshot>> snapshots, DocumentExtractions extractions) {
+        this.localDocuments = new LocalDocuments(Objects.requireNonNull(snapshots, "snapshots"),
+                Objects.requireNonNull(extractions, "extractions"));
+    }
+
+    private Optional<Pending> localPending(PageKey page) {
+        LocalDocuments local = localDocuments;
+        if (local == null) {
+            return Optional.empty();
+        }
+        return local.snapshots().apply(page).flatMap(snapshot -> LocalOriginalReference.read(snapshot.payload())
+                .flatMap(reference -> Optional.ofNullable(reference.extractionKey()))
+                .map(key -> new Pending(DocumentKey.localOriginal(page), snapshot.spaceKey(), key.sha256(),
+                        local.extractions(), key)));
+    }
+
+    /** Check a completed analysis against the exact extraction and current processor version. */
+    public boolean hasCurrentLocalAnalysis(PageSnapshot snapshot, String processorId) {
+        Optional<LocalOriginalReference> reference = LocalOriginalReference.read(snapshot.payload());
+        Optional<Pending> pending = localPending(snapshot.key());
+        if (reference.isEmpty() || pending.isEmpty()
+                || !Objects.equals(reference.get().extractionKey(), pending.get().exactExtraction())) {
+            return false;
+        }
+        Pending item = pending.get();
+        return item.extraction().map(extraction -> {
+            Manifest manifest = manifest(item, extraction);
+            String version = manifest.versions().get(processorId);
+            if (version == null) {
+                return false;
+            }
+            List<DocumentKey> expected = item.extractions().documents(extraction).stream()
+                    .map(part -> part.map(entry -> item.attachment().child(entry.id())).orElse(item.attachment()))
+                    .toList();
+            return !expected.isEmpty() && expected.stream().allMatch(document -> {
+                List<Enrichment> results = manifest.stored().getOrDefault(document, List.of()).stream()
+                        .filter(result -> processorId.equals(result.processorId())).toList();
+                return !results.isEmpty() && results.stream().allMatch(result ->
+                        result.status() == Enrichment.Status.OK && version.equals(result.processorVersion())
+                                && manifest.basis().equals(result.extraction()) && !enrichments.outdated(result));
+            });
+        }).orElse(false);
+    }
+
+    /** Delegate search preparation to the existing document scheduler; do not compute a second page embedding. */
+    public boolean prepareLocal(PageSnapshot snapshot, String processorId) {
+        if (!enabled.getAsBoolean()
+                || !enrichments.documentProcessorVersions(snapshot.key()).containsKey(processorId)
+                || LocalOriginalReference.read(snapshot.payload())
+                        .map(reference -> reference.extractionKey() == null).orElse(true)) {
+            return true;
+        }
+        Optional<Pending> pending = localPending(snapshot.key());
+        if (pending.isPresent() && pending.get().extraction()
+                .map(extraction -> pending.get().extractions().documents(extraction).isEmpty()).orElse(false)) {
+            return true;
+        }
+        if (hasCurrentLocalAnalysis(snapshot, processorId)) {
+            return true;
+        }
+        indexedLocal(snapshot);
+        return hasCurrentLocalAnalysis(snapshot, processorId);
+    }
+
+    /** Wait only within the search's existing deadline; the scheduled analysis owns the computation. */
+    public boolean awaitLocal(PageSnapshot snapshot, String processorId, long deadline) {
+        if (prepareLocal(snapshot, processorId)) {
+            return true;
+        }
+        while (System.nanoTime() < deadline) {
+            if (hasCurrentLocalAnalysis(snapshot, processorId)) {
+                return true;
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return hasCurrentLocalAnalysis(snapshot, processorId);
+    }
+
+    /** Validate a section index against the exact extraction of the currently cached local original. */
+    public boolean currentLocalExtraction(PageKey page, String extraction) {
+        if (extraction == null) {
+            return false;
+        }
+        return localPending(page).flatMap(Pending::extraction)
+                .map(current -> extraction.startsWith(basis(current) + "|")).orElse(false);
+    }
+
+    /** Explicitly recompute local section results in the existing interactive job. */
+    public Enrichments.Run recomputeLocal(PageSnapshot snapshot, String processorId, JobContext context) {
+        if (!enabled.getAsBoolean()) {
+            return new Enrichments.Run(false, 0, 0, 0);
+        }
+        Optional<Pending> pending = localPending(snapshot.key());
+        if (pending.isEmpty() || !LocalOriginalReference.read(snapshot.payload())
+                .map(reference -> Objects.equals(reference.extractionKey(), pending.get().exactExtraction()))
+                .orElse(false)) {
+            return new Enrichments.Run(false, 0, 0, 0);
+        }
+        Pending item = pending.get();
+        int removed = removals(item);
+        try {
+            return process(item, context, null, true, processorId);
+        } finally {
+            forgetIfRemoved(item, removed);
+        }
+    }
+
+    /** Schedule the newly committed local original, not a preview or a synthetic attachment. */
+    public void indexedLocal(PageSnapshot snapshot) {
+        if (localDocuments == null || !LocalOriginalReference.recognizes(snapshot.payload())) {
+            return;
+        }
+        Optional<Pending> item = localPending(snapshot.key());
+        if (item.isEmpty()) {
+            // No readable original in this revision: discard the previous sectioned analysis.
+            enrichments.store().removeDocument(DocumentKey.localOriginal(snapshot.key()));
+            enrichments.flush();
+        } else if (enabled.getAsBoolean() && !enrichments.documentProcessorIds().isEmpty()) {
+            if (background == null) {
+                enqueue(item.get());
+            } else {
+                Partition partition = new Partition(snapshot.key().sourceId(), snapshot.spaceKey());
+                synchronized (this) {
+                    noted.add(partition);
+                }
+                // Primary page content must not wait for the attachment batching interval.
+                startWhenIdle(partition);
+            }
+        }
+    }
     /** Der Netzzustand, oder {@code null}: dann zählt ein Netzfehler eines Prozessors wie jeder andere. */
     private volatile com.aresstack.spaceharvester.application.network.NetworkState network;
 
@@ -305,6 +448,13 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
     public Optional<PageText> sectionText(DocumentKey document, int section, String inputSha256,
                                           String extraction) {
         Objects.requireNonNull(document, "document");
+        if (document.localOriginal()) {
+            return localPending(document.page()).flatMap(Pending::extraction)
+                    .filter(current -> extraction == null || extraction.startsWith(basis(current) + "|"))
+                    .flatMap(current -> localDocuments.extractions().documentSection(current, document.part(), section))
+                    .map(DocumentSectionText::project)
+                    .filter(text -> inputSha256 != null && inputSha256.equals(text.inputSha256()));
+        }
         DocumentInventory source = assets;
         if (source == null || document.attachmentId().isEmpty() || inputSha256 == null) {
             return Optional.empty();
@@ -335,7 +485,15 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
     }
 
     /** Ein gemeldeter Anhang. */
-    private record Pending(DocumentKey attachment, String spaceKey, String sha256, DocumentExtractions extractions) {
+    private record Pending(DocumentKey attachment, String spaceKey, String sha256, DocumentExtractions extractions,
+                           ExtractionKey exactExtraction) {
+        Pending(DocumentKey attachment, String spaceKey, String sha256, DocumentExtractions extractions) {
+            this(attachment, spaceKey, sha256, extractions, null);
+        }
+
+        Optional<StoredExtraction> extraction() {
+            return exactExtraction == null ? extractions.readable(sha256) : extractions.stored(exactExtraction);
+        }
     }
 
     @Override
@@ -343,14 +501,19 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
         if (!enabled.getAsBoolean() || enrichments.documentProcessorIds().isEmpty()) {
             return;
         }
+        PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
+        enqueue(new Pending(DocumentKey.attachment(page, asset.attachmentId()), list.spaceKey(),
+                asset.sha256(), Objects.requireNonNull(extractions, "extractions")));
+    }
+
+    private void enqueue(Pending item) {
+        String sourceId = item.attachment().page().sourceId();
+        String spaceKey = item.spaceKey();
         if (background != null) {
-            note(new Partition(list.sourceId(), list.spaceKey()));
+            note(new Partition(sourceId, spaceKey));
             return;
         }
-        PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
-        Pending item = new Pending(DocumentKey.attachment(page, asset.attachmentId()), list.spaceKey(),
-                asset.sha256(), Objects.requireNonNull(extractions, "extractions"));
-        String partition = partition(list.sourceId(), list.spaceKey());
+        String partition = partition(sourceId, spaceKey);
         String job;
         synchronized (this) {
             // Ein erneut gemeldeter Anhang rückt nach hinten und rechnet mit seinem neuesten Stand.
@@ -359,20 +522,20 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             job = scheduled.get(partition);
         }
         if (jobs == null) {
-            drain(list.sourceId(), list.spaceKey(), null);
+            drain(sourceId, spaceKey, null);
             return;
         }
         if (job != null && alive(job)) {
             return;
         }
         try {
-            String id = submit(list.sourceId(), list.spaceKey());
+            String id = submit(sourceId, spaceKey);
             synchronized (this) {
                 scheduled.put(partition, id);
             }
         } catch (JobCapacityExceededException | IllegalStateException e) {
             LOG.log(System.Logger.Level.INFO, "Analysen der Anhänge in {0} nicht eingeplant ({1}); die nächste "
-                    + "Meldung holt sie nach", list.sourceId(), e.getClass().getSimpleName());
+                    + "Meldung holt sie nach", sourceId, e.getClass().getSimpleName());
         }
     }
 
@@ -631,7 +794,8 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             Iterator<Pending> iterator = pending.values().iterator();
             while (iterator.hasNext()) {
                 DocumentKey attachment = iterator.next().attachment();
-                if (attachment.page().equals(page) && !attachmentIds.contains(attachment.attachmentId().orElse(""))) {
+                if (!attachment.localOriginal() && attachment.page().equals(page)
+                        && !attachmentIds.contains(attachment.attachmentId().orElse(""))) {
                     iterator.remove();
                     removals.merge(attachment.value(), 1, Integer::sum);
                 }
@@ -719,7 +883,9 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
 
     /** Wurde der Anhang entfernt, während er rechnete, fällt auch das eben Gespeicherte wieder weg. */
     private void forgetIfRemoved(Pending item, int before) {
-        if (removals(item) != before) {
+        if (removals(item) != before || item.attachment().localOriginal()
+                && localPending(item.attachment().page()).filter(current ->
+                        Objects.equals(current.exactExtraction(), item.exactExtraction())).isEmpty()) {
             enrichments.store().removeDocument(item.attachment());
         }
     }
@@ -731,15 +897,10 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      * Manifest, ohne einen Abschnitt zu lesen. Läuft im Auftrag der Anreicherung nach einem Abgleich.
      */
     public void catchUp(String sourceId, String spaceKey, Collection<String> pageIds, JobContext context) {
-        DocumentInventory source = assets;
-        if (source == null || !enabled.getAsBoolean() || enrichments.documentProcessorIds().isEmpty()) {
+        if (!enabled.getAsBoolean() || enrichments.documentProcessorIds().isEmpty()) {
             return;
         }
-        Optional<DocumentExtractions> structured = source.documentExtractions();
-        if (structured.isEmpty()) {
-            return;
-        }
-        List<Asset> documents = source.indexedDocuments(sourceId, pageIds);
+        List<Pending> documents = work(sourceId, spaceKey, pageIds);
         if (documents.isEmpty()) {
             return;
         }
@@ -751,13 +912,10 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                 : new com.aresstack.spaceharvester.application.network.NetworkWait(net, context, COMPONENT);
         try {
             for (int next = 0; next < documents.size(); next++) {
-                Asset asset = documents.get(next);
                 if (context != null) {
                     context.checkpoint();
                 }
-                PageKey page = new PageKey(sourceId, asset.pageId());
-                Pending item = new Pending(DocumentKey.attachment(page, asset.attachmentId()), spaceKey,
-                        asset.sha256(), structured.get());
+                Pending item = documents.get(next);
                 int removed = removals(item);
                 try {
                     process(item, context, wait);
@@ -791,6 +949,27 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             catchUp(sourceId, spaceKey, pageIds, context);
             return;
         }
+        // Primary local originals participate in the page enrichment before its follow-up rules run.
+        if (enabled.getAsBoolean()) {
+            for (String pageId : pageIds) {
+                if (context != null) {
+                    context.checkpoint();
+                }
+                localPending(new PageKey(sourceId, pageId)).ifPresent(item -> {
+                    int removed = removals(item);
+                    try {
+                        process(item, context, null);
+                    } catch (JobCancelledException | JobFailedException e) {
+                        throw e;
+                    } catch (RuntimeException e) {
+                        LOG.log(System.Logger.Level.WARNING, "Local document analysis failed ({0})",
+                                e.getClass().getName());
+                    } finally {
+                        forgetIfRemoved(item, removed);
+                    }
+                });
+            }
+        }
         if (anyDue(sourceId, spaceKey, pageIds, context)) {
             note(new Partition(sourceId, spaceKey));
         }
@@ -801,22 +980,15 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      * Abkürzung in {@link #process}: ohne einen Abschnitt zu lesen und ohne Prozessor.
      */
     private boolean anyDue(String sourceId, String spaceKey, Collection<String> pageIds, JobContext context) {
-        DocumentInventory source = assets;
-        if (source == null || !enabled.getAsBoolean() || enrichments.documentProcessorIds().isEmpty()) {
+        if (!enabled.getAsBoolean() || enrichments.documentProcessorIds().isEmpty()) {
             return false;
         }
-        Optional<DocumentExtractions> structured = source.documentExtractions();
-        if (structured.isEmpty()) {
-            return false;
-        }
-        for (Asset asset : source.indexedDocuments(sourceId, pageIds)) {
+        for (Pending item : work(sourceId, spaceKey, pageIds)) {
             if (context != null) {
                 context.checkpoint();
             }
-            Pending item = new Pending(DocumentKey.attachment(new PageKey(sourceId, asset.pageId()),
-                    asset.attachmentId()), spaceKey, asset.sha256(), structured.get());
             try {
-                Optional<StoredExtraction> extraction = item.extractions().readable(item.sha256());
+                Optional<StoredExtraction> extraction = item.extraction();
                 if (extraction.isPresent() && !manifest(item, extraction.get()).current()) {
                     return true;
                 }
@@ -827,6 +999,25 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             }
         }
         return false;
+    }
+
+    private List<Pending> work(String sourceId, String spaceKey, Collection<String> pageIds) {
+        List<Pending> result = new ArrayList<>();
+        if (localDocuments != null) {
+            for (String pageId : pageIds) {
+                localPending(new PageKey(sourceId, pageId)).ifPresent(result::add);
+            }
+        }
+        DocumentInventory source = assets;
+        if (source != null) {
+            source.documentExtractions().ifPresent(structured -> {
+                for (Asset asset : source.indexedDocuments(sourceId, pageIds)) {
+                    result.add(new Pending(DocumentKey.attachment(new PageKey(sourceId, asset.pageId()),
+                            asset.attachmentId()), spaceKey, asset.sha256(), structured));
+                }
+            });
+        }
+        return result;
     }
 
     /**
@@ -870,16 +1061,23 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      */
     private void process(Pending item, JobContext context,
                          com.aresstack.spaceharvester.application.network.NetworkWait wait) {
+        process(item, context, wait, false, null);
+    }
+
+    private Enrichments.Run process(Pending item, JobContext context,
+                                    com.aresstack.spaceharvester.application.network.NetworkWait wait,
+                                    boolean force, String processorId) {
         com.aresstack.spaceharvester.application.network.NetworkState net = wait == null ? null : network;
-        Optional<StoredExtraction> extraction = item.extractions().readable(item.sha256());
+        Optional<StoredExtraction> extraction = item.extraction();
         if (extraction.isEmpty()) {
-            // Ohne lesbare Extraktion gilt der alte Stand weiter.
-            return;
+            // Keep the previous result if the extraction is unavailable.
+            return new Enrichments.Run(false, 0, 0, 0);
         }
         Manifest manifest = manifest(item, extraction.get());
-        if (manifest.current()) {
-            return;
+        if (!force && manifest.current()) {
+            return new Enrichments.Run(true, 0, 0, 0);
         }
+        int[] counts = new int[3];
         long embeddingMaxChars = manifest.embeddingMaxChars();
         String basis = manifest.basis();
         Map<String, String> versions = manifest.versions();
@@ -900,7 +1098,7 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
             List<Enrichment> results = stored.getOrDefault(hash.getKey(), List.of());
             // Andere Grenze oder inzwischen freigegeben: der zweite Durchgang entscheidet je Abschnitt und rechnet nur,
             // was an dieser Stelle nicht mehr gilt (Enrichments#refreshDocument).
-            if (!covered(results, versions, hash.getValue(), seen.get(hash.getKey()))
+            if (force || !covered(results, versions, hash.getValue(), seen.get(hash.getKey()))
                     || results.stream().anyMatch(result -> !Objects.equals(previousLimit(result.extraction()),
                     "embedding-max-chars=" + embeddingMaxChars))
                     || results.stream().anyMatch(enrichments::outdated)) {
@@ -921,9 +1119,16 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                     context.discovered(1);
                 }
                 // Ohne Extraktion: die trägt erst der Abschluss unten nach, wenn alle Abschnitte durchliefen.
+                List<Enrichment> previous = stored.getOrDefault(document, List.of());
+                if (force) {
+                    previous = processorId == null ? List.of() : previous.stream()
+                            .filter(result -> !processorId.equals(result.processorId())).toList();
+                }
                 Enrichments.Run run = enrichments.refreshDocument(document, index, hashes.get(document), null, text,
-                        stored.getOrDefault(document, List.of()), null, new DocumentPosition(offset,
-                                embeddingMaxChars));
+                        previous, null, new DocumentPosition(offset, embeddingMaxChars));
+                counts[0] += run.computed();
+                counts[1] += run.current();
+                counts[2] += run.failed();
                 if (wait != null && run.failed() > 0 && !net.online()) {
                     // Am Netz gescheitert: nichts rot, kein Versuch verbraucht. Das gespeicherte FAILED gälte beim
                     // Wiederholen als aktuell (gleiche Eingabe und Version) und der Abschnitt bekäme nie sein
@@ -965,6 +1170,7 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                     .forEach(section -> enrichments.store().removeSection(document, section));
         }
         enrichments.flush();
+        return new Enrichments.Run(true, counts[0], counts[1], counts[2]);
     }
 
     /** Entfernt die gescheiterten Ergebnisse eines Abschnitts und behält die gelungenen. */
@@ -1001,7 +1207,8 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
         Map<String, String> versions = enrichments.documentProcessorVersions(attachment.page());
         Map<DocumentKey, List<Enrichment>> stored = new HashMap<>();
         for (Enrichment enrichment : enrichments.store().findDocuments(attachment.page())) {
-            if (enrichment.document().attachmentId().equals(attachment.attachmentId())) {
+            if (enrichment.document().localOriginal() == attachment.localOriginal()
+                    && enrichment.document().attachmentId().equals(attachment.attachmentId())) {
                 stored.computeIfAbsent(enrichment.document(), key -> new ArrayList<>()).add(enrichment);
             }
         }
@@ -1010,7 +1217,8 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
         boolean current = expected.isEmpty() ? stored.isEmpty() : expected.stream().allMatch(document -> {
             List<Enrichment> results = stored.get(document);
             return current(results, versions, basis)
-                    && (results == null || results.stream().noneMatch(enrichments::outdated));
+                    && (results == null || results.stream().noneMatch(result -> enrichments.outdated(result)
+                    || attachment.localOriginal() && result.status() == Enrichment.Status.FAILED));
         });
         return new Manifest(basis, embeddingMaxChars, versions, stored, current);
     }
@@ -1046,7 +1254,8 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
                 for (Enrichment result : stored) {
                     if (result.processorId().equals(processor.getKey())
                             && result.processorVersion().equals(processor.getValue())
-                            && hash.equals(result.revision()) && !enrichments.outdated(result)) {
+                            && hash.equals(result.revision()) && !enrichments.outdated(result)
+                            && (!result.document().localOriginal() || result.status() == Enrichment.Status.OK)) {
                         done.add(result.section());
                     }
                 }
@@ -1097,7 +1306,7 @@ public final class DocumentEnrichments implements IndexedDocuments, AutoCloseabl
      * Undurchsichtige Kennung einer abgelegten Extraktion; nur verglichen, nie zerlegt. Mit Ablagezeitpunkt und
      * Zählern, denn ein erneutes Lesen mit weiteren Grenzen ersetzt die Abschnitte unter demselben Schlüssel.
      */
-    private static String basis(StoredExtraction extraction) {
+    public static String basis(StoredExtraction extraction) {
         ExtractionKey key = extraction.key();
         return key.sha256() + "|" + key.extractor() + "|" + key.version() + "|" + key.model() + "|"
                 + extraction.createdAt() + "|" + extraction.sections() + "|" + extraction.blocks() + "|"

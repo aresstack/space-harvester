@@ -29,13 +29,20 @@ class NdvClient implements Closeable {
     private volatile boolean connected;
 
     public NdvClient() {
-        this.pal = new NdvTransaction();
+        this(new NdvTransaction());
+    }
+
+    NdvClient(IPalTransactions pal) {
+        this.pal = Objects.requireNonNull(pal, "pal");
     }
 
     /**
      * Connect to the NDV server.
      */
     public void connect(String host, int port, String user, String password) throws IOException, NdvException {
+        currentLibrary = null;
+        cachedSystemFiles = null;
+        cachedDownloadSysFile = null;
         this.host = host;
         this.port = port;
         this.user = user.toUpperCase();
@@ -88,6 +95,7 @@ class NdvClient implements Closeable {
             this.currentLibrary = library;
             LOG.fine("[NdvClient] Logged on to library: " + library);
         } catch (PalResultException e) {
+            currentLibrary = null;
             throw new NdvException("Logon to library '" + library + "' failed: " + e.getMessage(), e);
         }
     }
@@ -105,7 +113,10 @@ class NdvClient implements Closeable {
     public IPalTypeSystemFile[] getSystemFiles() throws IOException, NdvException {
         checkConnected();
         try {
-            return pal.getSystemFiles();
+            if (cachedSystemFiles == null) {
+                cachedSystemFiles = pal.getSystemFiles();
+            }
+            return cachedSystemFiles == null ? null : cachedSystemFiles.clone();
         } catch (PalResultException e) {
             throw new NdvException("Failed to get system files: " + e.getMessage(), e);
         }
@@ -120,39 +131,34 @@ class NdvClient implements Closeable {
      */
     public List<String> listLibraries(IPalTypeSystemFile sysFile, String filter) throws IOException, NdvException {
         checkConnected();
-        List<String> result = new ArrayList<String>();
+        java.util.Set<String> result = new java.util.LinkedHashSet<String>();
         try {
-            IPalTypeLibrary[] libs = pal.getLibrariesFirst(sysFile, filter);
-            if (libs != null) {
-                for (IPalTypeLibrary lib : libs) {
-                    if (lib != null && lib.getLibrary() != null) {
-                        result.add(lib.getLibrary().trim());
+            IPalTypeLibrary[] page = pal.getLibrariesFirst(sysFile, filter);
+            while (page != null && page.length > 0) {
+                checkListingInterrupted();
+                int previous = result.size();
+                for (IPalTypeLibrary lib : page) {
+                    if (lib == null || lib.getLibrary() == null || lib.getLibrary().trim().isEmpty()) {
+                        throw new NdvException("Invalid library listing entry");
                     }
+                    result.add(lib.getLibrary().trim());
                 }
-            }
-            // Fetch remaining pages (getLibrariesNext throws PalResultException when done)
-            if (libs != null && libs.length > 0) {
-                int safetyLimit = 1000; // prevent infinite loops
-                for (int page = 0; page < safetyLimit; page++) {
-                    try {
-                        IPalTypeLibrary[] more = pal.getLibrariesNext();
-                        if (more == null || more.length == 0) break;
-                        for (IPalTypeLibrary lib : more) {
-                            if (lib != null && lib.getLibrary() != null) {
-                                result.add(lib.getLibrary().trim());
-                            }
-                        }
-                    } catch (PalResultException done) {
-                        // End of data
-                        break;
-                    }
+                if (result.size() == previous) {
+                    throw new NdvException("Library listing made no progress");
                 }
+                page = pal.getLibrariesNext();
             }
         } catch (PalResultException e) {
             throw new NdvException("Failed to list libraries: " + e.getMessage(), e);
         }
         LOG.fine("[NdvClient] Listed " + result.size() + " libraries");
-        return result;
+        return new ArrayList<String>(result);
+    }
+
+    private static void checkListingInterrupted() {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new java.util.concurrent.CancellationException("NDV listing interrupted");
+        }
     }
 
     /**
@@ -182,16 +188,25 @@ class NdvClient implements Closeable {
             }
 
             if (objects != null && objects.length > 0) {
-                int safetyLimit = 1000;
-                for (int p = 0; p < safetyLimit; p++) {
-                    // Ende der Daten ist ein leeres Array; eine PalResultException ist ein echter Fehler und darf
-                    // keine verkürzte Auflistung ergeben (sonst räumt der Index gültige Objekte ab).
+                if (page.isEmpty()) {
+                    throw new NdvException("Object listing made no progress for library '" + library + "'");
+                }
+                java.util.Set<String> seen = new java.util.HashSet<String>();
+                rememberObjects(seen, page);
+                while (true) {
+                    checkListingInterrupted();
                     IPalTypeObject[] more = pal.getObjectsNext();
-                    if (more == null || more.length == 0) break;
+                    if (more == null || more.length == 0) {
+                        return total;
+                    }
                     List<NdvObjectInfo> morePage = toInfoList(more);
+                    int previous = seen.size();
+                    rememberObjects(seen, morePage);
+                    if (seen.size() == previous) {
+                        throw new NdvException("Object listing made no progress for library '" + library + "'");
+                    }
                     total += morePage.size();
-                    LOG.fine("[NdvClient] getObjectsNext page " + (p + 1) + " returned " + morePage.size() + " objects");
-                    if (!morePage.isEmpty() && !callback.onPage(morePage, total)) {
+                    if (!callback.onPage(morePage, total)) {
                         return total;
                     }
                 }
@@ -218,6 +233,13 @@ class NdvClient implements Closeable {
             }
         });
         return result;
+    }
+
+    private static void rememberObjects(java.util.Set<String> seen, List<NdvObjectInfo> page) {
+        for (NdvObjectInfo object : page) {
+            seen.add(object.getEffectiveName() + "." + object.getTypeExtension()
+                    + ":" + object.getDatabaseId() + ":" + object.getFileNumber());
+        }
     }
 
     private List<NdvObjectInfo> toInfoList(IPalTypeObject[] objects) {
@@ -332,17 +354,17 @@ class NdvClient implements Closeable {
     public String readSource(String library, NdvObjectInfo objInfo)
             throws IOException, NdvException {
         checkConnected();
-        if (library == null || library.isEmpty()) {
-            throw new NdvException("readSource: library is null or empty");
-        }
         if (objInfo == null) {
             throw new NdvException("readSource: objInfo is null");
         }
 
         boolean isDdm = objInfo.getType() == ObjectType.DDM;
+        if (!isDdm && (library == null || library.isEmpty())) {
+            throw new NdvException("readSource: library is null or empty");
+        }
 
-        // Ensure we are logged on to the correct library
-        if (!library.equals(currentLibrary)) {
+        // Log on only for library-bound objects.
+        if (!isDdm && !library.equals(currentLibrary)) {
             logon(library);
         }
 
@@ -416,18 +438,16 @@ class NdvClient implements Closeable {
 
         // DDMs: always use FDDM system file
         if (objInfo.getType() == ObjectType.DDM) {
+            if (dbid > 0 && fnr > 0) {
+                return PalTypeSystemFileFactory.newInstance(dbid, fnr, IPalTypeSystemFile.FDDM);
+            }
             IPalTypeSystemFile fddm = findFddmSystemFile();
             if (fddm != null) {
                 LOG.fine("[NdvClient] resolveSystemFileForObject: DDM -> using FDDM: "
                         + fddm.getDatabaseId() + "/" + fddm.getFileNumber());
                 return fddm;
             }
-            // If no FDDM found but we have DATENBANK_NUMMER/DATEI_NUMMER from listing, use those with FDDM kind
-            if (dbid > 0 && fnr > 0) {
-                LOG.fine("[NdvClient] resolveSystemFileForObject: DDM, no FDDM in sysfiles, "
-                        + "using obj DATENBANK_NUMMER/DATEI_NUMMER with FDDM kind: " + dbid + "/" + fnr);
-                return PalTypeSystemFileFactory.newInstance(dbid, fnr, IPalTypeSystemFile.FDDM);
-            }
+            throw new NdvException("No FDDM system file available for DDM");
         }
 
         if (dbid > 0 && fnr > 0) {
@@ -486,12 +506,11 @@ class NdvClient implements Closeable {
             return cachedSystemFiles;
         }
         try {
-            cachedSystemFiles = pal.getSystemFiles();
-        } catch (PalResultException e) {
+            return getSystemFiles();
+        } catch (NdvException e) {
             LOG.warning("[NdvClient] getSystemFiles failed: " + e.getMessage());
             return null;
         }
-        return cachedSystemFiles;
     }
 
     private String joinLines(String[] lines) {
@@ -520,6 +539,9 @@ class NdvClient implements Closeable {
 
     @Override
     public void close() throws IOException {
+        currentLibrary = null;
+        cachedSystemFiles = null;
+        cachedDownloadSysFile = null;
         if (pal != null && connected) {
             try {
                 pal.disconnect();

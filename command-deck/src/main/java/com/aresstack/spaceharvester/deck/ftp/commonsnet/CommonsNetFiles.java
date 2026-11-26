@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.deck.ftp.commonsnet;
 
 import com.aresstack.spaceharvester.deck.ftp.DatasetAttributes;
+import com.aresstack.spaceharvester.deck.ftp.BinarySample;
 import com.aresstack.spaceharvester.deck.ftp.FileConnection;
 import com.aresstack.spaceharvester.deck.ftp.MvsListing;
 import com.aresstack.spaceharvester.deck.ftp.TransferOptions;
@@ -80,26 +81,31 @@ final class CommonsNetFiles implements FileConnection {
             case BINARY -> FTP.BINARY_FILE_TYPE;
             case LOCAL -> FTP.LOCAL_FILE_TYPE;
         };
+        boolean typeAccepted;
         if (transfer.textFormat() == TransferOptions.TextFormat.DEFAULT) {
-            ftp.setFileType(type);
+            typeAccepted = ftp.setFileType(type);
         } else {
-            ftp.setFileType(type, switch (transfer.textFormat()) {
+            typeAccepted = ftp.setFileType(type, switch (transfer.textFormat()) {
                 case TELNET -> FTP.TELNET_TEXT_FORMAT;
                 case CARRIAGE_CONTROL -> FTP.CARRIAGE_CONTROL_TEXT_FORMAT;
                 default -> FTP.NON_PRINT_TEXT_FORMAT;
             });
         }
-        ftp.setFileStructure(switch (transfer.structure()) {
+        if (!typeAccepted) throw new IOException("FTP TYPE abgelehnt – " + Clients.reply(ftp));
+        boolean structureAccepted = ftp.setFileStructure(switch (transfer.structure()) {
             case PAGE -> FTP.PAGE_STRUCTURE;
             case AUTO, RECORD, FILE -> recordStructure ? FTP.RECORD_STRUCTURE : FTP.FILE_STRUCTURE;
         });
         // Nur Stream: TransferOptions lässt Block und Komprimiert nicht zu (Commons Net kann sie nicht rahmen).
-        ftp.setFileTransferMode(FTP.STREAM_TRANSFER_MODE);
+        if (!structureAccepted || !ftp.setFileTransferMode(FTP.STREAM_TRANSFER_MODE)) {
+            throw new IOException("FTP-Übertragungsmodus abgelehnt – " + Clients.reply(ftp));
+        }
     }
 
     private void binaryMode() throws IOException {
-        ftp.setFileType(FTP.BINARY_FILE_TYPE);
-        ftp.setFileStructure(FTP.FILE_STRUCTURE);
+        if (!ftp.setFileType(FTP.BINARY_FILE_TYPE) || !ftp.setFileStructure(FTP.FILE_STRUCTURE)) {
+            throw new FtpReplyException("Binärmodus abgelehnt – " + Clients.reply(ftp), ftp.getReplyCode());
+        }
     }
 
     @Override
@@ -129,6 +135,50 @@ final class CommonsNetFiles implements FileConnection {
     @Override
     public List<RemoteEntry> list(String path) throws IOException {
         return mvs ? listMvs(MvsPath.absolute(path)) : listUnix(unixPath(path));
+    }
+
+    @Override
+    public List<RemoteEntry> listCopybookMembers(String dataset) throws IOException {
+        if (!mvs) {
+            return list(dataset);
+        }
+        String base = MvsPath.unquote(dataset).toUpperCase(Locale.ROOT);
+        String query = MvsPath.absolute(base + "(*)");
+        String[] names = ftp.listNames(query);
+        int reply = ftp.getReplyCode();
+        if (!org.apache.commons.net.ftp.FTPReply.isPositiveCompletion(reply)) {
+            String message = Clients.reply(ftp);
+            // Accept only the explicit empty-PDS response, not ambiguous access or dataset errors.
+            if (reply == 550 && message.toLowerCase(Locale.ROOT).contains("no members found")) {
+                return List.of();
+            }
+            if (reply == 421 || org.apache.commons.net.ftp.FTPReply.isNegativeTransient(reply)) {
+                throw new IOException("SYSLIB " + query + " – " + message);
+            }
+            throw new FtpReplyException("SYSLIB " + query + " – " + message, reply);
+        }
+        if (names == null) {
+            throw new IOException("SYSLIB " + query + ": member listing not received");
+        }
+        List<RemoteEntry> members = new ArrayList<>();
+        for (String raw : names) {
+            String name = MvsPath.unquote(raw).trim().toUpperCase(Locale.ROOT);
+            if (name.isBlank()) {
+                continue;
+            }
+            if (MvsPath.isMember(name)) {
+                String[] parts = MvsPath.splitMember(name);
+                if (!base.equals(parts[0])) {
+                    throw new IOException("Unexpected SYSLIB member: " + raw);
+                }
+                name = parts[1];
+            }
+            if (!MvsPath.isMemberName(name)) {
+                throw new IOException("Unexpected SYSLIB listing entry: " + raw);
+            }
+            members.add(RemoteEntry.file(name, MvsPath.absolute(MvsPath.memberSpec(base, name))));
+        }
+        return List.copyOf(members);
     }
 
     @Override
@@ -241,10 +291,13 @@ final class CommonsNetFiles implements FileConnection {
 
     /** Wie {@code MvsBrowserController.openResource}: ein Dataset öffnet nur als Liste, wenn es partitioniert ist. */
     @Override
-    public boolean opensAsFolder(RemoteEntry entry) {
+    public boolean opensAsFolder(RemoteEntry entry) throws IOException {
         if (!mvs) {
             return entry.directory();
         }
+        String organization = entry.details().organization().toUpperCase(Locale.ROOT);
+        if (organization.equals("PS")) return false;
+        if (organization.startsWith("PO")) return true;
         MvsLocation location = location(entry.path());
         return switch (location.getType()) {
             case HLQ, QUALIFIER_CONTEXT -> true;
@@ -268,6 +321,21 @@ final class CommonsNetFiles implements FileConnection {
                 ? MvsLocation.dataset(parsed.getLogicalPath()) : parsed;
     }
 
+    @Override
+    public RemoteEntry.Details datasetDetails(String path) {
+        if (!mvs) return RemoteEntry.Details.NONE;
+        String dataset = MvsPath.isMember(path) ? MvsPath.splitMember(path)[0] : MvsPath.unquote(path);
+        String name = dataset.toUpperCase(Locale.ROOT);
+        for (String query : List.of(MvsPath.absolute(name), MvsPath.absolute(name.substring(0,
+                Math.max(0, name.lastIndexOf('.') + 1)) + "*"))) {
+            for (String line : rawList(query)) {
+                var parsed = MvsListing.dataset(line);
+                if (parsed.isPresent() && parsed.get().name().equals(name)) return parsed.get().details();
+            }
+        }
+        return RemoteEntry.Details.NONE;
+    }
+
     private static String key(String path) {
         return MvsQuoteNormalizer.unquote(path).toUpperCase(Locale.ROOT);
     }
@@ -277,9 +345,13 @@ final class CommonsNetFiles implements FileConnection {
         FtpReplyException last = null;
         for (String candidate : candidates(path)) {
             try {
-                byte[] bytes = RecordStructure.withoutPadding(retrieve(candidate), transfer.transform());
+                byte[] raw = retrieve(candidate);
+                String restriction = mvs && (transfer.fileType() == TransferOptions.FileType.BINARY
+                        || RecordStructure.suspectBinary(raw, charset, transfer.transform(), recordStructure))
+                        ? "Mögliche Binärdaten – Textbearbeitung gesperrt. Binärdiagnose oder Hex-Ansicht verwenden." : "";
+                byte[] bytes = RecordStructure.withoutPadding(raw, transfer.transform());
                 String text = recordStructure ? RecordStructure.decode(bytes, charset, transfer.transform()) : new String(bytes, charset);
-                return RemoteFile.of(candidate, text);
+                return new RemoteFile(candidate, text, null, restriction);
             } catch (FtpReplyException refused) {
                 last = refused;
             }
@@ -289,19 +361,64 @@ final class CommonsNetFiles implements FileConnection {
 
     @Override
     public byte[] readBinary(String path) throws IOException {
-        binaryMode();
+        return binaryTransfer(path, InputStream::readAllBytes);
+    }
+
+    @Override
+    public BinarySample readBinarySample(String path, int limit) throws IOException {
+        if (limit < 1 || limit > BinarySample.MAX_CAPTURE_BYTES) throw new IllegalArgumentException("Diagnoselimit");
+        return binaryTransfer(path, input -> BinarySample.capture(input, limit));
+    }
+
+    @Override
+    public void downloadBinary(String path, java.io.OutputStream output) throws IOException {
+        binaryTransfer(path, input -> input.transferTo(output));
+    }
+
+    @FunctionalInterface
+    private interface BinaryReader<T> {
+        T read(InputStream input) throws IOException;
+    }
+
+    private <T> T binaryTransfer(String path, BinaryReader<T> reader) throws IOException {
         try {
+            binaryMode();
             FtpReplyException last = null;
             for (String candidate : candidates(path)) {
-                try {
-                    return retrieve(candidate);
-                } catch (FtpReplyException refused) {
-                    last = refused;
+                InputStream input = ftp.retrieveFileStream(candidate);
+                if (input == null) {
+                    last = new FtpReplyException("Nicht lesbar: " + candidate + " – " + Clients.reply(ftp),
+                            ftp.getReplyCode());
+                    continue;
                 }
+                T result;
+                try (input) {
+                    result = reader.read(input);
+                } catch (IOException | RuntimeException broken) {
+                    // Discard a control connection with an incomplete data transfer.
+                    Clients.close(ftp);
+                    throw broken;
+                }
+                if (!ftp.completePendingCommand()) {
+                    String reply = Clients.reply(ftp);
+                    Clients.close(ftp);
+                    throw new IOException("Binärübertragung unvollständig – " + reply);
+                }
+                return result;
             }
             throw last != null ? last : new FtpReplyException("Nicht gefunden: " + path, 550);
         } finally {
+            restoreTextMode();
+        }
+    }
+
+    private void restoreTextMode() throws IOException {
+        if (!ftp.isConnected()) return;
+        try {
             textMode();
+        } catch (IOException | RuntimeException failure) {
+            Clients.close(ftp);
+            throw failure;
         }
     }
 
@@ -333,11 +450,11 @@ final class CommonsNetFiles implements FileConnection {
 
     @Override
     public void writeBinary(String path, byte[] content) throws IOException {
-        binaryMode();
         try {
+            binaryMode();
             store(path, content);
         } finally {
-            textMode();
+            restoreTextMode();
         }
     }
 

@@ -24,6 +24,33 @@ class LucenePageTextIndexTest {
     Path dir;
 
     @Test
+    void reportsActualPrimaryTextAcrossSectionsAndAfterReopen() {
+        PageKey file = new PageKey("docs", "file");
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            index.replacePageSections(file, java.util.List.of(
+                    new PageTextIndex.Entry(file, "docs", "File", " ", "revision"),
+                    new PageTextIndex.Entry(file, "docs", "File", "Nachtlauf", "revision")));
+            index.put(new PageTextIndex.Entry(new PageKey("docs", "empty"), "docs", "Title only", " ... ", "empty"));
+            String embeddedName = "embedded.pdf\n";
+            index.put(new PageTextIndex.Entry(new PageKey("docs", "archive"), "docs", "Archive",
+                    embeddedName, "archive", "application/zip", embeddedName.length()));
+            assertThat(index.contentStates("docs", "docs")).containsEntry("archive",
+                    new PageTextIndex.ContentState("archive", false)).containsEntry("file",
+                    new PageTextIndex.ContentState("revision", true)).containsEntry("empty",
+                    new PageTextIndex.ContentState("empty", false));
+        }
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            assertThat(index.contentStates("docs", "docs").get("file").hasText()).isTrue();
+            index.replacePageSections(file, java.util.List.of(
+                    new PageTextIndex.Entry(file, "docs", "File", "", "next")));
+            assertThat(index.contentStates("docs", "docs").get("file"))
+                    .isEqualTo(new PageTextIndex.ContentState("next", false));
+            index.remove(file);
+            assertThat(index.contentStates("docs", "docs")).doesNotContainKey("file");
+        }
+    }
+
+    @Test
     void ranksByBm25WithTheTitleWeightedAndAWindowAroundTheFirstFinding() {
         try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
             index.put(entry("wiki", "1", "DEV", "Betrieb", "Einleitung. " + "Füllwort ".repeat(80)

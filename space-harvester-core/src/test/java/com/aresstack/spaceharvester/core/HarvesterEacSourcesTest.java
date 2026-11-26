@@ -118,7 +118,7 @@ class HarvesterEacSourcesTest {
                 .source(new SourceSettingsConfig("mail", "outlook", "Mail", null, null,
                         Map.of("mailbox", data.toString())))
                 .dataDirectory(data).build()) {
-            for (String id : new String[] {"host-ftp", "host-jes", "natural", "team", "reports", "mail"}) {
+            for (String id : new String[] {"host-ftp", "host-jes", "natural", "reports", "mail"}) {
                 assertThat(harvester.sources().partitions(id)).extracting(Partition::key).containsExactly(id);
             }
         }

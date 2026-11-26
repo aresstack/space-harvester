@@ -26,10 +26,16 @@ public final class PageTextIndexing {
 
     private final List<PageTextProjector> projectors;
     private final PageTextIndex index;
+    private final LocalPageSections localSections;
 
     public PageTextIndexing(List<PageTextProjector> projectors, PageTextIndex index) {
+        this(projectors, index, null);
+    }
+
+    public PageTextIndexing(List<PageTextProjector> projectors, PageTextIndex index, LocalPageSections localSections) {
         this.projectors = List.copyOf(projectors);
         this.index = Objects.requireNonNull(index, "index");
+        this.localSections = localSections;
     }
 
     /** Der Index, den diese Indizierung füllt. */
@@ -50,6 +56,9 @@ public final class PageTextIndexing {
      */
     public boolean index(PageSnapshot snapshot, PageMetadata current) {
         try {
+            if (localSections != null && localSections.supports(snapshot)) {
+                return localSections.index(snapshot, current, index);
+            }
             Optional<PageText> text = projection(snapshot);
             if (text.isEmpty()) {
                 index.remove(snapshot.key());
@@ -139,9 +148,14 @@ public final class PageTextIndexing {
      * samt Space und Titel. Damit prüft etwa die Relevanzsuche, ob Stellen eines Embeddings zum abgelegten Text gehören.
      */
     public static String entryState(String input, PageMetadata current) {
+        return entryState(input, current.partitionKey(), current.title());
+    }
+
+    /** Calculate the same index stamp without loading the cached payload. */
+    public static String entryState(String input, String spaceKey, String title) {
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest((input + "\n" + current.partitionKey() + "\n"
-                    + current.title()).getBytes(StandardCharsets.UTF_8));
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest((input + "\n" + spaceKey + "\n"
+                    + title).getBytes(StandardCharsets.UTF_8));
             return "sha256:" + HexFormat.of().formatHex(digest);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 fehlt", e);

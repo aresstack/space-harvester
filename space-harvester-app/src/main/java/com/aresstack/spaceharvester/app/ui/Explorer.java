@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.query.SpaceTree;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
+import com.aresstack.spaceharvester.application.sources.InvalidNavigationCursorException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -159,6 +160,12 @@ public final class Explorer {
         if (global) {
             return com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.ALL;
         }
+        if (!externalScopes.isEmpty()) {
+            Scope scope = externalScopes.getFirst();
+            return new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(
+                    scope.sourceId(), scope.spaceKey(), scope.pageId(),
+                    scope.pageTitle() == null ? sourceTitle(scope.sourceId()) : scope.pageTitle());
+        }
         TreePath[] paths = tree.getSelectionPaths();
         for (TreePath path : paths == null ? new TreePath[0] : paths) {
             if (path.getLastPathComponent() instanceof Node node) {
@@ -214,7 +221,7 @@ public final class Explorer {
     record MoreItem(String cursor) implements Item {
         @Override
         public String toString() {
-            return MORE;
+            return cursor == null ? "Ordner neu laden" : MORE;
         }
     }
 
@@ -279,6 +286,7 @@ public final class Explorer {
      * Export und Analysen beziehen sich dann auf alles, im Baum ist nichts gewählt.
      */
     private boolean global;
+    private List<Scope> externalScopes = List.of();
     private final DefaultTreeModel model = new DefaultTreeModel(top);
     private final JTree tree = new JTree(model);
     /** Die Bestandszeichen je Zeile (Angelo, 13.11.2026): aus dem Core gemeldet, nie abgefragt. */
@@ -781,7 +789,8 @@ public final class Explorer {
 
     /** Hebt die Auswahl auf, auch die globale; der Umfang ist dann wieder alles. */
     public void clearSelection() {
-        boolean was = global;
+        boolean was = global || !externalScopes.isEmpty();
+        externalScopes = List.of();
         global = false;
         if (tree.getSelectionCount() > 0) {
             tree.clearSelection();
@@ -799,6 +808,7 @@ public final class Explorer {
         if (global) {
             return;
         }
+        externalScopes = List.of();
         global = true;
         paintHead();
         if (tree.getSelectionCount() > 0) {
@@ -1190,8 +1200,11 @@ public final class Explorer {
             selectAll();
             return;
         }
-        // Eine Seite als Bereich: im Baum aufklappen und wählen wie ein Suchtreffer.
-        if (scopes.size() == 1 && scopes.get(0).pageId() != null) {
+        boolean external = context.runtime() != null && scopes.stream().anyMatch(scope ->
+                !shownSources.contains(scope.sourceId()) && context.runtime().workspace().sources().stream()
+                        .anyMatch(source -> source.id().equals(scope.sourceId())));
+        // Eine sichtbare Seite als Bereich: im Baum aufklappen und wählen wie ein Suchtreffer.
+        if (!external && scopes.size() == 1 && scopes.get(0).pageId() != null) {
             revealPage(scopes.get(0).sourceId(), scopes.get(0).spaceKey(), scopes.get(0).pageId());
             return;
         }
@@ -1216,13 +1229,38 @@ public final class Explorer {
                 }
             }
         }
+        if (external) {
+            // Preserve the explicit search scope even when no matching tree node exists.
+            global = false;
+            externalScopes = List.copyOf(scopes);
+            quiet = true;
+            try {
+                tree.setSelectionPaths(paths.isEmpty() ? null : paths.toArray(TreePath[]::new));
+            } finally {
+                quiet = false;
+            }
+            clearHint();
+            paintHead();
+            scopeListener.accept(externalScopes);
+            selectionListener.accept(selection());
+            return;
+        }
         if (paths.isEmpty()) {
             return;
         }
+        boolean hadExternal = !externalScopes.isEmpty();
+        externalScopes = List.of();
         tree.setSelectionPaths(paths.toArray(TreePath[]::new));
+        if (hadExternal) {
+            scopeListener.accept(scopes());
+            selectionListener.accept(selection());
+        }
     }
 
     public List<Scope> scopes() {
+        if (!externalScopes.isEmpty()) {
+            return externalScopes;
+        }
         TreePath[] paths = tree.getSelectionPaths();
         List<Scope> scopes = new ArrayList<>();
         for (TreePath path : paths == null ? new TreePath[0] : paths) {
@@ -1248,7 +1286,11 @@ public final class Explorer {
     /** Die Wurzelknoten: alle Quellen der Laufzeit, in deren Reihenfolge; unverändert, solange dieselben bleiben. */
     private void refreshSources() {
         AppRuntime runtime = context.runtime();
-        List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources();
+        List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources().stream()
+                .filter(source -> runtime.settings().sources().stream()
+                        .filter(entry -> entry.id().equals(source.id()))
+                        .allMatch(entry -> entry.config().showInExplorer()))
+                .toList();
         List<String> ids = sources.stream().map(HarvestSource::id).toList();
         // Vor dem Vergleich: eine neue Laufzeit mit denselben Quellen meldet die Zeichen neu an.
         states.watch(ids);
@@ -1282,6 +1324,7 @@ public final class Explorer {
             return;
         }
         if (!revealing) {
+            externalScopes = List.of();
             // Der Benutzer wählt selbst: die Hervorhebung eines Suchtreffers verschwindet.
             clearHint();
         }
@@ -1340,14 +1383,8 @@ public final class Explorer {
         Background.run(() -> children(runtime, item, null), batch -> {
             node.loading = false;
             node.loaded = true;
-            if (node.fromCache) {
-                node.fromCache = false;
-                merge(node, batch, true);
-            } else {
-                node.removeAllChildren();
-                append(node, batch);
-                model.nodeStructureChanged(node);
-            }
+            node.fromCache = false;
+            merge(node, batch, true);
             // Prefetch is optional and must never postpone the visible navigation results.
             Background.run(() -> {
                 prefetch(runtime, item, batch);
@@ -1461,34 +1498,29 @@ public final class Explorer {
         model.nodeChanged(moreNode);
         Background.run(() -> children(runtime, parent.item(), more.cursor()), batch -> {
             parent.loading = false;
-            if (parent.confirmed != null) {
-                // Über einem Stand aus dem Cache: auch die weiteren Stapel gleichen ab statt anzuhängen.
-                merge(parent, batch, false);
-                if (then != null) {
-                    then.run();
-                }
-                return;
+            merge(parent, batch, more.cursor() == null);
+            if (more.cursor() == null) {
+                note.setText("Ordner neu geladen.");
             }
-            // Nur einfügen und entfernen, nicht den Knoten neu aufbauen: das ließe die Auswahl darunter (und damit den
-            // Suchbereich) fallen.
-            model.removeNodeFromParent(moreNode);
-            int first = parent.getChildCount();
-            append(parent, batch);
-            int[] added = new int[parent.getChildCount() - first];
-            for (int i = 0; i < added.length; i++) {
-                added[i] = first + i;
-            }
-            model.nodesWereInserted(parent, added);
             if (then != null) {
                 then.run();
             }
         }, error -> {
             parent.loading = false;
-            moreNode.setUserObject(more);
+            MoreItem retry = more;
+            if (error instanceof InvalidNavigationCursorException && more.cursor() != null) {
+                retry = new MoreItem(null);
+                moreNode.setUserObject(retry);
+                model.nodeChanged(moreNode);
+                loadMore(parent, moreNode, retry, then);
+                return;
+            }
+            moreNode.setUserObject(retry);
             model.nodeChanged(moreNode);
             note.setText("Nicht geladen: " + Problems.describe(error).title());
         });
     }
+
 
     private static void append(Node parent, Batch batch) {
         for (Node child : batch.nodes()) {
@@ -2130,7 +2162,8 @@ public final class Explorer {
         return switch (item) {
             case SourceItem source -> states.all(List.of(source.sourceId()), treeSpaces());
             case SpaceItem space -> states.space(space.sourceId(), space.spaceKey());
-            case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP -> TreeStates.Badge.NONE;
+            case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP ->
+                    states.folder(page.sourceId(), page.spaceKey(), page.pageId());
             case PageItem page -> states.page(page.sourceId(), page.spaceKey(), page.pageId(),
                     !Boolean.FALSE.equals(page.hasChildren()));
             case null, default -> TreeStates.Badge.NONE;

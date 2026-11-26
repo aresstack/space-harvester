@@ -4,12 +4,15 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.enrichment.LocalReadingText;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,10 +43,20 @@ public class AcronymRelationRule {
     private final TermRelations relations;
     private final String processorVersion;
     private final Clock clock;
+    private final Function<PageKey, Optional<PageSnapshot>> snapshots;
+    private final LocalReadingText localReading;
 
     public AcronymRelationRule(SourceCatalog catalog, TermIndex index, AccessGuard access,
                                Function<PageKey, Optional<PageHeader>> headers, TermRelations relations,
                                String processorVersion, Clock clock) {
+        this(catalog, index, access, headers, relations, processorVersion, clock, null, null);
+    }
+
+    public AcronymRelationRule(SourceCatalog catalog, TermIndex index, AccessGuard access,
+                               Function<PageKey, Optional<PageHeader>> headers, TermRelations relations,
+                               String processorVersion, Clock clock,
+                               Function<PageKey, Optional<PageSnapshot>> snapshots,
+                               LocalReadingText localReading) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.index = Objects.requireNonNull(index, "index");
         this.access = Objects.requireNonNull(access, "access");
@@ -51,6 +64,8 @@ public class AcronymRelationRule {
         this.relations = Objects.requireNonNull(relations, "relations");
         this.processorVersion = Objects.requireNonNull(processorVersion, "processorVersion");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.snapshots = snapshots;
+        this.localReading = localReading;
     }
 
     /**
@@ -83,21 +98,24 @@ public class AcronymRelationRule {
                 processorVersion);
         Map<String, Candidate> candidates = new LinkedHashMap<>();
         Map<PageKey, Optional<PageHeader>> pages = new LinkedHashMap<>();
+        Map<PageKey, Optional<LocalReadingText.Reading>> readings = new HashMap<>();
         String from = null;
         while (true) {
             List<TermPosting> batch = index.postings(filter, from, false, TermIndex.MAX_BATCH);
             for (TermPosting posting : batch) {
-                if (posting.expansion() == null || posting.occurrences().isEmpty()
-                        || !current(posting, pages.computeIfAbsent(posting.page(), headers))) {
+                if (posting.expansion() == null || posting.occurrences().isEmpty()) {
+                    continue;
+                }
+                Optional<RelationEvidence> evidence = evidence(posting,
+                        pages.computeIfAbsent(posting.page(), headers), readings);
+                if (evidence.isEmpty()) {
                     continue;
                 }
                 String key = posting.normalized() + '\u0000' + TermText.normalize(posting.expansion());
                 Candidate candidate = candidates.computeIfAbsent(key,
                         ignored -> new Candidate(posting.term(), posting.expansion()));
                 if (candidate.evidence.size() < TermRelations.MAX_EVIDENCE) {
-                    TermOccurrence first = posting.occurrences().get(0);
-                    candidate.evidence.add(new RelationEvidence(sourceId, posting.page().pageId(), first.start(),
-                            first.end(), posting.inputSha256()));
+                    candidate.evidence.add(evidence.get());
                 }
             }
             if (batch.size() < TermIndex.MAX_BATCH) {
@@ -110,6 +128,41 @@ public class AcronymRelationRule {
                 candidate.expansion, RelationType.ABBREVIATION, candidate.evidence)));
         return relations.propose(ACTOR, RelationOrigin.RULE, new RelationScope(sourceId, null),
                 Set.of(RelationType.ABBREVIATION), "terms-" + processorVersion + "@" + clock.instant(), proposals);
+    }
+
+    private Optional<RelationEvidence> evidence(TermPosting posting, Optional<PageHeader> header,
+                                                Map<PageKey, Optional<LocalReadingText.Reading>> readings) {
+        if (header.isEmpty()) {
+            return Optional.empty();
+        }
+        if (posting.document().localOriginal()) {
+            if (snapshots == null || localReading == null || posting.extraction() == null) {
+                return Optional.empty();
+            }
+            if (!readings.containsKey(posting.page())) {
+                readings.clear();
+            }
+            return readings.computeIfAbsent(posting.page(), key -> snapshots.apply(key).flatMap(localReading::read))
+                    .filter(reading -> posting.extraction().startsWith(
+                            com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments.basis(
+                                    reading.extraction()) + "|"))
+                    .flatMap(reading -> reading.slices().stream()
+                            .filter(slice -> slice.document().equals(posting.document())
+                                    && slice.section() == posting.documentSection()
+                                    && slice.text().inputSha256().equals(posting.inputSha256()))
+                            .flatMap(slice -> posting.occurrences().stream()
+                                    .filter(occurrence -> slice.contains(occurrence.start(), occurrence.end()))
+                                    .map(occurrence -> new RelationEvidence(posting.page().sourceId(),
+                                            posting.page().pageId(), slice.offset() + occurrence.start(),
+                                            slice.offset() + occurrence.end(), reading.text().inputSha256())))
+                            .findFirst());
+        }
+        if (!current(posting, header)) {
+            return Optional.empty();
+        }
+        TermOccurrence first = posting.occurrences().getFirst();
+        return Optional.of(new RelationEvidence(posting.page().sourceId(), posting.page().pageId(),
+                first.start(), first.end(), posting.inputSha256()));
     }
 
     private static boolean current(TermPosting posting, Optional<PageHeader> header) {

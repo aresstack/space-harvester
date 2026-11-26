@@ -10,6 +10,7 @@ import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.NavigationResourceSource;
 import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourceScope;
 
@@ -19,16 +20,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Deque;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Ein FTP-Server als {@link KnowledgeSourcePort}, vor allem MVS/z/OS mit COBOL-Quellen in PDS-Membern.
@@ -42,7 +38,7 @@ import java.util.Set;
  *   <li>Revision: Änderungszeit, falls der Server sie meldet, beim Laden zusätzlich der SHA-256 des Texts.</li>
  * </ul>
  */
-final class FtpKnowledgeSource implements KnowledgeSourcePort {
+final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourceSource {
 
     static final String SCHEME = "ftp";
 
@@ -51,9 +47,15 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort {
     /** {@code host:port} klein, Teil jeder Ressourcen-ID ({@code ftp:host:port/HLQ.DATASET(MEMBER)}). */
     private final String locator;
     private final FtpSessionPool<FtpClientSession> sessions;
+    private final boolean programSourcesOnly;
 
     FtpKnowledgeSource(SourceAddress sourceId, FtpConnectionSettings settings,
                        FtpSessionPool<FtpClientSession> sessions) {
+        this(sourceId, settings, sessions, false);
+    }
+
+    FtpKnowledgeSource(SourceAddress sourceId, FtpConnectionSettings settings,
+                       FtpSessionPool<FtpClientSession> sessions, boolean programSourcesOnly) {
         if (sourceId == null || settings == null || sessions == null) {
             throw new IllegalArgumentException("sourceId, settings and sessions are required");
         }
@@ -61,6 +63,7 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort {
         this.settings = settings;
         this.locator = SourceLocators.hostPort(settings.host, settings.port);
         this.sessions = sessions;
+        this.programSourcesOnly = programSourcesOnly;
     }
 
     @Override
@@ -70,51 +73,22 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort {
 
     @Override
     public List<KnowledgeResource> discover(final SourceScope scope) throws KnowledgeSourceException {
+        return new FtpInventory(sessions, programSourcesOnly).discover(scope, this::resource);
+    }
+
+    @Override
+    public KnowledgeResourceId navigationResource(String nativePath) throws KnowledgeSourceException {
         return sessions.run(session -> {
-            Map<String, KnowledgeResource> found = new LinkedHashMap<String, KnowledgeResource>();
-            Set<String> visited = new LinkedHashSet<String>();
-            Deque<Object[]> queue = new ArrayDeque<Object[]>();
-            for (String startPoint : scope.startPoints()) {
-                String path = normalize(session, startPoint);
-                if (path.isEmpty()) {
-                    continue;
-                }
-                if (session.mvs() && new MvsPathDialect().isMemberPath(path)) {
-                    add(found, session, path, lastSegment(session, path), 0L, scope);
-                    continue;
-                }
-                List<FtpClientSession.FtpEntry> children = session.list(path);
-                visited.add(key(path));
-                if (children.isEmpty()) {
-                    // Sequentielles Dataset bzw. Datei: der Startpunkt selbst.
-                    add(found, session, path, lastSegment(session, path), 0L, scope);
-                } else {
-                    queue.add(new Object[] {children, 0});
-                }
+            String path = session.mvs() ? MvsQuoteNormalizer.unquote(nativePath).toUpperCase(Locale.ROOT)
+                    : nativePath.replaceFirst("^/+", "");
+            if (path.isEmpty() || session.mvs() && MvsQuoteNormalizer.hasWildcard(path)) {
+                return null;
             }
-            while (!queue.isEmpty() && found.size() < scope.maxResources()) {
-                Object[] next = queue.poll();
-                @SuppressWarnings("unchecked")
-                List<FtpClientSession.FtpEntry> entries = (List<FtpClientSession.FtpEntry>) next[0];
-                int depth = (Integer) next[1];
-                for (FtpClientSession.FtpEntry entry : entries) {
-                    if (found.size() >= scope.maxResources()) {
-                        break;
-                    }
-                    if (!entry.directory()) {
-                        add(found, session, entry.path(), entry.name(), entry.modifiedMillis(), scope);
-                    } else if (depth < scope.maxDepth() && visited.add(key(entry.path()))) {
-                        List<FtpClientSession.FtpEntry> children;
-                        try {
-                            children = session.list(entry.path());
-                        } catch (CommonsNetFtpSession.FtpNotFoundException e) {
-                            continue;
-                        }
-                        queue.add(new Object[] {children, depth + 1});
-                    }
-                }
+            if (programSourcesOnly && session.mvs() && FtpProgramClassifier.classify(session.sampleText(path))
+                    == FtpProgramClassifier.Kind.UNKNOWN) {
+                return null;
             }
-            return new ArrayList<KnowledgeResource>(found.values());
+            return idOf(path);
         });
     }
 
@@ -144,22 +118,6 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort {
     @Override
     public String toString() {
         return "FtpKnowledgeSource{" + sourceId + ", " + settings.host + ":" + settings.port + "}";
-    }
-
-    private void add(Map<String, KnowledgeResource> found, FtpClientSession session, String path, String name,
-                     long modifiedMillis, SourceScope scope) {
-        if (found.size() >= scope.maxResources()) {
-            return;
-        }
-        String idPath = session.mvs() ? MvsQuoteNormalizer.unquote(path) : stripLeadingSlashes(path);
-        if (idPath.isEmpty() || found.containsKey(key(idPath))) {
-            return;
-        }
-        try {
-            found.put(key(idPath), resource(idPath, name, modifiedMillis));
-        } catch (IllegalArgumentException e) {
-            // Name ergibt keine gültige Ressourcen-ID: überspringen.
-        }
     }
 
     private KnowledgeResource resource(String idPath, String name, long modifiedMillis) {
@@ -200,12 +158,7 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort {
         return value.substring(prefix.length());
     }
 
-    private static String normalize(FtpClientSession session, String startPoint) {
-        String trimmed = startPoint == null ? "" : startPoint.trim();
-        return session.mvs() ? MvsQuoteNormalizer.unquote(trimmed).toUpperCase(Locale.ROOT) : trimmed;
-    }
-
-    private static String lastSegment(FtpClientSession session, String path) {
+    static String lastSegment(FtpClientSession session, String path) {
         if (session.mvs()) {
             String unquoted = MvsQuoteNormalizer.unquote(path);
             int open = unquoted.indexOf('(');
@@ -217,18 +170,6 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort {
         String stripped = path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
         int slash = stripped.lastIndexOf('/');
         return slash >= 0 ? stripped.substring(slash + 1) : stripped;
-    }
-
-    private static String stripLeadingSlashes(String path) {
-        int start = 0;
-        while (start < path.length() && path.charAt(start) == '/') {
-            start++;
-        }
-        return path.substring(start);
-    }
-
-    private static String key(String path) {
-        return path.toUpperCase(Locale.ROOT);
     }
 
     static String sha256(String text) {

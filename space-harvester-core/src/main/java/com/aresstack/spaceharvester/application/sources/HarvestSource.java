@@ -73,6 +73,11 @@ public interface HarvestSource {
         return false;
     }
 
+    /** Indicate whether absence from this inventory is evidence about the page. */
+    default boolean inventoryCovers(String pageId) {
+        return true;
+    }
+
     /**
      * Alle Partitionen der Quelle (bei Confluence: Spaces), die mit den konfigurierten Zugangsdaten sichtbar sind;
      * ungekürzt.
@@ -93,6 +98,12 @@ public interface HarvestSource {
      *                               {@link #partitions()}
      */
     PageMetadataBatch pageMetadata(String partitionKey, String cursor, int limit);
+
+    /** Visit a complete partition in one traversal, or return false without emitting anything to use cursor paging. */
+    default boolean visitInventory(String partitionKey, Runnable checkpoint,
+                                   java.util.function.Consumer<PageMetadata> found) {
+        return false;
+    }
 
     /**
      * Metadaten einer einzelnen Seite ohne Inhalt über ihre ID in der Quelle, unabhängig vom Space (eine verschobene
@@ -133,6 +144,25 @@ public interface HarvestSource {
     default Optional<String> downloadOriginal(String pageId, java.nio.file.Path target,
                                               java.util.function.Predicate<String> wanted, long maxBytes) {
         return Optional.empty();
+    }
+
+    /** Indicate whether this source can process originals directly at their storage location. */
+    default boolean readsOriginalInPlace() {
+        return false;
+    }
+
+    /**
+     * Read an original within a synchronous callback. Do not retain the path or publish side effects
+     * until the source has checked that the read still belongs to the same revision.
+     */
+    default <T> Optional<T> readOriginalInPlace(String pageId, java.util.function.Predicate<String> wanted,
+                                                long maxBytes, DirectOriginalReader<T> reader) {
+        return Optional.empty();
+    }
+
+    @FunctionalInterface
+    interface DirectOriginalReader<T> {
+        T read(java.nio.file.Path original, PageMetadata metadata, String mediaType) throws java.io.IOException;
     }
 
     /**
@@ -245,6 +275,15 @@ public interface HarvestSource {
      * @throws SourceAccessException {@code UNSUPPORTED} für eine Quelle ohne diese Fähigkeit, sonst wie
      *                               {@link #partitions()}
      */
+    /** Resolve a directly visited native resource without extending the configured inventory. */
+    default List<String> libraries() {
+        return List.of();
+    }
+
+    default Optional<String> navigationPageId(String nativePath) {
+        return Optional.empty();
+    }
+
     default Optional<String> resolveAddress(String address) {
         throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle kann Adressen nicht auflösen", null);

@@ -25,8 +25,29 @@ public interface PageTextIndex {
     /** Legt den Text einer Seite ab oder ersetzt ihn. */
     void put(Entry entry);
 
+    /** Atomically replace the text sections of the page itself, retaining its real attachments. */
+    default void replacePageSections(PageKey page, Iterable<Entry> sections) {
+        throw new UnsupportedOperationException("Index does not support page sections");
+    }
+
     /** Der abgelegte Stand ({@link Entry#inputSha256()}) der Seite, wenn sie im Index liegt. */
     Optional<String> inputSha256(PageKey key);
+
+    /** Read all primary page index states for a space in one index snapshot. */
+    default java.util.Map<String, ContentState> contentStates(String sourceId, String spaceKey) {
+        return java.util.Map.of();
+    }
+
+    record ContentState(String inputSha256, boolean hasText, boolean verified) {
+        public ContentState(String inputSha256, boolean hasText) {
+            this(inputSha256, hasText, true);
+        }
+    }
+
+    /** Existing indexes without the marker are repaired by the normal indexing path. */
+    default boolean contentStateKnown(PageKey key) {
+        return true;
+    }
 
     /**
      * Der abgelegte Medientyp ({@link Entry#mediaType()}) der Seite; leer, wenn sie im Index fehlt oder der Eintrag
@@ -167,7 +188,12 @@ public interface PageTextIndex {
      * @param spaceKey    Space bzw. Partition der Seite; ein anderer als bisher gilt auch für die Anhänge der Seite
      * @param inputSha256 Stand des Eintrags: Eingabe-Hash der Projektion samt Titel und Space
      */
-    record Entry(PageKey key, String spaceKey, String title, String text, String inputSha256, String mediaType) {
+    record Entry(PageKey key, String spaceKey, String title, String text, String inputSha256, String mediaType,
+                 int metadataPrefixChars) {
+
+        public Entry(PageKey key, String spaceKey, String title, String text, String inputSha256, String mediaType) {
+            this(key, spaceKey, title, text, inputSha256, mediaType, 0);
+        }
 
         public Entry {
             Objects.requireNonNull(key, "key");
@@ -176,6 +202,9 @@ public interface PageTextIndex {
             Objects.requireNonNull(text, "text");
             Objects.requireNonNull(inputSha256, "inputSha256");
             mediaType = mediaType == null ? "" : mediaType;
+            if (metadataPrefixChars < 0 || metadataPrefixChars > text.length()) {
+                throw new IllegalArgumentException("Invalid metadata prefix length");
+            }
         }
 
         /** Ohne Medientyp: die Art des Dokuments ({@link DocumentKind}) ergibt sich aus dem Titel. */

@@ -92,6 +92,7 @@ final class SourceForm {
     final PlaceholderField baseUrl = new PlaceholderField(32, DEFAULT_URL);
     final JTextField directory = Comic.field(32);
     final JTextField include = Comic.field(24);
+    final JCheckBox includeEnabled = Comic.checkBox("Dateifilter aktivieren");
     /** Woher Benutzer und Passwort bzw. Token kommen: KeePass-Eintrag oder Manuell (Tresor), wie beim KI-Dienst. */
     final JComboBox<String> origin = Comic.combo();
     final JComboBox<String> keePassEntry = Comic.combo();
@@ -193,7 +194,9 @@ final class SourceForm {
         if (settings != null) {
             settings.trustStores().keySet().stream().sorted().forEach(trust::addItem);
         }
-        include.setText("*.md, *.txt, *.pdf, *.docx, *.html");
+        include.setText(com.aresstack.spaceharvester.application.sources.LocalFileFilter.DEFAULT_PATTERNS);
+        include.setEnabled(false);
+        includeEnabled.addItemListener(e -> include.setEnabled(includeEnabled.isSelected()));
         kind.addActionListener(e -> {
             loadFields();
             refreshAuth();
@@ -279,6 +282,7 @@ final class SourceForm {
         int mainFields = form.reserve(SourceFieldsEditor.ROWS);
         form.row("Adresse", baseUrl, "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
         form.row("Ordner", Comic.fieldWithButton(directory, browse(directory, true)), null);
+        form.row("Dateifilter", includeEnabled, "Aus: alle Dateien berücksichtigen");
         form.row("Dateien", include, "Muster, durch Komma getrennt");
         form.row("Anzeigename", title, "So heißt die Quelle in der App; leer lassen für den Vorschlag");
         onEdit(baseUrl, this::derive);
@@ -305,6 +309,8 @@ final class SourceForm {
         form.row("Technische Kennung", id, "Wird automatisch vergeben; nur ändern, wenn nötig");
         form.row("Platzhalter", variable, "Name in der Datei (${NAME}); die App setzt den Wert selbst");
         fields = new SourceFieldsEditor(form, mainFields, form.reserve(SourceFieldsEditor.ROWS), this::derive);
+        fields.libraryChooser(key -> "ndv".equals(typeId()) && "startPoints".equals(key),
+                this::chooseNdvLibraries);
         fields.shareAdvanced(open -> {
             if (open != sourceAdvancedOpen) {
                 sourceAdvanced(open);
@@ -763,6 +769,9 @@ final class SourceForm {
                     kept.certificateType(), kept.certificatePath(), kept.certificatePasswordVariable(),
                     kept.certificateAlias(), kept.thumbprint(), kept.trustBundle(), options(false));
         }
+        if (editing != null) {
+            draft = draft.withUsage(editing.draft().showInExplorer(), editing.draft().includeInGlobalSearch());
+        }
         if (generic && authType == SourceSettingsConfig.AuthType.BASIC && !typed()
                 && !SourceSaving.secretAvailable(context, editing, draft, false)) {
             // Ohne eingegebenes oder hinterlegtes Passwort keine Zeile password: der Core fragt das Programm (ADR 0022).
@@ -784,6 +793,9 @@ final class SourceForm {
     private Map<String, String> options(boolean ownForm) {
         Map<String, String> options = new java.util.TreeMap<>(editing == null ? Map.of()
                 : editing.draft().extraOptions());
+        if (SourceDraft.FILES.equals(typeId())) {
+            options.put("includeEnabled", Boolean.toString(includeEnabled.isSelected()));
+        }
         if (!ownForm && fields.active()) {
             return fields.apply(options);
         }
@@ -974,6 +986,41 @@ final class SourceForm {
     }
 
     /** Testet die Verbindung mit den Eingaben, ohne etwas zu speichern. */
+    private void chooseNdvLibraries(JTextField field, JComponent anchor) {
+        SourceDraft source = draft();
+        String account = keePassTitle();
+        Map<String, String> options = new java.util.TreeMap<>(source.extraOptions());
+        options.put("allLibraries", "true");
+        SourceDraft probe = source.withOptions(options);
+        ConfigFileEditor.Draft settings;
+        try {
+            settings = write(probe);
+        } catch (IOException | RuntimeException failure) {
+            feedback.problem(failure);
+            return;
+        }
+        AppRuntime.SessionSecrets secrets = sessionSecrets(probe);
+        anchor.setEnabled(false);
+        feedback.working("Bibliotheken werden geladen …");
+        Background.run(() -> AppRuntime.probeLibraries(settings.settings(), probe.id(), secrets, context.version(),
+                        Files.createTempDirectory("space-harvester-ndv-libraries")),
+                names -> {
+                    anchor.setEnabled(true);
+                    if (!"ndv".equals(typeId()) || !anchor.isShowing()
+                            || !account.equals(keePassTitle())
+                            || !source.extraOptions().equals(draft().extraOptions())
+                            || !java.util.Objects.equals(source.username(), draft().username())
+                            || !java.util.Objects.equals(source.id(), draft().id())) {
+                        return;
+                    }
+                    feedback.success(names.size() + " Bibliotheken gefunden");
+                    NdvLibrarySelection.show(anchor, field, names);
+                }, failure -> {
+                    anchor.setEnabled(true);
+                    feedback.problem(failure);
+                });
+    }
+
     void test(Runnable done) {
         if (!validateInput()) {
             done.run();
@@ -1191,7 +1238,11 @@ final class SourceForm {
                 : source.baseUrl();
         baseUrl.setText(address == null ? "" : address);
         directory.setText(source.directory() == null ? "" : source.directory());
-        include.setText(source.include() == null ? "" : source.include());
+        include.setText(source.include() == null
+                ? com.aresstack.spaceharvester.application.sources.LocalFileFilter.DEFAULT_PATTERNS : source.include());
+        includeEnabled.setSelected(com.aresstack.spaceharvester.application.sources.LocalFileFilter.enabled(
+                source.include(), source.extraOptions().get("includeEnabled")));
+        include.setEnabled(includeEnabled.isSelected());
         auth.setSelectedItem(switch (source.authType()) {
             case PAT -> PAT;
             case BASIC -> BASIC;
@@ -1609,6 +1660,7 @@ final class SourceForm {
                 : !confluence ? "Startadresse der Quelle (base-url)"
                 : "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
         form.visible(directory, files);
+        form.visible(includeEnabled, files);
         form.visible(include, files);
         boolean login = serverAddress || generic && (auth.getItemCount() > 1
                 || auth.getItemCount() == 1 && !NONE.equals(auth.getItemAt(0)));

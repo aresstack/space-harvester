@@ -93,6 +93,30 @@ public class LocalFilesStoredContentTest {
     }
 
     @Test
+    public void inventoryIncludesUnknownEmptyAndLargeFilesWithoutRelaxingReadLimit() throws Exception {
+        write("empty", "");
+        Files.write(root.resolve("large.bin"), new byte[2048]);
+        LocalFilesKnowledgeSource inventory = new LocalFilesKnowledgeSource(SOURCE, root, DETECTOR,
+                new ExtractionRegistry(), 1024,
+                com.aresstack.enterpriseai.source.api.files.LocalFileAccessPolicy::none,
+                Collections.<String>emptyList(), Collections.<String>emptyList(), (name, type) -> null, true);
+        List<String> listed = paths(inventory.resources("handbuch", "", 100).resources());
+        assertTrue(listed.containsAll(Arrays.asList("empty", "bild.bin", "large.bin")));
+        assertTrue(!listed.contains(".versteckt.txt"));
+        assertEquals(0, inventory.storedContent(id("empty")).payload().length);
+        assertKind(Kind.NOT_FOUND, () -> inventory.resourceMetadata(id(".versteckt.txt")));
+        try {
+            inventory.storedContent(id("large.bin"));
+            fail("Expected bounded in-memory read");
+        } catch (ResponseTooLargeException expected) {
+            assertEquals(1024, expected.maxBytes());
+        }
+        Path target = temp.getRoot().toPath().resolve("copy.bin");
+        assertTrue(inventory.copyOriginal(id("large.bin"), target, type -> true, 4096).isPresent());
+        assertEquals(2048, Files.size(target));
+    }
+
+    @Test
     public void theFolderIsOnePartitionKeyedByTheSourceId() throws Exception {
         List<SourcePartition> partitions = source.partitions();
 
@@ -110,6 +134,101 @@ public class LocalFilesStoredContentTest {
         assertEquals(Arrays.asList("a/x y.md", "a/z.txt"), paths(first.resources()));
         assertEquals(Arrays.asList("b.md", "c/d/e.txt"), paths(second.resources()));
         assertTrue(second.complete());
+    }
+
+    @Test
+    public void singlePassInventoryEmitsTheSameFilesWithoutReadingContents() throws Exception {
+        for (int index = 0; index < 250; index++) {
+            write("many/" + index + ".txt", "text");
+        }
+        List<KnowledgeResource> visited = new ArrayList<KnowledgeResource>();
+        java.util.concurrent.atomic.AtomicInteger checkpoints = new java.util.concurrent.atomic.AtomicInteger();
+        source.visitInventory("handbuch", checkpoints::incrementAndGet, visited::add);
+        List<String> actual = paths(visited);
+        Collections.sort(actual);
+        assertEquals(paths(source.resources("handbuch", "", 500).resources()), actual);
+        assertEquals(254, actual.size());
+        assertTrue(checkpoints.get() >= actual.size());
+        assertTrue(checkpoints.get() < 300);
+    }
+
+    @Test
+    public void singlePassInventoryStopsImmediatelyOnCancellation() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger checkpoints = new java.util.concurrent.atomic.AtomicInteger();
+        try {
+            source.visitInventory("handbuch", () -> {
+                if (checkpoints.incrementAndGet() == 3) {
+                    throw new java.util.concurrent.CancellationException();
+                }
+            }, resource -> { });
+            fail("Expected cancellation");
+        } catch (java.util.concurrent.CancellationException expected) {
+            assertEquals(3, checkpoints.get());
+        }
+    }
+
+    @Test
+    public void missingRootMakesSinglePassInventoryFail() throws Exception {
+        Path removed = Files.move(root, root.resolveSibling("removed"));
+        try {
+            assertKind(Kind.UNAVAILABLE, () -> {
+                source.visitInventory("handbuch", () -> { }, resource -> { });
+                return null;
+            });
+        } finally {
+            Files.move(removed, root);
+        }
+    }
+
+    @Test
+    public void readsOriginalInPlaceWithMatchingRevisionAndNoServerPathInMetadata() throws Exception {
+        String text = source.readOriginal(id("b.md"), "text/markdown"::equals, 1024, (original, resource) -> {
+            assertEquals(root.resolve("b.md").toRealPath(), original);
+            assertEquals(source.resourceMetadata(id("b.md")).revision(), resource.revision());
+            assertTrue(!resource.location().isPresent());
+            return new String(Files.readAllBytes(original), StandardCharsets.UTF_8);
+        }).get();
+        assertEquals("# B\n", text);
+    }
+
+    @Test
+    public void directReadRespectsEligibilityAndSizeBeforeCallingReader() {
+        LocalFilesKnowledgeSource.OriginalReader<String> reader = (path, resource) -> {
+            fail("Reader must not be called");
+            return "";
+        };
+        assertKind(Kind.INVALID_RESPONSE, () -> source.readOriginal(id("b.md"), type -> true, 1, reader));
+        assertKind(Kind.NOT_FOUND, () -> source.readOriginal(id(".versteckt.txt"), type -> true, 1024, reader));
+        assertKind(Kind.UNSUPPORTED, () -> source.readOriginal(id("../geheim.txt"), type -> true, 1024, reader));
+        try {
+            assertTrue(!source.readOriginal(id("b.md"), type -> false, 1024, reader).isPresent());
+        } catch (KnowledgeSourceException unexpected) {
+            throw new AssertionError(unexpected);
+        }
+    }
+
+    @Test
+    public void directReadRejectsResultWhenOriginalChangesDuringExtraction() {
+        assertKind(Kind.UNAVAILABLE, () -> source.readOriginal(id("b.md"), type -> true, 1024,
+                (original, resource) -> {
+                    Files.write(original, "changed content".getBytes(StandardCharsets.UTF_8));
+                    return "stale result";
+                }));
+    }
+
+    @Test
+    public void aRegularFileReplacingTheRootCannotConfirmAnInventory() throws Exception {
+        Path removed = Files.move(root, root.resolveSibling("removed"));
+        try {
+            Files.write(root, new byte[] {1});
+            assertKind(Kind.UNAVAILABLE, () -> {
+                source.visitInventory("handbuch", () -> { }, resource -> fail("Do not emit the root as a file"));
+                return null;
+            });
+        } finally {
+            Files.deleteIfExists(root);
+            Files.move(removed, root);
+        }
     }
 
     @Test

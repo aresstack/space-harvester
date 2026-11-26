@@ -56,7 +56,13 @@ class SynonymDiscoveryTest {
             new String(snapshot.payload().bytes(), StandardCharsets.UTF_8), List.of()));
     private static final String SYNONYM = "{\"judgments\":[{\"pair\":1,\"relation\":\"synonym\",\"a\":[1],\"b\":[1]}]}";
 
+    private final Set<String> directOnly = new HashSet<>();
     private final SourceCatalog catalog = new SourceCatalog() {
+        @Override
+        public boolean includeInGlobalSearch(String sourceId) {
+            return !directOnly.contains(sourceId);
+        }
+
         @Override
         public List<HarvestSource> all() {
             return List.of(source("wiki"), source("intern"));
@@ -166,6 +172,22 @@ class SynonymDiscoveryTest {
                 released::contains, new TermProcessor().version());
         discovery = new SynonymDiscovery(catalog, candidates, guard, relations, model, resolutionCache, jobs,
                 () -> SynonymBudget.DEFAULT, Clock.fixed(T0, ZoneOffset.UTC));
+    }
+
+    @Test
+    void restrictedGlobalRunPreservesExistingProposalsAndIgnoresExcludedCorpus() {
+        available = false;
+        cached("intern", "DEV", "Die E-Mail geht an die Fachabteilung.");
+        cached("intern", "DEV", "Jede Email wird im Postfach archiviert.");
+        assertThat(run(SynonymScope.ALL).rules().added()).isEqualTo(1);
+        var existing = automatic(RelationOrigin.RULE, null);
+        directOnly.add("intern");
+
+        var restricted = run(SynonymScope.ALL);
+        assertThat(restricted.candidates()).isZero();
+        assertThat(restricted.rules().withdrawn()).isZero();
+        assertThat(automatic(RelationOrigin.RULE, null)).isEqualTo(existing);
+        assertThat(run(SynonymScope.source("intern")).rules().added()).isEqualTo(1);
     }
 
     @Test

@@ -68,6 +68,32 @@ class SourceDiagramsTest {
     }
 
     @Test
+    void resolvedProcedureCopybookCallsBelongToIncludingParagraph() {
+        String cobol = """
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. DEMO.
+                       PROCEDURE DIVISION.
+                       MAIN-PARA.
+                           COPY PROCBOOK.
+                           STOP RUN.
+                       EXIT-PARA.
+                           EXIT.
+                """;
+        var source = com.aresstack.spaceharvester.mainframe.cobol.CobolSource.fixed("DEMO.cbl", cobol);
+        var analysis = com.aresstack.spaceharvester.mainframe.cobol.CobolAnalyzer.proLeap().analyze(source,
+                (including, name, library) -> Optional.of(
+                        com.aresstack.spaceharvester.mainframe.cobol.CobolSource.fixed("PROCBOOK",
+                                "           CALL 'SUBPGM'.\n")));
+        assertThat(analysis.diagnostics()).isEmpty();
+        var outline = com.aresstack.spaceharvester.mainframe.outline.Outline.fromCobolAnalysis(source, analysis);
+        String diagram = SourceDiagrams.generate(cobol, "DEMO.cbl", Optional.of(SourceLanguage.COBOL),
+                DiagramType.STRUCTURE, 0, false, false, null, outline).mermaid().orElseThrow();
+        assertThat(diagram).contains("PARA_MAIN_PARA ==>|CALL| CALL_SUBPGM")
+                .doesNotContain("PARA_EXIT_PARA ==>|CALL| CALL_SUBPGM")
+                .contains("PROCEDURE DIVISION");
+    }
+
+    @Test
     void explicitDetailsOverrideAutomaticCollapse() {
         StringBuilder jcl = new StringBuilder("//BIG      JOB (ACCT),'BAU',CLASS=A\n");
         for (int i = 1; i <= 40; i++) {

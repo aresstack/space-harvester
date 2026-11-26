@@ -38,6 +38,9 @@ public class NavigationController {
                     + "mit hasChildren (true, false oder null für unbekannt). Verlangt metadata auf den Space; Seiten "
                     + "ohne Freigabe fehlen.")
     @ApiResponse(responseCode = "200", description = "ChildrenResponse")
+    @ApiResponse(responseCode = "400", description = "Ungültiger Navigationscursor (invalid-navigation-cursor); Ordner neu laden",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "403", description = "Keine metadata-Freigabe (access-denied)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
@@ -80,6 +83,9 @@ public class NavigationController {
     @Operation(summary = "Direkte Kindseiten einer Seite live, in der Reihenfolge der Quelle",
             description = "Wie …/spaces/{spaceKey}/children; verlangt metadata auf die Seite.")
     @ApiResponse(responseCode = "200", description = "ChildrenResponse")
+    @ApiResponse(responseCode = "400", description = "Ungültiger Navigationscursor (invalid-navigation-cursor); Ordner neu laden",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "404", description = "Seite unbekannt oder nicht freigegeben",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))

@@ -242,6 +242,10 @@ public final class AnalysisConverter implements ExportConverter {
         generator.writeStringProperty("processorVersion", fact.provenance().processorVersion());
         generator.writeStringProperty("inputSha256", fact.provenance().inputSha256());
         generator.writeStringProperty("revision", fact.provenance().revision());
+        if (fact.provenance().localSection() != null) {
+            generator.writeNumberProperty("localSection", fact.provenance().localSection());
+            generator.writeStringProperty("localPartId", fact.provenance().localPartId());
+        }
         generator.writeName("payload");
         raw(generator, fact.payloadJson());
         generator.writeName("arguments");

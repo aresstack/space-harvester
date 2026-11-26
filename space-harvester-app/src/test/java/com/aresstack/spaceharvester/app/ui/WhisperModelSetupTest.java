@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -47,6 +48,12 @@ class WhisperModelSetupTest {
         });
     }
 
+    private static void onEdt(Runnable action) throws Exception {
+        SwingUtilities.invokeAndWait(action);
+        // Drain progress notifications posted by the synchronous test runner.
+        SwingUtilities.invokeAndWait(() -> { });
+    }
+
     @Test
     void aModelThatIsThereStartsTheActionWithoutAsking() throws Exception {
         Path tiny = Files.createDirectories(models.resolve("whisper-tiny"));
@@ -55,7 +62,7 @@ class WhisperModelSetupTest {
         }
         WhisperModelSetup setup = setup(new FakeHuggingFace());
 
-        setup.ensure(null, progress::add, stopped::add, () -> started++);
+        onEdt(() -> setup.ensure(null, progress::add, stopped::add, () -> started++));
 
         assertThat(started).isEqualTo(1);
         assertThat(asked).isEmpty();
@@ -63,12 +70,12 @@ class WhisperModelSetupTest {
     }
 
     @Test
-    void aMissingModelIsOnlyLoadedAfterYes() {
+    void aMissingModelIsOnlyLoadedAfterYes() throws Exception {
         FakeHuggingFace hub = new FakeHuggingFace();
         WhisperModelSetup setup = setup(hub);
         answer = false;
 
-        setup.ensure(null, progress::add, stopped::add, () -> started++);
+        onEdt(() -> setup.ensure(null, progress::add, stopped::add, () -> started++));
 
         assertThat(asked).singleElement().asString().contains("Tiny (ca. 150 MB)", "Wirklich", "Hugging Face");
         assertThat(hub.requests).isEmpty();
@@ -95,7 +102,7 @@ class WhisperModelSetupTest {
         WhisperModelSetup setup = setup(hub);
         answer = true;
 
-        setup.ensure(null, progress::add, stopped::add, () -> started++);
+        onEdt(() -> setup.ensure(null, progress::add, stopped::add, () -> started++));
 
         assertThat(asked).singleElement().asString().contains("Base");
         assertThat(started).isEqualTo(1);
@@ -123,7 +130,7 @@ class WhisperModelSetupTest {
         WhisperModelSetup setup = setup(hub);
         answer = true;
 
-        setup.ensure(WhisperModel.SMALL, null, progress::add, stopped::add, () -> started++);
+        onEdt(() -> setup.ensure(WhisperModel.SMALL, null, progress::add, stopped::add, () -> started++));
 
         assertThat(asked).singleElement().asString().contains("Small");
         assertThat(started).isEqualTo(1);
@@ -131,17 +138,17 @@ class WhisperModelSetupTest {
         assertThat(models.resolve("whisper-small").resolve("model.safetensors")).exists();
         assertThat(setup.status().model()).as("die Einstellung bleibt").isEqualTo(WhisperModel.TINY);
 
-        setup.ensure(WhisperModel.SMALL, null, progress::add, stopped::add, () -> started++);
+        onEdt(() -> setup.ensure(WhisperModel.SMALL, null, progress::add, stopped::add, () -> started++));
         assertThat(asked).as("jetzt da: keine Frage mehr").hasSize(1);
         assertThat(started).isEqualTo(2);
     }
 
     @Test
-    void aFailedDownloadIsReportedAndDoesNotStartTheAction() {
+    void aFailedDownloadIsReportedAndDoesNotStartTheAction() throws Exception {
         WhisperModelSetup setup = setup(new FakeHuggingFace());
         answer = true;
 
-        setup.ensure(null, progress::add, stopped::add, () -> started++);
+        onEdt(() -> setup.ensure(null, progress::add, stopped::add, () -> started++));
 
         assertThat(started).isZero();
         assertThat(setup.status().state()).isEqualTo(WhisperModelSetup.State.NOT_INSTALLED);
@@ -159,7 +166,7 @@ class WhisperModelSetupTest {
         assertThat(setup.status().state()).isEqualTo(WhisperModelSetup.State.INSTALLED);
 
         selected = WhisperModel.SMALL;
-        setup.refresh();
+        onEdt(setup::refresh);
 
         assertThat(setup.status().model()).isEqualTo(WhisperModel.SMALL);
         assertThat(setup.status().state()).isEqualTo(WhisperModelSetup.State.NOT_INSTALLED);

@@ -135,6 +135,7 @@ final class FtpDatasetsView extends JPanel {
     private String current = "";
     private boolean creatingDataset;
     private boolean connected;
+    private volatile com.aresstack.spaceharvester.app.chat.MvsDiagnosisTools.Grant diagnosis;
 
     FtpDatasetsView(FtpSessionView owner, Runnable showJobs, EditorSessions editors) {
         super(new BorderLayout());
@@ -151,10 +152,10 @@ final class FtpDatasetsView extends JPanel {
         var up = InputFrame.flatButton("↑", "Eine Ebene höher");
         up.addActionListener(e -> up());
         IconButton reload = new IconButton(Glyph.REFRESH, "Neu laden");
-        reload.addActionListener(e -> navigate(path.getText(), false));
+        reload.addActionListener(e -> navigate(current.isEmpty() ? path.getText() : current, false));
         pathFrame.addButton(up);
         pathFrame.addButton(reload);
-        path.addActionListener(e -> navigate(path.getText(), true));
+        path.addActionListener(e -> openAddress());
         path.setToolTipText("HLQ, Dataset oder Pfad; Pfeil runter springt in die Liste");
         filter.setToolTipText("<html>Filter auf den Namen, Groß-/Kleinschreibung egal.<br>"
                 + "Auf MVS: enthält; mit / am Anfang ein Regex (etwa <b>/^J.*L$</b>).<br>"
@@ -277,7 +278,11 @@ final class FtpDatasetsView extends JPanel {
         JPanel documentPanel = new JPanel(new BorderLayout(0, 4));
         documentPanel.setOpaque(false);
         documentPanel.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 0));
-        documentPanel.add(documentsHead, BorderLayout.NORTH);
+        JPanel readingHead = new JPanel(new BorderLayout());
+        readingHead.setOpaque(false);
+        readingHead.add(north, BorderLayout.NORTH);
+        readingHead.add(documentsHead, BorderLayout.SOUTH);
+        documentPanel.add(readingHead, BorderLayout.NORTH);
         documentPanel.add(documents, BorderLayout.CENTER);
         tree.setRootVisible(false);
         tree.setShowsRootHandles(true);
@@ -331,13 +336,8 @@ final class FtpDatasetsView extends JPanel {
                 List.of(), AppState.shared().get(SIDE_TAB_KEY),
                 name -> AppState.shared().put(SIDE_TAB_KEY, name));
         javax.swing.JComponent side = sideBar;
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, side, DeckBars.withFind(documentPanel));
-        ComicDivider.install(split, Comic.PALETTE);
-        split.setResizeWeight(0.42);
-        split.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 0));
-        split.setOpaque(false);
-
-        add(north, BorderLayout.NORTH);
+        var split = new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
+                side, DeckBars.withFind(documentPanel), 280).withDividerToggle();
         add(split, BorderLayout.CENTER);
 
         download = new IconButton(ComposerIcons.download(), "Herunterladen … – gewähltes Member als Textdatei speichern");
@@ -380,6 +380,7 @@ final class FtpDatasetsView extends JPanel {
     }
 
     void setConnected(boolean value) {
+        if (!value) revokeDiagnosis();
         connected = value;
         enableActions();
     }
@@ -401,6 +402,11 @@ final class FtpDatasetsView extends JPanel {
     }
 
     private void navigate(String target, Move move) {
+        navigate(target, move, () -> { });
+    }
+
+    private void navigate(String target, Move move, Runnable afterRefresh) {
+        revokeDiagnosis();
         FtpSession session = owner.session();
         if (session.mvs() && (target == null || target.isBlank() || MvsPath.ROOT.equals(MvsPath.absolute(target)))) {
             message("Bitte HLQ eingeben (z.B. BENUTZERKENNUNG)", false);
@@ -409,12 +415,13 @@ final class FtpDatasetsView extends JPanel {
         }
         String resolved = session.mvs() ? MvsPath.absolute(target) : (target == null || target.isBlank() ? "/" : target);
         boolean withDetails = details;
+        boolean acquire = owner.navigationEnabled();
         owner.status("Liste " + resolved + " …", false);
         if (model.all.isEmpty() || !resolved.equals(current)) {
             message("Lade Einträge …", false);
         }
         String from = current;
-        owner.session().files(files -> files.list(resolved, withDetails)).whenComplete((list, error) ->
+        owner.session().files(files -> files.list(resolved, withDetails || acquire)).whenComplete((list, error) ->
                 SwingUtilities.invokeLater(() -> {
                     if (error != null) {
                         Throwable cause = error instanceof java.util.concurrent.CompletionException
@@ -435,13 +442,17 @@ final class FtpDatasetsView extends JPanel {
                         }
                     }
                     current = resolved;
-                    path.setText(resolved);
+                    path.setText(document == null ? resolved : document.location());
                     model.columns(session.mvs(), withDetails);
                     widths();
                     model.show(list);
                     newBar.setVisible(false);
                     showList();
                     enableActions();
+                    afterRefresh.run();
+                    if (acquire) {
+                        owner.navigationListed(list);
+                    }
                 }));
     }
 
@@ -508,7 +519,7 @@ final class FtpDatasetsView extends JPanel {
         enableActions();
         expandAll.setVisible(groupable && grouped);
         collapseAll.setVisible(groupable && grouped);
-        detailsButton.marked(details);
+        updateDiagnosisTitle();
         sortButton.marked(sort != EntryList.Sort.NAME_ASC);
     }
 
@@ -659,6 +670,12 @@ final class FtpDatasetsView extends JPanel {
         menu.add(item("Öffnen", single != null, () -> open(single)));
         menu.addSeparator();
         menu.add(item("Herunterladen …", readable(single), this::download));
+        if (mvs) {
+            menu.add(item("Binär herunterladen …", connected && readable(single), () -> downloadBinary(single)));
+            menu.add(item("Hex-Ansicht …", connected && readable(single), () -> showHex(single)));
+            menu.add(item("Binärdiagnose für MCP freigeben …", connected && readable(single), () -> armDiagnosis(single)));
+            menu.add(item("Binärdiagnose beenden", diagnosis != null, this::revokeDiagnosis));
+        }
         menu.add(item("Als Job einreichen", readable(single), this::submit));
         menu.addSeparator();
         menu.add(item(mvs ? "Neues Dataset …" : "Neuer Ordner …", connected && !current.isEmpty(),
@@ -670,6 +687,38 @@ final class FtpDatasetsView extends JPanel {
         menu.addSeparator();
         menu.add(item("Löschen (" + chosen.size() + ") …", connected && !chosen.isEmpty(), this::delete));
         return menu;
+    }
+
+    void armDiagnosis(RemoteEntry entry) {
+        if (!connected || !owner.session().mvs() || !readable(entry)
+                || selectedAll().size() != 1 || !entry.path().equals(selected().path())) return;
+        if (!confirm.test("MCP-Binärdiagnose", "Originalbytes von " + entry.path()
+                + " für gpt-oss-120b am konfigurierten KI-Endpunkt freigeben? "
+                + "Der Chat kann bis zu 64 KiB aus einer 8-MiB-Stichprobe abrufen. "
+                + "Die Übertragung wird vollständig gelesen. Chatantworten können im Verlauf stehen. "
+                + "Nur bei einem autorisierten Endpunkt freigeben.")) return;
+        revokeDiagnosis();
+        diagnosis = new com.aresstack.spaceharvester.app.chat.MvsDiagnosisTools.Grant(owner.session(), entry);
+        updateDiagnosisTitle();
+    }
+
+    com.aresstack.spaceharvester.app.chat.MvsDiagnosisTools.Grant diagnosis() {
+        return diagnosis;
+    }
+
+    void revokeDiagnosis() {
+        var previous = diagnosis;
+        diagnosis = null;
+        if (previous != null) {
+            previous.revoke();
+            updateDiagnosisTitle();
+        }
+    }
+
+    private void updateDiagnosisTitle() {
+        detailsButton.marked(details || diagnosis != null);
+        detailsButton.setToolTipText(diagnosis == null ? "Details zeigen (Größe, Datum, RECFM/LRECL)"
+                : "MCP-Binärdiagnose freigegeben: " + diagnosis.path() + " (Kontextmenü zum Beenden)");
     }
 
     private static javax.swing.JMenuItem item(String text, boolean enabled, Runnable action) {
@@ -716,6 +765,23 @@ final class FtpDatasetsView extends JPanel {
                         openDocument(entry.path());
                     }
                 });
+    }
+
+    private void openAddress() {
+        String target = path.getText().strip();
+        if (owner.session().mvs() && MvsPath.isMember(target)) {
+            openDocument(MvsPath.absolute(target));
+            return;
+        }
+        for (RemoteEntry entry : model.all) {
+            if (entry.path().equals(target)) {
+                open(entry);
+                return;
+            }
+        }
+        showDocument(null);
+        sideBar.select(SIDE_DATASETS);
+        navigate(target, true);
     }
 
     private void openDocument(String remotePath) {
@@ -771,6 +837,7 @@ final class FtpDatasetsView extends JPanel {
 
     private void showDocument(EditorSession session) {
         document = session;
+        path.setText(session == null ? current : session.location());
         ComposerToggleButton pill = session == null ? null : pillOf.get(session);
         if (pill != null) {
             pill.setSelected(true);
@@ -807,7 +874,10 @@ final class FtpDatasetsView extends JPanel {
         EditorSession session = document;
         String text = session.location() + " · " + session.state().label();
         boolean error = false;
-        if (session.state() == EditorSession.State.FAILED || session.state() == EditorSession.State.CONFLICT) {
+        if (session.state() == EditorSession.State.READY && !session.writable()) {
+            text += " · " + session.document().map(d -> d.writeRestriction()).orElse("Nur lesen");
+            error = true;
+        } else if (session.state() == EditorSession.State.FAILED || session.state() == EditorSession.State.CONFLICT) {
             text += session.problem().map(problem -> ": " + problem).orElse("");
             error = true;
         } else if (session.note().isPresent()) {
@@ -906,6 +976,8 @@ final class FtpDatasetsView extends JPanel {
 
     private void enableActions() {
         RemoteEntry entry = selected();
+        if (diagnosis != null && (!connected || entry == null || selectedAll().size() != 1
+                || !diagnosis.path().equals(entry.path()))) revokeDiagnosis();
         boolean file = readable(entry);
         boolean mvs = owner.session().mvs();
         download.setEnabled(connected && file);
@@ -926,7 +998,7 @@ final class FtpDatasetsView extends JPanel {
         reloadDocument.setVisible(showing);
         if (showing) {
             EditorSession.State state = document.state();
-            save.setEnabled(connected && document.dirty()
+            save.setEnabled(connected && document.writable() && document.dirty()
                     && (state == EditorSession.State.READY || state == EditorSession.State.CONFLICT));
             reloadDocument.setEnabled(connected && state != EditorSession.State.LOADING && state != EditorSession.State.SAVING);
         }
@@ -1043,15 +1115,14 @@ final class FtpDatasetsView extends JPanel {
             }
             return new DeleteResult(done, failures);
         }), "Löschen fehlgeschlagen", result -> {
-            navigate(current, false);
-            if (result.failures().isEmpty()) {
-                owner.status(result.done() == 1 ? "Gelöscht: " + chosen.get(0).name() : result.done() + " gelöscht",
-                        false);
-            } else {
-                String text = result.done() + " gelöscht, " + result.failures().size() + " fehlgeschlagen:\n\n"
-                        + String.join("\n", result.failures());
-                owner.status(result.done() + " gelöscht, " + result.failures().size() + " fehlgeschlagen", true);
-                report.accept(text);
+            boolean failed = !result.failures().isEmpty();
+            String status = failed ? result.done() + " gelöscht, " + result.failures().size() + " fehlgeschlagen"
+                    : result.done() == 1 ? "Gelöscht: " + chosen.get(0).name() : result.done() + " gelöscht";
+            // Preserve the operation result when the asynchronous refresh completes.
+            navigate(current, Move.STAY, () -> owner.status(status, failed));
+            owner.status(status, failed);
+            if (failed) {
+                report.accept(status + ":\n\n" + String.join("\n", result.failures()));
             }
         });
     }
@@ -1099,6 +1170,55 @@ final class FtpDatasetsView extends JPanel {
             return target;
         }), "Herunterladen von " + entry.path() + " fehlgeschlagen",
                 saved -> owner.status("Gespeichert: " + saved, false));
+    }
+
+    private void downloadBinary(RemoteEntry entry) {
+        if (!readable(entry) || !connected) return;
+        JFileChooser chooser = SaveChooser.create(fileName(entry) + ".bin");
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        Path target = chooser.getSelectedFile().toPath().toAbsolutePath();
+        if (Files.exists(target) && !confirm.test("Überschreiben", target + " ersetzen?")) return;
+        owner.run(owner.session().filesOnce(files -> {
+            Path temporary = Files.createTempFile(target.getParent(), ".ftp-", ".part");
+            try {
+                try (var out = Files.newOutputStream(temporary)) {
+                    files.downloadBinary(entry.path(), out);
+                }
+                Files.move(temporary, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                return target;
+            } finally {
+                Files.deleteIfExists(temporary);
+            }
+        }), "Binärdownload fehlgeschlagen", saved -> owner.status("Binär gespeichert: " + saved, false));
+    }
+
+    private void showHex(RemoteEntry entry) {
+        if (!readable(entry) || !connected) return;
+        owner.run(owner.session().filesOnce(files -> files.readBinarySample(entry.path(),
+                com.aresstack.spaceharvester.deck.ftp.BinarySample.MAX_CAPTURE_BYTES)),
+                "Hex-Ansicht fehlgeschlagen", sample -> {
+                    javax.swing.JTextArea content = new javax.swing.JTextArea(24, 100);
+                    content.setEditable(false);
+                    content.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12));
+                    JPanel panel = new JPanel(new BorderLayout(4, 4));
+                    JPanel navigation = new JPanel();
+                    javax.swing.JSpinner offset = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(
+                            0, 0, Math.max(0, sample.capturedBytes() - 1), 4096));
+                    navigation.add(new JLabel("Byteoffset:"));
+                    navigation.add(offset);
+                    navigation.add(new JLabel("Stichprobe: " + sample.capturedBytes() + " / " + sample.totalBytes() + " Bytes"));
+                    Runnable render = () -> {
+                        int position = (Integer) offset.getValue();
+                        content.setText(com.aresstack.spaceharvester.app.chat.MvsDiagnosisTools.hex(
+                                sample.slice(position, 4096), position));
+                        content.setCaretPosition(0);
+                    };
+                    offset.addChangeListener(e -> render.run());
+                    panel.add(navigation, BorderLayout.NORTH);
+                    panel.add(new javax.swing.JScrollPane(content), BorderLayout.CENTER);
+                    render.run();
+                    Dialogs.view(this, "Hex · " + entry.path(), panel);
+                });
     }
 
     private void upload() {

@@ -295,7 +295,8 @@ public class FactController {
                     fact.role(), payload, fact.arguments().stream().map(argument -> new ArgumentResponse(
                             argument.role(), argument.ordinal(), argument.value())).toList(),
                     new ProvenanceResponse(provenance.processorId(), provenance.processorVersion(),
-                            provenance.inputSha256(), provenance.revision(), provenance.computedAt()),
+                            provenance.inputSha256(), provenance.revision(), provenance.computedAt(),
+                            provenance.localPartId(), provenance.localSection()),
                     fact.anchor() == null ? null : new AnchorResponse(fact.anchor().section(),
                             fact.anchor().charStart(), fact.anchor().charEnd()), freshness, fact.origin().name(),
                     fact.review().name(), revision);
@@ -338,7 +339,9 @@ public class FactController {
 
     /** Herkunft: Prozessor, Version, Eingabe-Hash und Revision der Payload. */
     public record ProvenanceResponse(String processor, String processorVersion, String inputSha256,
-                                     @Schema(nullable = true) String payloadRevision, Instant computedAt) {
+                                     @Schema(nullable = true) String payloadRevision, Instant computedAt,
+                                     @Schema(nullable = true) String localPartId,
+                                     @Schema(nullable = true) Integer localSection) {
     }
 
     /** Fundstelle im Lesetext der Eingabe. */

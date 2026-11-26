@@ -50,6 +50,17 @@ public final class LargeFileTexts {
      * @throws com.aresstack.spaceharvester.application.sources.SourceAccessException wenn die Quelle nicht liefern kann
      */
     public Optional<String> text(HarvestSource source, PageMetadata metadata, long maxBytes) {
+        if (source.readsOriginalInPlace()) {
+            return source.readOriginalInPlace(metadata.pageId(), LocalFilesTextProjector::readable, maxBytes,
+                    (original, actual, mediaType) -> {
+                        requireSameRevision(source, metadata, actual);
+                        return extract(source, original, actual, mediaType);
+                    }).orElse(Optional.empty());
+        }
+        return downloadedText(source, metadata, maxBytes);
+    }
+
+    private Optional<String> downloadedText(HarvestSource source, PageMetadata metadata, long maxBytes) {
         Path file;
         try {
             Files.createDirectories(temporary);
@@ -63,25 +74,38 @@ public final class LargeFileTexts {
             if (mediaType.isEmpty()) {
                 return Optional.empty();
             }
-            ExtractionLimits current = limits.get();
-            Collector text = new Collector(current.maxChars() > 0 ? current.maxChars()
-                    : TikaDocumentText.DEFAULT_MAX_CHARS);
-            try {
-                structure.extract(file, metadata.title(), mediaType.get(), current, text);
-            } catch (RuntimeException e) {
-                // Ein Dokument ohne lesbaren Text (defekt, verschlüsselt, Schutzgrenze) hat eben keinen Auszug.
-                LOG.log(System.Logger.Level.INFO, "Kein Textauszug einer großen Datei in {0} ({1})", source.id(),
-                        e.getClass().getSimpleName());
-                return Optional.empty();
-            }
-            String extracted = text.text();
-            return extracted.isBlank() ? Optional.empty() : Optional.of(extracted);
+            return extract(source, file, metadata, mediaType.get());
         } finally {
             try {
                 Files.deleteIfExists(file);
             } catch (IOException ignored) {
                 // Nur ein Rest im temporären Verzeichnis.
             }
+        }
+    }
+
+    private Optional<String> extract(HarvestSource source, Path file, PageMetadata metadata, String mediaType) {
+        ExtractionLimits current = limits.get();
+        Collector text = new Collector(current.maxChars() > 0 ? current.maxChars()
+                : TikaDocumentText.DEFAULT_MAX_CHARS);
+        try {
+            structure.extract(file, metadata.title(), mediaType, current, text);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.INFO, "Kein Textauszug einer Datei in {0} ({1})", source.id(),
+                    e.getClass().getSimpleName());
+            return Optional.empty();
+        }
+        String extracted = text.text();
+        return extracted.isBlank() ? Optional.empty() : Optional.of(extracted);
+    }
+
+    private static void requireSameRevision(HarvestSource source, PageMetadata expected, PageMetadata actual) {
+        if (!expected.pageId().equals(actual.pageId())
+                || !Objects.equals(expected.version(), actual.version())
+                || !Objects.equals(expected.modifiedAt(), actual.modifiedAt())) {
+            throw new com.aresstack.spaceharvester.application.sources.SourceAccessException(source.id(),
+                    com.aresstack.spaceharvester.application.sources.SourceAccessException.Reason.UNAVAILABLE,
+                    "Datei hat sich seit der Inventur geändert", null);
         }
     }
 

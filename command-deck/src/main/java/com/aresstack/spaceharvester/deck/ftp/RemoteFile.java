@@ -14,12 +14,17 @@ import java.util.Objects;
  * @param text Inhalt
  * @param hash SHA-256 des Inhalts
  */
-public record RemoteFile(String path, String text, String hash) {
+public record RemoteFile(String path, String text, String hash, String writeRestriction) {
+
+    public RemoteFile(String path, String text, String hash) {
+        this(path, text, hash, "");
+    }
 
     public RemoteFile {
         Objects.requireNonNull(path, "path");
         text = text == null ? "" : text;
         hash = hash == null ? hash(text) : hash;
+        writeRestriction = writeRestriction == null ? "" : writeRestriction;
     }
 
     public static RemoteFile of(String path, String text) {

@@ -2,6 +2,8 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.spaceharvester.application.holdings.HoldingCounts;
 import com.aresstack.spaceharvester.application.holdings.HoldingState;
+import com.aresstack.spaceharvester.application.holdings.IndexCoverage;
+import com.aresstack.spaceharvester.application.holdings.IndexState;
 import com.aresstack.spaceharvester.application.holdings.PageHolding;
 import com.aresstack.spaceharvester.application.holdings.SpaceSummary;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
@@ -17,6 +19,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /** Die Bestandszeichen des Explorers wie bei OneDrive: je Seite ihr Zustand, je Knoten der Teilbaum, mit Zahlen im Tooltip. */
 class TreeStatesTest {
+
+    @Test
+    void localIndexBadgesDoNotTreatCachedMetadataAsSearchableContent() {
+        assertThat(TreeStates.indexLeaf(IndexState.INDEXED, false).glyph()).isEqualTo(Glyph.CHECK_CIRCLE);
+        for (IndexState state : IndexState.values()) {
+            if (state != IndexState.INDEXED) {
+                assertThat(TreeStates.indexLeaf(state, false).glyph()).isNotEqualTo(Glyph.CHECK_CIRCLE);
+            }
+        }
+        assertThat(TreeStates.indexLeaf(IndexState.INDEXED, true).kind()).isEqualTo(TreeStates.Kind.LOADING);
+        var coverage = IndexCoverage.of(IndexState.INDEXED).plus(IndexCoverage.of(IndexState.FOLDER))
+                .plus(IndexCoverage.of(IndexState.NO_TEXT));
+        assertThat(TreeStates.indexNode(coverage, false).kind()).isEqualTo(TreeStates.Kind.PARTIAL);
+        assertThat(TreeStates.indexNode(coverage, false).tooltip())
+                .contains("1 von 2 Dateien", "1 ohne durchsuchbaren Text");
+        var complete = IndexCoverage.of(IndexState.INDEXED).plus(IndexCoverage.of(IndexState.FOLDER));
+        assertThat(TreeStates.indexNode(complete, false).kind()).isEqualTo(TreeStates.Kind.FULL);
+    }
 
     @Test
     void aLeafShowsItsOwnStateAndLoadingWinsOverEverything() {

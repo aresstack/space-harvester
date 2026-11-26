@@ -33,13 +33,19 @@ public final class Indexer {
      */
     public static void start(AppContext context, String sourceId, String spaceKey, String pageId,
                              Consumer<Started> done, Consumer<Throwable> failed) {
+        SyncMode mode = context.settings() != null ? context.settings().effectiveSync(sourceId).mode()
+                : SyncSettings.DEFAULT_MODE;
+        start(context, sourceId, spaceKey, pageId, mode, done, failed);
+    }
+
+    /** Start an explicit index operation with a bounded acquisition mode for this run. */
+    public static void start(AppContext context, String sourceId, String spaceKey, String pageId, SyncMode mode,
+                             Consumer<Started> done, Consumer<Throwable> failed) {
         AppRuntime runtime = context.runtime();
         if (runtime == null) {
             failed.accept(new IllegalStateException("Die Laufzeit ist nicht gestartet"));
             return;
         }
-        SyncMode mode = context.settings() != null ? context.settings().effectiveSync(sourceId).mode()
-                : SyncSettings.DEFAULT_MODE;
         Background.run(() -> {
             List<String> keys = spaceKey != null ? List.of(spaceKey)
                     : runtime.workspace().spaces(sourceId).stream().map(Partition::key).toList();

@@ -112,7 +112,8 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
             return;
         }
         documents.keySet().removeIf(key -> key.equals(document) || !document.isEmbedded()
-                && key.page().equals(document.page()) && key.attachmentId().equals(document.attachmentId()));
+                && key.page().equals(document.page()) && key.localOriginal() == document.localOriginal()
+                && key.attachmentId().equals(document.attachmentId()));
     }
 
     /** Abschnitt (sortierbar) und Prozessor: Ergebnisse aufsteigend nach Abschnitt, darin nach Prozessor. */
@@ -151,11 +152,15 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
     @Override
     public synchronized List<MetadataFact> factsOf(PageKey key) {
         TreeMap<String, Enrichment> found = results.get(Objects.requireNonNull(key, "key"));
-        if (found == null) {
-            return List.of();
-        }
         List<MetadataFact> facts = new ArrayList<>();
-        found.values().forEach(result -> facts.addAll(EnrichmentFacts.of(result)));
+        if (found != null) {
+            found.values().forEach(result -> facts.addAll(EnrichmentFacts.of(result)));
+        }
+        documents.forEach((document, entries) -> {
+            if (document.localOriginal() && document.page().equals(key)) {
+                entries.values().forEach(result -> facts.addAll(EnrichmentFacts.of(result)));
+            }
+        });
         return List.copyOf(facts);
     }
 
@@ -178,6 +183,17 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
                 }
             }
         }
+        documents.forEach((document, entries) -> {
+            if (document.localOriginal() && query.sourceIds().contains(document.page().sourceId())) {
+                for (Enrichment result : entries.values()) {
+                    for (MetadataFact fact : EnrichmentFacts.of(result)) {
+                        if ((after == null || fact.id().compareTo(after) > 0) && query.matches(fact)) {
+                            sorted.put(fact.id(), fact);
+                        }
+                    }
+                }
+            }
+        });
         return sorted.values().stream().limit(limit).toList();
     }
 

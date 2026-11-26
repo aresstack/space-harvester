@@ -80,6 +80,11 @@ class SourceFormTest {
             assertThat(((JTextField) f.fields.input("host")).getText()).isEqualTo("ndv.example.test");
             assertThat(((JTextField) f.fields.input("port")).getText()).isEqualTo("8011");
             assertThat(((JTextField) f.fields.input("startPoints")).getText()).isEqualTo("LAGER");
+            assertThat(((JTextField) f.fields.input("startPoints")).isEditable()).isFalse();
+            ((javax.swing.JCheckBox) f.fields.input("allLibraries")).setSelected(true);
+            ((javax.swing.JCheckBox) f.fields.input("navigationFill")).setSelected(true);
+            assertThat(f.draft().extraOptions()).containsEntry("allLibraries", "true")
+                    .containsEntry("navigationFill", "true").containsEntry("startPoints", "LAGER");
             assertThat(f.kind.isEnabled()).as("eine neue Quelle, alles änderbar").isTrue();
         });
     }
@@ -115,6 +120,18 @@ class SourceFormTest {
                 saved.countDown();
             });
             f.kind.setSelectedIndex(1);
+            assertThat(f.includeEnabled.isVisible()).isTrue();
+            assertThat(f.includeEnabled.isSelected()).isFalse();
+            assertThat(f.include.isEnabled()).isFalse();
+            assertThat(f.include.getText()).contains("*.one", "*.mp4", "*.xls", "*.xlsx");
+            f.includeEnabled.doClick();
+            assertThat(f.include.isEnabled()).isTrue();
+            f.include.setText("*.md, *.one");
+            assertThat(f.draft().extraOptions()).containsEntry("includeEnabled", "true");
+            f.includeEnabled.doClick();
+            assertThat(f.include.isEnabled()).isFalse();
+            assertThat(f.draft().include()).isEqualTo("*.md, *.one");
+            assertThat(f.draft().extraOptions()).containsEntry("includeEnabled", "false");
             assertThat(f.validateInput()).as("Ordner und Kennung fehlen").isFalse();
             assertThat(f.error(f.directory)).isEqualTo("Bitte einen Ordner wählen.");
             assertThat(f.error(f.id)).startsWith("Bitte eine Kennung");

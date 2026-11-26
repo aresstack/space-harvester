@@ -636,13 +636,21 @@ public final class Harvester implements AutoCloseable {
             }
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
             // Volltextindex.
+            TikaDocumentStructure documentStructure = new TikaDocumentStructure(builder.extractionLimits.parallel(),
+                    ExtractionStore.DEFAULT_SECTION_CHARS);
+            DocumentExtractions structuredDocuments = new DocumentExtractions(documentStructure,
+                    new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits);
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
                     new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector(),
+                    new com.aresstack.spaceharvester.source.LocalReferenceTextProjector(structuredDocuments),
                     // Angelo 20.11.2026: Videoseiten ohne Text lesen ihr Transkript, die letzte Korrektur zuerst; die
                     // Ablage entsteht erst weiter unten.
                     new com.aresstack.spaceharvester.application.presentation.VideoTranscriptTextProjector(
                             this::assets)));
             this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
+            enrichments.localReader(new com.aresstack.spaceharvester.application.enrichment.LocalReaderAnalyses(
+                    new com.aresstack.spaceharvester.application.enrichment.LocalReadingText(structuredDocuments),
+                    enrichments, navigationBuilder));
             // Angelo 22.11.2026: Auch die KI-Anreicherung rechnet so breit, wie ai.parallel erlaubt, gelesen je Teil.
             enrichments.parallel(() -> {
                 AiServiceSettings ai = currentAi.get();
@@ -718,12 +726,15 @@ public final class Harvester implements AutoCloseable {
             LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
             opened.add(textIndex);
             PageTextIndexing texts = new PageTextIndexing(List.of(new ConfluenceStorageTextProjector(),
-                    new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()), textIndex);
+                    new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()), textIndex,
+                    new com.aresstack.spaceharvester.application.query.LocalPageSections(structuredDocuments));
 
             this.access = new AccessGuard(builder.accessPolicy);
             // ADR 0027: Bestand je Space; jeder Commit des Cache meldet ihm seine Änderungen. Schließt vor dem Cache.
             LuceneHoldingsCatalog holdingsCatalog = new LuceneHoldingsCatalog(cache);
             this.holdings = new Holdings(catalog, holdingsCatalog, access, builder.maxTreeNodes);
+            holdings.localIndex(textIndex);
+            textIndex.holdingsChanges(holdings.localIndexChanges());
             opened.add(holdings);
             // Paket V1: Verzeichnis der Verweise aus den gespeicherten Seiten; hört wie der Bestand auf jeden Commit.
             LuceneLinkIndex linkIndex = LuceneLinkIndex.open(cacheDirectory.resolve("links"));
@@ -737,12 +748,25 @@ public final class Harvester implements AutoCloseable {
             List<String> linkSources = catalog.configs().stream().map(SourceSettingsConfig::id).toList();
             startScans.add(() -> pageLinks.reconcileOnStart(linkSources));
             // ADR 0028: Eintragen aus der Auswahl, gebündelte Liste und Entfernen für die Oberfläche.
+            AtomicReference<DocumentEnrichments> sectionTexts = new AtomicReference<>();
             this.pageReleaseService = new PageReleaseService(pageReleases, holdings, access, cache::findHeader,
-                    key -> enrichmentStore.find(key).stream().anyMatch(found -> "embedding".equals(found.processorId())
-                            && found.status() == Enrichment.Status.OK), clock);
+                    key -> {
+                        Optional<PageSnapshot> snapshot = cache.find(key);
+                        if (snapshot.isPresent() && com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                                .recognizes(snapshot.get().payload())) {
+                            DocumentEnrichments sections = sectionTexts.get();
+                            return sections != null && sections.hasCurrentLocalAnalysis(snapshot.get(), "embedding");
+                        }
+                        return enrichmentStore.find(key).stream().anyMatch(found -> "embedding".equals(found.processorId())
+                                && found.status() == Enrichment.Status.OK);
+                    }, clock);
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
             LucenePageSearchIndex index = new LucenePageSearchIndex(cache, builder.searchTimeout);
-            this.snapshots = new SourceSnapshots(catalog);
+            this.snapshots = builder.localOriginalReferences
+                    ? new SourceSnapshots(catalog, new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
+                            new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(structuredDocuments),
+                            LocalFilesTextProjector::readable))
+                    : new SourceSnapshots(catalog);
             // Größere Dateien nimmt der Cache nicht an: gar nicht erst herunterladen, nur die Kopfdaten ablegen.
             long maxPageBytes = builder.maxPageBytes;
             snapshots.maxBytes(() -> maxPageBytes);
@@ -750,8 +774,6 @@ public final class Harvester implements AutoCloseable {
             // Das Original kommt dafür auf die Platte und wird als Strom gelesen (ADR 0026), wie große Anhänge.
             long maxTextFileBytes = builder.maxTextFileBytes;
             snapshots.maxTextBytes(() -> maxTextFileBytes);
-            TikaDocumentStructure documentStructure = new TikaDocumentStructure(builder.extractionLimits.parallel(),
-                    ExtractionStore.DEFAULT_SECTION_CHARS);
             LargeFileTexts largeFileTexts = new LargeFileTexts(documentStructure, () -> builder.extractionLimits,
                     cacheDirectory.resolve("large-files"));
             snapshots.largeFileText(largeFileTexts::text);
@@ -762,11 +784,16 @@ public final class Harvester implements AutoCloseable {
             this.freshness = new PageFreshness(sources, snapshots, clock, builder.checkTimeout,
                     builder.largeFileTimeout);
             this.pages = new PageQueries(catalog, reader, access, freshness,
-                    new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave, cache::saveWaiting), enrichments, texts),
+                    new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave, cache::saveWaiting),
+                            enrichments, texts, snapshot -> {
+                                DocumentEnrichments sections = sectionTexts.get();
+                                if (sections != null) {
+                                    sections.indexedLocal(snapshot);
+                                }
+                            }),
                     builder.maxTreeNodes, freshnessRule(builder), clock);
             this.addresses = new PageAddresses(catalog, access, pages);
             // ADR 0026, AP9a: Lesetexte der Abschnitte von Anhängen, sobald die Analysen je Dokument stehen (unten).
-            AtomicReference<DocumentEnrichments> sectionTexts = new AtomicReference<>();
             DocumentTexts documentTexts = (document, section, inputSha256, extraction) -> sectionTexts.get() == null
                     ? Optional.empty() : sectionTexts.get().sectionText(document, section, inputSha256, extraction);
             this.passages = new PassageQueries(pages, enrichments, projector, documentTexts);
@@ -785,7 +812,11 @@ public final class Harvester implements AutoCloseable {
                         if (fill != null) {
                             fill.offer(gaps);
                         }
-                    }, clock);
+                    }, clock, sourceId -> (manager != null && !builder.prefetchSearchHitsFixed
+                            ? this.settings.sync().override(sourceId).effectivePrefetch(this.settings.search().prefetchHits())
+                            : builder.prefetchSearchHits)
+                            && (manager != null && !builder.backgroundFillFixed
+                            ? this.settings.syncFor(sourceId).backgroundFill() : builder.backgroundFill));
             opened.add(findings);
             if (backgroundJobs != null) {
                 // Fundstelle 14: Funde katalogisieren als Hintergrundart „Funde katalogisieren“.
@@ -808,7 +839,8 @@ public final class Harvester implements AutoCloseable {
                     new FileTermRelationStore(builder.dataDirectory.resolve("term-relations")), access,
                     cache::findHeader, clock, enrichmentStore, termProcessor.version());
             this.acronymRelationRule = new AcronymRelationRule(catalog, enrichmentStore, access, cache::findHeader,
-                    termRelations, termProcessor.version(), clock);
+                    termRelations, termProcessor.version(), clock, cache::find,
+                    new com.aresstack.spaceharvester.application.enrichment.LocalReadingText(structuredDocuments));
             // #122: KI-Akronymauflösung über das Chat-Modell der wirksamen Konfiguration, nur für freigegebene Quellen.
             ChatAcronymExpansionModel chatModel = new ChatAcronymExpansionModel(
                     () -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles, builder.userAgent);
@@ -901,7 +933,17 @@ public final class Harvester implements AutoCloseable {
                     new AcquisitionScheduler.Limits(SEARCH_FILL_PARALLEL,
                             fillQueue != null ? backgroundParallelism : 0,
                             AcquisitionScheduler.Limits.DEFAULT.perSource(), AcquisitionScheduler.Limits.DEFAULT.capacity()),
-                    null, AcquisitionScheduler.DEFAULT_RESUME_DELAY);
+                    null, AcquisitionScheduler.DEFAULT_RESUME_DELAY, (sourceId, trigger) -> {
+                        if (trigger == ChangeTrigger.SEARCH) {
+                            return manager != null && !builder.prefetchSearchHitsFixed
+                                    ? this.settings.sync().override(sourceId).effectivePrefetch(this.settings.search().prefetchHits())
+                                    : builder.prefetchSearchHits;
+                        }
+                        if (trigger == ChangeTrigger.BACKGROUND) {
+                            return fillFollows ? this.settings.syncFor(sourceId).backgroundFill() : builder.backgroundFill;
+                        }
+                        return true;
+                    });
             opened.add(scheduler);
             this.acquisition = scheduler;
             this.pageLoads = new com.aresstack.spaceharvester.application.background.PageLoads(backgroundJobs,
@@ -959,12 +1001,15 @@ public final class Harvester implements AutoCloseable {
             this.keywordSearch = new KeywordSearch(catalog, access,
                     new PassageSnippets(textIndex, enrichmentStore::find), prefetch, builder.discoveryQueries,
                     excerpts, builder.selection(), runLog, findings,
-                    prefetchFollows ? () -> this.settings.search().prefetchHits() : () -> true, sourceIds -> {
+                    sourceId -> prefetchFollows
+                            ? this.settings.sync().override(sourceId).effectivePrefetch(this.settings.search().prefetchHits())
+                            : builder.prefetchSearchHits, sourceIds -> {
                         SyncBeforeSearch before = this.syncBeforeSearch;
                         if (before != null) {
                             before.searching(sourceIds);
                         }
-                    }, SearchExpansion.typed(termRelations::counterparts), glossarySynonyms.expansion());
+                    }, SearchExpansion.typed(termRelations::counterparts), glossarySynonyms.expansion(),
+                    sourceId -> fillFollows ? this.settings.syncFor(sourceId).backgroundFill() : builder.backgroundFill);
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
@@ -978,14 +1023,18 @@ public final class Harvester implements AutoCloseable {
                     Enrichments.stop(renewals, Duration.ofSeconds(10));
                 });
                 // Fundstelle 10: Mit Hintergrundaufträgen sichtbar als „Veraltete Treffer nachladen“.
-                PageRenewal visible = new PageRenewal(pages, renewals, pageLoads);
+                PageRenewal visible = new PageRenewal(pages, renewals, pageLoads, keywordSearch::allowsPrefetch);
                 opened.add(visible);
                 renewal = visible;
             }
             // ADR 0013, Punkt 3: mit Haken erst finden, laden und fehlende Embeddings berechnen.
             SemanticPreparation preparation = embedding == null || prefetch == null ? null
                     : new SemanticPreparation(keywordSearch, key -> reader.page(key).map(CachedPage::snapshot),
-                    enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT, jobs);
+                    enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT, jobs,
+                    (snapshot, processorId, deadline) -> {
+                        DocumentEnrichments sections = sectionTexts.get();
+                        return sections != null && sections.awaitLocal(snapshot, processorId, deadline);
+                    });
             // Angelo 24.11.2026: Aufträge „Suchtreffer vorbereiten“ entstehen nicht mehr; unterbrochene alte entfallen.
             SemanticPreparation.forgetInterrupted(jobs);
             // ADR 0026, AP9a: auch in den Vektoren der Anhänge, solange enrichment.documents.enabled gilt.
@@ -1011,7 +1060,7 @@ public final class Harvester implements AutoCloseable {
             Harvester searching = this;
             Holdings termHoldings = this.holdings;
             this.termSearch = new com.aresstack.spaceharvester.application.query.progressive.TermSearch(keywordSearch,
-                    (who, query) -> searchScope(termHoldings, catalog.all().stream().map(HarvestSource::id).toList(),
+                    (who, query) -> searchScope(termHoldings, catalog.globalSearchSources().stream().map(HarvestSource::id).toList(),
                             who, query),
                     com.aresstack.spaceharvester.application.query.progressive.TermSearch.Knowledge.of(
                             searching::termKnowledge, searching::termVocabulary));
@@ -1020,11 +1069,11 @@ public final class Harvester implements AutoCloseable {
                     new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
                     HitScorer.of(excerpts), runLog, new NeighborCandidates(pageConnections),
                     new com.aresstack.spaceharvester.application.query.progressive.BackgroundNeighborLoader(pageLoads,
-                            backgroundJobs), termSearch);
+                            backgroundJobs, keywordSearch::allowsPrefetch), termSearch, keywordSearch::includesSource);
             // R2: dieselbe Methode zur Schlagwortsuche ohne progressive Suche, als eigener Aufruf nach einem Stapel.
             this.neighborSearch = new NeighborSearch(keywordSearch, new NeighborCandidates(pageConnections),
                     new com.aresstack.spaceharvester.application.query.progressive.BackgroundNeighborLoader(pageLoads,
-                            backgroundJobs));
+                            backgroundJobs, keywordSearch::allowsPrefetch));
             opened.add(orchestrator);
             this.progressiveSearch = orchestrator;
             start.step("Suche");
@@ -1056,8 +1105,12 @@ public final class Harvester implements AutoCloseable {
             documentEnrichments.background(backgroundJobs, (sourceId, spaceKey) -> spaceKey == null ? List.of()
                     : cache.knownPages(sourceId, spaceKey).keySet());
             documentEnrichments.network(network);
+            documentEnrichments.localDocuments(cache::find, structuredDocuments);
+            terms.localOriginals(documentEnrichments::currentLocalExtraction, enrichments::localReadingText);
+            relevance.localOriginals(documentEnrichments::currentLocalExtraction);
             opened.add(documentEnrichments);
             sectionTexts.set(documentEnrichments);
+            pageRecomputation.localDocuments(documentEnrichments);
             EnrichmentsAfterSync afterSync = new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                     // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
                     // SY1: danach der automatische Synonymlauf der Quelle als Hintergrundauftrag.
@@ -1101,6 +1154,7 @@ public final class Harvester implements AutoCloseable {
                                     trustBundles, builder.userAgent)))
                     // Höchstens ein Update je Tag (Angelo, 21.11.2026), Tage in der Zeitzone des Rechners.
                     .perDay(java.time.ZoneId.systemDefault())
+                    .globalSources(catalog::includeInGlobalSearch)
                     // Bereichszusammenfassung (ADR 0034 §7, Angelo 24.11.2026): Bestand statt Änderungen, alle Seiten.
                     .areas(holdings);
             opened.add(changeLog);
@@ -1201,6 +1255,9 @@ public final class Harvester implements AutoCloseable {
                     new JsonPackageConverter(), new MarkdownConverter(), new MarkdownPackageConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, holdingsCatalog, clock);
+            exports.localExports(new com.aresstack.spaceharvester.application.export.LocalExportSnapshots(
+                    structuredDocuments, snapshots::exportLocalOriginal, builder.maxPageBytes));
+            exports.fileTexts(new LocalFilesTextProjector());
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
             // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit
             // der Seite als Eltern; Bildanhänge dort mit ihrer vorhandenen Beschreibung (#371)
@@ -1212,8 +1269,7 @@ public final class Harvester implements AutoCloseable {
                     TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
             // ADR 0026, AP3b: abgelegte Dokumente aus der Datei lesen, Text in Abschnitten unter extractions/.
-            assets.documentExtractions(new DocumentExtractions(documentStructure,
-                    new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits));
+            assets.documentExtractions(structuredDocuments);
             assets.indexedDocuments(documentEnrichments);
             // Angelo 20.11.2026: Neues Transkript oder neue Korrektur → Analysen neu, gelöschtes → Analysen weg.
             com.aresstack.spaceharvester.application.presentation.TranscriptAnalyses transcriptAnalyses =
@@ -1605,6 +1661,7 @@ public final class Harvester implements AutoCloseable {
             exports.onSubmitted(images::announce);
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
+            conversions.fileTexts(new LocalFilesTextProjector());
             // ADR 0026, Punkt 11: abgelegte Dokumente ohne Download neu lesen; der Space für den Volltextindex
             // kommt aus dem Cache.
             this.rereads = new DocumentRereads(jobs, assets, assetStore,
@@ -3454,6 +3511,7 @@ public final class Harvester implements AutoCloseable {
         private Duration largeFileTimeout = PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT;
         private int maxTreeNodes = 50_000;
         private int maxPageBytes = LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES;
+        private boolean localOriginalReferences = true;
         private long maxTextFileBytes = DEFAULT_MAX_TEXT_FILE_BYTES;
         private boolean prefetchSearchHits = true;
         private boolean prefetchSearchHitsFixed;
@@ -3638,6 +3696,12 @@ public final class Harvester implements AutoCloseable {
                 }
             }
             return adapters;
+        }
+
+        /** Override the default reference-based local storage pipeline. */
+        public Builder localOriginalReferences(boolean enabled) {
+            this.localOriginalReferences = enabled;
+            return this;
         }
 
         /** Exportartefakte; Standard {@code <dataDirectory>/exports}. */

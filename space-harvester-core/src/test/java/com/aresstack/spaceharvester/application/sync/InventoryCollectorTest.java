@@ -35,6 +35,22 @@ class InventoryCollectorTest {
     }
 
     @Test
+    void reportsInventoryProgressBeforeCompletingAndDoesNotCountDuplicates() {
+        source.tamper = batch -> batch.nextCursor() == null ? withExtra(batch, FakeSource.page("1", "DOC", null,
+                "3", "a")) : batch;
+        List<String> reported = new ArrayList<>();
+        List<Integer> batchSizes = new ArrayList<>();
+        Inventory inventory = new InventoryCollector(source.queries(), FakeSource.CLOCK, 2)
+                .collect("wiki", "DOC", () -> { }, entries -> {
+                    batchSizes.add(entries.size());
+                    entries.forEach(entry -> reported.add(entry.page().pageId()));
+                });
+        assertThat(inventory.confirmed()).isTrue();
+        assertThat(reported).containsExactly("1", "2", "3", "4", "5");
+        assertThat(batchSizes).containsExactly(1, 2, 2);
+    }
+
+    @Test
     void anAbortedListingIsIncompleteAndHasNoFingerprint() {
         source.failListingAtCall(1);
 

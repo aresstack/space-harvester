@@ -44,6 +44,7 @@ public class PageNavigation {
 
     private final SourceCatalog catalog;
     private final PageCacheReader cache;
+    private final NavigationOrder navigationOrder;
     private final AccessGuard access;
     private final FindingCatalog findings;
     private final PageLinks links;
@@ -77,6 +78,7 @@ public class PageNavigation {
         this.findings = Objects.requireNonNull(findings, "findings");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.cache = cache;
+        this.navigationOrder = new NavigationOrder(cache);
         this.access = Objects.requireNonNull(access, "access");
     }
 
@@ -99,15 +101,17 @@ public class PageNavigation {
         access.require(caller, parentPageId == null
                 ? ResourceScope.space(sourceId, Objects.requireNonNull(spaceKey, "spaceKey"))
                 : ResourceScope.source(sourceId), AccessKind.METADATA);
-        HarvestSource.ChildPages batch = source.children(spaceKey, parentPageId, cursor);
+        NavigationOrder.Request request = navigationOrder.prepare(sourceId, spaceKey, parentPageId, cursor,
+                source.navigationUsesGroups());
+        HarvestSource.ChildPages batch = source.children(spaceKey, parentPageId, request.sourceCursor);
         if (parentPageId != null) {
             access.requireConcealed(caller, ResourceScope.page(sourceId, batch.partitionKey(), parentPageId),
                     AccessKind.METADATA);
         }
-        rememberOrder(sourceId, batch.partitionKey(), parentPageId, cursor, batch);
+        String nextCursor = navigationOrder.complete(request, batch);
         List<PageNode> shown = visible(caller, sourceId, batch.pages());
         rememberBrowsed(source, sourceId, parentPageId, shown);
-        return new Children(sourceId, batch.partitionKey(), parentPageId, shown, batch.nextCursor());
+        return new Children(sourceId, batch.partitionKey(), parentPageId, shown, nextCursor);
     }
 
     /**
@@ -120,59 +124,6 @@ public class PageNavigation {
         }
         for (PageNode page : pages) {
             browsedPages.put(new PageKey(sourceId, page.pageId()), new SeenPage(page, parentId));
-        }
-    }
-
-    /** Höchstens so viele Knoten merkt sich die Navigation, deren Kinder die Quelle noch stapelweise liefert. */
-    static final int MAX_OPEN_LISTINGS = 256;
-
-    /** Je Knoten die Seiten-IDs der bisher gelieferten Stapel, bis der letzte Stapel da ist. */
-    private final Map<String, List<String>> listings = new java.util.concurrent.ConcurrentHashMap<>();
-
-    /**
-     * Schreibt die Reihenfolge der Quelle für {@link #cachedChildren} fort: der erste Stapel beginnt sie neu, jeder
-     * weitere hängt an. Solange Stapel ausstehen, folgen die vorher bekannten, noch nicht gelieferten Kinder in ihrer
-     * alten Reihenfolge; mit dem letzten Stapel gilt genau das Gelieferte. Unveränderte Reihenfolgen schreibt sie nicht
-     * neu. Scheitert der Cache, bleibt es still: die Navigation selbst darf daran nicht scheitern.
-     */
-    private void rememberOrder(String sourceId, String spaceKey, String parentPageId, String cursor,
-                               HarvestSource.ChildPages batch) {
-        if (cache == null || parentPageId == null && spaceKey == null) {
-            return;
-        }
-        String node = sourceId + '\n' + (parentPageId == null ? "space:" + spaceKey : "page:" + parentPageId);
-        List<String> delivered = batch.pages().stream().map(PageNode::pageId).toList();
-        List<String> seen;
-        if (cursor == null) {
-            seen = new java.util.ArrayList<>(delivered);
-        } else {
-            List<String> before = listings.get(node);
-            if (before == null) {
-                return;
-            }
-            seen = new java.util.ArrayList<>(before);
-            delivered.stream().filter(pageId -> !seen.contains(pageId)).forEach(seen::add);
-        }
-        if (batch.nextCursor() == null) {
-            listings.remove(node);
-        } else {
-            if (listings.size() >= MAX_OPEN_LISTINGS) {
-                listings.clear();
-            }
-            listings.put(node, List.copyOf(seen));
-        }
-        try {
-            List<String> known = cache.childOrder(sourceId, spaceKey, parentPageId);
-            List<String> order = new java.util.ArrayList<>(seen);
-            if (batch.nextCursor() != null) {
-                Set<String> placed = new java.util.HashSet<>(seen);
-                known.stream().filter(pageId -> !placed.contains(pageId)).forEach(order::add);
-            }
-            if (!order.equals(known)) {
-                cache.rememberChildOrder(sourceId, spaceKey, parentPageId, order);
-            }
-        } catch (RuntimeException e) {
-            // Nur ein Hinweis für die Anzeige; ohne ihn ordnet cachedChildren nach Titel.
         }
     }
 

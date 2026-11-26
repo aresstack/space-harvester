@@ -19,6 +19,15 @@ public interface ChatToolset {
     /** Kurz, was der Aufruf tut, für die Statuszeile; ohne Argumente des Modells. */
     String describe(AiChat.ToolCall call);
 
+    /** Describe the current semantic view independently of its rendered component tree. */
+    default String viewContext() { return ""; }
+
+    /** Identify the selected text for safe reuse of a captured snapshot. */
+    default String viewIdentity() { return ""; }
+
+    /** Pass the selected model before offering tools. */
+    default void modelSelected(String model) {}
+
     /** Bricht laufende Arbeit ab (Stopp im Chat). */
     default void cancel() {
     }

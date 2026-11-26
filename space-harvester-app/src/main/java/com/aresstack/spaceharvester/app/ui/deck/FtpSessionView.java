@@ -24,6 +24,7 @@ final class FtpSessionView extends JPanel {
     static final String JOBS = "JES-Jobs";
 
     private final FtpSession session;
+    private final FtpNavigationObserver navigation;
     private final CardLayout centerCards = new CardLayout();
     private final JPanel center = new JPanel(centerCards);
     private final CardLayout actionCards = new CardLayout();
@@ -41,8 +42,15 @@ final class FtpSessionView extends JPanel {
 
     FtpSessionView(FtpSession session, Runnable showJobs,
                    com.aresstack.spaceharvester.deck.editor.EditorSessions editors) {
+        this(session, showJobs, editors, FtpNavigationObserver.NONE);
+    }
+
+    FtpSessionView(FtpSession session, Runnable showJobs,
+                   com.aresstack.spaceharvester.deck.editor.EditorSessions editors,
+                   FtpNavigationObserver navigation) {
         super(new BorderLayout());
         this.session = session;
+        this.navigation = navigation;
         setBackground(Comic.SURFACE);
         datasets = new FtpDatasetsView(this, showJobs, editors);
         jobs = new FtpJobsView(this);
@@ -70,6 +78,14 @@ final class FtpSessionView extends JPanel {
         return footTools;
     }
 
+    boolean navigationEnabled() {
+        return navigation.enabled(session);
+    }
+
+    void navigationListed(java.util.List<com.aresstack.spaceharvester.deck.ftp.RemoteEntry> entries) {
+        navigation.listed(session, entries);
+    }
+
     FtpSession session() {
         return session;
     }
@@ -88,6 +104,7 @@ final class FtpSessionView extends JPanel {
 
     /** Zeigt eine Unteransicht; die Jobliste wird beim ersten Zeigen abgefragt. */
     void show(String next) {
+        if (JOBS.equals(next)) datasets.revokeDiagnosis();
         view = JOBS.equals(next) ? JOBS : DATASETS;
         centerCards.show(center, view);
         actionCards.show(actions, view);

@@ -61,6 +61,27 @@ class LocalFolderHierarchyTest {
     }
 
     @Test
+    void singlePassInventoryMatchesPagedMetadataAndChecksCancellationDuringTraversal() {
+        KnowledgeSourceHarvestSource source = open();
+        Map<String, PageMetadata> visited = new LinkedHashMap<>();
+        java.util.concurrent.atomic.AtomicInteger checkpoints = new java.util.concurrent.atomic.AtomicInteger();
+        assertThat(source.visitInventory("docs", checkpoints::incrementAndGet,
+                page -> {
+                    assertThat(visited.put(page.pageId(), page)).isNull();
+                })).isTrue();
+        assertThat(visited.keySet()).containsExactlyInAnyOrderElementsOf(list(source, 1).keySet());
+        visited.forEach((id, page) -> assertThat(page.attributes()).isEqualTo(source.pageMetadata(id).attributes()));
+        assertThat(checkpoints.get()).isGreaterThanOrEqualTo(6);
+
+        java.util.concurrent.atomic.AtomicInteger cancelled = new java.util.concurrent.atomic.AtomicInteger();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> source.visitInventory("docs", () -> {
+            if (cancelled.incrementAndGet() == 3) {
+                throw new java.util.concurrent.CancellationException();
+            }
+        }, page -> { })).isInstanceOf(java.util.concurrent.CancellationException.class);
+    }
+
+    @Test
     void aFolderIsMarkedAsFolderAndHasNoContent() {
         KnowledgeSourceHarvestSource source = open();
 
@@ -139,6 +160,30 @@ class LocalFolderHierarchyTest {
     }
 
     @Test
+    void disabledFilterIncludesUnknownEmptyAndLargeFilesInNavigationAndInventory() throws IOException {
+        write("notes.one", "not a real section");
+        write("unknown.zzz", "unknown");
+        write("empty", "");
+        Files.write(directory.resolve("large.bin"), new byte[2 * 1024 * 1024]);
+        SourceSettingsConfig config = new SourceSettingsConfig("docs", "files", null, null, null,
+                Map.of("directory", directory.toString(), "include", "*.md", "includeEnabled", "false",
+                        "maxFileMegabytes", "1"));
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("docs", "files", "docs",
+                new LocalFilesSourceAdapter().open(config, null).port());
+        assertThat(source.children("docs", null, null).pages()).extracting(HarvestSource.PageNode::title)
+                .contains("notes.one", "unknown.zzz", "empty", "large.bin", "notiz.txt");
+        assertThat(titles(list(source, 500))).contains("notes.one", "unknown.zzz", "empty", "large.bin");
+        assertThat(source.storedPage(id("empty")).payload()).isEmpty();
+        assertThat(source.storedPage(id("large.bin")).nativeFormat())
+                .isEqualTo(com.aresstack.spaceharvester.application.snapshot.LargeFiles.FORMAT);
+        SourceSettingsConfig filtered = new SourceSettingsConfig("docs", "files", null, null, null,
+                Map.of("directory", directory.toString(), "include", "*.zzz", "includeEnabled", "true"));
+        KnowledgeSourceHarvestSource restricted = new KnowledgeSourceHarvestSource("docs", "files", "docs",
+                new LocalFilesSourceAdapter().open(filtered, null).port());
+        assertThat(titles(list(restricted, 500))).containsExactly("unknown.zzz");
+    }
+
+    @Test
     void completeInventoryDoesNotWrapAnEmptyCursor() {
         KnowledgeSourceHarvestSource source = open();
         PageMetadataBatch batch = source.pageMetadata("docs", null, 500);
@@ -182,6 +227,391 @@ class LocalFolderHierarchyTest {
         } finally {
             Files.deleteIfExists(target);
         }
+    }
+
+    @Test
+    void largeLocalTextIsReadAtItsOriginalPathWithoutCreatingTemporaryCopies() throws IOException {
+        HarvestSource source = open();
+        String pageId = id("notiz.txt");
+        PageMetadata metadata = source.pageMetadata(pageId);
+        Path temporary = directory.resolve("must-not-be-created");
+        LargeFileTexts texts = new LargeFileTexts(new TikaDocumentStructure(),
+                () -> com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS, temporary);
+        assertThat(source.readsOriginalInPlace()).isTrue();
+        assertThat(source.readOriginalInPlace(pageId, type -> true, 1024,
+                (path, actual, type) -> path)).contains(directory.resolve("notiz.txt").toRealPath());
+        assertThat(texts.text(source, metadata, 1024)).contains("Eine Datei an der Wurzel");
+        assertThat(temporary).doesNotExist();
+
+        Files.writeString(directory.resolve("notiz.txt"), "Changed and longer content");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> texts.text(source, metadata, 1024))
+                .isInstanceOf(com.aresstack.spaceharvester.application.sources.SourceAccessException.class);
+        assertThat(temporary).doesNotExist();
+    }
+
+    @Test
+    void sameSizeModificationChangesTheContentRevisionInInventoryAndSingleRead() throws IOException {
+        KnowledgeSourceHarvestSource source = open();
+        Path file = directory.resolve("notiz.txt");
+        String pageId = id("notiz.txt");
+        PageMetadata previous = source.pageMetadata(pageId);
+        byte[] bytes = Files.readAllBytes(file);
+        bytes[0] = 'X';
+        Files.write(file, bytes);
+        Files.setLastModifiedTime(file, java.nio.file.attribute.FileTime.from(previous.modifiedAt().plusSeconds(5)));
+        PageMetadata current = source.pageMetadata(pageId);
+        assertThat(current.version()).isNotEqualTo(previous.version());
+        assertThat(current.version()).isEqualTo(list(source, 500).get(pageId).version());
+        assertThat(source.storedPage(pageId).metadata().version()).isEqualTo(current.version());
+        Map<String, PageMetadata> inventory = new LinkedHashMap<>();
+        source.visitInventory("docs", () -> { }, page -> inventory.put(page.pageId(), page));
+        assertThat(inventory.get(pageId).version()).isEqualTo(current.version());
+    }
+
+    @Test
+    void referenceStorageKeepsCompleteStructuredTextAndOnlyABoundedPreviewInTheSnapshot() throws IOException {
+        KnowledgeSourceHarvestSource source = open();
+        String pageId = id("notiz.txt");
+        PageMetadata metadata = source.pageMetadata(pageId);
+        Path storeDirectory = directory.resolve(".extraction-store");
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(storeDirectory);
+        var documents = new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                new TikaDocumentStructure(), store,
+                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS, 8);
+        var storage = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
+                new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(documents),
+                LocalFilesTextProjector::readable);
+        var snapshots = new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source), storage);
+        var first = snapshots.fetch("docs", metadata);
+        var reference = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                .read(first.payload()).orElseThrow();
+
+        assertThat(first.metadata()).isEqualTo(metadata);
+        assertThat(first.payload().nativeFormat()).isEqualTo(
+                com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.FORMAT);
+        assertThat(reference.originalSha256()).isNotEqualTo(first.payload().rawSha256());
+        assertThat(reference.preview()).isEqualTo("Eine Dat");
+        assertThat(reference.previewTruncated()).isTrue();
+        assertThat(reference.status()).isEqualTo(
+                com.aresstack.spaceharvester.application.assets.ExtractionStatus.OK);
+        assertThat(reference.extractionKey()).isNotNull();
+        assertThat(store.find(reference.extractionKey())).hasValueSatisfying(extraction -> {
+            try (var sections = documents.indexSections(extraction)) {
+                assertThat(sections.map(section -> section.text()).toList())
+                        .containsExactly("Eine Datei an der Wurzel");
+            }
+        });
+        assertThat(snapshots.fetch("docs", pageId).payload()).isEqualTo(first.payload());
+        snapshots.maxTextBytes(() -> 1024);
+        assertThat(new String(snapshots.original("docs", metadata), StandardCharsets.UTF_8))
+                .isEqualTo("Eine Datei an der Wurzel");
+        assertThat(Files.readString(directory.resolve("notiz.txt"))).isEqualTo("Eine Datei an der Wurzel");
+        assertThat(new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source))
+                .fetch("docs", metadata).payload().nativeFormat()).isEqualTo("file");
+    }
+
+    @Test
+    void exportRejectsChangedBytesEvenWithRestoredMetadataAndKeepsTheStoredText() throws IOException {
+        Path file = directory.resolve("notiz.txt");
+        String content = "Alte Fassung " + "Überblick \"😀\".\n\n".repeat(200);
+        Files.writeString(file, content);
+        var source = open();
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
+                directory.resolve(".extraction-store"));
+        var documents = new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                new TikaDocumentStructure(), store,
+                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS, 8);
+        var strategy = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
+                new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(documents),
+                LocalFilesTextProjector::readable);
+        var snapshots = new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source), strategy);
+        snapshots.maxBytes(() -> 100_000);
+        var snapshot = snapshots.fetch("docs", id("notiz.txt"));
+        var reference = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                .read(snapshot.payload()).orElseThrow();
+        var exporter = new com.aresstack.spaceharvester.application.export.LocalExportSnapshots(
+                documents, snapshots::exportLocalOriginal, 100_000);
+        assertThat(exporter.prepare(snapshot, false).snapshot().payload().bytes()).isEqualTo(
+                content.getBytes(StandardCharsets.UTF_8));
+        var modified = Files.getLastModifiedTime(file);
+        Files.writeString(file, content.replace("Alte Fassung", "Neue Fassung"));
+        Files.setLastModifiedTime(file, modified);
+        assertThat(source.pageMetadata(id("notiz.txt")).version()).isEqualTo(snapshot.revision());
+        assertThat(snapshots.exportLocalOriginal(snapshot, reference)).isEmpty();
+        var fallback = exporter.prepare(snapshot, false);
+        assertThat(fallback.incomplete()).isTrue();
+        assertThat(fallback.warning()).contains("nicht in der gespeicherten Fassung");
+        var portable = com.aresstack.spaceharvester.application.snapshot.PortableLocalDocument
+                .read(fallback.snapshot().payload()).orElseThrow();
+        assertThat(portable.text()).contains("Alte Fassung", "Überblick").doesNotContain("Neue Fassung");
+        assertThat(portable.textTruncated()).isFalse();
+
+        var offline = new com.aresstack.spaceharvester.application.export.LocalExportSnapshots(
+                documents, (page, manifest) -> { throw new AssertionError("Do not read the original"); }, 512);
+        var bounded = offline.prepare(snapshot, true);
+        assertThat(bounded.snapshot().payload().length()).isLessThanOrEqualTo(512);
+        assertThat(bounded.incomplete()).isTrue();
+        assertThat(com.aresstack.spaceharvester.application.snapshot.PortableLocalDocument
+                .read(bounded.snapshot().payload())).hasValueSatisfying(document -> {
+                    assertThat(document.textTruncated()).isTrue();
+                    assertThat(document.text()).contains("Alte Fassung");
+                });
+    }
+
+    @Test
+    void aChangedOriginalCannotPublishItsStagedStructuredExtraction() throws IOException {
+        KnowledgeSourceHarvestSource source = open();
+        Path file = directory.resolve("notiz.txt");
+        PageMetadata metadata = source.pageMetadata(id("notiz.txt"));
+        String hash = new com.aresstack.spaceharvester.application.snapshot.NativePayload(
+                Files.readAllBytes(file), "text/plain", "file").rawSha256();
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
+                directory.resolve(".extraction-store"));
+        var structure = new TikaDocumentStructure();
+        var changing = new com.aresstack.spaceharvester.application.assets.DocumentStructure() {
+            @Override
+            public String id() {
+                return structure.id();
+            }
+
+            @Override
+            public String version() {
+                return structure.version();
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.assets.StructuredDocument extract(
+                    Path original, String title, String mediaType,
+                    com.aresstack.spaceharvester.application.assets.ExtractionLimits limits,
+                    com.aresstack.spaceharvester.application.assets.StructureSink sink) {
+                var result = structure.extract(original, title, mediaType, limits, sink);
+                try {
+                    Files.writeString(original, "Changed during parsing");
+                } catch (IOException failure) {
+                    throw new java.io.UncheckedIOException(failure);
+                }
+                return result;
+            }
+        };
+        var documents = new com.aresstack.spaceharvester.application.assets.DocumentExtractions(changing, store,
+                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS);
+        var direct = new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(documents);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> direct.extract(source, metadata, type -> true))
+                .isInstanceOf(com.aresstack.spaceharvester.application.sources.SourceAccessException.class);
+        assertThat(store.find(documents.key(hash))).isEmpty();
+    }
+
+    @Test
+    void referenceStrategyDoesNotChangeFolderOrVideoStorageAndMarksUnsupportedFiles() throws IOException {
+        Files.write(directory.resolve("unknown.zzz"), new byte[] {1, 2, 3});
+        Files.write(directory.resolve("aufnahme.mp4"), new byte[] {1, 2, 3});
+        KnowledgeSourceHarvestSource source = open();
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
+                directory.resolve(".extraction-store"));
+        var storage = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
+                new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(
+                        new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                                new TikaDocumentStructure(), store,
+                                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS)),
+                LocalFilesTextProjector::readable);
+        var snapshots = new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source), storage);
+        assertThat(snapshots.fetch("docs", id("Handbuch")).payload().nativeFormat()).isEqualTo("local-folder");
+        assertThat(snapshots.fetch("docs", id("aufnahme.mp4")).payload().nativeFormat())
+                .isEqualTo("remote-media-metadata");
+        var reference = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                .read(snapshots.fetch("docs", id("unknown.zzz")).payload()).orElseThrow();
+        assertThat(reference.status()).isEqualTo(
+                com.aresstack.spaceharvester.application.assets.ExtractionStatus.UNSUPPORTED);
+        assertThat(reference.originalSha256()).isNull();
+        assertThat(reference.preview()).isEmpty();
+    }
+
+    @Test
+    void fullTextFindsTermsBeyondTheBoundedPreviewAndReplacesAllOldSections() throws IOException {
+        Path original = directory.resolve("notiz.txt");
+        Files.writeString(original, "Beginning\n" + "ordinary paragraph\n\n".repeat(7000) + "Zielbegriff");
+        KnowledgeSourceHarvestSource source = open();
+        String pageId = id("notiz.txt");
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
+                directory.resolve(".extraction-store"));
+        var documents = new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                new TikaDocumentStructure(), store,
+                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS, 8);
+        var storage = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
+                new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(documents),
+                LocalFilesTextProjector::readable);
+        var snapshots = new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source), storage);
+        var first = snapshots.fetch("docs", pageId);
+        assertThat(com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.read(first.payload())
+                .orElseThrow().preview()).doesNotContain("Zielbegriff");
+        try (var index = com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex.open(
+                directory.resolve(".index"))) {
+            var texts = new com.aresstack.spaceharvester.application.query.PageTextIndexing(List.of(), index,
+                    new com.aresstack.spaceharvester.application.query.LocalPageSections(documents));
+            assertThat(texts.index(first)).isTrue();
+            var hits = index.search("Zielbegriff", java.util.Set.of("docs"),
+                    com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 10);
+            assertThat(hits).hasSize(1);
+            assertThat(hits.get(0).pageId()).isEqualTo(pageId);
+            assertThat(hits.get(0).attachmentId()).isNull();
+            assertThat(texts.index(first)).isFalse();
+            index.putAttachment(new com.aresstack.spaceharvester.application.query.PageTextIndex.AttachmentEntry(
+                    first.key(), first.spaceKey(), "real-attachment", "Attachment", "Anhangbegriff", "stand"));
+            Files.writeString(original, "Neuerbegriff");
+            assertThat(texts.index(snapshots.fetch("docs", pageId))).isTrue();
+            assertThat(index.search("Zielbegriff", java.util.Set.of("docs"),
+                    com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 10)).isEmpty();
+            assertThat(index.search("Neuerbegriff", java.util.Set.of("docs"),
+                    com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 10)).hasSize(1);
+            assertThat(index.search("Anhangbegriff", java.util.Set.of("docs"),
+                    com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 10)).hasSize(1);
+        }
+    }
+
+    @Test
+    void localDocumentAnalysesUseAllStoredSectionsWithoutSyntheticAttachments() throws IOException {
+        Files.writeString(directory.resolve("notiz.txt"),
+                "Beginning\n" + "ordinary paragraph\n\n".repeat(7000) + "Zielbegriff");
+        KnowledgeSourceHarvestSource source = open();
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
+                directory.resolve(".extraction-store"));
+        var documents = new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                new TikaDocumentStructure(), store,
+                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS, 8);
+        var strategy = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
+                new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(documents),
+                LocalFilesTextProjector::readable);
+        var snapshots = new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source), strategy);
+        var current = new java.util.concurrent.atomic.AtomicReference<>(
+                snapshots.fetch("docs", id("notiz.txt")));
+        var results = new com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore();
+        var input = new ArrayList<String>();
+        var processor = new com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor() {
+            public String id() { return "section-test"; }
+            public String version() { return "1"; }
+            public boolean documents() { return true; }
+            public com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput process(
+                    com.aresstack.spaceharvester.application.enrichment.PageText text) {
+                input.add(text.text());
+                return com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput.of("{}");
+            }
+        };
+        var enrichments = new com.aresstack.spaceharvester.application.enrichment.Enrichments(
+                new LocalReferenceTextProjector(documents), List.of(processor), results, java.time.Clock.systemUTC());
+        try (var analyses = new com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments(
+                enrichments, null, () -> true)) {
+            analyses.localDocuments(key -> java.util.Optional.of(current.get()).filter(page -> page.key().equals(key)),
+                    documents);
+            enrichments.refresh(current.get());
+            enrichments.recompute(current.get(), null);
+            assertThat(input).isEmpty();
+            assertThat(results.find(current.get().key())).isEmpty();
+            analyses.indexedLocal(current.get());
+            var key = com.aresstack.spaceharvester.application.assets.DocumentKey.localOriginal(current.get().key());
+            assertThat(input).anyMatch(text -> text.contains("Zielbegriff"));
+            assertThat(results.find(key)).hasSizeGreaterThan(1);
+            var found = results.find(key).getLast();
+            assertThat(found.document().attachmentId()).isEmpty();
+            assertThat(analyses.sectionText(key, found.section(), found.inputSha256(), found.extraction()))
+                    .hasValueSatisfying(text -> assertThat(text.text()).contains("Zielbegriff"));
+            int calls = input.size();
+            analyses.indexedLocal(current.get());
+            assertThat(input).hasSize(calls);
+            var recomputed = analyses.recomputeLocal(current.get(), "section-test", null);
+            assertThat(recomputed.computed()).isEqualTo(calls);
+            assertThat(recomputed.failed()).isZero();
+            assertThat(input).hasSize(calls * 2);
+            Files.writeString(directory.resolve("notiz.txt"), "New revision");
+            current.set(snapshots.fetch("docs", id("notiz.txt")));
+            analyses.indexedLocal(current.get());
+            assertThat(results.find(key)).hasSize(1);
+            assertThat(analyses.sectionText(key, found.section(), found.inputSha256(), found.extraction())).isEmpty();
+        }
+    }
+
+    @Test
+    void readerCombinesSectionAnalysesAtExactOffsetsAndKeepsResolvablePassageIds() throws IOException {
+        Files.writeString(directory.resolve("notiz.txt"),
+                "API (Application Programming Interface).\n" + "A normal sentence.\n\n".repeat(7000)
+                        + "XML (Extensible Markup Language).");
+        var source = open();
+        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(
+                directory.resolve(".extraction-store"));
+        var documents = new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
+                new TikaDocumentStructure(1, 2048), store,
+                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS);
+        var strategy = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
+                new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(documents),
+                LocalFilesTextProjector::readable);
+        var snapshots = new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source), strategy);
+        var current = new java.util.concurrent.atomic.AtomicReference<>(snapshots.fetch("docs", id("notiz.txt")));
+        var results = new com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore();
+        var acronymProcessor = new com.aresstack.spaceharvester.application.enrichment.AcronymProcessor();
+        var navigation = new com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder();
+        var rules = KnowledgeTextSegmentation.defaults();
+        var passageProcessor = new com.aresstack.spaceharvester.application.passages.PassageProcessor(
+                com.aresstack.spaceharvester.application.passages.SentenceSegmenter.splitter(rules), rules, null);
+        var navigationProcessor = new com.aresstack.spaceharvester.application.passages.NavigationProcessor(
+                navigation, null, results::find, results::find, null);
+        var termProcessor = new com.aresstack.spaceharvester.application.enrichment.language.TermProcessor(acronymProcessor);
+        var reader = new com.aresstack.spaceharvester.application.enrichment.LocalReadingText(documents);
+        var enrichments = new com.aresstack.spaceharvester.application.enrichment.Enrichments(
+                new LocalReferenceTextProjector(reader),
+                List.of(acronymProcessor, termProcessor, passageProcessor, navigationProcessor),
+                results, java.time.Clock.systemUTC());
+        var views = new com.aresstack.spaceharvester.application.enrichment.LocalReaderAnalyses(reader, enrichments, navigation);
+        try (var analyses = new com.aresstack.spaceharvester.application.enrichment.DocumentEnrichments(
+                enrichments, null, () -> true)) {
+            analyses.localDocuments(key -> java.util.Optional.of(current.get()).filter(page -> page.key().equals(key)),
+                    documents);
+            assertThat(reader.read(current.get()).orElseThrow().slices().size()).isGreaterThan(1);
+            assertThat(analyses.hasCurrentLocalAnalysis(current.get(), "passages")).isFalse();
+            assertThat(analyses.prepareLocal(current.get(), "passages")).isTrue();
+            assertThat(analyses.hasCurrentLocalAnalysis(current.get(), "passages")).isTrue();
+            var view = views.read(current.get()).orElseThrow();
+            assertThat(view.acronyms().state().name()).isEqualTo("CURRENT");
+            assertThat(view.terms().state().name()).isEqualTo("CURRENT");
+            assertThat(view.passages().state().name()).isEqualTo("CURRENT");
+            assertThat(view.navigation().state().name()).isEqualTo("CURRENT");
+            assertThat(view.acronyms().acronyms()).extracting(a -> a.acronym()).contains("API", "XML");
+            for (var acronym : view.acronyms().acronyms()) {
+                for (var occurrence : acronym.occurrences()) {
+                    assertThat(view.text().text().substring(occurrence.start(), occurrence.end()))
+                            .startsWith(acronym.acronym());
+                }
+            }
+            var last = view.passages().passages().getLast();
+            assertThat(last.text()).contains("XML");
+            assertThat(view.text().text().substring(last.start(), last.end())).isEqualTo(last.text());
+            assertThat(last.id()).contains("~local-original");
+            var resolved = com.aresstack.spaceharvester.application.passages.DocumentPassages.resolve(
+                    com.aresstack.spaceharvester.application.passages.PassageId.parse(last.id()),
+                    results.findDocuments(current.get().key()), analyses::sectionText, 1);
+            assertThat(resolved.match().name()).isEqualTo("FOUND");
+            assertThat(resolved.passages()).anyMatch(passage -> passage.id().equals(last.id())
+                    && passage.text().equals(last.text()));
+            assertThat(results.find(current.get().key())).isEmpty();
+            Files.writeString(directory.resolve("notiz.txt"), "A completely different text.");
+            current.set(snapshots.fetch("docs", id("notiz.txt")));
+            assertThat(analyses.hasCurrentLocalAnalysis(current.get(), "passages")).isFalse();
+            var stale = views.read(current.get()).orElseThrow();
+            assertThat(stale.passages().passages()).isEmpty();
+            assertThat(stale.acronyms().acronyms()).isEmpty();
+        }
+    }
+
+    private static com.aresstack.spaceharvester.application.sources.SourceCatalog catalog(HarvestSource source) {
+        return new com.aresstack.spaceharvester.application.sources.SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public java.util.Optional<HarvestSource> find(String sourceId) {
+                return java.util.Optional.of(source).filter(item -> item.id().equals(sourceId));
+            }
+        };
     }
 
     private Map<String, PageMetadata> list(KnowledgeSourceHarvestSource source, int limit) {

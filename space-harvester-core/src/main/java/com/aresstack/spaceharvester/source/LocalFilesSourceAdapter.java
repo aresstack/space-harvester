@@ -77,7 +77,15 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
                     return granted == null ? LocalFileAccessPolicy.none()
                             : LocalFileAccessPolicy.of(granted.allowAll(),
                                     granted.roots().stream().filter(Files::isDirectory).toList());
-                }, VideoFileTypes::streamableType);
+                }, VideoFileTypes::streamableType, true);
+    }
+
+    /** Resolve a relative folder path using the same local IDs as the source navigation. */
+    public static String folderPageId(Path relative) {
+        if (relative.isAbsolute() || relative.toString().isEmpty() || relative.normalize().startsWith("..")) {
+            throw new IllegalArgumentException("Expected a folder path relative to the source root");
+        }
+        return LocalFolderHierarchy.encode(relative.toString().replace('\\', '/'));
     }
 
     @Override
@@ -98,7 +106,10 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
     /** Die Felder des Upstream-Typs ohne {@code title}, der außerhalb von {@code options} steht. */
     @Override
     public List<SourceField> fields() {
-        return SourceFields.of(provider.type(), Set.of("title"));
+        List<SourceField> fields = new ArrayList<>(SourceFields.of(provider.type(), Set.of("title")));
+        fields.add(new SourceField("includeEnabled", "Dateifilter aktivieren",
+                "Aus: alle regulären Dateien", SourceField.Kind.FLAG, false, false, "false"));
+        return List.copyOf(fields);
     }
 
     @Override
@@ -158,6 +169,10 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
 
     private static SourceSettings settings(SourceSettingsConfig config) {
         Map<String, String> values = new LinkedHashMap<>(config.options());
+        String enabled = values.remove("includeEnabled");
+        if (!com.aresstack.spaceharvester.application.sources.LocalFileFilter.enabled(values.get("include"), enabled)) {
+            values.remove("include");
+        }
         values.putIfAbsent("maxFileMegabytes", Integer.toString(DEFAULT_MAX_FILE_MEGABYTES));
         if (config.title() != null) {
             values.put("title", config.title());

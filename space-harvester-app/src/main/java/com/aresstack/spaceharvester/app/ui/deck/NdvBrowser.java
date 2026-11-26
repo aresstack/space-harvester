@@ -166,7 +166,7 @@ final class NdvBrowser extends JPanel {
     private final JPanel tools = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
     private final JPanel foot = new JPanel(new BorderLayout());
     /** Zwischenspeicher, Abhängigkeiten und Sperrliste dieses Servers (wie NdvSourceCacheService in MainframeMate). */
-    private final NdvAnalysis analysis;
+    private NdvAnalysis analysis;
     private final NdvAccessRules rules = NdvAnalysisSettings.rules();
     private final IconButton hideBlockedToggle = new IconButton(Glyph.LOCK, "Gesperrte ausblenden (Sperrliste)");
     private final IconButton indexToggle = new IconButton(Glyph.PULSE,
@@ -231,7 +231,7 @@ final class NdvBrowser extends JPanel {
         hiddenTypes.addAll(state.hiddenTypes());
         hideBlocked = state.hideBlacklisted();
         indexVisible = state.indexVisible();
-        analysis = NdvAnalysisSettings.analysis(session.profile().label());
+        analysis = NdvAnalysisSettings.analysis(session);
         indexPanel = new NdvIndexPanel(this::openHit);
         relationsPanel = new NdvRelationsPanel(new NdvRelationsPanel.Navigator() {
             @Override
@@ -405,12 +405,8 @@ final class NdvBrowser extends JPanel {
         right.setBorder(BorderFactory.createEmptyBorder(8, 6, 0, 12));
         ComicDivider.install(right);
         // Unter der Arbeitsfläche rechts die Leiste mit der Lupe, auf einer Linie mit der Fußleiste der Seitenleiste.
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, left, DeckBars.withFind(right));
-        split.setResizeWeight(0.2);
-        split.setDividerLocation(220);
-        split.setOpaque(false);
-        split.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 0));
-        ComicDivider.install(split);
+        var split = new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
+                left, DeckBars.withFind(right), 280).withDividerToggle();
         add(split, BorderLayout.CENTER);
         add(indexPanel, BorderLayout.EAST);
         indexPanel.setVisible(indexVisible);
@@ -559,6 +555,9 @@ final class NdvBrowser extends JPanel {
     private void stateChanged() {
         if (session.state() == NdvState.CONNECTED && !everConnected) {
             everConnected = true;
+            unwatch();
+            analysis = NdvAnalysisSettings.analysis(session);
+            watch();
             // Erst jetzt ist der Benutzer bekannt: den gemerkten Filter dieses Benutzers holen (nicht den anonymen).
             state.restoreFilter(nameFilter, session.profile().host(), session.user(), scope());
             updateFilterButtons();
@@ -680,6 +679,8 @@ final class NdvBrowser extends JPanel {
                     : objects.getRowCount() + " Objekte in " + current, false);
             openPending();
             // Wie in MainframeMate: nach dem Auflisten Abhängigkeiten aufbauen und Quelltexte vorab laden.
+            NdvAnalysisSettings.searchLink().visited(session.profile(), session.account(),
+                    navigationPaths(current, objects.rows));
             startAnalysis(current, List.copyOf(objects.rows), false);
         }, error -> {
             if (listing.get() != generation) {
@@ -796,13 +797,17 @@ final class NdvBrowser extends JPanel {
             return;
         }
         NdvBookmark probe = new NdvBookmark(library, wanted);
-        for (NdvObject object : objects.rows) {
-            if (object.displayName().equalsIgnoreCase(probe.objectName())) {
-                int line = pendingLineByName;
-                pendingLineByName = 0;
-                openAt(object, line);
-                return;
-            }
+        List<NdvObject> matches = objects.rows.stream()
+                .filter(object -> object.displayName().equalsIgnoreCase(probe.objectName())).toList();
+        int line = pendingLineByName;
+        pendingLineByName = 0;
+        if (matches.size() > 1) {
+            note("Mehrdeutiges Lesezeichen: " + wanted + " – bitte Objekt in der Liste auswählen", true);
+            return;
+        }
+        if (matches.size() == 1) {
+            openAt(matches.getFirst(), line);
+            return;
         }
         note("Lesezeichen nicht gefunden: " + library + "/" + wanted, true);
     }
@@ -1142,6 +1147,14 @@ final class NdvBrowser extends JPanel {
      * geändert hat (nur Erlaubtes); danach wird der Graph neu gebaut. Mit {@code explicit} auch ohne Änderung der
      * Sperrliste erneut.
      */
+    List<String> navigationPaths(String lib, List<NdvObject> listed) {
+        return listed.stream().filter(NdvObject::source)
+                .filter(object -> !object.location().ddm())
+                .filter(object -> lib.equalsIgnoreCase(object.library()))
+                .filter(object -> rules.isAllowed(NdvAccessRules.path(lib, object.displayName())))
+                .map(NdvObject::path).distinct().toList();
+    }
+
     private void startAnalysis(String lib, List<NdvObject> listed, boolean explicit) {
         if (lib == null || listed.isEmpty()) {
             return;
@@ -1149,7 +1162,8 @@ final class NdvBrowser extends JPanel {
         // Mit Größe und Datum jedes Objekts: Ein auf dem Server geänderter Quelltext ändert meist weder Anzahl noch
         // Regeln, muss nach „Neu laden“ aber neu geprüft werden.
         String key = lib + "|" + rules.snapshot().hashCode() + "|" + listed.stream()
-                .map(o -> o.displayName() + ":" + o.sourceSize() + ":" + o.changed()).toList().hashCode();
+                .map(o -> o.path() + ":" + o.location().databaseId() + ":" + o.location().fileNumber()
+                        + ":" + o.sourceSize() + ":" + o.changed()).toList().hashCode();
         if (!explicit && key.equals(lastPrefetch) && analysis.graph(lib).isPresent()) {
             return;
         }
@@ -1312,7 +1326,7 @@ final class NdvBrowser extends JPanel {
         }
         java.util.Optional<NdvSearchLink.Rule> rule;
         try {
-            rule = link.rule(session.profile());
+            rule = link.rule(session.profile(), session.account());
         } catch (RuntimeException e) {
             indexPanel.searchRule("Wissensquellen nicht lesbar: " + ConnectForm.describe(e), Comic.RED, false,
                     false);
@@ -1359,7 +1373,7 @@ final class NdvBrowser extends JPanel {
 
     /** „Jetzt indexieren“: Abgleich der Wissensquelle dieses Servers als eigener Auftrag. */
     void indexNow() {
-        NdvAnalysisSettings.searchLink().rule(session.profile()).ifPresentOrElse(rule -> indexNow(rule.sourceId()),
+        NdvAnalysisSettings.searchLink().rule(session.profile(), session.account()).ifPresentOrElse(rule -> indexNow(rule.sourceId()),
                 () -> note("Für diesen Server gibt es noch keine Regel", true));
     }
 
@@ -1438,7 +1452,13 @@ final class NdvBrowser extends JPanel {
     }
 
     private void openHit(NdvSourceCache.Hit hit) {
-        openByName(hit.name(), hit.line(), hit.library());
+        List<NdvObject> matches = objects.rows.stream().filter(hit::matches).toList();
+        if (matches.size() != 1 || objects.rows.stream()
+                .filter(object -> object.path().equalsIgnoreCase(matches.getFirst().path())).count() != 1) {
+            note("Quelltextfundstelle nicht eindeutig in der aktuellen Bibliothek auflösbar", true);
+            return;
+        }
+        openAt(matches.getFirst(), hit.line());
     }
 
     /** Beziehungen des geöffneten Objekts neu zeigen. */
@@ -1483,11 +1503,15 @@ final class NdvBrowser extends JPanel {
         String wanted = name.toUpperCase(Locale.ROOT);
         String lib = inLibrary != null ? inLibrary : library;
         if (lib != null && lib.equals(library)) {
-            for (NdvObject object : objects.rows) {
-                if (object.displayName().equalsIgnoreCase(wanted)) {
-                    openAt(object, line);
-                    return;
-                }
+            List<NdvObject> matches = objects.rows.stream()
+                    .filter(object -> object.displayName().equalsIgnoreCase(wanted)).toList();
+            if (matches.size() > 1) {
+                note("Mehrdeutiger Objektname: " + wanted + " – bitte Objekt in der Liste auswählen", true);
+                return;
+            }
+            if (matches.size() == 1) {
+                openAt(matches.getFirst(), line);
+                return;
             }
         }
         java.util.Optional<String> target = inLibrary != null ? java.util.Optional.of(inLibrary)

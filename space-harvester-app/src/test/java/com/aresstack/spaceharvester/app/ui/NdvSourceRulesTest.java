@@ -18,10 +18,10 @@ class NdvSourceRulesTest {
 
     @Test
     void aSourceBelongsToTheServerWithTheSameHostAndPort() {
-        NdvProfile profile = new NdvProfile("ndv.example.test", 2700, "");
+        NdvProfile profile = new NdvProfile("ndv.example.test", 8011, "");
         assertThat(NdvSourceRules.matches(config("ndv", Map.of("host", "NDV.example.test")), profile))
-                .as("Port fehlt = 2700, Host ohne Groß-/Kleinschreibung").isTrue();
-        assertThat(NdvSourceRules.matches(config("ndv", Map.of("host", "ndv.example.test", "port", "8011")),
+                .as("Port fehlt = 8011, Host ohne Groß-/Kleinschreibung").isTrue();
+        assertThat(NdvSourceRules.matches(config("ndv", Map.of("host", "ndv.example.test", "port", "2700")),
                 profile)).isFalse();
         assertThat(NdvSourceRules.matches(config("ftp", Map.of("host", "ndv.example.test")), profile)).isFalse();
         assertThat(NdvSourceRules.matches(config("ndv", Map.of("host", "anderer.example.test")), profile)).isFalse();
@@ -29,10 +29,31 @@ class NdvSourceRulesTest {
 
     @Test
     void librariesComeFromTheStartPointsAndAreAddedWithoutDuplicates() {
-        assertThat(NdvSourceRules.libraries("lager, KASSE/KA*, ,lager")).containsExactly("LAGER", "KASSE");
+        assertThat(NdvSourceRules.libraries("lager, KASSE/KA*, ,lager")).containsExactly("LAGER");
         assertThat(NdvSourceRules.libraries(null)).isEmpty();
-        assertThat(NdvSourceRules.withLibraries("KASSE/KA*", List.of("lager", "kasse"))).isEqualTo("KASSE/KA*, LAGER");
+        assertThat(NdvSourceRules.withLibraries("KASSE/KA*", List.of("lager", "kasse"))).isEqualTo("KASSE/KA*, LAGER, KASSE");
         assertThat(NdvSourceRules.withLibraries(null, List.of("lager"))).isEqualTo("LAGER");
+    }
+
+    @Test
+    void sameEndpointDoesNotProveSameAccount() {
+        var configured = config("ndv", Map.of("host", "ndv.example.test", "credentialRef", "keepass:NDV-A"));
+        assertThat(NdvSourceRules.sameAccount(configured, null, "NDV-A")).isTrue();
+        assertThat(NdvSourceRules.sameAccount(configured, null, "NDV-B")).isFalse();
+        assertThat(NdvSourceRules.sameAccount(configured, null, "")).isFalse();
+        assertThat(NdvSourceRules.sameAccount(configured, "NDV-B", "NDV-A")).isFalse();
+        assertThat(NdvSourceRules.sameAccount(configured, "NDV-B", "NDV-B")).isTrue();
+    }
+
+    @Test
+    void allLibraryRuleCoversNewlyDiscoveredLibrariesAndPreservesLegacySelections() {
+        var rule = new com.aresstack.spaceharvester.app.ui.deck.NdvSearchLink.Rule(
+                "natural", "Natural", List.of(), true);
+        assertThat(rule.covers("NEWLIB")).isTrue();
+        assertThat(new com.aresstack.spaceharvester.app.ui.deck.NdvSearchLink.Rule(
+                "natural", "Natural", List.of("LAGER")).covers("NEWLIB")).isFalse();
+        assertThat(NdvLibrarySelection.selections("LAGER; kasse/KA*, FDDM:\nLAGER"))
+                .containsExactly("LAGER", "KASSE/KA*", "FDDM:");
     }
 
     @Test

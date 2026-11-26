@@ -135,6 +135,21 @@ public class Enrichments {
     private static final Pattern ID = Pattern.compile("[a-z][a-z0-9-]{0,63}");
 
     private final PageTextProjector projector;
+    private volatile LocalReaderAnalyses localReader;
+
+    public void localReader(LocalReaderAnalyses localReader) {
+        this.localReader = Objects.requireNonNull(localReader, "localReader");
+    }
+
+    public Optional<LocalReaderAnalyses.Result> localReading(PageSnapshot snapshot) {
+        LocalReaderAnalyses reader = localReader;
+        return reader == null ? Optional.empty() : reader.read(snapshot);
+    }
+
+    public Optional<LocalReadingText.Reading> localReadingText(PageSnapshot snapshot) {
+        LocalReaderAnalyses reader = localReader;
+        return reader == null ? Optional.empty() : reader.reading(snapshot);
+    }
     private final Map<String, EnrichmentProcessor> processors = new LinkedHashMap<>();
     private final EnrichmentStore store;
     private final Clock clock;
@@ -361,6 +376,7 @@ public class Enrichments {
             }
             Enrichment old = previous.get(processor.id());
             if (old != null && old.freshness(input, processor.version()) == Enrichment.Freshness.CURRENT
+                    && (!document.localOriginal() || old.status() == Enrichment.Status.OK)
                     && processor.current(old, text, position)) {
                 current++;
                 continue;
@@ -450,6 +466,10 @@ public class Enrichments {
      */
     public int recomputeInBackground(PageSnapshot snapshot, Collection<String> processorIds)
             throws InterruptedException {
+        if (processors.values().stream().noneMatch(processor -> processorIds.contains(processor.id())
+                && !sectionOwned(snapshot, processor))) {
+            return 0;
+        }
         Optional<PageText> projected = projection(snapshot);
         if (projected.isEmpty()) {
             return 0;
@@ -461,7 +481,7 @@ public class Enrichments {
         store.find(key).forEach(enrichment -> stored.add(enrichment.processorId()));
         int count = 0;
         for (EnrichmentProcessor processor : processors.values()) {
-            if (!processorIds.contains(processor.id())) {
+            if (!processorIds.contains(processor.id()) || sectionOwned(snapshot, processor)) {
                 continue;
             }
             if (!processor.appliesTo(key)) {
@@ -507,7 +527,7 @@ public class Enrichments {
         String input = projection(snapshot).map(PageText::inputSha256).orElse(null);
         Map<String, String> applicable = new LinkedHashMap<>();
         for (EnrichmentProcessor processor : processors.values()) {
-            if (processor.appliesTo(snapshot.key())) {
+            if (!sectionOwned(snapshot, processor) && processor.appliesTo(snapshot.key())) {
                 applicable.put(processor.id(), processor.version());
             }
         }
@@ -528,6 +548,37 @@ public class Enrichments {
             views.add(new View(enrichment, freshness));
         }
         return new Inspection(input, views, applicable);
+    }
+
+    /** Inspect the stored local section results without treating them as whole-page analyses. */
+    public List<View> localInspection(PageSnapshot snapshot) {
+        List<View> views = new ArrayList<>();
+        if (com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.recognizes(snapshot.payload())) {
+            Optional<LocalReadingText.Reading> reading = localReadingText(snapshot);
+            for (Enrichment enrichment : store.findDocuments(snapshot.key())) {
+                if (!enrichment.document().localOriginal()) {
+                    continue;
+                }
+                EnrichmentProcessor processor = processors.get(enrichment.processorId());
+                String expectedVersion = processor == null ? null : processor.version();
+                Enrichment.Freshness freshness = Enrichment.Freshness.STALE;
+                if (reading.isPresent() && enrichment.extraction() != null
+                        && enrichment.extraction().startsWith(DocumentEnrichments.basis(reading.get().extraction()) + "|")
+                        && !outdated(enrichment)) {
+                    var slice = reading.get().slices().stream()
+                            .filter(s -> s.document().equals(enrichment.document()) && s.section() == enrichment.section())
+                            .findFirst();
+                    if (slice.isPresent()) {
+                        freshness = enrichment.freshness(slice.get().text().inputSha256(), expectedVersion);
+                    } else if (enrichment.processorVersion().equals(expectedVersion)) {
+                        // The completed extraction can include sections outside the bounded reader.
+                        freshness = Enrichment.Freshness.CURRENT;
+                    }
+                }
+                views.add(new View(enrichment, freshness));
+            }
+        }
+        return List.copyOf(views);
     }
 
     /** Die aktuellen Prozessoren mit ihrer Version in Ausführungsreihenfolge. */
@@ -615,7 +666,18 @@ public class Enrichments {
     public record Run(boolean supported, int computed, int current, int failed) {
     }
 
+    private static boolean sectionOwned(PageSnapshot snapshot, EnrichmentProcessor processor) {
+        return processor.documents() && com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                .recognizes(snapshot.payload());
+    }
+
     private Run run(PageSnapshot snapshot, String only, boolean force) {
+        var local = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.read(snapshot.payload());
+        if (local.isPresent() && processors.values().stream().noneMatch(processor ->
+                (only == null || only.equals(processor.id())) && !sectionOwned(snapshot, processor)
+                        && processor.appliesTo(snapshot.key()))) {
+            return new Run(local.get().extractionKey() != null, 0, 0, 0);
+        }
         Optional<PageText> projected = projection(snapshot);
         if (projected.isEmpty()) {
             return new Run(false, 0, 0, 0);
@@ -630,7 +692,8 @@ public class Enrichments {
         int current = 0;
         int failed = 0;
         for (EnrichmentProcessor processor : processors.values()) {
-            if (only != null && !only.equals(processor.id()) || !processor.appliesTo(snapshot.key())) {
+            if (only != null && !only.equals(processor.id()) || sectionOwned(snapshot, processor)
+                    || !processor.appliesTo(snapshot.key())) {
                 continue;
             }
             Enrichment previous = stored.get(processor.id());
@@ -719,7 +782,7 @@ public class Enrichments {
             PageText current = text;
             String currentInput = input;
             for (int attempt = 0; attempt < TEXT_CHANGE_ATTEMPTS; attempt++) {
-                if (!processor.appliesTo(snapshot.key())) {
+                if (sectionOwned(snapshot, processor) || !processor.appliesTo(snapshot.key())) {
                     return Queued.SKIPPED;
                 }
                 Enrichment previous = store.find(snapshot.key()).stream()
@@ -1951,7 +2014,7 @@ public class Enrichments {
     private Queued computeWork(Work work) {
         EnrichmentProcessor processor = processors.get(work.processorId());
         Optional<PageSnapshot> snapshot = processor == null ? Optional.empty() : lookup.apply(work.key());
-        Optional<PageText> text = snapshot.flatMap(this::projection);
+        Optional<PageText> text = snapshot.filter(page -> !sectionOwned(page, processor)).flatMap(this::projection);
         if (text.isEmpty()) {
             return Queued.SKIPPED;
         }
@@ -1966,7 +2029,7 @@ public class Enrichments {
     private void fallback(Work work) {
         EnrichmentProcessor processor = processors.get(work.processorId());
         Optional<PageSnapshot> snapshot = processor == null ? Optional.empty() : lookup.apply(work.key());
-        Optional<PageText> text = snapshot.flatMap(this::projection);
+        Optional<PageText> text = snapshot.filter(page -> !sectionOwned(page, processor)).flatMap(this::projection);
         if (text.isEmpty() || background == null) {
             return;
         }

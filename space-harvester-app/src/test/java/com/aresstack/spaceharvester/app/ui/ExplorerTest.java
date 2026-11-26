@@ -32,6 +32,51 @@ class ExplorerTest {
     }
 
     @Test
+    void selectingHiddenSourceKeepsTheExplicitSearchAndChatScope() throws Exception {
+        Path visible = Files.createDirectories(home.resolve("visible"));
+        Path hidden = Files.createDirectories(home.resolve("hidden"));
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: visible
+                      type: files
+                      options:
+                        directory: %s
+                    - id: hidden
+                      type: files
+                      show-in-explorer: false
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), visible, hidden));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> {
+            Explorer explorer = new Explorer(context);
+            var scopes = new java.util.concurrent.atomic.AtomicReference<List<Explorer.Scope>>();
+            var selection = new java.util.concurrent.atomic.AtomicReference<
+                    com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection>();
+            explorer.onScope(scopes::set);
+            explorer.onSelection(selection::set);
+            explorer.select(List.of(new Explorer.Scope("visible", null)));
+            var wanted = List.of(new Explorer.Scope("hidden", null));
+            explorer.select(wanted);
+            assertThat(explorer.tree().getSelectionCount()).isZero();
+            assertThat(explorer.scopes()).isEqualTo(wanted);
+            assertThat(scopes.get()).isEqualTo(wanted);
+            assertThat(selection.get().sourceId()).isEqualTo("hidden");
+            explorer.selectAll();
+            assertThat(explorer.scopes()).isEmpty();
+            assertThat(selection.get().global()).isTrue();
+        });
+    }
+
+    @Test
     void nodeKindControlsIconsWithoutInspectingTheSourceType() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, "space-harvester-app:\n  data-directory: "
@@ -106,6 +151,178 @@ class ExplorerTest {
             assertThat(explorer.tree().getModel().isLeaf(cached)).isTrue();
         });
     }
+
+    @Test
+    void sharePointExplorerLoadsMoreWithoutReadingAllServerPages() throws Exception {
+        try (com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint site =
+                     com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint.paginated(251, 100)) {
+            Explorer explorer = sharePointExplorer(site);
+            Explorer.Node library = expandSharePointLibrary(explorer);
+            awaitChildren(library, 101);
+            assertThat(site.continuationRequests()).isZero();
+            SwingUtilities.invokeAndWait(() -> clickMore(explorer, library, 100));
+            awaitChildren(library, 201);
+            assertThat(site.continuationRequests()).isEqualTo(1);
+            SwingUtilities.invokeAndWait(() -> clickMore(explorer, library, 200));
+            awaitChildren(library, 251);
+            assertThat(site.continuationRequests()).isEqualTo(2);
+            assertUniquePages(library, 251);
+        }
+    }
+
+    @Test
+    void sharePointExplorerRetriesTemporaryFailureAndDeduplicatesShiftedPages() throws Exception {
+        try (com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint site =
+                     com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint.paginated(251, 100)) {
+            Explorer explorer = sharePointExplorer(site);
+            Explorer.Node library = expandSharePointLibrary(explorer);
+            awaitChildren(library, 101);
+            Explorer.MoreItem before = moreItem(library);
+            site.failFileRequestAfter(0);
+            SwingUtilities.invokeAndWait(() -> clickMore(explorer, library, 100));
+            awaitChildren(library, 101);
+            assertThat(moreItem(library)).isEqualTo(before);
+
+            site.addFile("000-new.txt");
+            SwingUtilities.invokeAndWait(() -> clickMore(explorer, library, 100));
+            awaitChildren(library, 200);
+            SwingUtilities.invokeAndWait(() -> clickMore(explorer, library, 199));
+            awaitChildren(library, 251);
+            assertUniquePages(library, 251);
+        }
+    }
+
+    @Test
+    void sharePointExplorerOffersLocalReloadWhenInvalidCursorRecoveryFails() throws Exception {
+        try (com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint site =
+                     com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint.paginated(251, 250)) {
+            Explorer explorer = sharePointExplorer(site);
+            Explorer.Node library = expandSharePointLibrary(explorer);
+            awaitChildren(library, 101);
+            Explorer.Node retained = (Explorer.Node) library.getChildAt(1);
+            site.removeFile("Datei-0000.txt");
+            site.failFileRequestAfter(1);
+            SwingUtilities.invokeAndWait(() -> clickMore(explorer, library, 100));
+            awaitChildren(library, 101);
+            assertThat(moreItem(library).cursor()).isNull();
+
+            SwingUtilities.invokeAndWait(() -> clickMore(explorer, library, 100));
+            awaitChildren(library, 102);
+            assertThat(moreItem(library).cursor()).isNotNull();
+            assertThat(library.getChildAt(0)).isSameAs(retained);
+            SwingUtilities.invokeAndWait(() -> clickMore(explorer, library, 101));
+            awaitChildren(library, 202);
+            SwingUtilities.invokeAndWait(() -> clickMore(explorer, library, 201));
+            awaitChildren(library, 250);
+            assertUniquePages(library, 250);
+        }
+    }
+
+    @Test
+    void sharePointExplorerAutomaticallyRestartsInvalidCursorAndPreservesExistingNode() throws Exception {
+        try (com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint site =
+                     com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint.paginated(251, 250)) {
+            Explorer explorer = sharePointExplorer(site);
+            Explorer.Node library = expandSharePointLibrary(explorer);
+            awaitChildren(library, 101);
+            Explorer.Node retained = (Explorer.Node) library.getChildAt(1);
+            SwingUtilities.invokeAndWait(() ->
+                    explorer.tree().setSelectionPath(new javax.swing.tree.TreePath(retained.getPath())));
+            site.removeFile("Datei-0000.txt");
+            SwingUtilities.invokeAndWait(() -> clickMore(explorer, library, 100));
+            awaitChildren(library, 102);
+            SwingUtilities.invokeAndWait(() -> {
+                assertThat(library.getChildAt(0)).isSameAs(retained);
+                assertThat(explorer.tree().getSelectionPath().getLastPathComponent()).isSameAs(retained);
+                assertThat(explorer.tree().isExpanded(new javax.swing.tree.TreePath(library.getPath()))).isTrue();
+            });
+            assertThat(moreItem(library).cursor()).isNotNull();
+        }
+    }
+
+    private Explorer sharePointExplorer(
+            com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint site) throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: "
+                + home.resolve("data").toString().replace('\\', '/') + "\n"
+                + "space-harvester:\n  sources:\n    - id: sp\n      type: sharepoint\n"
+                + "      title: SharePoint\n      options:\n        siteUrl: " + site.siteUrl() + "\n");
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        Explorer[] explorer = new Explorer[1];
+        SwingUtilities.invokeAndWait(() -> explorer[0] = new Explorer(context));
+        return explorer[0];
+    }
+
+    private static Explorer.Node expandSharePointLibrary(Explorer explorer) throws Exception {
+        Explorer.Node root = (Explorer.Node) explorer.tree().getModel().getRoot();
+        awaitChildren(root, 1);
+        Explorer.Node source = expandOnlyChild(explorer, root);
+        awaitChildren(source, 1);
+        Explorer.Node space = expandOnlyChild(explorer, source);
+        awaitChildren(space, 1);
+        return expandOnlyChild(explorer, space);
+    }
+
+    private static Explorer.Node expandOnlyChild(Explorer explorer, Explorer.Node parent) throws Exception {
+        Explorer.Node[] child = new Explorer.Node[1];
+        SwingUtilities.invokeAndWait(() -> {
+            child[0] = (Explorer.Node) parent.getFirstChild();
+            explorer.tree().setSize(500, 10000);
+            explorer.tree().expandPath(new javax.swing.tree.TreePath(child[0].getPath()));
+        });
+        return child[0];
+    }
+
+    private static Explorer.MoreItem moreItem(Explorer.Node parent) throws Exception {
+        Explorer.MoreItem[] item = new Explorer.MoreItem[1];
+        SwingUtilities.invokeAndWait(() -> item[0] = (Explorer.MoreItem) ((Explorer.Node) parent.getLastChild()).item());
+        return item[0];
+    }
+
+    private static void assertUniquePages(Explorer.Node parent, int count) throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            List<String> ids = new java.util.ArrayList<>();
+            for (int i = 0; i < parent.getChildCount(); i++) {
+                Explorer.Node child = (Explorer.Node) parent.getChildAt(i);
+                ids.add(((Explorer.PageItem) child.item()).pageId());
+            }
+            assertThat(ids).hasSize(count).doesNotHaveDuplicates();
+        });
+    }
+
+    private static void clickMore(Explorer explorer, Explorer.Node parent, int count) {
+        assertThat(parent.getChildCount()).isEqualTo(count + 1);
+        Explorer.Node more = (Explorer.Node) parent.getLastChild();
+        assertThat(more.item()).isInstanceOf(Explorer.MoreItem.class);
+        javax.swing.JTree tree = explorer.tree();
+        tree.setSize(500, 10000);
+        javax.swing.tree.TreePath path = new javax.swing.tree.TreePath(more.getPath());
+        tree.scrollPathToVisible(path);
+        java.awt.Rectangle bounds = tree.getPathBounds(path);
+        assertThat(bounds).isNotNull();
+        explorer.treeMouse().mouseClicked(mouseEvent(tree, java.awt.event.MouseEvent.MOUSE_CLICKED,
+                bounds.x + 5, bounds.y + bounds.height / 2, 1));
+    }
+
+    private static void awaitChildren(Explorer.Node parent, int count) throws Exception {
+        boolean[] ready = new boolean[1];
+        for (int i = 0; i < 200; i++) {
+            SwingUtilities.invokeAndWait(() -> ready[0] = !parent.loading && parent.getChildCount() == count
+                    && !(parent.getFirstChild() instanceof Explorer.Node
+                    && ((Explorer.Node) parent.getFirstChild()).item() instanceof Explorer.Note));
+            if (ready[0]) return;
+            Thread.sleep(50);
+        }
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(parent.loading).isFalse();
+            assertThat(parent.getChildCount()).isEqualTo(count);
+            assertThat(ready[0]).isTrue();
+        });
+    }
+
 
     @Test
     void theTitleFilterAsksTheSourceForPagesNeverLoaded() throws Exception {

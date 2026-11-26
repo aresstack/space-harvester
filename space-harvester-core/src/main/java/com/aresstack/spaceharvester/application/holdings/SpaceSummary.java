@@ -14,7 +14,12 @@ import java.util.Objects;
  *                   Suche); {@code null}, wenn der Cache von dem Space nichts kennt
  * @param counts     Zähler über alle sichtbaren Seiten des Space
  */
-public record SpaceSummary(String sourceId, String spaceKey, CacheGeneration generation, HoldingCounts counts) {
+public record SpaceSummary(String sourceId, String spaceKey, CacheGeneration generation, HoldingCounts counts,
+                           IndexCoverage indexCoverage) {
+
+    public SpaceSummary(String sourceId, String spaceKey, CacheGeneration generation, HoldingCounts counts) {
+        this(sourceId, spaceKey, generation, counts, null);
+    }
 
     public SpaceSummary {
         Objects.requireNonNull(sourceId, "sourceId");

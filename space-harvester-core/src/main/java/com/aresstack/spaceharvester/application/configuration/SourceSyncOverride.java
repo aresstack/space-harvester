@@ -28,7 +28,20 @@ import java.time.Duration;
 public record SourceSyncOverride(Duration changeSearchInterval, Duration inventoryInterval, Boolean events,
                                  Boolean catchUpOnStart, Boolean beforeSearch, SyncMode mode,
                                  RefreshStrategy refreshStrategy, Duration maxAge, Duration withheldRetention,
-                                 Boolean backgroundFill) {
+                                 Boolean backgroundFill, Boolean prefetchHits) {
+
+    public SourceSyncOverride(Duration changeSearchInterval, Duration inventoryInterval, Boolean events,
+                              Boolean catchUpOnStart, Boolean beforeSearch, SyncMode mode,
+                              RefreshStrategy refreshStrategy, Duration maxAge, Duration withheldRetention,
+                              Boolean backgroundFill) {
+        this(changeSearchInterval, inventoryInterval, events, catchUpOnStart, beforeSearch, mode, refreshStrategy,
+                maxAge, withheldRetention, backgroundFill, null);
+    }
+
+    /** Resolve the source override without changing the global default. */
+    public boolean effectivePrefetch(boolean global) {
+        return prefetchHits == null ? global : prefetchHits;
+    }
 
     /** Unterschlüssel unter {@code sync.sources.<Quelle>.}. */
     public static final String CHANGE_SEARCH_INTERVAL = "interval";
@@ -41,6 +54,7 @@ public record SourceSyncOverride(Duration changeSearchInterval, Duration invento
     public static final String MAX_AGE = "max-age";
     public static final String WITHHELD_RETENTION = "withheld-retention";
     public static final String BACKGROUND_FILL = "background-fill";
+    public static final String PREFETCH_HITS = "prefetch-hits";
 
     /** Übernimmt alles global. */
     public static final SourceSyncOverride NONE = new SourceSyncOverride(null, null, null, null, null, null, null, null,

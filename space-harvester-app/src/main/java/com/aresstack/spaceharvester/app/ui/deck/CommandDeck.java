@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.deck;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
+import com.aresstack.spaceharvester.app.chat.JesChatTools;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess;
@@ -107,7 +108,9 @@ public final class CommandDeck {
     private final Perspective perspective;
     /** Startseite: beim Wechsel ins Deck gewählt, verbindet nichts. */
     private final DeckHome home;
-    private DeckArea area = DeckArea.HOME;
+    private volatile DeckArea area = DeckArea.HOME;
+    private volatile long chatGeneration;
+    private final java.util.List<Runnable> sidebarObservers = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /** Ohne Passwortspeicher und Proxy (Tests). */
     public CommandDeck() {
@@ -162,6 +165,7 @@ public final class CommandDeck {
                         new com.aresstack.spaceharvester.deck.files.sharepoint.windows.NetUseLogin(), connecting),
                 () -> sharePointSites.get(), accounts);
         ftp = new FtpWorkspace(ftpSessions, accounts, editors);
+        ftp.onChatChanged(() -> { if (area == DeckArea.FTP) areaObservers.forEach(Runnable::run); });
         tools.setOpaque(false);
         ndv = new NdvWorkspace(ndvSessions, accounts, editors);
         eakte = new EakteWorkspace(eakteSessions, accounts);
@@ -230,6 +234,8 @@ public final class CommandDeck {
         stage.add(findBar(), BorderLayout.SOUTH);
         // Bereiche mit Seitenleiste nehmen die Lupe unter ihre Arbeitsfläche (DeckBars.FindSlot), wie im Space Harvester.
         stage.putClientProperty(DeckBars.FIND_HOST, (Runnable) this::placeFindBar);
+        stage.putClientProperty(com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane.HOST,
+                (Runnable) () -> sidebarObservers.forEach(Runnable::run));
         // Ein Editor wird gezeigt oder verdeckt: Falt-Umschalter, Sprachauswahl und Treffer folgen ihm.
         stage.putClientProperty(com.aresstack.spaceharvester.app.ui.FindBar.VIEW_HOST,
                 (Runnable) () -> findBar().viewChanged());
@@ -309,6 +315,10 @@ public final class CommandDeck {
     }
 
     /** Der Proxy-Weg der App für NDV-Verbindungen, die ihn gewählt haben (Vorgabe direkt). */
+    public void ftpNavigation(FtpNavigationObserver observer) {
+        ftp.navigationObserver(observer);
+    }
+
     public void ndvRoute(PalNdvConnector.Route route) {
         ndvRoute = route == null ? profile -> java.net.Proxy.NO_PROXY : route;
     }
@@ -335,14 +345,36 @@ public final class CommandDeck {
                     com.aresstack.spaceharvester.app.chat.TerminalChatTools.systemMessage(where));
         }
         JComponent shown = areaView(sent);
+        long areaGeneration = chatGeneration;
+        long ftpGeneration = ftp.chatGeneration();
+        java.util.function.BooleanSupplier stillShown = () -> area == sent && chatGeneration == areaGeneration
+                && (sent != DeckArea.FTP || ftp.chatGeneration() == ftpGeneration);
         com.aresstack.spaceharvester.app.chat.ChatToolset extra = null;
         String listing = "";
         java.util.List<String> rules = java.util.List.of();
         String where = "Command Deck › " + sent.title();
         String key = "command-deck/" + sent.name().toLowerCase(java.util.Locale.ROOT);
         if (sent == DeckArea.FTP) {
-            extra = new com.aresstack.spaceharvester.app.chat.FtpChatTools(ftp.selected(), ftp::selected);
-            rules = com.aresstack.spaceharvester.app.chat.FtpChatTools.rules();
+            FtpSessionView active = ftp.activeSessionView();
+            if (active != null) {
+                where += " › " + active.view();
+                key += "/" + active.session().id() + "/" + active.view();
+                if (FtpSessionView.JOBS.equals(active.view())) {
+                    shown = active.jobs();
+                    JesChatTools jes = new JesChatTools(active.jobs(), stillShown);
+                    extra = jes;
+                    rules = JesChatTools.rules();
+
+                } else {
+                    shown = active.datasets();
+                    extra = new com.aresstack.spaceharvester.app.chat.FtpChatTools(ftp.selected(), ftp::selected);
+                    rules = com.aresstack.spaceharvester.app.chat.FtpChatTools.rules();
+                    var diagnosis = active.datasets().diagnosis();
+                    if (diagnosis != null) {
+                        extra = new com.aresstack.spaceharvester.app.chat.MvsDiagnosisTools(extra, diagnosis, stillShown);
+                    }
+                }
+            }
         } else if (sent == DeckArea.NDV) {
             extra = new com.aresstack.spaceharvester.app.chat.NdvChatTools(ndv.selected(), ndv::selected);
             rules = com.aresstack.spaceharvester.app.chat.NdvChatTools.rules();
@@ -360,8 +392,9 @@ public final class CommandDeck {
                 key += "/" + folder;
             }
         }
+        JComponent activeView = shown;
         com.aresstack.spaceharvester.app.chat.DeckChatTools tools =
-                new com.aresstack.spaceharvester.app.chat.DeckChatTools(() -> shown, () -> area == sent, extra);
+                new com.aresstack.spaceharvester.app.chat.DeckChatTools(() -> activeView, stillShown, extra);
         return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolScope(where, key, tools,
                 com.aresstack.spaceharvester.app.chat.DeckChatTools.systemMessage(where, about(sent), rules,
                         tools.snapshot() + (listing.isEmpty() ? ""
@@ -370,6 +403,19 @@ public final class CommandDeck {
 
     /** Hinweis über dem Eingabefeld und Vorschläge (Chips) für den gewählten Bereich. */
     public com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints chatHints() {
+        if (area == DeckArea.FTP && ftp.activeSessionView() != null
+                && FtpSessionView.JOBS.equals(ftp.activeSessionView().view())) {
+            return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints(
+                    "JES-Jobs: Der Chat darf suchen, Jobs und Spool auswählen und lesen. Keine Host-Änderungen.",
+                    java.util.List.of(action("Job erklären", "Erkläre den ausgewählten Job."),
+                            action("Spool zusammenfassen", "Fasse den geöffneten Spool zusammen.")));
+        }
+        if (area == DeckArea.FTP && ftp.activeSessionView() != null) {
+            return new com.aresstack.spaceharvester.app.ui.content.ChatPanel.ToolHints(
+                    "Datasets: Der Chat liest Datasets und Members. JES-Werkzeuge sind nur in JES-Jobs verfügbar.",
+                    java.util.List.of(action("Ansicht erklären", "Erkläre mir, was ich gerade sehe."),
+                            action("Member zusammenfassen", "Fasse den offenen Editorinhalt zusammen.")));
+        }
         return chatHints(area);
     }
 
@@ -441,6 +487,14 @@ public final class CommandDeck {
         };
     }
 
+    public com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane activeSidebar() {
+        return com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane.activeIn(workspace);
+    }
+
+    public void onSidebarChanged(Runnable observer) {
+        sidebarObservers.add(observer);
+    }
+
     /** Meldet jeden Wechsel des Bereichs (der Chat passt Hinweis und Vorschläge an). */
     public void onAreaChanged(Runnable observer) {
         areaObservers.add(observer);
@@ -459,6 +513,12 @@ public final class CommandDeck {
 
     /** Zeigt einen Arbeitsbereich; offene Sitzungen der anderen bleiben, wie sie sind. */
     public void show(DeckArea next) {
+        if (area != next) {
+            chatGeneration++;
+            if (area == DeckArea.FTP && ftp.activeSessionView() != null) {
+                ftp.activeSessionView().datasets().revokeDiagnosis();
+            }
+        }
         area = next;
         buttons.get(next).setSelected(true);
         cards.show(workspace, next.name());
@@ -581,6 +641,10 @@ public final class CommandDeck {
     }
 
     /** Woher der Bereich Dateien die freigegebenen Ordner (Einstellungen › Dateizugriff) als Orte nimmt. */
+    public void folderIndexAction(com.aresstack.spaceharvester.app.ui.LocalFolderIndexAction action) {
+        files.folderIndexAction((parent, location) -> action.start(parent, location, files::indexStatus));
+    }
+
     public void sharedFolders(java.util.function.Supplier<java.util.List<java.nio.file.Path>> folders) {
         sharedFolders = folders == null ? java.util.List::of : folders;
     }

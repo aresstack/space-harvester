@@ -43,6 +43,8 @@ class OneNotePreviewPanelTest {
             OneNotePreviewPanel panel = new OneNotePreviewPanel(preview);
             assertThat(panel.sectionCount()).isEqualTo(1);
             assertThat(panel.displayedText()).isEqualTo("Legacy content");
+            assertThat(panel.getComponent(0))
+                    .isInstanceOf(com.aresstack.enterpriseai.ui.comic.control.ComicScrollPane.class);
         });
     }
 
@@ -56,7 +58,13 @@ class OneNotePreviewPanelTest {
             OneNotePreviewPanel panel = new OneNotePreviewPanel(preview);
             assertThat(panel.sectionCount()).isEqualTo(2);
             assertThat(panel.displayedText()).isEqualTo("First page");
+            assertThat(panel.getComponent(0))
+                    .isInstanceOf(com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane.class);
             javax.swing.JSplitPane split = (javax.swing.JSplitPane) panel.getComponent(0);
+            assertThat(split.getLeftComponent())
+                    .isInstanceOf(com.aresstack.enterpriseai.ui.comic.control.ComicScrollPane.class);
+            assertThat(split.getRightComponent())
+                    .isInstanceOf(com.aresstack.enterpriseai.ui.comic.control.ComicScrollPane.class);
             javax.swing.JList<?> list = (javax.swing.JList<?>) ((javax.swing.JScrollPane)
                     split.getLeftComponent()).getViewport().getView();
             javax.swing.Action next = list.getActionMap().get(list.getInputMap(javax.swing.JComponent.WHEN_FOCUSED)

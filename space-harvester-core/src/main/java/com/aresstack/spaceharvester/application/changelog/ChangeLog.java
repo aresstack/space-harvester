@@ -59,6 +59,7 @@ public final class ChangeLog implements AutoCloseable {
     private final AccessGuard access;
     private final Function<PageKey, Optional<PageHeader>> headers;
     private final Supplier<? extends Collection<String>> sources;
+    private java.util.function.Predicate<String> globalSources = id -> true;
     private final Listeners<ChangeLogListener> listeners = new Listeners<>("Änderungsprotokoll");
     private final Coalescer<String, String> coalescer;
     private final Summaries summaries;
@@ -385,6 +386,12 @@ public final class ChangeLog implements AutoCloseable {
                 new ChangeReport(consolidated.update(), window), rendered.markdown(), rendered.sections());
     }
 
+    /** Restrict implicit cross-source change views without disabling explicit source access. */
+    public ChangeLog globalSources(Predicate<String> included) {
+        this.globalSources = Objects.requireNonNull(included, "included");
+        return this;
+    }
+
     /** Rohe Zeilen für die Einsicht, neueste zuerst, seitenweise; nur Zeilen, die der Aufrufer sehen darf. */
     public ChangeEntries entries(AccessContext caller, ChangeFilter filter) {
         Objects.requireNonNull(caller, "caller");
@@ -394,7 +401,7 @@ public final class ChangeLog implements AutoCloseable {
             requireReadable(caller, filter.sourceId());
             wanted = List.of(filter.sourceId());
         } else {
-            wanted = sources.get().stream()
+            wanted = sources.get().stream().filter(globalSources)
                     .filter(sourceId -> access.permits(caller, ResourceScope.source(sourceId), AccessKind.METADATA))
                     .toList();
         }

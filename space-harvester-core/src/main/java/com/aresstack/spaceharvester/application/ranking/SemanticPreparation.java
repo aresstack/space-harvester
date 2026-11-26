@@ -58,6 +58,12 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
      * Aufruf weiter.
      */
     private final Jobs jobs;
+    private final LocalPreparation localPreparation;
+
+    @FunctionalInterface
+    public interface LocalPreparation {
+        boolean prepare(PageSnapshot snapshot, String processorId, long deadline);
+    }
 
     /** Angabe an Aufträgen „Suchtreffer vorbereiten“ früherer Fassungen ({@code task}); neue entstehen nicht mehr. */
     public static final String TASK = "prepare-search-hits";
@@ -76,6 +82,13 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
     /** @param jobs für den Rest nach der Frist ({@value #PHASE}) oder {@code null} */
     public SemanticPreparation(KeywordSearch keywords, Function<PageKey, Optional<PageSnapshot>> snapshots,
                                Enrichments enrichments, String processorId, Duration wait, Jobs jobs) {
+        this(keywords, snapshots, enrichments, processorId, wait, jobs, (snapshot, id, deadline) -> false);
+    }
+
+    public SemanticPreparation(KeywordSearch keywords, Function<PageKey, Optional<PageSnapshot>> snapshots,
+                               Enrichments enrichments, String processorId, Duration wait, Jobs jobs,
+                               LocalPreparation localPreparation) {
+        this.localPreparation = Objects.requireNonNull(localPreparation, "localPreparation");
         this.jobs = jobs;
         this.keywords = Objects.requireNonNull(keywords, "keywords");
         this.snapshots = Objects.requireNonNull(snapshots, "snapshots");
@@ -123,10 +136,23 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
         int pending = found.loading() + (lostCandidates(found) ? 1 : 0);
         // Jede Seite einmal, auch wenn die Schlagwortsuche sie mehrfach liefert.
         java.util.Map<PageKey, PageSnapshot> unique = new java.util.LinkedHashMap<>();
+        Set<PageKey> visited = new java.util.HashSet<>();
         for (KeywordSearch.Hit hit : found.hits()) {
+            if (!keywords.allowsPrefetch(hit.sourceId())) {
+                continue;
+            }
             PageKey key = new PageKey(hit.sourceId(), hit.pageId());
-            if (!unique.containsKey(key)) {
-                snapshots.apply(key).filter(this::withoutCurrentEmbedding).ifPresent(page -> unique.put(key, page));
+            if (!visited.add(key)) {
+                continue;
+            }
+            Optional<PageSnapshot> page = snapshots.apply(key);
+            if (page.isPresent() && com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
+                    .recognizes(page.get().payload())) {
+                if (!localPreparation.prepare(page.get(), processorId, deadline)) {
+                    pending++;
+                }
+            } else {
+                page.filter(this::withoutCurrentEmbedding).ifPresent(snapshot -> unique.put(key, snapshot));
             }
         }
         if (unique.isEmpty()) {

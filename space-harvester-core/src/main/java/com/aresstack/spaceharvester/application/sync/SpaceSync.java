@@ -115,22 +115,23 @@ public class SpaceSync {
 
     /** Wie {@link #plan(String, String, boolean)}, in der Betriebsart {@code mode}. */
     public SyncPlan plan(String sourceId, String spaceKey, SyncMode mode) {
-        return plan(sourceId, spaceKey, mode, () -> { });
+        return plan(sourceId, spaceKey, mode, SyncListener.NONE);
     }
 
     /** Check cancellation between the page batches of an inventory. */
-    private SyncPlan plan(String sourceId, String spaceKey, SyncMode mode, Runnable checkpoint) {
+    private SyncPlan plan(String sourceId, String spaceKey, SyncMode mode, SyncListener listener) {
         SyncBaseline baseline = store.confirmed(sourceId, spaceKey).orElse(null);
-        Inventory inventory = collector.collect(sourceId, spaceKey, checkpoint);
+        Inventory inventory = collector.collect(sourceId, spaceKey, listener::checkpoint, listener::inventoryProgress);
         SyncPlan plan = SyncPlanner.plan(baseline, inventory,
                 inventory.confirmed() ? store.knownPages(sourceId, spaceKey) : Map.of(), mode);
         if (!plan.inventory().confirmed()) {
             return plan;
         }
-        plan = indexed(plan);
+        java.util.function.Predicate<String> covered = pageId -> collector.covers(sourceId, pageId);
+        plan = indexed(plan.withinInventoryCoverage(covered));
         Map<String, RemovalCheck.Result> removals = removalCheck.verify(plan);
         SyncPlan checked = removals.isEmpty() ? plan : plan.withRemovals(removals);
-        return checked.withPurgesDue(clock.instant().minus(retention(sourceId)));
+        return checked.withPurgesDue(clock.instant().minus(retention(sourceId)), covered);
     }
 
     /** Lädt die Seiten unter markierten Wurzeln vollständig; die Vorfahren kommen aus der Inventur. */
@@ -214,7 +215,7 @@ public class SpaceSync {
     public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener, SyncMode mode,
                        java.util.function.Function<Inventory, java.util.function.Predicate<String>> loading,
                        boolean reloadAll) {
-        SyncPlan planned = plan(sourceId, spaceKey, mode, listener::checkpoint);
+        SyncPlan planned = plan(sourceId, spaceKey, mode, listener);
         java.util.function.Predicate<String> inScope = loading == null || !planned.inventory().confirmed()
                 ? pageId -> true : loading.apply(planned.inventory());
         SyncPlan limited = loading == null || !planned.inventory().confirmed() ? planned

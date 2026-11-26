@@ -87,7 +87,7 @@ public final class MainWindow implements AppContext.Navigator {
     static final int SIDEBAR_WIDTH = 280;
     static final String LEFT_WIDTH_KEY = "sidebar.left.width";
     static final String LEFT_OPEN_KEY = "sidebar.left.open";
-    private ComicSplitPane split;
+    private com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane split;
     /** Arbeitsfläche links, Chat-Seitenleiste rechts (Angelo, 21.11.2026). */
     private javax.swing.JSplitPane chatSplit;
     private com.aresstack.spaceharvester.app.ui.content.ChatSidebar chatSidebar;
@@ -228,8 +228,10 @@ public final class MainWindow implements AppContext.Navigator {
                 new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass),
                 com.aresstack.spaceharvester.app.ui.deck.betaview.BetaViewAccess.of(context),
                 new com.aresstack.spaceharvester.app.ui.deck.AppTerminalTunnel(context));
+        commandDeck.folderIndexAction(new LocalFolderIndexAction(context));
         // NDV direkt wie MainframeMate; nur Verbindungen mit „Proxy der App verwenden“ nehmen den Proxy der App.
         commandDeck.ndvRoute(com.aresstack.spaceharvester.app.ui.deck.NdvNetwork.of(context));
+        commandDeck.ftpNavigation(new FtpNavigationFill(context));
         // E-Akte: Proxy und TLS-Vertrauen der App (Windows-ROOT), das Anmeldeprotokoll ohne Werte ins Log.
         org.slf4j.Logger eakteLog = org.slf4j.LoggerFactory.getLogger("command-deck.eakte");
         commandDeck.eakte(new com.aresstack.spaceharvester.deck.eakte.http.HttpEakteServer(
@@ -490,6 +492,7 @@ public final class MainWindow implements AppContext.Navigator {
         switcher = new PerspectiveSwitcher(ApplicationIcons.titleLogo(), perspectives);
         // Avenger-Easter-Egg (#1141): vorläufiger Auslöser fünf Klicks auf das Logo; Ablauf und Auslöser sind getrennt.
         avenger = new AvengerEasterEgg(switcher);
+        switcher.onSidebarToggle(this::toggleDrawer);
         com.aresstack.spaceharvester.app.ui.controls.ClickBurst.install(switcher.logo(), 5,
                 java.time.Duration.ofMillis(700), avenger::reveal);
         west.add(switcher, BorderLayout.CENTER);
@@ -628,7 +631,9 @@ public final class MainWindow implements AppContext.Navigator {
                 if (settingsOver != null && Perspectives.COMMAND_DECK.equals(settingsOver.id())) {
                     leaveSettings();
                 }
+                refreshDrawerToggle();
             });
+            commandDeck.onSidebarChanged(this::refreshDrawerToggle);
         }
         chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, stage, sideDeck);
         chatSplit.setBorder(null);
@@ -664,29 +669,14 @@ public final class MainWindow implements AppContext.Navigator {
         nav.get(AppContext.Section.ACTIVITIES).setSelected(chatOpen && sideJobs);
         sideModes.show(sideDeck, sideJobs ? SIDE_JOBS : SIDE_CHAT);
         placeChat();
-        split = new ComicSplitPane(side, chatSplit, 200, 520, Comic.PALETTE);
-        split.setBackground(Comic.SURFACE);
-        // Ein Trenner für die ganze App: derselbe Renderer wie unter „Aufträge“ und im Graph (ComicDivider), damit
-        // alle Teilungen gleich aussehen; die Breitenregeln des ComicSplitPane bleiben.
-        ComicDivider.install(split, Comic.PALETTE);
-        split.setContinuousLayout(true);
-        // Breite und offen/zu der linken Leiste wie beim letzten Beenden (Application State).
-        split.setPreferredLeftWidth(WindowSizes.recallInt(LEFT_WIDTH_KEY, SIDEBAR_WIDTH));
+        split = new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
+                side, chatSplit, 200, 520, WindowSizes.recallInt(LEFT_WIDTH_KEY, SIDEBAR_WIDTH));
         split.setLeftWidthListener(width -> WindowSizes.rememberInt(LEFT_WIDTH_KEY, width));
         if (WindowSizes.recallInt(LEFT_OPEN_KEY, 1) == 0) {
             collapseDrawer();
         }
         // Einklappbar: Doppelklick auf den Teiler klappt den Drawer zu bzw. wieder auf.
-        if (split.getUI() instanceof javax.swing.plaf.basic.BasicSplitPaneUI basic) {
-            basic.getDivider().addMouseListener(new java.awt.event.MouseAdapter() {
-                @Override
-                public void mouseClicked(java.awt.event.MouseEvent event) {
-                    if (event.getClickCount() == 2) {
-                        toggleDrawer();
-                    }
-                }
-            });
-        }
+        split.onDividerToggle(this::toggleDrawer);
 
         actionDeck.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
                 Comic.LINE), BorderFactory.createEmptyBorder(6, 16, 6, 16)));
@@ -716,6 +706,7 @@ public final class MainWindow implements AppContext.Navigator {
 
         surface.add(top, BorderLayout.NORTH);
         surface.add(split, BorderLayout.CENTER);
+        refreshDrawerToggle();
         surface.add(bottom, BorderLayout.SOUTH);
         ComicWindowResizer.install(surface, RESIZE_GRIP);
         installShortcuts(surface);
@@ -960,19 +951,43 @@ public final class MainWindow implements AppContext.Navigator {
     static final int COLLAPSED_DIVIDER = 6;
 
     void toggleDrawer() {
-        if (split.isLeftCollapsed()) {
-            split.openLeft();
-            WindowSizes.rememberInt(LEFT_OPEN_KEY, 1);
+        if (split == null || perspectives == null) {
+            return;
+        }
+        if (harvesterDrawerActive()) {
+            split.toggle();
+            WindowSizes.rememberInt(LEFT_OPEN_KEY, split.isLeftCollapsed() ? 0 : 1);
         } else {
-            collapseDrawer();
-            WindowSizes.rememberInt(LEFT_OPEN_KEY, 0);
+            var pane = activeDeckSidebar();
+            if (pane != null) {
+                pane.toggle();
+            }
+        }
+        refreshDrawerToggle();
+    }
+
+    private boolean harvesterDrawerActive() {
+        return settingsOver != null || perspectives.isCurrent(Perspectives.HARVESTER);
+    }
+
+    private com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane activeDeckSidebar() {
+        return perspectives.isCurrent(Perspectives.COMMAND_DECK) ? commandDeck.activeSidebar() : null;
+    }
+
+    private void refreshDrawerToggle() {
+        if (switcher == null || split == null || perspectives == null) {
+            return;
+        }
+        if (harvesterDrawerActive()) {
+            switcher.sidebarState(true, !split.isLeftCollapsed());
+        } else {
+            var pane = activeDeckSidebar();
+            switcher.sidebarState(pane != null, pane != null && !pane.isLeftCollapsed());
         }
     }
 
     private void collapseDrawer() {
-        split.collapseLeft();
-        // collapseLeft() nimmt den Teiler ganz weg; ein schmaler bleibt, damit ein Doppelklick wieder aufklappt.
-        split.setDividerSize(COLLAPSED_DIVIDER);
+        split.collapseWithHandle();
     }
 
     /**
@@ -1038,6 +1053,7 @@ public final class MainWindow implements AppContext.Navigator {
             // Zurück im Space Harvester: der Bereich von vorhin mit seinem Stand und seinen Knöpfen.
             showSection(current);
         }
+        refreshDrawerToggle();
         top.revalidate();
         top.repaint();
     }
@@ -1146,6 +1162,7 @@ public final class MainWindow implements AppContext.Navigator {
         if (ownDrawer && split != null && split.isLeftCollapsed()) {
             split.openLeft();
         }
+        refreshDrawerToggle();
         View view = views.get(section);
         boolean ownActions = view.actions() != null && view != activities;
         actionCards.show(actionDeck, ownActions ? section.name() : JOBS);

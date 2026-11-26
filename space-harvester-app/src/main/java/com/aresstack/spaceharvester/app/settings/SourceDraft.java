@@ -37,7 +37,30 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                           SourceSettingsConfig.AuthType authType, String username, String secretVariable,
                           SourceSettingsConfig.CertificateStoreType certificateType, String certificatePath,
                           String certificatePasswordVariable, String certificateAlias, String thumbprint,
-                          String trustBundle, Map<String, String> extraOptions, boolean baseUrlType) {
+                          String trustBundle, Map<String, String> extraOptions, boolean baseUrlType,
+                          boolean showInExplorer, boolean includeInGlobalSearch) {
+
+    public SourceDraft(String id, String type, String title, String baseUrl, String directory, String include,
+                       SourceSettingsConfig.AuthType authType, String username, String secretVariable,
+                       SourceSettingsConfig.CertificateStoreType certificateType, String certificatePath,
+                       String certificatePasswordVariable, String certificateAlias, String thumbprint,
+                       String trustBundle, Map<String, String> extraOptions, boolean baseUrlType) {
+        this(id, type, title, baseUrl, directory, include, authType, username, secretVariable, certificateType,
+                certificatePath, certificatePasswordVariable, certificateAlias, thumbprint, trustBundle, extraOptions,
+                baseUrlType, true, true);
+    }
+
+    public SourceDraft withOptions(Map<String, String> options) {
+        return new SourceDraft(id, type, title, baseUrl, directory, include, authType, username, secretVariable,
+                certificateType, certificatePath, certificatePasswordVariable, certificateAlias, thumbprint,
+                trustBundle, options, baseUrlType, showInExplorer, includeInGlobalSearch);
+    }
+
+    public SourceDraft withUsage(boolean explorer, boolean globalSearch) {
+        return new SourceDraft(id, type, title, baseUrl, directory, include, authType, username, secretVariable,
+                certificateType, certificatePath, certificatePasswordVariable, certificateAlias, thumbprint,
+                trustBundle, extraOptions, baseUrlType, explorer, globalSearch);
+    }
 
     public static final String CONFLUENCE = "confluence";
     public static final String BSCW = "bscw";
@@ -48,7 +71,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
     private static final Pattern VARIABLE = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,127}");
     private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(:[^}]*)?}");
     private static final Set<String> KNOWN = Set.of("id", "type", "title", "baseurl", "auth", "clientcertificate",
-            "trustbundle", "options");
+            "trustbundle", "options", "showinexplorer", "includeinglobalsearch");
     private static final Set<String> KNOWN_AUTH = Set.of("type", "username", "password", "token");
     private static final Set<String> KNOWN_CERTIFICATE = Set.of("enabled", "type", "path", "alias", "password",
             "thumbprint");
@@ -185,7 +208,8 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         SourceDraft draft = new SourceDraft(id, type, text(raw, "title"), address, directory, include,
                 authType, text(auth, "username"), secretVariable, certificateType, text(certificate, "path"),
                 certificatePasswordVariable, text(certificate, "alias"), text(certificate, "thumbprint"),
-                text(raw, "trust-bundle"), options, confluence || bscw || text(raw, "base-url") != null);
+                text(raw, "trust-bundle"), options, confluence || bscw || text(raw, "base-url") != null,
+                usageFlag(raw, "show-in-explorer"), usageFlag(raw, "include-in-global-search"));
         return new Editable(draft, plaintext);
     }
 
@@ -229,6 +253,17 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         return CONFLUENCE.equals(type);
     }
 
+    private static boolean usageFlag(Map<?, ?> raw, String key) {
+        Object value = AppSettingsLoader.get(raw, key);
+        if (value == null || "true".equalsIgnoreCase(value.toString())) {
+            return true;
+        }
+        if ("false".equalsIgnoreCase(value.toString())) {
+            return false;
+        }
+        throw new IllegalArgumentException("Ungültiger Schalter: " + key);
+    }
+
     public boolean serverAddress() {
         return baseUrlType;
     }
@@ -245,7 +280,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
     public SourceDraft withSecretVariable(String variable) {
         return new SourceDraft(id, type, title, baseUrl, directory, include, authType, username, variable,
                 certificateType, certificatePath, certificatePasswordVariable, certificateAlias, thumbprint,
-                trustBundle, extraOptions, baseUrlType);
+                trustBundle, extraOptions, baseUrlType, showInExplorer, includeInGlobalSearch);
     }
 
     /** Vorschlag für die Umgebungsvariable des Geheimnisses, z. B. {@code WIKI_TOKEN} für die Quelle {@code wiki}. */
@@ -326,6 +361,12 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         yaml.append(in).append("type: ").append(type).append('\n');
         if (title != null) {
             yaml.append(in).append("title: ").append(scalar(title)).append('\n');
+        }
+        if (!showInExplorer) {
+            yaml.append(in).append("show-in-explorer: false\n");
+        }
+        if (!includeInGlobalSearch) {
+            yaml.append(in).append("include-in-global-search: false\n");
         }
         if (serverAddress()) {
             yaml.append(in).append("base-url: ").append(scalar(baseUrl)).append('\n');

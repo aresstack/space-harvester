@@ -17,9 +17,17 @@ import java.util.concurrent.ExecutionException;
 public final class FtpDocumentStore implements DocumentStore {
 
     private final FtpSession session;
+    private final CopybookMemberIndex copybookMembers;
 
     public FtpDocumentStore(FtpSession session) {
+        this(session, System::nanoTime);
+    }
+
+    FtpDocumentStore(FtpSession session, java.util.function.LongSupplier clock) {
         this.session = Objects.requireNonNull(session, "session");
+        this.copybookMembers = new CopybookMemberIndex(clock,
+                dataset -> await(session.files(files -> files.listCopybookMembers(MvsPath.absolute(dataset))),
+                        "SYSLIB " + dataset));
     }
 
     /**
@@ -49,6 +57,53 @@ public final class FtpDocumentStore implements DocumentStore {
         return siblingPaths(location, name);
     }
 
+    @Override
+    public java.util.Optional<EditorDocument> resolveCopybook(String location, String name, String library)
+            throws DocumentException {
+        if (!MvsPath.isMember(location)) {
+            return DocumentStore.super.resolveCopybook(location, name, library);
+        }
+        if (!MvsPath.isMemberName(name)) {
+            throw new DocumentException("Ungültiger COPY-Membername: " + name);
+        }
+        var datasets = new java.util.LinkedHashSet<String>();
+        if (library.isBlank()) {
+            datasets.addAll(session.profile().syslib());
+            datasets.add(MvsPath.splitMember(location)[0]);
+        } else {
+            String qualifier = MvsPath.unquote(library);
+            session.profile().syslib().stream()
+                    .filter(ds -> ds.equalsIgnoreCase(qualifier))
+                    .forEach(datasets::add);
+            if (datasets.isEmpty()) {
+                session.profile().syslib().stream()
+                        .filter(ds -> ds.substring(ds.lastIndexOf('.') + 1).equalsIgnoreCase(qualifier))
+                        .forEach(datasets::add);
+            }
+            if (datasets.size() > 1) {
+                throw new DocumentException("Mehrdeutige SYSLIB-Zuordnung für " + library);
+            }
+            if (datasets.isEmpty()) {
+                throw new DocumentException("Keine SYSLIB-Zuordnung für " + library);
+            }
+        }
+        for (String dataset : datasets) {
+            String memberPath = copybookMembers.find(dataset, name);
+            if (memberPath != null) {
+                return java.util.Optional.of(load(memberPath));
+            }
+        }
+        return java.util.Optional.empty();
+    }
+
+    @Override
+    public String copybookLookupScope(String location, String library) {
+        if (!MvsPath.isMember(location)) {
+            return DocumentStore.super.copybookLookupScope(location, library);
+        }
+        return library.isBlank() ? MvsPath.splitMember(location)[0].toUpperCase(java.util.Locale.ROOT) : "";
+    }
+
     static java.util.List<String> siblingPaths(String location, String name) {
         if (location == null || name == null || name.isBlank()) {
             return java.util.List.of();
@@ -70,19 +125,26 @@ public final class FtpDocumentStore implements DocumentStore {
 
     @Override
     public SaveResult save(EditorDocument loaded, String text, boolean overwrite) throws DocumentException {
+        if (!loaded.writeRestriction().isEmpty()) throw new DocumentException(loaded.writeRestriction());
         String path = loaded.location();
         boolean records = session.mvs();
         // Nur auf MVS gilt das Satzformat (letzter Umbruch kein leerer Satz); andere Dateien gehen unverändert hinaus.
         String outgoing = records && text.endsWith("\n") ? text.substring(0, text.length() - 1) : text;
         try {
-            RemoteFile written = session.filesOnce(files -> files.writeIfUnchanged(path, outgoing,
-                    overwrite ? null : loaded.hash())).get();
+            RemoteFile written = session.filesOnce(files -> {
+                if (overwrite && records) {
+                    RemoteFile current = files.read(path);
+                    if (!current.writeRestriction().isEmpty()) throw new java.io.IOException(current.writeRestriction());
+                }
+                return files.writeIfUnchanged(path, outgoing, overwrite ? null : loaded.hash());
+            }).get();
+            copybookMembers.invalidate(written.path());
             RemoteFile fresh = await(session.files(files -> files.read(written.path())), "Lesen nach dem Speichern");
             if (fresh.text().equals(expected(outgoing, records))) {
                 // Der Editor behält seinen Text als Stand (sonst bliebe er nach dem Speichern „geändert“), der
                 // Fingerabdruck ist der des Hosts für die nächste Prüfung.
                 return new SaveResult.Saved(new EditorDocument(fresh.path(), loaded.name(), text, loaded.charset(),
-                        loaded.lineEnding(), fresh.hash()));
+                        loaded.lineEnding(), fresh.hash(), fresh.writeRestriction()));
             }
             if (overwrite) {
                 // Ausdrücklich überschrieben, der Host hat aber etwas anderes abgelegt (etwa Satzlänge): sein Stand
@@ -121,7 +183,7 @@ public final class FtpDocumentStore implements DocumentStore {
 
     private EditorDocument document(RemoteFile file) {
         return new EditorDocument(file.path(), name(file.path()), file.text(), session.profile().encoding(), "\n",
-                file.hash());
+                file.hash(), file.writeRestriction());
     }
 
     /** Anzeigename: auf MVS das Member bzw. der Dataset-Name, sonst der Dateiname. */

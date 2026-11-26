@@ -58,8 +58,22 @@ public final class EnrichmentFacts {
 
     /** Die Fakten des Ergebnisses, leer für andere Prozessoren, fehlgeschlagene oder unlesbare Ergebnisse. */
     public static List<MetadataFact> of(Enrichment enrichment) {
+        if (enrichment.document().localOriginal() && enrichment.extraction() == null) {
+            return List.of();
+        }
         List<MetadataFact> facts = derive(enrichment);
-        return facts.size() > MAX_PER_RESULT ? List.copyOf(facts.subList(0, MAX_PER_RESULT)) : List.copyOf(facts);
+        List<MetadataFact> bounded = facts.subList(0, Math.min(facts.size(), MAX_PER_RESULT));
+        if (enrichment.document().localOriginal()) {
+            List<MetadataFact> sectionFacts = new ArrayList<>(bounded.size());
+            for (int position = 0; position < bounded.size(); position++) {
+                // Preserve stable identities across sections and archive parts.
+                sectionFacts.add(bounded.get(position).withId(id(enrichment.key(),
+                        enrichment.processorId() + "|" + enrichment.document().hash() + "|" + enrichment.section(),
+                        position)));
+            }
+            return List.copyOf(sectionFacts);
+        }
+        return List.copyOf(bounded);
     }
 
     /** Ob das Ergebnis mehr als {@value #MAX_PER_RESULT} Fakten trägt, {@link #of} also nicht alle liefert. */
