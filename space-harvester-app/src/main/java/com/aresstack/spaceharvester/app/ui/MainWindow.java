@@ -276,8 +276,10 @@ public final class MainWindow implements AppContext.Navigator {
             var use = settings.ai().summary();
             String model = use != null && use.model() != null ? use.model() : settings.ai().chatModel();
             // Tokenbudget aus Kontextlänge und Ausgabelimit (F41-7); fehlt eines, geht der Code in einer Anfrage.
+            // Kontextlänge aus den Einstellungen, sonst aus dem schon bekannten Modellkatalog des Dienstes.
             com.aresstack.spaceharvester.app.runtime.ModelBudget budget = com.aresstack.spaceharvester.app.runtime
-                    .ModelBudget.known(settings.ai().contextTokens(), settings.ai().chatMaxTokens());
+                    .ModelBudget.chat(settings.ai().contextTokens(), runtime.workspace().catalogContextTokens(model,
+                            false), settings.ai().chatMaxTokens());
             return new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramLabels.Target(
                     runtime.workspace().aiChat(), model, use == null ? null : use.thinking(), budget);
         });

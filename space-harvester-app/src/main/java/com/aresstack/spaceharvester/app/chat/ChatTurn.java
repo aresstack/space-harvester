@@ -88,10 +88,14 @@ public final class ChatTurn {
     static final DateTimeFormatter CHANGE_DATE = DateTimeFormatter.ofPattern("d.M.yyyy HH:mm");
 
     /**
-     * Tokenbudget des Chat-Modells (Kontextlänge und Ausgabelimit aus den Einstellungen), {@code null} unbekannt: Daraus
-     * folgt, wie viel der offenen Seite und jedes Werkzeugergebnisses mitgeht ({@link ChatRoom}).
+     * Tokenbudget des Chat-Modells (Kontextlänge aus den Einstellungen oder dem Modellkatalog des Dienstes, Ausgabelimit),
+     * {@code null} unbekannt: Daraus
+     * folgt, wie viel der offenen Seite und jedes Werkzeugergebnisses mitgeht ({@link ChatRoom}). Erst auf dem Thread
+     * des Turns bestimmt ({@link #budget()}), weil dafür der Modellkatalog des Dienstes gefragt werden kann.
      */
-    private ModelBudget budget;
+    private java.util.function.Supplier<ModelBudget> budgetSource = () -> null;
+    private volatile ModelBudget budget;
+    private volatile boolean budgetKnown;
     /**
      * Modelle, deren Dienst eine Anfrage mit Werkzeugen abgelehnt hat: Für sie fällt der Chat bis zum Neustart still
      * auf die Suche mit Auszügen zurück (ADR 0033, kein Schalter).
@@ -277,8 +281,45 @@ public final class ChatTurn {
      * offene Seite geht so weit mit, wie sie in die erste Anfrage passt, der Rest per {@code seite_lesen} (ADR 0033).
      */
     public ChatTurn budget(ModelBudget budget) {
-        this.budget = budget;
+        return budget(() -> budget);
+    }
+
+    /** Wie oben; {@code source} wird erst auf dem Thread des Turns einmal gefragt (darf das Netz nutzen). */
+    public ChatTurn budget(java.util.function.Supplier<ModelBudget> source) {
+        this.budgetSource = Objects.requireNonNull(source, "source");
+        this.budgetKnown = false;
         return this;
+    }
+
+    /** Das Budget dieses Turns, beim ersten Gebrauch bestimmt. */
+    private ModelBudget budget() {
+        if (!budgetKnown) {
+            synchronized (this) {
+                if (!budgetKnown) {
+                    try {
+                        budget = budgetSource.get();
+                    } catch (RuntimeException unknown) {
+                        budget = null;
+                    }
+                    budgetKnown = true;
+                }
+            }
+        }
+        return budget;
+    }
+
+    /**
+     * Platz für das Wissen ohne Werkzeuge (Kontextblock in der Systemnachricht): was neben Anweisung, Verlauf und Frage
+     * in die Anfrage passt ({@link ChatRoom}); ohne bekannte Kontextlänge keine Grenze.
+     */
+    private int knowledgeRoom() {
+        return ChatRoom.left(budget(), conversation(ChatKnowledge.SYSTEM_PROMPT, question), List.of(), 1);
+    }
+
+    /** Der Platz je Auszug, wenn sich {@code parts} Auszüge den Kontextblock teilen. */
+    private int excerptRoom(int parts) {
+        int room = knowledgeRoom();
+        return room == ChatRoom.UNLIMITED ? room : room / Math.max(1, parts);
     }
 
     /** Für Tests: ein anderer Zugriff auf das Änderungsprotokoll. */
@@ -543,7 +584,7 @@ public final class ChatTurn {
                 finish(() -> listener.completed(fixed));
                 return;
             }
-            context = ChatKnowledge.assemble(changes.excerpts());
+            context = ChatKnowledge.assemble(changes.excerpts(), knowledgeRoom());
             asked = whatsNewQuestion(question, changes.total(), context.accepted().size(), changes.since());
         } else {
             try {
@@ -708,7 +749,7 @@ public final class ChatTurn {
             }
             if (released) {
                 total = page.text().length();
-                int room = ChatRoom.left(budget, conversation(ChatKnowledge.toolSystemMessage(area, null, 0, 0,
+                int room = ChatRoom.left(budget(), conversation(ChatKnowledge.toolSystemMessage(area, null, 0, 0,
                         null, appSources != null), question), toolset.definitions(), 1);
                 String head = total <= room ? page.text() : ChatKnowledge.excerpt(page.text(), room)
                         .replaceAll(" …$", "");
@@ -943,7 +984,7 @@ public final class ChatTurn {
         List<AiChat.Message> next = new ArrayList<>(messages);
         next.add(AiChat.Message.assistant(text == null ? "" : text, calls));
         // Die Aufrufe dieser Runde teilen sich, was in der Anfrage noch Platz hat (ChatRoom).
-        int room = ChatRoom.left(budget, next, toolset.definitions(), calls.size());
+        int room = ChatRoom.left(budget(), next, toolset.definitions(), calls.size());
         // Mehrere Aufrufe einer Runde laufen gleichzeitig (höchstens „Parallele Agenten“); Browser-Aufrufe bleiben
         // nacheinander, der Browser eines Chats bedient eine Aktion nach der anderen. Die Antworten bleiben in der
         // Reihenfolge der Aufrufe.
@@ -1089,7 +1130,7 @@ public final class ChatTurn {
                 // Gemeldet hat releasePageOrThrow; der Text der Seite geht nicht an das Modell.
             }
         }
-        return kept.size() == context.accepted().size() ? context : ChatKnowledge.assemble(kept);
+        return kept.size() == context.accepted().size() ? context : ChatKnowledge.assemble(kept, knowledgeRoom());
     }
 
     /** Der Space der Seite im gewählten Bereich, je Turn einmal je Space gelesen; {@code null}, wenn keiner sie hat. */
@@ -1217,7 +1258,7 @@ public final class ChatTurn {
                 break;
             }
             ChatKnowledge.Excerpt excerpt = page(entry.getKey().sourceId(), entry.getKey().pageId(), null,
-                    ChatKnowledge.MAX_HIT_CHARS);
+                    excerptRoom(CHANGED_PAGES));
             if (excerpt != null) {
                 excerpts.add(new ChatKnowledge.Excerpt((excerpt.title() == null ? entry.getKey().pageId()
                         : excerpt.title()) + " (geändert am " + date(entry.getValue()) + ")", excerpt.sourceId(),
@@ -1256,7 +1297,7 @@ public final class ChatTurn {
             // Überblicksfragen („Worum geht es hier?“) treffen kein Schlagwort: dann die Startseiten des Bereichs.
             excerpts = overview();
         }
-        return ChatKnowledge.assemble(excerpts);
+        return ChatKnowledge.assemble(excerpts, knowledgeRoom());
     }
 
     /** Höchstens so viele Titel im Überblick über den Bereich. */
@@ -1288,7 +1329,8 @@ public final class ChatTurn {
         StringBuilder titles = new StringBuilder();
         int listed = 0;
         for (Root root : roots) {
-            ChatKnowledge.Excerpt excerpt = page(root.sourceId(), root.pageId(), null, ChatKnowledge.MAX_HIT_CHARS);
+            ChatKnowledge.Excerpt excerpt = page(root.sourceId(), root.pageId(), null,
+                    excerptRoom(ChatKnowledge.MAX_SOURCES));
             if (excerpt == null) {
                 continue;
             }
@@ -1317,9 +1359,11 @@ public final class ChatTurn {
 
     private List<ChatKnowledge.Excerpt> wholePages() {
         List<ChatKnowledge.Excerpt> excerpts = new ArrayList<>();
+        // Die wenigen ganzen Seiten teilen sich den Platz der Anfrage (früher je höchstens 12.000 Zeichen).
+        int each = excerptRoom(Math.max(1, scope.size()));
         for (Map.Entry<String, Set<String>> source : scope.pages().asMap().entrySet()) {
             for (String pageId : source.getValue()) {
-                ChatKnowledge.Excerpt excerpt = page(source.getKey(), pageId, null, ChatKnowledge.MAX_PAGE_CHARS);
+                ChatKnowledge.Excerpt excerpt = page(source.getKey(), pageId, null, each);
                 if (excerpt != null) {
                     excerpts.add(excerpt);
                 }
@@ -1367,7 +1411,7 @@ public final class ChatTurn {
             }
             ChatKnowledge.Excerpt excerpt = passage(hit);
             if (excerpt == null) {
-                excerpt = page(hit.sourceId(), hit.pageId(), hit.snippet(), ChatKnowledge.MAX_HIT_CHARS);
+                excerpt = page(hit.sourceId(), hit.pageId(), hit.snippet(), excerptRoom(ChatKnowledge.MAX_SOURCES));
             }
             if (excerpt != null) {
                 excerpts.add(excerpt);
@@ -1395,7 +1439,7 @@ public final class ChatTurn {
             }
             return text.isEmpty() ? null : new ChatKnowledge.Excerpt(hit.title(), hit.sourceId(),
                     hit.url() == null ? null : hit.url().toString(),
-                    ChatKnowledge.excerpt(text.toString(), ChatKnowledge.MAX_HIT_CHARS), hit.pageId());
+                    ChatKnowledge.excerpt(text.toString(), excerptRoom(ChatKnowledge.MAX_SOURCES)), hit.pageId());
         } catch (RuntimeException gone) {
             return null;
         }
@@ -1507,8 +1551,6 @@ public final class ChatTurn {
 
     // ------------------------------------------------------------------ Unteragenten (Angelo 24.11.2026)
 
-    /** Höchstens so viele Zeichen einer Seite liest ein Unteragent. */
-    static final int SUB_AGENT_CHARS = ChatKnowledge.MAX_PAGE_CHARS;
 
     /**
      * Die Werkzeuge {@code base} samt {@value ChatTools#EVALUATE}, wenn der Turn Wissen hat (Bereich oder interne
@@ -1626,7 +1668,10 @@ public final class ChatTurn {
         } catch (RuntimeException failed) {
             return ref + ": Die Seite ließ sich nicht für die KI freigeben; sie geht nicht an das Modell.";
         }
-        String text = ChatKnowledge.excerpt(page.text(), SUB_AGENT_CHARS);
+        // Der Unteragent stellt eine eigene Anfrage: die Seite geht so weit mit, wie sie neben Anweisung und Frage passt.
+        String frame = "Frage: " + asked + "\n\nSeite [nn] " + page.title() + "\n\n";
+        String text = ChatKnowledge.excerpt(page.text(), ChatRoom.left(budget(), List.of(
+                AiChat.Message.system(ChatKnowledge.SUB_AGENT_PROMPT), AiChat.Message.user(frame)), List.of(), 1));
         int number = cite(new ChatKnowledge.Excerpt(page.title(), key.sourceId(), page.location(),
                 ChatKnowledge.excerpt(page.text(), ChatKnowledge.MAX_HIT_CHARS), key.pageId()), key);
         List<AiChat.Message> messages = List.of(AiChat.Message.system(ChatKnowledge.SUB_AGENT_PROMPT),

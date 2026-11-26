@@ -768,7 +768,8 @@ class SettingDialogsTest {
                 assertThat(fresh.changed()).isFalse();
                 fresh.provider.setSelectedItem(com.aresstack.spaceharvester.ai.AiProvider.OPENAI_COMPATIBLE.displayName());
                 assertThat(fresh.rows.shows(fresh.apiKey)).isTrue();
-                assertThat(fresh.rows.shows(fresh.contextTokens)).isFalse();
+                // Die Kontextlänge gilt für jeden Dienst (Textmenge des Chats), gesendet wird sie nur an Ollama.
+                assertThat(fresh.rows.shows(fresh.contextTokens)).isTrue();
                 assertThat(fresh.changed()).isTrue();
             });
         } finally {
