@@ -2476,7 +2476,7 @@ public final class ChatPanel extends JPanel {
             links.standalone(false);
             bubble.setSources(links);
             row.setVisible(true);
-            links.setVisible(links.getComponentCount() > 0);
+            links.setVisible(links.hasEntries());
             transcript.revalidate();
             transcript.repaint();
             scrollDown();
@@ -3347,13 +3347,31 @@ public final class ChatPanel extends JPanel {
      * Die Quellen einer Antwort als Zeile unter ihrer Blase (Entwurf Chat-Seitenleiste, Punkt 8): je Quelle ein Link
      * „[n] Titel“ in der Nummer, die die Antwort nennt. Ohne Quellen ist die Zeile nicht da; die Links brechen in
      * der schmalen Leiste um. Eine Quelle ohne Seite (ein Dateianhang) steht als Text da.
+     *
+     * <p>Die Liste ist zunächst eingeklappt (Angelo, 26.11.2026): eine einzige Zeile, die die Quellen als schlichten
+     * Text aufzählt und am Ende mit „…“ abschneidet, was nicht hineinpasst. Links davor, nah bei den Knöpfen der
+     * Antwort, steht immer ein Pfeil: eingeklappt nach rechts, aufgeklappt nach unten. Aufgeklappt stehen die
+     * Quellen untereinander, jede als Link.
      */
     static final class SourceLinks extends JPanel implements com.aresstack.enterpriseai.ui.comic.bubble.WidthAwareHeight {
 
         static final int TITLE_LENGTH = 48;
 
+        static final String SHOW_ALL = "Alle Quellen zeigen";
+        static final String SHOW_LESS = "Quellen einklappen";
+        /** Zeilenhöhe wie die Knöpfe daneben, damit die erste Zeile mit ihnen auf einer Linie steht. */
+        private static final int ROW = com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.SIZE;
+        private static final int ROW_GAP = 2;
+        private static final int TOGGLE_GAP = 4;
+
         private final java.util.function.Consumer<ChatRecord.Source> open;
         private List<ChatRecord.Source> shown = List.of();
+        private final List<JComponent> entries = new ArrayList<>();
+        /** Die eingeklappte Zeile: alle Quellen als Text; JLabel kürzt selbst mit „…“, wenn der Platz nicht reicht. */
+        private final JLabel summary = Comic.muted("");
+        private final com.aresstack.spaceharvester.app.ui.controls.FlatIconButton toggle =
+                new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(Glyph.EXPAND, SHOW_ALL);
+        private boolean expanded;
 
         SourceLinks(java.util.function.Consumer<ChatRecord.Source> open) {
             super(null);
@@ -3361,6 +3379,51 @@ public final class ChatPanel extends JPanel {
             setOpaque(false);
             standalone(false);
             setVisible(false);
+            summary.setFont(Comic.regular(11f));
+            summary.setName("transcript.sourcesSummary");
+            // Auch ein Klick auf die Zeile klappt auf, nicht nur der kleine Pfeil.
+            Cursors.set(summary, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+            summary.addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent event) {
+                    if (SwingUtilities.isLeftMouseButton(event)) {
+                        expanded(true);
+                    }
+                }
+            });
+            toggle.setName("transcript.sourcesToggle");
+            toggle.setForeground(Comic.BLUE);
+            toggle.setVisible(false);
+            toggle.addActionListener(e -> expanded(!expanded));
+        }
+
+        /** Klappt die Liste auf oder zu; die Antwort darüber und der Verlauf rücken nach. */
+        void expanded(boolean value) {
+            if (expanded == value) {
+                return;
+            }
+            expanded = value;
+            toggle.setIcon(expanded ? Glyph.COLLAPSE : Glyph.EXPAND);
+            toggle.setToolTipText(expanded ? SHOW_LESS : SHOW_ALL);
+            toggle.getAccessibleContext().setAccessibleName(toggle.getToolTipText());
+            for (java.awt.Container up = this; up != null; up = up.getParent()) {
+                up.invalidate();
+            }
+            revalidate();
+            repaint();
+        }
+
+        boolean expanded() {
+            return expanded;
+        }
+
+        /** Der Pfeil links vor den Quellen; immer da, wenn es Quellen gibt. */
+        javax.swing.JButton toggle() {
+            return toggle;
+        }
+
+        boolean hasEntries() {
+            return !entries.isEmpty();
         }
 
         void show(List<ChatRecord.Source> sources) {
@@ -3369,9 +3432,16 @@ public final class ChatPanel extends JPanel {
             }
             shown = List.copyOf(sources);
             removeAll();
+            entries.clear();
             for (int index = 0; index < shown.size(); index++) {
-                add(entry(index + 1, shown.get(index)));
+                JComponent entry = entry(index + 1, shown.get(index));
+                entries.add(entry);
+                add(entry);
             }
+            add(toggle);
+            add(summary);
+            summary.setText(String.join(", ", texts()));
+            summary.setToolTipText(SHOW_ALL);
             setVisible(!shown.isEmpty());
             revalidate();
             repaint();
@@ -3402,7 +3472,7 @@ public final class ChatPanel extends JPanel {
         /** Die gezeigten Einträge als Text; für Tests. */
         List<String> texts() {
             List<String> texts = new ArrayList<>();
-            for (Component entry : getComponents()) {
+            for (Component entry : entries) {
                 texts.add(entry instanceof javax.swing.AbstractButton button ? button.getText()
                         : ((JLabel) entry).getText());
             }
@@ -3423,27 +3493,39 @@ public final class ChatPanel extends JPanel {
             layoutEntries(getWidth(), true);
         }
 
+        /** Die eingeklappte Zeile als Text; für Tests. */
+        String summary() {
+            return summary.getText();
+        }
+
+        /**
+         * Eingeklappt: Pfeil und eine Textzeile über die restliche Breite. Aufgeklappt: Pfeil und darunter bündig
+         * je Quelle eine Zeile mit ihrem Link.
+         */
         private int layoutEntries(int width, boolean place) {
             java.awt.Insets insets = getInsets();
             int available = Math.max(1, width - insets.left - insets.right);
-            int x = 0;
-            int y = insets.top + 2;
-            int rowHeight = 0;
-            for (Component entry : getComponents()) {
-                Dimension preferred = entry.getPreferredSize();
-                int entryWidth = Math.min(available, preferred.width);
-                if (x > 0 && x + entryWidth > available) {
-                    x = 0;
-                    y += rowHeight + 2;
-                    rowHeight = 0;
+            int indent = ROW + TOGGLE_GAP;
+            int usable = Math.max(1, available - indent);
+            int rows = expanded ? Math.max(1, entries.size()) : 1;
+            if (place) {
+                toggle.setVisible(!entries.isEmpty());
+                toggle.setBounds(insets.left, insets.top, ROW, ROW);
+                int summaryHeight = Math.min(ROW, summary.getPreferredSize().height);
+                summary.setVisible(!expanded);
+                summary.setBounds(insets.left + indent, insets.top + (ROW - summaryHeight) / 2,
+                        Math.min(usable, summary.getPreferredSize().width), summaryHeight);
+                int row = 0;
+                for (JComponent entry : entries) {
+                    Dimension preferred = entry.getPreferredSize();
+                    int height = Math.min(ROW, preferred.height);
+                    entry.setVisible(expanded);
+                    entry.setBounds(insets.left + indent, insets.top + row * (ROW + ROW_GAP) + (ROW - height) / 2,
+                            Math.min(usable, preferred.width), height);
+                    row++;
                 }
-                if (place) {
-                    entry.setBounds(insets.left + x, y, entryWidth, preferred.height);
-                }
-                x += entryWidth + 10;
-                rowHeight = Math.max(rowHeight, preferred.height);
             }
-            return y + rowHeight + 2 + insets.bottom;
+            return insets.top + rows * ROW + (rows - 1) * ROW_GAP + insets.bottom;
         }
 
         @Override

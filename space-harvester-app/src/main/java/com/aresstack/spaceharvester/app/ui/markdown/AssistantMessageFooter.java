@@ -8,10 +8,13 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Insets;
 
-/** Sources across the full width, the action row left-aligned below them, at the start of the answer text. */
+/** The action row left-aligned at the start of the answer text, the source links beside it in the same row. */
 final class AssistantMessageFooter extends JPanel implements WidthAwareHeight {
 
     private static final int ROW_GAP = 4;
+    /** Abstand zwischen den Knöpfen und den Quellen daneben. */
+    private static final int GAP = 12;
+    private static final int MIN_SOURCE_WIDTH = 120;
     /** Abstände der Reihe und Innenrand des ersten Knopfs: so viel rückt die Reihe nach links, bündig zum Text. */
     private static final int LEAD = 5;
     /** Abstand zwischen dem allein stehenden Kopierknopf und den übrigen Knöpfen (zusätzlich zum Reihenabstand). */
@@ -109,33 +112,46 @@ final class AssistantMessageFooter extends JPanel implements WidthAwareHeight {
 
     @Override
     public int preferredHeightForWidth(int width) {
-        int controlHeight = controls.getPreferredSize().height;
+        Dimension controlSize = controls.getPreferredSize();
         JComponent links = sources();
         if (links == null || !links.isVisible()) {
-            return controlHeight;
+            return controlSize.height;
         }
-        int sourceHeight = MarkdownHeights.forWidth(links, Math.max(1, width));
-        return sourceHeight <= 0 ? controlHeight : sourceHeight + ROW_GAP + controlHeight;
+        if (stackSources(width, controlSize.width)) {
+            int sourceHeight = MarkdownHeights.forWidth(links, Math.max(1, width));
+            return sourceHeight <= 0 ? controlSize.height : controlSize.height + ROW_GAP + sourceHeight;
+        }
+        return Math.max(controlSize.height, MarkdownHeights.forWidth(links, sourceWidth(width, controlSize.width)));
     }
 
     /**
-     * Die Quellen über die ganze Breite, darunter die Knöpfe mit der Uhrzeit linksbündig am Textanfang (Angelo,
-     * 26.11.2026): Die Antwort beginnt links, dort endet auch das Lesen; rechts außen hingen die Knöpfe verloren.
+     * Die Knöpfe mit der Uhrzeit linksbündig am Textanfang (Angelo, 26.11.2026). Die Quellen beginnen rechts
+     * daneben in derselben Zeile und laufen, wenn sie umbrechen, bündig darunter weiter; die Zeile wächst erst mit
+     * einer aufgeklappten langen Liste. Nur in einer sehr schmalen Leiste stehen sie unter den Knöpfen.
      */
     @Override
     public void doLayout() {
         Dimension controlSize = controls.getPreferredSize();
         int width = getWidth();
-        int y = 0;
+        controls.setBounds(-LEAD, 0, Math.min(width + LEAD, controlSize.width), controlSize.height);
+        controls.doLayout();
         JComponent links = sources();
         if (links != null && links.isVisible()) {
-            int sourceHeight = MarkdownHeights.forWidth(links, Math.max(1, width));
-            links.setBounds(0, 0, Math.max(1, width), sourceHeight);
+            boolean stacked = stackSources(width, controlSize.width);
+            int sourceWidth = stacked ? Math.max(1, width) : sourceWidth(width, controlSize.width);
+            int x = stacked ? 0 : width - sourceWidth;
+            int y = stacked ? controlSize.height + ROW_GAP : 0;
+            links.setBounds(x, y, sourceWidth, MarkdownHeights.forWidth(links, sourceWidth));
             links.doLayout();
-            y = sourceHeight <= 0 ? 0 : sourceHeight + ROW_GAP;
         }
-        controls.setBounds(-LEAD, y, Math.min(width + LEAD, controlSize.width), controlSize.height);
-        controls.doLayout();
+    }
+
+    private int sourceWidth(int width, int controlsWidth) {
+        return Math.max(1, width - (controlsWidth - LEAD) - GAP);
+    }
+
+    private boolean stackSources(int width, int controlsWidth) {
+        return width < controlsWidth - LEAD + GAP + MIN_SOURCE_WIDTH;
     }
 
     @Override

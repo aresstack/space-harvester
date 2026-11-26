@@ -64,7 +64,7 @@ class ChatMarkdownBubbleTest {
     }
 
     @Test
-    void footerPutsActionsLeftUnderTheSourcesAtTheStartOfTheAnswer() throws Exception {
+    void footerPutsActionsLeftAtTheStartOfTheAnswerAndTheSourcesBesideThem() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             MarkdownTheme theme = MarkdownTheme.forSurface(java.awt.Color.WHITE);
             AssistantMessageFooter footer = new AssistantMessageFooter(theme.getMutedForeground());
@@ -86,10 +86,19 @@ class ChatMarkdownBubbleTest {
                 // Angelo, 26.11.2026: Knöpfe und Uhrzeit beginnen links am Textanfang, nie allein am rechten Rand.
                 assertThat(controls.x).isLessThanOrEqualTo(0);
                 assertThat(links.getBounds().intersects(controls)).isFalse();
-                assertThat(links.getX()).isZero();
-                assertThat(links.getWidth()).isEqualTo(width);
-                assertThat(controls.y).isGreaterThanOrEqualTo(links.getY() + links.getHeight());
+                assertThat(controls.y).isZero();
                 assertThat(controls.y + controls.height).isLessThanOrEqualTo(footer.getHeight());
+                assertThat(links.getY() + links.getHeight()).isLessThanOrEqualTo(footer.getHeight());
+                if (width == 300) {
+                    // Sehr schmal: die Quellen stehen unter den Knöpfen über die ganze Breite.
+                    assertThat(links.getX()).isZero();
+                    assertThat(links.getY()).isGreaterThanOrEqualTo(controls.y + controls.height);
+                } else {
+                    // Sonst beginnen sie in der Knopfzeile, rechts neben den Knöpfen, bis zum rechten Rand.
+                    assertThat(links.getY()).isZero();
+                    assertThat(links.getX()).isGreaterThan(controls.x + controls.width);
+                    assertThat(links.getX() + links.getWidth()).isEqualTo(width);
+                }
                 assertThat(qr.getParent().getComponent(qr.getParent().getComponentZOrder(qr) - 1))
                         .isInstanceOf(MessageTimestamp.class);
                 // Der Kopierknopf steht für sich ganz links, mit einer Lücke zum Rest; hinter dem QR-Knopf der Export.
