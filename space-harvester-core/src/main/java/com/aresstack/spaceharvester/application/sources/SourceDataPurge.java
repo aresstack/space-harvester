@@ -87,6 +87,33 @@ public final class SourceDataPurge {
         Quiesce NONE = sourceId -> () -> { };
 
         AutoCloseable quiesce(String sourceId) throws Exception;
+
+        /**
+         * Erst dieses, dann {@code next} anhalten; freigegeben in umgekehrter Reihenfolge. Scheitert {@code next}, wird
+         * dieses gleich wieder freigegeben.
+         */
+        default Quiesce andThen(Quiesce next) {
+            Objects.requireNonNull(next, "next");
+            return sourceId -> {
+                AutoCloseable first = quiesce(sourceId);
+                AutoCloseable second;
+                try {
+                    second = next.quiesce(sourceId);
+                } catch (Exception | Error e) {
+                    try {
+                        first.close();
+                    } catch (Exception suppressed) {
+                        e.addSuppressed(suppressed);
+                    }
+                    throw e;
+                }
+                return () -> {
+                    try (first) {
+                        second.close();
+                    }
+                };
+            };
+        }
     }
 
     /** Abstände der Selbstheilung eines gescheiterten Löschens; danach bleibt es beim letzten. */

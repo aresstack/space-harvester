@@ -1729,7 +1729,12 @@ public final class Harvester implements AutoCloseable {
                     .standing(statusQuo)
                     .inventoryLog(inventoryLog)
                     .build(), sourceId -> catalog.config(sourceId).isPresent(),
-                    sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
+                    // Die Füllung bleibt für die ganze Bereinigung gesperrt, nicht nur beim Leeren ihrer Schlange: Sonst
+                    // reihte sie die Seiten aus dem noch nicht geleerten Katalog wieder ein.
+                    ((SourceDataPurge.Quiesce) sourceId -> {
+                        BackgroundFill current = filling.get();
+                        return current == null ? () -> { } : current.holdSource(sourceId);
+                    }).andThen(sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT)));
             this.sourceManagement = new SourceManagement(catalog, jobs, purge);
             withdrawals.set(purge);
             jobActions.purge(purge);
