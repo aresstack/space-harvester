@@ -1,17 +1,16 @@
 package com.aresstack.spaceharvester.app.nlp;
 
+import com.aresstack.enterpriseai.proasteion.platform.network.ResumableDownload;
 import com.aresstack.spaceharvester.nlp.malt.GermanParserModelPin;
 import com.aresstack.spaceharvester.nlp.malt.MaltModelLoader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
@@ -40,10 +39,27 @@ public final class ParserModelInstaller {
     /** Holt die ZIP; liefert den Inhalt und, falls bekannt, die Länge in Bytes (sonst {@code -1}). */
     public interface Download {
         Body open(URI target) throws IOException;
+
+        /**
+         * Der Rest ab Byte {@code from} nach einem Abriss ({@code Range}, mit {@code validator} auch {@code If-Range});
+         * ohne Unterstützung scheitert der Download wie bisher.
+         */
+        default ResumableDownload.Response rest(URI target, long from, String validator) throws IOException {
+            throw new IOException("Fortsetzen des Downloads nicht unterstützt");
+        }
     }
 
-    /** Antwort eines {@link Download}. */
-    public record Body(InputStream content, long length) {
+    /**
+     * Antwort eines {@link Download}.
+     *
+     * @param validator {@code ETag}, sonst {@code Last-Modified}, oder {@code null}; damit kommt beim Fortsetzen nie ein
+     *                  Rest einer anderen Fassung
+     */
+    public record Body(InputStream content, long length, String validator) {
+
+        public Body(InputStream content, long length) {
+            this(content, length, null);
+        }
     }
 
     /** Fortschritt für die Oberfläche. */
@@ -58,6 +74,7 @@ public final class ParserModelInstaller {
     private final Path directory;
     private final GermanParserModelPin.Release release;
     private final Download download;
+    private final int resumes;
     /** Der gerade gelesene Datenstrom; {@link #abort} schließt ihn, damit ein hängender Download endet. */
     private volatile InputStream current;
 
@@ -67,9 +84,22 @@ public final class ParserModelInstaller {
      * @param download  holt die ZIP über den HTTP-Weg der App (Proxy, TLS)
      */
     public ParserModelInstaller(Path directory, GermanParserModelPin.Release release, Download download) {
+        this(directory, release, download, 0);
+    }
+
+    /**
+     * @param resumes wie oft ein abgerissener Download ab dem letzten Byte fortgesetzt wird (in der App
+     *                {@code jobs.retry.max-attempts}), 0 für nie (Angelo 26.11.2026, WLAN)
+     */
+    public ParserModelInstaller(Path directory, GermanParserModelPin.Release release, Download download,
+                                int resumes) {
         this.directory = Objects.requireNonNull(directory, "directory");
         this.release = Objects.requireNonNull(release, "release");
         this.download = Objects.requireNonNull(download, "download");
+        if (resumes < 0) {
+            throw new IllegalArgumentException("resumes darf nicht negativ sein");
+        }
+        this.resumes = resumes;
     }
 
     public Path directory() {
@@ -128,32 +158,48 @@ public final class ParserModelInstaller {
         } catch (NoSuchAlgorithmException e) {
             throw new IOException(e);
         }
-        Body body = download.open(URI.create(release.download()));
+        URI target = URI.create(release.download());
+        Body body = download.open(target);
         current = body.content();
         if (cancelled.getAsBoolean()) {
             body.content().close();
         }
-        try (InputStream in = new DigestInputStream(body.content(), digest);
-             OutputStream out = Files.newOutputStream(zip)) {
-            byte[] buffer = new byte[64 * 1024];
-            long done = 0;
-            progress.bytes(0, body.length());
-            int n;
-            while (true) {
-                try {
-                    n = in.read(buffer);
-                } catch (IOException e) {
-                    check(cancelled);
-                    throw e;
-                }
-                check(cancelled);
-                if (n < 0) {
-                    break;
-                }
-                out.write(buffer, 0, n);
-                done += n;
-                progress.bytes(done, body.length());
-            }
+        long total = body.length();
+        progress.bytes(0, total);
+        try (java.nio.channels.FileChannel out = java.nio.channels.FileChannel.open(zip,
+                java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.WRITE,
+                java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
+            ResumableDownload.Sink file = ResumableDownload.sink(out);
+            ResumableDownload.copy(new ResumableDownload.Response(200, null, body.validator(), body.content(), total),
+                    (from, validator) -> {
+                        // Nach einem Abbruch (abort schließt den Strom) nie fortsetzen.
+                        check(cancelled);
+                        ResumableDownload.Response rest = download.rest(target, from, validator);
+                        current = rest.body();
+                        return rest;
+                    }, new ResumableDownload.Sink() {
+                        private long done;
+
+                        @Override
+                        public void write(byte[] buffer, int offset, int length) throws IOException {
+                            check(cancelled);
+                            file.write(buffer, offset, length);
+                            digest.update(buffer, offset, length);
+                            done += length;
+                            progress.bytes(done, total);
+                        }
+
+                        @Override
+                        public void restart() throws IOException {
+                            file.restart();
+                            digest.reset();
+                            done = 0;
+                            progress.bytes(0, total);
+                        }
+                    }, Long.MAX_VALUE, resumes);
+        } catch (IOException e) {
+            check(cancelled);
+            throw e;
         } finally {
             current = null;
         }

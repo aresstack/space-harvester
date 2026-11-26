@@ -1258,7 +1258,9 @@ public final class AppContext {
                                 release,
                                 new com.aresstack.spaceharvester.app.nlp.HttpModelDownload(
                                         AppRuntime.proxy(current.proxy(), secrets()), current.tls(),
-                                        "space-harvester-app/" + version())));
+                                        "space-harvester-app/" + version()),
+                                // Abgerissene Downloads so oft ab dem letzten Byte fortsetzen wie jobs.retry.max-attempts.
+                                current.jobLimits().retry().maxAttempts()));
             });
             // Die Einstellungen laden erst nach dem Fenster: danach (und nach jeder Änderung) neu prüfen.
             ParserModelSetup setup = parserModel;
