@@ -185,6 +185,9 @@ public final class ChatPanel extends JPanel {
      * nicht. Vorbelegt wie askai ({@code stagnationRounds} 3), im Menü am Dreieck einstellbar.
      */
     static final String QUIET_ROUNDS = "Runden ohne Neues";
+    /** Menüeintrag und Schlüssel der Suchauszüge je Frage ({@link ChatKnowledge#SOURCES_KEY}). */
+    static final String SEARCH_EXCERPTS = "Suchauszüge je Frage";
+    static final String EXCERPTS = ChatKnowledge.SOURCES_KEY.substring("chat.web.".length());
     static final int QUIET_ROUNDS_DEFAULT = 3;
     /** Die Stufen im Menü; darunter „Benutzerdefiniert …“. */
     static final List<Integer> PARALLEL_STEPS = com.aresstack.spaceharvester.app.ui.ParallelChoice.STEPS;
@@ -1799,7 +1802,10 @@ public final class ChatPanel extends JPanel {
                         + "gleichzeitig gelesen werden", "files", FILES_DEFAULT).menu(PARALLEL_FILES),
                 parallelChoice("Runden ohne Neues: nach so vielen Werkzeugrunden ohne neues Ergebnis bittet der "
                         + "Chat die KI, mit dem Gefundenen zu antworten; sonst sucht sie, bis sie fertig ist",
-                        "quiet", QUIET_ROUNDS_DEFAULT).menu(QUIET_ROUNDS));
+                        "quiet", QUIET_ROUNDS_DEFAULT).menu(QUIET_ROUNDS),
+                parallelChoice("Suchauszüge je Frage: so viele Treffer der Suche gehen ohne Werkzeuge als Auszüge "
+                        + "an die KI, zusammen nie mehr, als in die Anfrage passt", EXCERPTS,
+                        ChatKnowledge.SOURCES_DEFAULT).menu(SEARCH_EXCERPTS));
     }
 
     private com.aresstack.spaceharvester.app.ui.ParallelChoice parallelChoice(String tip, String key, int fallback) {
