@@ -87,6 +87,19 @@ class LucenePageTextIndexTest {
         }
     }
 
+    /** Angelo 26.11.2026 (docs/grenzen.md): Text einer langen Seite wird nicht mehr nach 1 Mio. Zeichen abgeschnitten. */
+    @Test
+    void findsAWordFarBehindTheFormerOneMillionCharacterCut() {
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            index.put(entry("wiki", "1", "DEV", "Lang", "Füllwort ".repeat(200_000) + "Schlusswort am Ende."));
+
+            var matches = index.search("Schlusswort", Set.of("wiki"), SearchSpaces.all(), 10);
+
+            assertThat(matches).extracting(PageTextIndex.Match::pageId).containsExactly("1");
+            assertThat(matches.getFirst().snippet()).contains("Schlusswort am Ende.");
+        }
+    }
+
     @Test
     void theWindowIsAroundAWholeWordNotAPartOfOne() {
         try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
