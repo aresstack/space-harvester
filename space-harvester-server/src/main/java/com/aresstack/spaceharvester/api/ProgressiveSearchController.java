@@ -46,8 +46,6 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Suche", description = "Schlagwortsuche über die Suche der Quellen, Titel- und Metadatensuche im Index")
 public class ProgressiveSearchController {
 
-    /** Höchstes Zeitbudget einer Suche. */
-    static final Duration MAX_TIME_BUDGET = Duration.ofMinutes(2);
     /** So lange wartet {@code wait=true} über das Zeitbudget hinaus auf den Abschluss. */
     static final Duration WAIT_MARGIN = Duration.ofSeconds(5);
 
@@ -74,9 +72,11 @@ public class ProgressiveSearchController {
                     + "Stand. Delegierte Benutzer warten immer, weil ihre Anmeldung den Aufruf nicht überdauert. "
                     + "Eine Quelle ohne Freigabe liefert nichts; scheitert jede Suchanfrage, endet die Suche mit "
                     + "reason=failed. Höchstens space-harvester.search.progressive.max-running Suchen laufen zugleich "
-                    + "(Standard " + ProgressiveSearches.DEFAULT_MAX_RUNNING + ", darüber 429 too-many-searches); "
-                    + "beendete bleiben space-harvester.search.progressive.retention lang abrufbar (Standard 5 "
-                    + "Minuten).")
+                    + "(Standard " + ProgressiveSearches.DEFAULT_MAX_RUNNING + "); weitere warten mit "
+                    + "status=waiting in der Reihenfolge ihres Starts, höchstens .max-waiting (Standard "
+                    + ProgressiveSearches.DEFAULT_MAX_WAITING + "), darüber 429 too-many-searches. Eine neue Suche "
+                    + "verdrängt nie eine andere. Beendete bleiben .retention lang abrufbar (Standard 5 Minuten); "
+                    + "timeBudgetMs höchstens .max-time-budget (Standard 2 Minuten).")
     @ApiResponse(responseCode = "200", description = "Mit wait=true: die fertige Liste mit Abschlussgrund")
     @ApiResponse(responseCode = "202", description = "Die Suche läuft; Location nennt den Stand")
     @ApiResponse(responseCode = "400", description = "Ungültige Anfrage, etwa ohne q oder mit Werten außerhalb der "
@@ -85,7 +85,7 @@ public class ProgressiveSearchController {
     @ApiResponse(responseCode = "503", description = "ranking=semantic ohne verfügbares Embedding-Modell "
             + "(semantic-search-unavailable)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
-    @ApiResponse(responseCode = "429", description = "Zu viele laufende Suchen (too-many-searches)",
+    @ApiResponse(responseCode = "429", description = "Zu viele laufende und wartende Suchen (too-many-searches)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public ResponseEntity<ProgressiveResponse> start(@Parameter(hidden = true) AccessContext caller,
@@ -96,7 +96,7 @@ public class ProgressiveSearchController {
         KeywordSearch.Query query = new KeywordSearch.Query(request.q(), request.sourceId(), set(request.sourceIds()),
                 set(request.spaceKeys()), set(request.excludeSpaceKeys()))
                 .withGlossarySynonyms(Boolean.TRUE.equals(request.glossarySynonyms()));
-        SearchProfile profile = profile(request, searches.defaults());
+        SearchProfile profile = profile(request, searches.defaults(), searches.limits().maxTimeBudget());
         ProgressiveSearches.Tracked tracked = searches.start(caller, query, profile);
         boolean wait = Boolean.TRUE.equals(request.waitForResult())
                 || caller.kind() == AccessContext.PrincipalKind.END_USER;
@@ -142,7 +142,7 @@ public class ProgressiveSearchController {
 
     private static void await(ProgressiveSearches.Tracked tracked, Duration timeout) {
         try {
-            tracked.search().result().get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            tracked.result().get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException | ExecutionException e) {
             // Der Stand sagt, wie weit die Suche ist; sie scheitert nie mit einer Ausnahme.
         } catch (InterruptedException e) {
@@ -156,6 +156,11 @@ public class ProgressiveSearchController {
 
     /** Das Standardprofil mit den Angaben der Anfrage; Grenzen prüft das Profil. */
     static SearchProfile profile(ProgressiveRequest request, SearchProfile defaults) {
+        return profile(request, defaults, ProgressiveSearches.DEFAULT_MAX_TIME_BUDGET);
+    }
+
+    /** Wie {@link #profile(ProgressiveRequest, SearchProfile)} mit dem eingestellten höchsten Zeitbudget. */
+    static SearchProfile profile(ProgressiveRequest request, SearchProfile defaults, Duration maxTimeBudget) {
         SearchProfile.Mode mode = defaults.mode();
         if (request.mode() != null) {
             mode = switch (request.mode()) {
@@ -182,8 +187,8 @@ public class ProgressiveSearchController {
         }
         Duration timeBudget = defaults.timeBudget();
         if (request.timeBudgetMs() != null) {
-            if (request.timeBudgetMs() < 1 || request.timeBudgetMs() > MAX_TIME_BUDGET.toMillis()) {
-                throw new InvalidQueryException("timeBudgetMs muss zwischen 1 und " + MAX_TIME_BUDGET.toMillis()
+            if (request.timeBudgetMs() < 1 || request.timeBudgetMs() > maxTimeBudget.toMillis()) {
+                throw new InvalidQueryException("timeBudgetMs muss zwischen 1 und " + maxTimeBudget.toMillis()
                         + " liegen");
             }
             timeBudget = Duration.ofMillis(request.timeBudgetMs());
@@ -249,7 +254,7 @@ public class ProgressiveSearchController {
     /**
      * Stand einer progressiven Suche.
      *
-     * @param status    {@code running} oder {@code done}
+     * @param status    {@code waiting} (wartet auf einen Platz), {@code running} oder {@code done}
      * @param done      ob die Suche beendet ist; „beendet“ heißt, die Strategie hat ihre Arbeit getan, nicht, dass
      *                  jede Seite untersucht wurde
      * @param reason    warum sie endete, {@code null}, solange sie läuft; {@code budget-exhausted} behauptet nie, das
@@ -263,7 +268,7 @@ public class ProgressiveSearchController {
      *                  {@code GET /api/v1/search/progress/{id}}
      * @param elapsedMs Dauer bisher bzw. bis zum Abschluss
      */
-    public record ProgressiveResponse(String id, @Schema(allowableValues = {"running", "done"}) String status,
+    public record ProgressiveResponse(String id, @Schema(allowableValues = {"waiting", "running", "done"}) String status,
                                       boolean done,
                                       @Schema(nullable = true, allowableValues = {"quality-reached",
                                               "all-variants-done", "budget-exhausted", "cancelled", "failed"})
@@ -275,7 +280,8 @@ public class ProgressiveSearchController {
                                       List<String> loads, long elapsedMs) {
 
         static ProgressiveResponse of(ProgressiveSearches.Snapshot snapshot) {
-            return new ProgressiveResponse(snapshot.id(), snapshot.done() ? "done" : "running", snapshot.done(),
+            String status = snapshot.done() ? "done" : snapshot.waiting() ? "waiting" : "running";
+            return new ProgressiveResponse(snapshot.id(), status, snapshot.done(),
                     snapshot.reason() == null ? null : name(snapshot.reason()), name(snapshot.profile().mode()),
                     name(snapshot.profile().expansion()), name(snapshot.profile().ranking()),
                     snapshot.hits().stream().map(ProgressiveHitResponse::of).toList(),

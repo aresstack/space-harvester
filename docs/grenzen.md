@@ -70,7 +70,7 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Baum und Listen in der REST-API (`PageQueries.MAX_TREE_DEPTH`, `MAX_PAGE_LIMIT`, `ContentListing.MAX_START`, `TermQueries.MAX_SCAN`) | 200 / 100 / 10.000 / 50.000 | tiefere Ebenen und spätere Einträge sind nicht erreichbar | beseitigen: Baum ebenenweise (F40-6), Seitengröße einstellbar |
 | Cache-Vorschau und Explorer (`Explorer.TREE_LIMIT`, `Payloads.MAX_DISPLAY_CHARS`) | 5000 Knoten / 2.000.000 Zeichen | große Bäume und lange Inhalte werden abgeschnitten | beseitigen: paginieren (F40-5) |
 | Diagrammtexte (`DiagramLabels`, Zahl ohne Konstante) | 4000 Zeichen Code | der Code wurde vor dem Modellaufruf abgeschnitten (F41-7) | **beseitigt**: zu langer Code wird nach dem Tokenbudget des Modells (`ModelBudget`) an Zeilengrenzen in Teile zerlegt und teilweise beschriftet |
-| Laufende progressive Suchen (`ProgressiveSearches.DEFAULT_MAX_RUNNING`, `DEFAULT_RETENTION`) | 256 / 5 min | laufen schon `max-running` Suchen, wird eine neue mit 429 abgewiesen; eine neue verdrängt keine andere mehr | **einstellbar**: `space-harvester.search.progressive.max-running`, `.retention` (F38-4). Das Register bleibt (F38-4 erlaubt es); Wartende gibt es nicht, darum kein eigenes Wartebudget |
+| Progressive Suchen (`ProgressiveSearches.DEFAULT_MAX_RUNNING`, `DEFAULT_MAX_WAITING`, `DEFAULT_RETENTION`, `DEFAULT_MAX_TIME_BUDGET`) | 256 laufend / 256 wartend / 5 min / 2 min | laufen schon `max-running` Suchen, wartet eine neue (`waiting`) und startet, sobald ein Platz frei wird; erst wenn auch `max-waiting` voll ist, wird sie mit 429 abgewiesen; eine neue verdrängt nie eine andere; ein größeres Zeitbudget wird gekürzt | **einstellbar**: `space-harvester.search.progressive.max-running`, `.max-waiting`, `.retention`, `.max-time-budget` (F38-4, ADR 0038 Punkt 10) |
 | Speicher und Pakete (Desktop-`FileSystemAssetStore.DEFAULT_MAX_TOTAL_BYTES`, `ZipExportPackageReader`, `ImportController.MAX_PACKAGE_BYTES`, `LocalFilesSourceAdapter.MAX_FILE_MEGABYTES`, `BscwSourceAdapter`) | 20 GiB, 256 MiB, 4 GiB, 64 MB, Tiefe 50 | größere Dateien und tiefere Ordner werden nicht geerntet oder importiert | Speicherbudget einstellbar, Bestandsgrenzen beseitigen |
 | KI-Textbudgets (Chat 24.000 Zeichen / 8 Quellen, Podcast, Zusammenfassungen, Fristen 12.000 Zeichen) | fest | Material wird vor dem Modellaufruf gekürzt | aus der Tokenlänge des Modells ableiten |
 | Modellname in der MVS-Diagnose (`MvsDiagnosisTools`) | `gpt-oss-120b` | die Diagnose läuft nur mit diesem Modell | eingestelltes Modell verwenden |
@@ -657,8 +657,9 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 |---|---|---|---|---|
 | `ConfluenceCompatController.DEFAULT_LIMIT` | `25` | Vorgabe | Stapel-/Seitengröße | einstellbar |
 | `ImportController.MAX_PACKAGE_BYTES` | `4L * 1024 * 1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
-| `ProgressiveSearchController.MAX_TIME_BUDGET` | `Duration.ofMinutes(2)` | fest | Timeout | einstellbar |
 | `ProgressiveSearches.DEFAULT_MAX_RUNNING` | `256` | Vorgabe | Parallelität | einstellbar: `space-harvester.search.progressive.max-running` |
+| `ProgressiveSearches.DEFAULT_MAX_WAITING` | `256` | Vorgabe | Warteschlange | einstellbar: `space-harvester.search.progressive.max-waiting` |
+| `ProgressiveSearches.DEFAULT_MAX_TIME_BUDGET` | `Duration.ofMinutes(2)` | Vorgabe | Timeout | einstellbar: `space-harvester.search.progressive.max-time-budget` |
 | `ProgressiveSearches.DEFAULT_RETENTION` | `Duration.ofMinutes(5)` | Vorgabe | Cache-Aufbewahrung | einstellbar: `space-harvester.search.progressive.retention` |
 
 ### `command-deck`
