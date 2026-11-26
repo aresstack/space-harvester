@@ -69,6 +69,42 @@ class FtpNavigationReconciliationTest {
         }
     }
 
+    /** ADR 0037, Punkt 3: Bereinigen bietet Erworbenes ohne Grund an, entfernt es erst auf Wahl, Navigation bleibt. */
+    @Test
+    void cleanupOffersOnlyPagesWithoutReasonAndRemovesThemOnlyWhenChosen() throws Exception {
+        try (ParityFtp server = ParityFtp.start();
+             Harvester harvester = harvester(server, "/parity/docs")) {
+            var source = harvester.sources().sources().stream()
+                    .filter(candidate -> candidate.id().equals("ftp-test")).findFirst().orElseThrow();
+            String readme = source.navigationPageId("/parity/README.txt").orElseThrow();
+            String notes = source.navigationPageId("/parity/notizen.txt").orElseThrow();
+            BackgroundGroup group = harvester.pageLoads().load(harvester.caller(), "FTP navigation",
+                    List.of(new PageKey("ftp-test", readme), new PageKey("ftp-test", notes))).orElseThrow();
+            for (String jobId : group.jobIds()) {
+                assertThat(harvester.await(jobId, Duration.ofSeconds(60)).state()).isEqualTo(JobState.COMPLETED);
+            }
+            harvester.navigationMarks().mark("ftp-test", "ftp-test", List.of(notes));
+            assertThat(harvester.await(harvester.sync("ftp-test", "ftp-test").id(),
+                    Duration.ofSeconds(60)).state()).isEqualTo(JobState.COMPLETED);
+
+            var previews = harvester.cleanupPreviews("ftp-test");
+
+            assertThat(previews).hasSize(1);
+            assertThat(previews.get(0).problem()).isNull();
+            // Erstes Bereinigen: Was ohne Grund dasteht, kam vor dem Merken der Gründe, also „Grund unbekannt“.
+            assertThat(previews.get(0).unknown()).containsExactly(readme);
+            assertThat(previews.get(0).withoutReason()).isEmpty();
+            assertThat(harvester.pages().cached(harvester.caller(), "ftp-test", readme)).isPresent();
+
+            assertThat(harvester.await(harvester.cleanUp("ftp-test", "ftp-test", java.util.Set.of(readme, notes))
+                    .id(), Duration.ofSeconds(60)).state()).isEqualTo(JobState.COMPLETED);
+
+            assertThat(harvester.pages().cached(harvester.caller(), "ftp-test", readme)).isEmpty();
+            assertThat(harvester.pages().cached(harvester.caller(), "ftp-test", notes)).isPresent();
+            assertThat(harvester.cleanupPreviews("ftp-test").get(0).unknown()).isEmpty();
+        }
+    }
+
     private Harvester harvester(ParityFtp server, String scope) {
         Map<String, String> options = Map.of("host", server.host(), "port", String.valueOf(server.port()),
                 "startPoints", scope, "navigationFill", "true");

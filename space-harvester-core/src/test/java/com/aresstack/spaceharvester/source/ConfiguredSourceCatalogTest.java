@@ -33,6 +33,29 @@ class ConfiguredSourceCatalogTest {
     }
 
     @Test
+    void renameChangesOnlyTheDisplayNameAndKeepsTheOpenSource() {
+        ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(List.of(
+                source("wiki", new Auth(AuthType.PAT, null, null, "token"))), "test");
+        var opened = catalog.find("wiki").orElseThrow();
+
+        assertThat(catalog.rename("wiki", "  Team-Wiki ")).isTrue();
+
+        // Dieselbe Instanz: nicht neu geöffnet, Sitzung und Zugangsdaten bleiben.
+        assertThat(catalog.find("wiki").orElseThrow()).isSameAs(opened);
+        assertThat(opened.title()).isEqualTo("Team-Wiki");
+        assertThat(catalog.configs()).singleElement().satisfies(config -> {
+            assertThat(config.id()).isEqualTo("wiki");
+            assertThat(config.title()).isEqualTo("Team-Wiki");
+            assertThat(config.baseUrl()).isEqualTo(BASE);
+        });
+        assertThat(catalog.rename("wiki", "Team-Wiki")).isFalse();
+        assertThat(catalog.rename("wiki", " ")).isTrue();
+        assertThat(opened.title()).isEqualTo("wiki");
+        assertThatThrownBy(() -> catalog.rename("fehlt", "x"))
+                .isInstanceOf(com.aresstack.spaceharvester.application.sources.UnknownSourceException.class);
+    }
+
+    @Test
     void disabledCertificateMayKeepAnUnresolvedPasswordPlaceholder() {
         SourceSettingsConfig.ClientCertificate kept = new SourceSettingsConfig.ClientCertificate(false,
                 SourceSettingsConfig.CertificateStoreType.PKCS12, java.nio.file.Path.of("client.p12"), "client",

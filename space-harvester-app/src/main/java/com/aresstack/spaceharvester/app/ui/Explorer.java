@@ -115,6 +115,14 @@ public final class Explorer {
             + "ihn nicht mehr; Geladenes bleibt. Wieder einblenden unter Wissensquellen › Ausgeschlossen";
     static final String EXCLUDED_NOTICE = "„%s“ ausgeschlossen · wieder einblenden unter Wissensquellen › "
             + "Ausgeschlossen";
+    /*
+     * Umbenennen (Angelo, 26.11.2026): Der Anzeigename einer Quelle ist reine Anzeige; derselbe Wert wie „Anzeigename“
+     * in der Quellenverwaltung. ID und Ziel bleiben, die Quellen starten nicht neu.
+     */
+    static final String RENAME = "Umbenennen";
+    static final String RENAME_TIP = "Anzeigenamen der Quelle ändern; nur Anzeige, ID und Daten bleiben";
+    static final String RENAME_TEXT = "Neuer Anzeigename für die Quelle „%s“ (ID %s). Er dient nur der Anzeige; "
+            + "ID, Einstellungen und Daten bleiben.";
     static final String PAGE_ONLY = "Seite indexieren";
     static final String PAGE_ONLY_TIP = "Nur diese Seite ohne Unterseiten laden; Auftrag startet sofort";
     static final String INDEX_ALL = "Alles indexieren";
@@ -1311,6 +1319,7 @@ public final class Explorer {
         // Vor dem Vergleich: eine neue Laufzeit mit denselben Quellen meldet die Zeichen neu an.
         states.watch(ids);
         if (ids.equals(shownSources) && top.getChildCount() > 0) {
+            retitle(sources);
             return;
         }
         shownSources = ids;
@@ -1324,6 +1333,24 @@ public final class Explorer {
         }
         model.reload();
         note.setText(" ");
+    }
+
+    /**
+     * Übernimmt geänderte Anzeigenamen (Rechtsklick „Umbenennen“ oder Quellenverwaltung) in die gezeigten
+     * Quellenknoten, ohne den Baum neu aufzubauen: Aufgeklappte Zweige und Auswahl bleiben.
+     */
+    private void retitle(List<HarvestSource> sources) {
+        java.util.Map<String, String> titles = new java.util.HashMap<>();
+        sources.forEach(source -> titles.put(source.id(), source.title()));
+        for (int i = 0; i < top.getChildCount(); i++) {
+            if (top.getChildAt(i) instanceof Node node && node.item() instanceof SourceItem source) {
+                String title = titles.get(source.sourceId());
+                if (title != null && !title.equals(source.title())) {
+                    node.setUserObject(new SourceItem(source.sourceId(), title));
+                    model.nodeChanged(node);
+                }
+            }
+        }
     }
 
     private static Node expandable(Item item) {
@@ -2252,6 +2279,19 @@ public final class Explorer {
                 Severity.ERROR));
     }
 
+    /** Fragt den neuen Anzeigenamen ab und speichert ihn wie die Quellenverwaltung ({@link AppContext#renameSource}). */
+    private void rename(SourceItem source) {
+        String typed = Dialogs.askText(tree, RENAME, String.format(RENAME_TEXT, source.title(), source.sourceId()),
+                source.title());
+        if (typed == null || typed.equals(source.title())) {
+            return;
+        }
+        context.renameSource(source.sourceId(), typed,
+                () -> notice("Quelle umbenannt in „" + typed + "“", Severity.INFO),
+                error -> notice("Umbenennen ließ sich nicht speichern: " + Problems.describe(error).title(),
+                        Severity.ERROR));
+    }
+
     /**
      * Lädt die Knoten der Quelle neu, ohne die Quelle abzugleichen, etwa nachdem in den Einstellungen etwas
      * ausgeschlossen oder wieder eingeblendet wurde; eine aufgeklappte Quelle klappt wieder auf.
@@ -2505,6 +2545,12 @@ public final class Explorer {
             refresh.setToolTipText(REFRESH_TIP);
             refresh.addActionListener(e -> refresh(item));
             menu.add(refresh);
+        }
+        if (item instanceof SourceItem source) {
+            javax.swing.JMenuItem rename = new javax.swing.JMenuItem(RENAME);
+            rename.setToolTipText(RENAME_TIP);
+            rename.addActionListener(e -> rename(source));
+            menu.add(rename);
         }
         if (analysisScope(item, false) != null) {
             String unavailable = analyses.unavailable();
