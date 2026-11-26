@@ -50,9 +50,15 @@ public final class SharePointSourceProvider implements KnowledgeSourceProvider {
                     "Höchstzahl Dateien (optional)", "Obergrenze je Lauf; leer = alle").advanced())
             .field(SourceSettingField.of("maxFileMegabytes", SourceSettingField.Kind.NUMBER,
                     "Größte Datei in MB (optional)", "Größere Dateien werden übersprungen; leer = 50").advanced())
+            .field(SourceSettingField.of("navigationBatchSize", SourceSettingField.Kind.NUMBER,
+                    "Einträge je Explorer-Abruf", "Stapelgröße beim Aufklappen eines Ordners (REST $top); leer = "
+                            + SharePointNavigationPages.DEFAULT_BATCH_SIZE + ". Begrenzt nie den Ordnerinhalt.")
+                    .advanced())
             .build();
 
     private static final int MAX_TIMEOUT = 600000;
+    /** Input bound for navigationBatchSize: the SharePoint list view threshold. */
+    private static final int MAX_NAVIGATION_BATCH_SIZE = 5000;
 
     private final Function<SecretRef, SharePointCredentialsProvider> credentials;
     private final HttpRoutePort routes;
@@ -116,6 +122,8 @@ public final class SharePointSourceProvider implements KnowledgeSourceProvider {
         int[] timeouts = timeouts(reader);
         String userAgent = reader.text("userAgent", defaultUserAgent);
         SourceScope configuredScope = scope(reader);
+        int navigationBatchSize = reader.integer("navigationBatchSize", SharePointNavigationPages.DEFAULT_BATCH_SIZE,
+                1, MAX_NAVIGATION_BATCH_SIZE);
         if (reader.hasProblems() || siteUrl == null) {
             throw new IllegalArgumentException("SharePoint-Quelle " + sourceId + " ist fehlerhaft: " + reader.problems());
         }
@@ -123,7 +131,7 @@ public final class SharePointSourceProvider implements KnowledgeSourceProvider {
                 : credentials.apply(credentialRef);
         return new SharePointKnowledgeSource(sourceId, siteUrl, provider,
                 new UrlConnectionSharePointTransport(routes, sslSocketFactory, userAgent, timeouts[0], timeouts[1]),
-                detector, extraction, maxFileBytes, configuredScope);
+                detector, extraction, maxFileBytes, configuredScope, navigationBatchSize);
     }
 
     /** Die Site ohne Schema, z. B. {@code sp.intern/sites/team}; Teil jeder Ressourcen-ID. */

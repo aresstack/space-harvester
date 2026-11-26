@@ -42,14 +42,26 @@ final class InlineMarkdownRenderer {
     }
 
     WrappingTextPane render(Node container, Font font) {
+        WrappingTextPane pane = pane(font);
+        renderChildren(container, pane.getStyledDocument(), attributes(font));
+        installLinkHandling(pane);
+        return pane;
+    }
+
+    /** Unformatierter Text (unbekannte Blöcke wie HTML), umbrochen wie ein Absatz; nie als HTML gedeutet. */
+    WrappingTextPane plain(String text, Font font) {
+        WrappingTextPane pane = pane(font);
+        append(pane.getStyledDocument(), text == null ? "" : text, attributes(font));
+        return pane;
+    }
+
+    private WrappingTextPane pane(Font font) {
         WrappingTextPane pane = new WrappingTextPane();
         pane.setFont(font);
         pane.setForeground(theme.getForeground());
         // Markierung aus der Blasenfarbe statt des Look-and-Feel-Blaus; die Schrift bleibt lesbar.
         pane.setSelectionColor(theme.getQuoteBorder());
         pane.setSelectedTextColor(theme.getForeground());
-        renderChildren(container, pane.getStyledDocument(), attributes(font));
-        installLinkHandling(pane);
         return pane;
     }
 

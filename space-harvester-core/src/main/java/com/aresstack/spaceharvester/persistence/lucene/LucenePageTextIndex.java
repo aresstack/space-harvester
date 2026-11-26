@@ -68,8 +68,6 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
      * Anhang ein Eintrag je Dokument (auch enthaltene Dateien) und Abschnitt (ADR 0026, AP4b).
      */
     public static final String VERSION = "page-text-index/v3";
-    /** So viel Text je Seite wird indiziert und für Auszüge gespeichert; der Rest einer sehr langen Seite fehlt. */
-    public static final int MAX_TEXT_CHARS = 1_000_000;
     /** Höchstens so viele Treffer je Suche. */
     public static final int MAX_LIMIT = 1_000;
 
@@ -213,8 +211,8 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     }
 
     private Document pageDocument(Entry entry) {
-        String text = entry.text().length() > MAX_TEXT_CHARS ? entry.text().substring(0, MAX_TEXT_CHARS)
-                : entry.text();
+        // Ganzer Text, ohne Grenze (Angelo 26.11.2026, docs/grenzen.md): früher fehlte alles nach 1 Mio. Zeichen.
+        String text = entry.text();
         Document doc = new Document();
         // Give all page sections the same replacement key; attachment IDs have a separate namespace.
         doc.add(new StringField(ID, id(entry.key()), Field.Store.NO));
@@ -344,8 +342,8 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     }
 
     private static Document document(AttachmentEntry entry) {
-        String text = entry.text().length() > MAX_TEXT_CHARS ? entry.text().substring(0, MAX_TEXT_CHARS)
-                : entry.text();
+        // Ganzer Text, ohne Grenze (Angelo 26.11.2026, docs/grenzen.md): früher fehlte alles nach 1 Mio. Zeichen.
+        String text = entry.text();
         Document doc = new Document();
         doc.add(new StringField(ID, entryId(entry), Field.Store.NO));
         doc.add(new StringField(KIND, ATTACHMENT_KIND, Field.Store.YES));

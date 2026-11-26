@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.knowledge;
 
+import com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -202,7 +203,13 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
          * Aus der Korrektur des Prüfschritts (ADR 0032, FL4): ein einfacher Hauptsatz des Chat-Modells, nur aus Wörtern
          * des Originalsatzes, geparst wie eine Zeile der Vorstufe; zeigt auf die Aussage, die er korrigiert.
          */
-        MODELL
+        MODELL,
+        /**
+         * Aus einer KI-Hypothese der Programmanalyse (ADR 0041, Punkt 7; ADR 0032, Fortschreibung vom 26.11.2026): der
+         * Hypothesensatz, geparst wie eine Zeile der Vorstufe. Beleg ist nie dieser Satz, sondern der
+         * Quellstellenbeleg ({@link Derivation#source()}); die Aussage belegt nur den Ist-Zustand des Programms.
+         */
+        PROGRAMM
     }
 
     /**
@@ -233,9 +240,11 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
      * @param corrects           bei einer Korrektur die ID der Aussage, die sie korrigiert; sonst {@code null}
      * @param section            bei einer Aussage der Vorstufe der Abschnitt, den das Modell zu ihr sah (der
      *                           Prüfschritt zeigt ihn als Zusammenhang); {@code null} sonst und bei Analysen vor FL4
+     * @param source             bei einer Aussage aus der Programmanalyse ({@link Origin#PROGRAMM}) ihr
+     *                           Quellstellenbeleg; sonst {@code null} (Beleg ist dann der Originalsatz)
      */
     public record Derivation(Origin origin, StageFlag stageFlag, String simplifiedSentence, Origin featuresFrom,
-                             String corrects, Section section) {
+                             String corrects, Section section, SourceLocationEvidence source) {
 
         /** Aus dem Originalsatz (auch alle Analysen vor FL3). */
         public static final Derivation ORIGINAL = new Derivation(Origin.ORIGINAL, StageFlag.NONE, null,
@@ -264,6 +273,20 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
             if (section != null && origin != Origin.VORSTUFE) {
                 throw new IllegalArgumentException("Nur eine Aussage der Vorstufe hat einen Abschnitt");
             }
+            if (origin == Origin.PROGRAMM && (stageFlag != StageFlag.NONE || simplifiedSentence == null
+                    || simplifiedSentence.isBlank() || corrects != null || source == null)) {
+                throw new IllegalArgumentException("Eine Aussage der Programmanalyse braucht ihren Satz und ihren "
+                        + "Quellstellenbeleg");
+            }
+            if (source != null && origin != Origin.PROGRAMM) {
+                throw new IllegalArgumentException("Nur eine Aussage der Programmanalyse hat einen Quellstellenbeleg");
+            }
+        }
+
+        /** Ohne Quellstellenbeleg (alle Herkünfte außer {@link Origin#PROGRAMM}). */
+        public Derivation(Origin origin, StageFlag stageFlag, String simplifiedSentence, Origin featuresFrom,
+                          String corrects, Section section) {
+            this(origin, stageFlag, simplifiedSentence, featuresFrom, corrects, section, null);
         }
 
         /** Ohne Abschnitt. */
@@ -293,14 +316,25 @@ public record ParsedStatements(List<Sentence> sentences, List<Mention> mentions,
             return new Derivation(Origin.MODELL, StageFlag.NONE, correction, featuresFrom, corrects);
         }
 
+        /**
+         * Aus einer KI-Hypothese der Programmanalyse (ADR 0041, Punkt 7), mit eigenen Merkmalen.
+         *
+         * @param hypothesis der Hypothesensatz, wie ihn die Oberfläche zeigt; nie Beleg
+         * @param source     der Quellstellenbeleg
+         */
+        public static Derivation programm(String hypothesis, SourceLocationEvidence source) {
+            return new Derivation(Origin.PROGRAMM, StageFlag.NONE, hypothesis, Origin.PROGRAMM, null, null,
+                    Objects.requireNonNull(source, "source"));
+        }
+
         /** Dieselbe Herkunft mit Merkmalen aus der Original-Aussage desselben Verbs. */
         public Derivation withFeaturesFromOriginal() {
-            return new Derivation(origin, stageFlag, simplifiedSentence, Origin.ORIGINAL, corrects, section);
+            return new Derivation(origin, stageFlag, simplifiedSentence, Origin.ORIGINAL, corrects, section, source);
         }
 
         /** Dieselbe Herkunft mit dem Abschnitt der Vorstufe. */
         public Derivation withSection(Section other) {
-            return new Derivation(origin, stageFlag, simplifiedSentence, featuresFrom, corrects, other);
+            return new Derivation(origin, stageFlag, simplifiedSentence, featuresFrom, corrects, other, source);
         }
     }
 

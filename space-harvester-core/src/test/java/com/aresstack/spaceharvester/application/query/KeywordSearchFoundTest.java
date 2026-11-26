@@ -60,7 +60,9 @@ class KeywordSearchFoundTest {
     }
 
     @Test
-    void sourceSpecificPrefetchLeavesNativeHitsVisibleWithoutLoadingOrCataloguingThem() {
+    void sourceSpecificPrefetchOnlyDecidesLoadingWhileCataloguingFollowsTheBackgroundFill() {
+        // Angelo 26.11.: Suchtreffer nachladen (Laden des Inhalts) und Hintergrundfüllung (Erfassen im Katalog) sind
+        // getrennte Verantwortlichkeiten. „slow“ lädt nicht nach, ihre Funde werden trotzdem katalogisiert.
         fast.results("betrieb", "1");
         slow.results("betrieb", "9");
         List<String> loaded = new ArrayList<>();
@@ -77,8 +79,60 @@ class KeywordSearchFoundTest {
         assertThat(loaded).containsExactly("fast");
         assertThat(result.found()).extracting(KeywordSearch.Hit::sourceId)
                 .containsExactlyInAnyOrder("fast", "slow");
+        org.mockito.Mockito.verify(findings).accept(any(), org.mockito.ArgumentMatchers.eq("slow"), any());
+        org.mockito.Mockito.verify(findings).accept(any(), org.mockito.ArgumentMatchers.eq("fast"), any());
+    }
+
+    @Test
+    void excludedHitsAreNeitherShownNorLoadedNorCatalogued(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) {
+        // Angelo 26.11.: Ausgeschlossenes erscheint nicht in der Suche und wird nicht indexiert.
+        fast.results("betrieb", "1", "2");
+        List<String> loaded = new ArrayList<>();
+        var findings = mock(com.aresstack.spaceharvester.application.acquisition.FindingCatalog.class);
+        KeywordSearch search = new KeywordSearch(catalog, allowAll(), texts, (caller, hits) -> {
+            hits.forEach(hit -> loaded.add(hit.pageId()));
+            return KeywordSearch.Prefetch.Fill.NONE;
+        }, 1, ExcerptPriority.off(), CandidateSelectionStrategy.topN(5), com.aresstack.spaceharvester.application.searchrun.SearchRunLog.NONE, findings,
+                sourceId -> true, KeywordSearch.BeforeSearch.NONE, SearchExpansion.NONE, SearchExpansion.NONE,
+                sourceId -> true);
+        var exclusions = new com.aresstack.spaceharvester.application.sync.Exclusions(
+                new com.aresstack.spaceharvester.persistence.files.FileExclusionMarks(dir), (sourceId, pageId) -> null,
+                (sourceId, pageId) -> null);
+        exclusions.exclude("fast", "S", "2");
+        search.exclusions(exclusions);
+
+        var result = search.search(APP, KeywordSearch.Query.of("betrieb"), null, 25);
+
+        assertThat(result.ranked()).extracting(KeywordSearch.Hit::pageId).contains("1").doesNotContain("2");
+        assertThat(loaded).doesNotContain("2");
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<com.aresstack.spaceharvester.application.acquisition.FindingCatalog.Finding>>
+                offered = org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.Mockito.verify(findings).accept(any(), org.mockito.ArgumentMatchers.eq("fast"), offered.capture());
+        assertThat(offered.getValue()).extracting(
+                com.aresstack.spaceharvester.application.acquisition.FindingCatalog.Finding::pageId)
+                .containsExactly("1");
+    }
+
+    @Test
+    void withoutBackgroundFillNothingIsCataloguedEvenWhereHitsAreLoaded() {
+        fast.results("betrieb", "1");
+        slow.results("betrieb", "9");
+        List<String> loaded = new ArrayList<>();
+        var findings = mock(com.aresstack.spaceharvester.application.acquisition.FindingCatalog.class);
+        KeywordSearch search = new KeywordSearch(catalog, allowAll(), texts, (caller, hits) -> {
+            hits.forEach(hit -> loaded.add(hit.sourceId()));
+            return KeywordSearch.Prefetch.Fill.NONE;
+        }, 1, ExcerptPriority.off(), CandidateSelectionStrategy.topN(1), com.aresstack.spaceharvester.application.searchrun.SearchRunLog.NONE, findings,
+                sourceId -> true, KeywordSearch.BeforeSearch.NONE, SearchExpansion.NONE, SearchExpansion.NONE,
+                "slow"::equals);
+
+        search.search(APP, KeywordSearch.Query.of("betrieb"), null, 25);
+
+        assertThat(loaded).isNotEmpty();
         org.mockito.Mockito.verify(findings, org.mockito.Mockito.never()).accept(any(),
-                org.mockito.ArgumentMatchers.eq("slow"), any());
+                org.mockito.ArgumentMatchers.eq("fast"), any());
+        org.mockito.Mockito.verify(findings).accept(any(), org.mockito.ArgumentMatchers.eq("slow"), any());
     }
 
     @Test

@@ -154,6 +154,7 @@ import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SpaceSync;
 import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.application.sync.Exclusions;
 import com.aresstack.spaceharvester.application.sync.Indexing;
 import com.aresstack.spaceharvester.application.sync.SyncBeforeSearch;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
@@ -181,6 +182,7 @@ import com.aresstack.spaceharvester.output.export.EnrichmentImportedAssets;
 import com.aresstack.spaceharvester.output.export.ZipExportPackageReader;
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileReadStates;
+import com.aresstack.spaceharvester.persistence.files.FileExclusionMarks;
 import com.aresstack.spaceharvester.persistence.files.FileIndexMarks;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore;
@@ -368,6 +370,7 @@ public final class Harvester implements AutoCloseable {
     private final com.aresstack.spaceharvester.application.podcast.PagePodcasts pagePodcasts;
     private final SpaceSyncJobs syncs;
     private final Indexing indexing;
+    private final Exclusions exclusions;
     private final ChangeEvents changeEvents;
     private final Reconciliation reconciliation;
     /** Bestandsinventur nach {@code sync.inventory-interval}, nur aus der Konfiguration (ADR 0014/0015). */
@@ -818,11 +821,8 @@ public final class Harvester implements AutoCloseable {
                         if (fill != null) {
                             fill.offer(gaps);
                         }
-                    }, clock, sourceId -> (manager != null && !builder.prefetchSearchHitsFixed
-                            ? this.settings.sync().override(sourceId).effectivePrefetch(this.settings.search().prefetchHits())
-                            : builder.prefetchSearchHits)
-                            && (manager != null && !builder.backgroundFillFixed
-                            ? this.settings.syncFor(sourceId).backgroundFill() : builder.backgroundFill));
+                    }, clock, sourceId -> manager != null && !builder.backgroundFillFixed
+                            ? this.settings.syncFor(sourceId).backgroundFill() : builder.backgroundFill);
             opened.add(findings);
             if (backgroundJobs != null) {
                 // Fundstelle 14: Funde katalogisieren als Hintergrundart „Funde katalogisieren“.
@@ -1140,6 +1140,21 @@ public final class Harvester implements AutoCloseable {
             FileIndexMarks indexMarks = new FileIndexMarks(builder.dataDirectory);
             syncs.indexMarks(indexMarks);
             this.indexing = new Indexing(indexMarks, syncs, this::collectIndexedAssets);
+            // Ausschließen (Angelo 26.11.2026): Ausgeschlossenes fehlt in Baum und Suche; löscht nichts.
+            PageNavigation browsing = this.navigation;
+            this.exclusions = new Exclusions(new FileExclusionMarks(builder.dataDirectory),
+                    (sourceId, pageId) -> reader.header(new PageKey(sourceId, pageId))
+                            .map(header -> header.metadata().parentPageId())
+                            .orElseGet(() -> browsing.browsedParent(sourceId, pageId)),
+                    (sourceId, pageId) -> reader.header(new PageKey(sourceId, pageId))
+                            .map(header -> header.metadata().title()).orElse(null));
+            navigation.exclusions(exclusions);
+            keywordSearch.exclusions(exclusions);
+            findings.exclusions(exclusions);
+            // Automatische Auslöser laden Ausgeschlossenes nie; ausdrückliches Öffnen, Lesen und Export bleiben möglich.
+            Exclusions excluded = this.exclusions;
+            acquisition.withhold((key, trigger) -> automatic(trigger)
+                    && excluded.excluded(key.sourceId(), null, key.pageId()));
             // ADR 0030: Update-Marke je Quelle, sobald keine manuelle Synchronisierung mehr läuft oder angehalten wartet.
             // ADR 0030, CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
             cache.contentDiffer(new TextContentDiffer(pageTexts));
@@ -2833,6 +2848,18 @@ public final class Harvester implements AutoCloseable {
         return indexing;
     }
 
+    /** Auslöser ohne ausdrücklichen Klick auf genau diese Seite (ADR 0037, Punkt 10). */
+    private static boolean automatic(ChangeTrigger trigger) {
+        return trigger == ChangeTrigger.SEARCH || trigger == ChangeTrigger.BACKGROUND
+                || trigger == ChangeTrigger.STARTUP || trigger == ChangeTrigger.SCHEDULE
+                || trigger == ChangeTrigger.EVENT;
+    }
+
+    /** Ausschließen: was der Benutzer ausgeschlossen hat, fehlt in Baum und Suche und wird nicht indexiert. */
+    public Exclusions exclusions() {
+        return exclusions;
+    }
+
     /** Bilder und Anhänge einer markierten Wurzel beschaffen; vor dem Aufbau der Beschaffung nichts. */
     private void collectIndexedAssets(String sourceId, String spaceKey, String pageId) {
         ExportAssetCollection collection = assetCollection;
@@ -3687,6 +3714,18 @@ public final class Harvester implements AutoCloseable {
         public Builder statementAnalyzer(StatementAnalyzer analyzer) {
             this.statementAnalyzer = Objects.requireNonNull(analyzer, "analyzer");
             return this;
+        }
+
+        /**
+         * Die Quellentypen, die ein so gebauter Harvester mit {@link Harvester#sourceTypes()} meldet, ohne ihn zu
+         * starten: für Oberflächen, die die Liste auch ohne laufende Laufzeit brauchen (Quellenformular). Verlangt wie
+         * {@link #build()} ein {@link #dataDirectory}.
+         */
+        public List<SourceType> sourceTypes() {
+            if (dataDirectory == null) {
+                throw new IllegalStateException("dataDirectory fehlt");
+            }
+            return ConfiguredSourceCatalog.types(adapters());
         }
 
         /**

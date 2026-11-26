@@ -4,6 +4,9 @@
 mTLS: [README](../README.md#quellen-konfigurieren); Secrets und Azure Key Vault: [SECRETS.md](SECRETS.md); Proxy:
 README, Abschnitt „Proxy und PAC/WPAD“.
 
+Alle festen Grenzen (Größen, Anzahlen, Tiefen, Zeiten, Parallelität) mit Wert, Einstellung und Folge beim Erreichen:
+[grenzen.md](grenzen.md). Eine Grenze, die einstellbar wird, bekommt ihren Schlüssel hier und ihre Zeile dort.
+
 ## Lokal, ohne Server
 
 Der Dienst braucht nur `application.yml` und optional eine eigene Datei wie `config/application-local.yml` (von Git
@@ -48,6 +51,8 @@ Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvest
 | `space-harvester.search.semantic` | `false` | Voreinstellung des Hakens „semantisch“ für Clients (wirkt nur mit Embedding-Modell); die Relevanzsuche selbst folgt dem Embedding-Modell |
 | `space-harvester.search.rerank` | `true` | Treffer über das Rerank-Modell umordnen, wenn eines eingestellt ist |
 | `space-harvester.search.prefetch-hits` | `true` | Treffer der nativen Quellensuche zuerst in den Cache laden |
+| `space-harvester.search.progressive.max-running` | `256` | Nur Dienst (REST, ADR 0017): so viele progressive Suchen laufen zugleich; eine weitere bekommt 429 `too-many-searches`, wartende Suchen gibt es nicht. Eine neue Suche verdrängt keine andere (F38-4). Wirkt beim Start |
+| `space-harvester.search.progressive.retention` | `5m` | Nur Dienst: so lange bleibt eine beendete progressive Suche abrufbar. Wirkt beim Start |
 | `space-harvester.statements.analyzer` | `parser` | Aussagenanalyse (Fahrplan A2/A3): vorgewählter Analysator eines Laufs und zugleich die Ablage, aus der Aussagen, Graph, Stand, Begriffe und Export lesen (immer genau eine). `parser` MaltParser, `model` KI-Analysator über den eingestellten KI-Dienst (Erprobung: auf den erfundenen Prüftexten nicht besser als der Parser, mehr plausibel aussehende Fehler). Beide haben eine eigene Ablage und überschreiben sich nie; der KI-Analysator läuft nur im ausdrücklich gestarteten Auftrag und nur für Seiten mit KI-Freigabe |
 | `space-harvester.statements.analyzer-model` | leer | eigenes Chat-Modell für den KI-Analysator; leer heißt `ai.chat-model`. Ein anderes Modell lässt dessen Analysen veralten |
 | `space-harvester.statements.simplification.mode` | `where-needed` | Vorstufe „Sätze vereinfachen“ der Aussagenanalyse (ADR 0032): `where-needed` nur Stichpunkte, Kennungszeilen und Sätze ohne sichere Aussage, `always` alle Sätze mit Verb. Läuft nur im ausdrücklich gestarteten Auftrag und nur für Seiten mit KI-Freigabe |

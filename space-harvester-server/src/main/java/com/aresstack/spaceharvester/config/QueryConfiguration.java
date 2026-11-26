@@ -82,6 +82,7 @@ import org.springframework.context.annotation.Configuration;
  * antworten ihre Routen mit {@code cache-unavailable}.
  */
 @Configuration(proxyBeanMethods = false)
+@org.springframework.boot.context.properties.EnableConfigurationProperties(ProgressiveSearchProperties.class)
 class QueryConfiguration {
 
     /**
@@ -142,9 +143,7 @@ class QueryConfiguration {
         }
         return new FindingCataloging(catalog, access, new LuceneFindingStore(available),
                 gaps -> fill.ifAvailable(background -> background.offer(gaps)), Clock.systemUTC(),
-                sourceId -> live.current().sync().override(sourceId)
-                        .effectivePrefetch(live.current().search().prefetchHits())
-                        && live.current().syncFor(sourceId).backgroundFill());
+                sourceId -> live.current().syncFor(sourceId).backgroundFill());
     }
 
     /** Die Titel- und Metadatensuche im Index, etwa für die Confluence-kompatible Fassade. */
@@ -239,9 +238,11 @@ class QueryConfiguration {
      * wenn die wirksame Konfiguration eines hat, sonst nach Regeln.
      */
     @Bean(destroyMethod = "close")
-    ProgressiveSearches progressiveSearches(SearchOrchestrator orchestrator, QueryVariantModels models) {
+    ProgressiveSearches progressiveSearches(SearchOrchestrator orchestrator, QueryVariantModels models,
+                                            ProgressiveSearchProperties limits) {
         return new ProgressiveSearches(orchestrator, () -> SearchProfile.defaults().withExpansion(
-                models.get().isPresent() ? SearchProfile.Expansion.AI : SearchProfile.Expansion.RULES));
+                models.get().isPresent() ? SearchProfile.Expansion.AI : SearchProfile.Expansion.RULES),
+                limits.toLimits());
     }
 
     /**

@@ -139,6 +139,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
 
     private final Load load;
     private final java.util.function.BiPredicate<String, ChangeTrigger> allowed;
+    /** Seiten, die ein Auslöser nicht laden darf, etwa Ausgeschlossenes für automatische Auslöser. */
+    private volatile java.util.function.BiPredicate<PageKey, ChangeTrigger> withheld = (key, trigger) -> false;
     private volatile Limits limits;
     private final long resumeDelayNanos;
     /** Letzte Aktion des Vordergrunds ({@link System#nanoTime()}), anfangs lange her. */
@@ -200,6 +202,14 @@ public final class AcquisitionScheduler implements AutoCloseable {
      */
     public AcquisitionScheduler(Load load, Limits limits, Executor executor, Duration resumeDelay) {
         this(load, limits, executor, resumeDelay, (source, trigger) -> true);
+    }
+
+    /**
+     * Hält Seiten zurück, die ein Auslöser nicht laden darf (Ausschließen, Angelo 26.11.2026): Die Anfrage verfällt wie
+     * eine nicht erlaubte; ohne Aufruf wird nichts zurückgehalten.
+     */
+    public void withhold(java.util.function.BiPredicate<PageKey, ChangeTrigger> withheld) {
+        this.withheld = Objects.requireNonNull(withheld, "withheld");
     }
 
     public AcquisitionScheduler(Load load, Limits limits, Executor executor, Duration resumeDelay,
@@ -639,7 +649,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
         try {
             String source = entry.key.sourceId();
             List<Ticket> permitted = entry.tickets().stream()
-                    .filter(ticket -> allowed.test(source, ticket.mode.trigger())).toList();
+                    .filter(ticket -> allowed.test(source, ticket.mode.trigger())
+                            && !withheld.test(entry.key, ticket.mode.trigger())).toList();
             if (permitted.isEmpty()) {
                 // Detach the denied entry before releasing the lock so a new explicit request can start independently.
                 entries.remove(entry.key, entry);

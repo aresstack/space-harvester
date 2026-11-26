@@ -110,6 +110,11 @@ public final class Workspace {
         this.caller = harvester.caller();
         this.glossary = new CoreGlossaryAccess(harvester, caller, this::subscribeJobs);
         this.activities = Objects.requireNonNull(activities, "activities");
+        // ADR 0032 (Fortschreibung 26.11.2026): Programmaussagen werden beim Lesen gegen den aktuellen Code, die
+        // Copybooks und die Programmanalyse geprüft, je mit den Leserechten des Aufrufers
+        harvester.statementAnalysis().programSources(reader ->
+                new com.aresstack.spaceharvester.app.runtime.program.ProgramCurrentSources(
+                        key -> cachedPage(reader, key), programAnalyses()));
     }
 
     // ------------------------------------------------------------------ Wissensquellen
@@ -136,6 +141,13 @@ public final class Workspace {
 
     /** Spaces einer Quelle, live ({@code GET /api/v1/sources/{id}/spaces}); zugleich die Verbindungsprüfung. */
     public List<Partition> spaces(String sourceId) {
+        com.aresstack.spaceharvester.application.sync.Exclusions exclusions = harvester.exclusions();
+        return allSpaces(sourceId).stream()
+                .filter(partition -> !exclusions.spaceExcluded(sourceId, partition.key())).toList();
+    }
+
+    /** Wie {@link #spaces}, auch die ganz ausgeschlossenen Spaces; für die Übersicht in den Einstellungen. */
+    public List<Partition> allSpaces(String sourceId) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
         return access.filter(caller, harvester.sources().partitions(sourceId), AccessKind.METADATA,
                 partition -> ResourceScope.space(sourceId, partition.key()));
@@ -655,8 +667,12 @@ public final class Workspace {
      * nicht lokal liegt oder nicht lesbar ist. Das Wissen des Chats liest so (ADR 0028: nur Lokales geht an die KI).
      */
     public Optional<DeliveredPage> cachedPage(String sourceId, String pageId) {
+        return cachedPage(caller, new PageKey(sourceId, pageId));
+    }
+
+    private Optional<DeliveredPage> cachedPage(AccessContext reader, PageKey key) {
         try {
-            return harvester.pages().cached(caller, sourceId, pageId);
+            return harvester.pages().cached(reader, key.sourceId(), key.pageId());
         } catch (AccessDeniedException | UnknownSourceException e) {
             return Optional.empty();
         }
@@ -1019,7 +1035,7 @@ public final class Workspace {
 
     /** Run only by an explicit request; no remote source fetch or implicit AI release. */
     public Enrichments.Run recomputeCobolBusiness(PageKey key, String rawSha256, String model,
-            com.aresstack.spaceharvester.app.runtime.program.CobolBusinessAnalysis.Budget budget,
+            ModelBudget budget,
             java.util.function.BooleanSupplier modelUnchanged, java.util.function.Consumer<com.aresstack.spaceharvester.application.jobs.JobState> state) {
         var page = cachedPage(key.sourceId(), key.pageId())
                 .orElseThrow(() -> new IllegalStateException("Programm nicht im Wissensbestand verfügbar."));
@@ -1029,7 +1045,45 @@ public final class Workspace {
         access.require(caller, ResourceScope.space(key.sourceId(), page.header().metadata().partitionKey()), AccessKind.SYNC);
         return harvester.pageRecomputation().execute(caller.jobOwner(), page.snapshot(),
                 com.aresstack.spaceharvester.app.runtime.program.CobolBusinessEnrichment.ID, state,
-                context -> cobolBusiness(modelUnchanged).run(key, rawSha256, harvester::aiChat, model, budget, context));
+                context -> {
+                    var run = cobolBusiness(modelUnchanged).run(key, rawSha256, harvester::aiChat, model, budget,
+                            context);
+                    programStatements(key, context);
+                    return run;
+                });
+    }
+
+    /**
+     * The fresh business hypotheses of a program as program statements in the one Fachlogik store (ADR 0041, item 7;
+     * ADR 0032, update of 26.11.2026): source-location evidence from the stored analyses, read only through the gate,
+     * stored by the core only while technically current. Without a sentence analyzer the hypotheses stay in the
+     * program analysis alone.
+     */
+    private void programStatements(PageKey key, com.aresstack.spaceharvester.application.jobs.JobContext context) {
+        if (!harvester.statementAnalysis().available()) return;
+        var page = cachedPage(key.sourceId(), key.pageId())
+                .orElseThrow(() -> new IllegalStateException("Programm nicht im Wissensbestand verfügbar."));
+        var gate = programAnalyses();
+        var parser = gate.current(page, com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment.ID);
+        var business = gate.current(page, com.aresstack.spaceharvester.app.runtime.program.CobolBusinessEnrichment.ID);
+        if (parser.isEmpty() || business.isEmpty()) return;
+        java.util.function.Function<PageKey, Optional<DeliveredPage>> pages = other -> cachedPage(other.sourceId(),
+                other.pageId());
+        var mapped = com.aresstack.spaceharvester.app.runtime.program.ProgramHypothesisEvidence.of(page.snapshot(),
+                parser.get(), business.get(), other -> pages.apply(other).map(DeliveredPage::snapshot));
+        context.checkpoint();
+        context.phase("COBOL", "Hypothesen in den Fachlogik-Bestand übernehmen");
+        var stored = harvester.statementAnalysis().analyzeProgram(caller, page.snapshot(), mapped.hypotheses(),
+                new com.aresstack.spaceharvester.app.runtime.program.ProgramCurrentSources(pages, gate),
+                context::cancelRequested);
+        int left = mapped.unmapped() + stored.rejected();
+        context.record(left == 0
+                ? com.aresstack.spaceharvester.application.jobs.JobEvent.Draft.info("COBOL",
+                        stored.stored() + " Hypothesen als Aussagen mit Quellstellenbeleg übernommen")
+                : com.aresstack.spaceharvester.application.jobs.JobEvent.Draft.warning(
+                        com.aresstack.spaceharvester.application.jobs.JobEvent.Category.JOB, "COBOL",
+                        "PROGRAM_STATEMENTS_LEFT_OUT", stored.stored() + " Hypothesen übernommen, " + left
+                                + " ohne zuordenbaren oder aktuellen Quellstellenbeleg ausgelassen"));
     }
 
     /**
@@ -2313,6 +2367,36 @@ public final class Workspace {
     public void unindex(String sourceId, String spaceKey, String pageId) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
         harvester.indexing().unindex(sourceId, spaceKey, pageId);
+    }
+
+    /**
+     * Ausschließen (Angelo 26.11.2026): die Seite samt allem darunter, ohne {@code pageId} der ganze Space, erscheint
+     * nicht mehr im Baum und in der Suche und wird nicht indexiert. Löscht nichts; wieder einblenden über
+     * {@link #include}.
+     */
+    public void exclude(String sourceId, String spaceKey, String pageId) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        harvester.exclusions().exclude(sourceId, spaceKey, pageId);
+    }
+
+    /** Blendet genau diesen Ausschluss wieder ein; die Inhalte erscheinen wieder, neu geladen wird nichts. */
+    public void include(String sourceId, String spaceKey, String pageId) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        harvester.exclusions().include(sourceId, spaceKey, pageId);
+    }
+
+    /** Die Ausschlüsse der Quelle für die Übersicht in den Einstellungen; liest nur die Ablage. */
+    public List<com.aresstack.spaceharvester.application.sync.Exclusions.Exclusion> exclusions(String sourceId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
+        return harvester.exclusions().of(sourceId);
+    }
+
+    /**
+     * Die oberste Ebene eines Space mit den ausgeschlossenen Knoten, live, für die Übersicht in den Einstellungen
+     * (Mehrfachauswahl wie bei den NDV-Bibliotheken).
+     */
+    public PageNavigation.Children allChildren(String sourceId, String spaceKey, String parentPageId, String cursor) {
+        return harvester.navigation().children(caller, sourceId, spaceKey, parentPageId, cursor, true);
     }
 
     /** Ob genau diese Wurzel zum Indexieren markiert ist, ohne {@code pageId} der ganze Space; liest nur die Ablage. */

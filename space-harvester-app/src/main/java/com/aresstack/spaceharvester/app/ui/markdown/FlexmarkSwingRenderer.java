@@ -119,12 +119,9 @@ final class FlexmarkSwingRenderer {
         if (node.hasChildren()) {
             return renderContainer(node, renderMermaid, allowUnwrap);
         }
-        JLabel fallback = new JLabel(node.getChars().toString());
-        // Unbekannte Blöcke stammen aus der Modellantwort: nie als Swing-HTML deuten (ein „<html>…“ bleibt Text).
-        fallback.putClientProperty("html.disable", Boolean.TRUE);
-        fallback.setFont(theme.getBodyFont());
-        fallback.setForeground(theme.getForeground());
-        return fallback;
+        // Unbekannte Blöcke (etwa HTML) stammen aus der Modellantwort: als Text zeigen, nie als Swing-HTML deuten,
+        // und wie einen Absatz umbrechen statt als einzeiliges Label rechts abzuschneiden.
+        return inlineRenderer.plain(node.getChars().toString().trim(), theme.getBodyFont());
     }
 
     private JComponent renderHeading(Heading heading) {

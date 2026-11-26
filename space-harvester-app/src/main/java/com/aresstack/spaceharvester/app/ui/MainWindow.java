@@ -275,8 +275,16 @@ public final class MainWindow implements AppContext.Navigator {
             }
             var use = settings.ai().summary();
             String model = use != null && use.model() != null ? use.model() : settings.ai().chatModel();
+            // Tokenbudget aus Kontextlänge und Ausgabelimit (F41-7); fehlt eines, geht der Code in einer Anfrage.
+            com.aresstack.spaceharvester.app.runtime.ModelBudget budget;
+            try {
+                budget = com.aresstack.spaceharvester.app.runtime.ModelBudget.of(settings.ai().contextTokens(),
+                        settings.ai().chatMaxTokens());
+            } catch (IllegalStateException unknown) {
+                budget = null;
+            }
             return new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramLabels.Target(
-                    runtime.workspace().aiChat(), model, use == null ? null : use.thinking());
+                    runtime.workspace().aiChat(), model, use == null ? null : use.thinking(), budget);
         });
         statusView = new StatusView(context);
         sources = new SourcesView(context);
@@ -1329,6 +1337,16 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     @Override
+    public void openContainerFromTree(String sourceId, String spaceKey, String pageId, String title) {
+        // Wie eine Seite: In der Suche filtert die Auswahl links nur.
+        if (current == AppContext.Section.SEARCH) {
+            return;
+        }
+        showSection(AppContext.Section.CONTENT);
+        content.openContainer(sourceId, spaceKey, pageId, title);
+    }
+
+    @Override
     public void openSource(String sourceId, String title) {
         showSection(AppContext.Section.CONTENT);
         content.openSource(sourceId, title);
@@ -1422,6 +1440,11 @@ public final class MainWindow implements AppContext.Navigator {
                 () -> notice("Nicht mehr indexiert; Geladenes bleibt und wird weiter aktuell gehalten", Comic.MUTED),
                 error -> notice("Markierung ließ sich nicht aufheben: " + Problems.describe(error).title(),
                         Comic.RED));
+    }
+
+    @Override
+    public void exclusionsChanged(String sourceId) {
+        explorer.reloadSource(sourceId);
     }
 
     /** Kreispfeile hinter gescheiterten Abgleichen eines Updates: wie die Kreispfeile im Baum für diese Spaces. */

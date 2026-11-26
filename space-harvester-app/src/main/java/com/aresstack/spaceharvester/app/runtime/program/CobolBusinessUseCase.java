@@ -39,7 +39,7 @@ public final class CobolBusinessUseCase {
     }
 
     public Enrichments.Run run(PageKey key, String requestedHash, Supplier<AiChat> chat, String model,
-                                CobolBusinessAnalysis.Budget budget, JobContext context) {
+                                com.aresstack.spaceharvester.app.runtime.ModelBudget budget, JobContext context) {
         requireAllowed(key);
         var page = readable(key, requestedHash);
         writable.accept(page);

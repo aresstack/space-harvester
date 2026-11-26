@@ -68,6 +68,26 @@ class FindingCatalogingTest {
     }
 
     @Test
+    void anExcludedFindingIsNeitherCataloguedNorReportedToTheFill(@org.junit.jupiter.api.io.TempDir
+                                                                  java.nio.file.Path dir) throws InterruptedException {
+        // Ausschließen (Angelo 26.11.2026): kein Eintrag, keine Lücke; der Nachbar daneben kommt wie gewohnt.
+        page("1", "DEV", "3");
+        page("2", "DEV", "1");
+        var exclusions = new com.aresstack.spaceharvester.application.sync.Exclusions(
+                new com.aresstack.spaceharvester.persistence.files.FileExclusionMarks(dir), (sourceId, pageId) -> null,
+                (sourceId, pageId) -> null);
+        exclusions.exclude("wiki", "DEV", "1");
+        cataloging.exclusions(exclusions);
+
+        cataloging.offer(APP, "wiki", List.of(new FindingCatalog.Finding("1", "3"),
+                new FindingCatalog.Finding("2", "1")));
+        assertThat(cataloging.awaitIdle(WAIT)).isTrue();
+
+        assertThat(store.headers).containsOnlyKeys("2");
+        assertThat(gaps).extracting(gap -> gap.key().pageId()).containsExactly("2");
+    }
+
+    @Test
     void aNewFindingIsCataloguedOnceWithItsLiveHeaderAndReportedToTheFill() throws InterruptedException {
         page("1", "DEV", "3");
 

@@ -213,17 +213,32 @@ public final class AppRuntime implements AutoCloseable {
         }
     }
 
+    /**
+     * Die Quellentypen, die eine mit diesen Einstellungen gestartete Laufzeit kennt ({@code Workspace#sourceTypes}),
+     * ohne sie zu starten: dieselben Adapter wie {@link #start}, daher auch ohne laufende oder nach einer gescheiterten
+     * Laufzeit vollständig (Quellenformular).
+     */
+    public static List<com.aresstack.spaceharvester.application.sources.SourceType> sourceTypes(AppSettings settings) {
+        return Harvester.builder().sourceAdapter(confluence(settings))
+                .dataDirectory(settings.storage().dataDirectory()).sourceTypes();
+    }
+
+    /**
+     * Confluence wie im Enterprise AI Client (#571): Weiterleitungen wie dort, kein asynchroner Transport,
+     * HTML-Antworten statt Dateien neben dem Protokoll. Wiederholungen bei Netzfehlern, 429 und 5xx aus jobs.retry
+     * (ADR 0025); Datei-Downloads und Einmalcodes wiederholt der Client nie (keine neue Mail).
+     */
+    private static ConfluenceSourceAdapter confluence(AppSettings settings) {
+        return ConfluenceSourceAdapter.desktop(com.aresstack.spaceharvester.app.ui.SettingsView.logDirectory())
+                .withRetry(settings.jobLimits().retry());
+    }
+
     private static Harvester.Builder builder(AppSettings settings, AppSettings.Storage storage,
                                              List<SourceSettingsConfig> sources, AccessPolicy policy, String version,
                                              SessionSecrets secrets, boolean withAi) {
         Harvester.Builder builder = Harvester.builder()
                 .sources(sources)
-                // Confluence wie im Enterprise AI Client (#571): Weiterleitungen wie dort, kein asynchroner Transport,
-                // HTML-Antworten statt Dateien neben dem Protokoll. Wiederholungen bei Netzfehlern, 429 und 5xx aus
-                // jobs.retry (ADR 0025); Datei-Downloads und Einmalcodes wiederholt der Client nie (keine neue Mail).
-                .sourceAdapter(ConfluenceSourceAdapter.desktop(
-                        com.aresstack.spaceharvester.app.ui.SettingsView.logDirectory())
-                        .withRetry(settings.jobLimits().retry()))
+                .sourceAdapter(confluence(settings))
                 // Die App bedient Einmalcodes (SignInSlot); ohne Wartezeit fehlten solche Dateien sofort.
                 .signInWait(SignInRequests.DEFAULT_WAIT)
                 .dataDirectory(storage.dataDirectory())

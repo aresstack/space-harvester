@@ -43,7 +43,7 @@ import java.util.concurrent.TimeoutException;
  *       das Ergebnis verworfen.</li>
  *   <li>Gleichzeitigkeit: höchstens {@link #MAX_PARALLEL} Läufe; ein hängender Lauf hält seinen Platz, bis er endet,
  *       sodass nie mehr als so viele Threads in Tika stecken.</li>
- *   <li>Textlänge: höchstens {@link #DEFAULT_MAX_CHARS} Zeichen, so viele, wie der Volltextindex je Seite führt.</li>
+ *   <li>Textlänge: höchstens {@link #DEFAULT_MAX_CHARS} Zeichen.</li>
  * </ul>
  * Die letzten Ergebnisse bleiben im Speicher ({@value #CACHE_ENTRIES} Einträge nach Inhalts-Hash), weil Volltextindex
  * und Anreicherungen dieselbe Datei kurz nacheinander projizieren. Meldungen nennen weder Dateinamen noch Inhalte.
@@ -58,7 +58,7 @@ public final class TikaDocumentText implements DocumentText {
 
     /** Größte Datei, die geparst wird: 20 MiB. */
     public static final long DEFAULT_MAX_BYTES = 20L * 1024 * 1024;
-    /** Längster Text je Datei, wie {@code LucenePageTextIndex.MAX_TEXT_CHARS}. */
+    /** Längster Text je Datei (fest, docs/grenzen.md; soll {@code assets.extraction.max-chars} folgen). */
     public static final int DEFAULT_MAX_CHARS = 1_000_000;
     /** Längste Laufzeit je Datei. */
     public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);

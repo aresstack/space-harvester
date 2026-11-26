@@ -10,7 +10,11 @@ import com.aresstack.spaceharvester.application.check.Corrections;
 import com.aresstack.spaceharvester.application.check.StatementCheck;
 import com.aresstack.spaceharvester.application.check.StatementChecks;
 import com.aresstack.spaceharvester.application.configuration.SimplificationSettings;
+import com.aresstack.spaceharvester.application.assets.DocumentKey;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.evidence.CurrentSources;
+import com.aresstack.spaceharvester.application.evidence.SourceLocationCheck;
+import com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.simplification.SimplificationSection;
 import com.aresstack.spaceharvester.application.simplification.SimplificationUnavailableException;
@@ -18,7 +22,12 @@ import com.aresstack.spaceharvester.application.simplification.Simplifications;
 import com.aresstack.spaceharvester.application.simplification.SimplifiedSentence;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -63,6 +72,8 @@ public class StatementAnalysis {
     private final Supplier<StatementAnalyzer> model;
     private final java.util.function.Predicate<PageKey> released;
     private final StatementReviews reviews;
+    /** Der aktuelle Stand für Quellstellenbelege je Aufrufer, oder {@code null} in Laufzeiten ohne Programmanalyse. */
+    private volatile Function<AccessContext, CurrentSources> programSources;
 
     /**
      * @param texts    dieselbe Textprojektion wie der Leser ({@code Enrichments#text})
@@ -123,6 +134,16 @@ public class StatementAnalysis {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /**
+     * Richtet den aktuellen Stand für die technische Prüfung der Quellstellenbelege ein (ADR 0032, Fortschreibung
+     * 26.11.2026; ADR 0041, Punkte 10 und 11). Ohne ihn bleibt eine Programmanalyse nur am Programmtext gemessen.
+     *
+     * @param sources je Aufrufer die Inhalte, die er lesen darf, oder {@code null}
+     */
+    public void programSources(Function<AccessContext, CurrentSources> sources) {
+        this.programSources = sources;
+    }
+
     /** Die Zeit der Uhr, mit der {@link PageStatementAnalysis#analyzedAt()} geschrieben wird. */
     public java.time.Instant now() {
         return clock.instant();
@@ -156,7 +177,7 @@ public class StatementAnalysis {
             return PageStatements.missing(texts.apply(snapshot).isEmpty() ? PageStatements.NO_TEXT
                     : PageStatements.NOT_ANALYSED);
         }
-        String reason = reason(stored.get(), texts.apply(snapshot).map(PageText::inputSha256));
+        String reason = reason(caller, stored.get(), texts.apply(snapshot).map(PageText::inputSha256));
         return new PageStatements(reason == null ? PageStatements.State.CURRENT : PageStatements.State.STALE, reason,
                 reviewed(stored.get()));
     }
@@ -241,6 +262,13 @@ public class StatementAnalysis {
             return PageStatements.missing(PageStatements.NO_TEXT);
         }
         PageKey key = snapshot.key();
+        Optional<PageStatementAnalysis> program = store(AnalyzerChoice.PARSER).find(key)
+                .filter(StatementAnalysis::ofProgram);
+        if (program.isPresent()) {
+            // ADR 0041, Punkt 7: Programmcode ist kein Satztext; seine Aussagen kommen aus der Programmanalyse und
+            // werden von der Satzanalyse nie überschrieben
+            return read(caller, snapshot);
+        }
         String input = text.get().inputSha256();
         // Die Version steht vor dem Rechnen fest: wechselt das Modell währenddessen, ist das Ergebnis veraltet.
         String version = parser.version();
@@ -294,6 +322,135 @@ public class StatementAnalysis {
         store.replace(analysis);
         return new PageStatements(PageStatements.State.CURRENT, null,
                 reviewed(analysis.withResult(result.withoutConllu())));
+    }
+
+    /**
+     * Speichert KI-Hypothesen der Programmanalyse als Aussagen des Programms im Fachlogik-Bestand (ADR 0041, Punkt 7;
+     * ADR 0032, Fortschreibung vom 26.11.2026). Kein zweiter Bestand: Die Aussagen liegen in der Analyse des Programms
+     * wie Aussagen einer Seite, Prüfung durch Menschen wie in W3.
+     *
+     * <p>Jede Hypothese wird wie eine Zeile der Vorstufe mit dem Satzanalysator zerlegt; ihre Aussagen tragen die
+     * Herkunft {@link ParsedStatements.Origin#PROGRAMM} und ihren Quellstellenbeleg, nie den Hypothesensatz als Beleg.
+     * Nur Hypothesen, deren Beleg zu diesem Programm gehört und technisch aktuell ist
+     * ({@link SourceLocationCheck}), kommen hinein; die übrigen werden gezählt, nie gespeichert. Die Fassung in den
+     * Aussagen-IDs fasst Programmtext und die Fingerabdrücke aller Belege zusammen: Ändert sich Code, ein Copybook oder
+     * die Analyseversion, entstehen neue IDs, und eine frühere Bestätigung wandert nicht mit. Die Analyse gilt als
+     * veraltet, sobald sich der Programmtext oder der Satzanalysator ändert. Ersetzt die gespeicherte Analyse des
+     * Programms in einem Schritt; Fehler und Abbruch schreiben nichts.
+     *
+     * @param program    das Programm; der Aufrufer braucht Leserecht
+     * @param hypotheses Hypothesen mit Quellstellenbeleg, in der Reihenfolge der Programmanalyse
+     * @param sources    jetziger Stand für die technische Belegprüfung
+     * @throws AnalyzerUnavailableException ohne Satzanalysator
+     * @throws CancellationException        nach einem Abbruch; die alte Analyse bleibt
+     */
+    public ProgramStatements analyzeProgram(AccessContext caller, PageSnapshot program,
+                                            List<ProgramHypothesis> hypotheses, CurrentSources sources,
+                                            BooleanSupplier cancelled) {
+        Objects.requireNonNull(hypotheses, "hypotheses");
+        Objects.requireNonNull(sources, "sources");
+        require(caller, program);
+        StatementAnalyzer parser = analyzer.get();
+        if (parser == null) {
+            throw new AnalyzerUnavailableException(AnalyzerUnavailableException.Reason.NOT_CONFIGURED,
+                    "In dieser Laufzeit ist kein Satzanalysator eingerichtet (nur in der Desktop-App)", null);
+        }
+        Optional<PageText> text = texts.apply(program);
+        if (text.isEmpty()) {
+            return new ProgramStatements(PageStatements.missing(PageStatements.NO_TEXT), 0, hypotheses.size());
+        }
+        PageKey key = program.key();
+        DocumentKey document = DocumentKey.page(key);
+        List<String> lines = new ArrayList<>();
+        List<SourceLocationEvidence> evidence = new ArrayList<>();
+        int rejected = 0;
+        for (ProgramHypothesis hypothesis : hypotheses) {
+            if (!hypothesis.source().program().equals(document)
+                    || !SourceLocationCheck.check(hypothesis.source(), sources).current()) {
+                rejected++;
+                continue;
+            }
+            lines.add(hypothesis.sentence());
+            evidence.add(hypothesis.source());
+        }
+        String input = text.get().inputSha256();
+        String version = parser.version();
+        String hypothesisText = String.join("\n", lines);
+        StringBuilder basis = new StringBuilder(input).append('\n').append(hypothesisText);
+        evidence.forEach(source -> basis.append('\n').append(source.fingerprint()));
+        ParsedStatements parsed = lines.isEmpty() ? new ParsedStatements(List.of(), List.of(), List.of(), List.of(),
+                List.of(), null) : parser.analyze(PageStatementAnalysis.documentId(key, sha256(basis.toString())),
+                hypothesisText, cancelled);
+        if (cancelled.getAsBoolean()) {
+            throw new CancellationException("Analyse abgebrochen");
+        }
+        check(parsed, hypothesisText.length());
+        List<ParsedStatements.Statement> statements = new ArrayList<>();
+        for (ParsedStatements.Statement statement : parsed.statements()) {
+            int line = line(hypothesisText, statement.start());
+            statements.add(statement.withDerivation(ParsedStatements.Derivation.programm(lines.get(line),
+                    evidence.get(line))));
+        }
+        ParsedStatements result = new ParsedStatements(parsed.sentences(), parsed.mentions(), statements,
+                parsed.attachments(), parsed.components(), parsed.conllu());
+        PageStatementAnalysis analysis = new PageStatementAnalysis(key, program.spaceKey(),
+                program.metadata().title(), program.revision(), input, parser.id(), version, clock.instant(), result,
+                null, null);
+        store(AnalyzerChoice.PARSER).replace(analysis);
+        return new ProgramStatements(new PageStatements(PageStatements.State.CURRENT, null,
+                reviewed(analysis.withResult(result.withoutConllu()))), lines.size(), rejected);
+    }
+
+    /** Ob eine gespeicherte Analyse die Aussagen eines Programms hält (ADR 0041, Punkt 7). */
+    static boolean ofProgram(PageStatementAnalysis analysis) {
+        return analysis.result().statements().stream()
+                .anyMatch(statement -> statement.derivation().origin() == ParsedStatements.Origin.PROGRAMM);
+    }
+
+    /** Index der Zeile (Hypothese), in der eine Zeichenposition liegt. */
+    private static int line(String text, int position) {
+        int line = 0;
+        for (int i = text.indexOf('\n'); i >= 0 && i < position; i = text.indexOf('\n', i + 1)) {
+            line++;
+        }
+        return line;
+    }
+
+    private static String sha256(String text) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(text.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    /**
+     * Eine KI-Hypothese der Programmanalyse mit ihrem Quellstellenbeleg.
+     *
+     * @param sentence die Hypothese als ein deutscher Satz; Zeilenumbrüche werden Leerzeichen
+     * @param source   ihr Quellstellenbeleg
+     */
+    public record ProgramHypothesis(String sentence, SourceLocationEvidence source) {
+
+        public ProgramHypothesis {
+            Objects.requireNonNull(sentence, "sentence");
+            Objects.requireNonNull(source, "source");
+            sentence = sentence.replaceAll("\\s+", " ").strip();
+            if (sentence.isEmpty()) {
+                throw new IllegalArgumentException("Hypothese ohne Satz");
+            }
+        }
+    }
+
+    /**
+     * Ergebnis von {@link #analyzeProgram}.
+     *
+     * @param statements der neue Stand
+     * @param stored     gespeicherte Hypothesen
+     * @param rejected   ausgelassene Hypothesen: Beleg fremd, veraltet oder nicht prüfbar (oder kein Programmtext)
+     */
+    public record ProgramStatements(PageStatements statements, int stored, int rejected) {
     }
 
     /** Der Analysator der Wahl oder {@code null}, wenn er in dieser Laufzeit fehlt; lädt kein Modell. */
@@ -357,7 +514,7 @@ public class StatementAnalysis {
             return PageStatements.missing(texts.apply(snapshot).isEmpty() ? PageStatements.NO_TEXT
                     : PageStatements.NOT_ANALYSED);
         }
-        String reason = reason(stored.get(), texts.apply(snapshot).map(PageText::inputSha256));
+        String reason = reason(caller, stored.get(), texts.apply(snapshot).map(PageText::inputSha256));
         return new PageStatements(reason == null ? PageStatements.State.CURRENT : PageStatements.State.STALE, reason,
                 reviewed(stored.get()));
     }
@@ -492,7 +649,7 @@ public class StatementAnalysis {
         Optional<PageStatementAnalysis> stored = store.find(key);
         Optional<PageText> text = texts.apply(snapshot);
         if (stored.isEmpty() || text.isEmpty()
-                || reason(stored.get(), text.map(PageText::inputSha256)) != null) {
+                || reason(caller, stored.get(), text.map(PageText::inputSha256)) != null) {
             throw new CheckUnavailableException(CheckUnavailableException.Reason.NOT_CURRENT);
         }
         PageStatementAnalysis analysis = stored.get();
@@ -674,7 +831,7 @@ public class StatementAnalysis {
     }
 
     /** Warum eine gespeicherte Analyse veraltet ist, oder {@code null}, wenn sie aktuell ist. */
-    String reason(PageStatementAnalysis stored, Optional<String> input) {
+    String reason(AccessContext caller, PageStatementAnalysis stored, Optional<String> input) {
         if (input.isEmpty()) {
             return PageStatements.NO_TEXT;
         }
@@ -689,7 +846,32 @@ public class StatementAnalysis {
         if (PageStatementAnalysis.STAGE_WITHDRAWN.equals(stored.stage())) {
             return PageStatements.STAGE_WITHDRAWN;
         }
+        if (ofProgram(stored) && !evidenceCurrent(caller, stored)) {
+            return PageStatements.EVIDENCE_CHANGED;
+        }
         return null;
+    }
+
+    /**
+     * Ob jeder Quellstellenbeleg der Programmaussagen noch zum aktuellen Stand passt (ADR 0032, Fortschreibung
+     * 26.11.2026): ändert sich ein Copybook oder die Programmanalyse, ohne dass sich der Programmtext ändert, ist die
+     * Analyse möglicherweise veraltet. Nicht prüfbar zählt wie veraltet, denn bestätigen lässt sich dann nichts.
+     */
+    private boolean evidenceCurrent(AccessContext caller, PageStatementAnalysis stored) {
+        Function<AccessContext, CurrentSources> installed = programSources;
+        if (installed == null) {
+            return true;
+        }
+        CurrentSources sources = installed.apply(caller);
+        Set<String> checked = new HashSet<>();
+        for (ParsedStatements.Statement statement : stored.result().statements()) {
+            SourceLocationEvidence source = statement.derivation().source();
+            if (source != null && checked.add(source.fingerprint())
+                    && SourceLocationCheck.check(source, sources).outcome() != SourceLocationCheck.Outcome.CURRENT) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void require(AccessContext caller, PageSnapshot snapshot) {

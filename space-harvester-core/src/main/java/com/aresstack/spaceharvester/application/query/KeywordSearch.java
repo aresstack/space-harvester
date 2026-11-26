@@ -135,6 +135,9 @@ public class KeywordSearch {
 
     private final SourceCatalog catalog;
     private final AccessGuard access;
+    /** Was der Benutzer ausgeschlossen hat, fehlt in jeder Trefferliste (Angelo 26.11.2026). */
+    private volatile com.aresstack.spaceharvester.application.sync.Exclusions exclusions =
+            com.aresstack.spaceharvester.application.sync.Exclusions.NONE;
     private final PageTextIndex texts;
     private final Prefetch prefetch;
     private final java.util.function.Predicate<String> prefetching;
@@ -507,7 +510,8 @@ public class KeywordSearch {
         long started = System.nanoTime();
         Tally tally = new Tally();
         tally.searchId = searchId;
-        Results results = batch(caller, query, cursor, limit, tally, found);
+        Found shown = found == null ? null : (sourceId, hits) -> found.found(sourceId, withoutExcluded(hits));
+        Results results = withoutExcluded(batch(caller, query, cursor, limit, tally, shown));
         if (runs == SearchRunLog.NONE) {
             return results;
         }
@@ -524,6 +528,41 @@ public class KeywordSearch {
                 SearchRun.ownerOf(caller), query.text(), startedAt, Duration.ofNanos(System.nanoTime() - started),
                 results.sources().stream().map(KeywordSearch::outcome).toList(), stages, results.complete(), null));
         return recorded ? results.withSearchRun(id.value()) : results;
+    }
+
+    /** Ausgeschlossenes lässt die Suche weg; ohne Aufruf ist nichts ausgeschlossen. */
+    public void exclusions(com.aresstack.spaceharvester.application.sync.Exclusions exclusions) {
+        this.exclusions = Objects.requireNonNull(exclusions, "exclusions");
+    }
+
+    /** Der Stapel ohne Treffer unter einem Ausschluss; der Zähler „lädt“ bleibt, er betrifft nur den Fortschritt. */
+    private Results withoutExcluded(Results results) {
+        List<Hit> hits = withoutExcluded(results.hits());
+        List<Hit> found = withoutExcluded(results.found());
+        if (hits.size() == results.hits().size() && found.size() == results.found().size()) {
+            return results;
+        }
+        return new Results(results.sourceId(), hits, results.sources(), results.nextCursor(), results.complete(),
+                results.loading(), found, results.progress(), results.searchRun());
+    }
+
+    private List<Hit> withoutExcluded(List<Hit> hits) {
+        com.aresstack.spaceharvester.application.sync.Exclusions excluded = exclusions;
+        if (hits.isEmpty() || hits.stream().noneMatch(hit -> excluded.any(hit.sourceId()))) {
+            return hits;
+        }
+        return hits.stream().filter(hit -> !excluded(excluded, hit)).toList();
+    }
+
+    /** Ob der Treffer unter einem Ausschluss liegt; seine Elternseite gilt vor dem Bestand. */
+    private boolean excluded(Hit hit) {
+        com.aresstack.spaceharvester.application.sync.Exclusions excluded = exclusions;
+        return excluded.any(hit.sourceId()) && excluded(excluded, hit);
+    }
+
+    private static boolean excluded(com.aresstack.spaceharvester.application.sync.Exclusions exclusions, Hit hit) {
+        return exclusions.within(hit.sourceId(), hit.spaceKey(),
+                pageId -> pageId.equals(hit.pageId()) ? hit.parentPageId() : null).test(hit.pageId());
     }
 
     private static SearchRun.SourceOutcome outcome(SourceState state) {
@@ -809,6 +848,8 @@ public class KeywordSearch {
         List<Hit> stillLoading = List.of();
         Progress progress = null;
         toLoad.removeIf(hit -> !allowsPrefetch(hit.sourceId()));
+        // Ausgeschlossenes wird nie nachgeladen (Angelo 26.11.2026).
+        toLoad.removeIf(this::excluded);
         if (loads && !toLoad.isEmpty()) {
             try {
                 Prefetch.Fill fill = prefetch.prefetch(caller, toLoad);
@@ -933,12 +974,13 @@ public class KeywordSearch {
         Set<PageKey> offered = searchId == null ? null
                 : offeredIn.computeIfAbsent(searchId, ignored -> ConcurrentHashMap.newKeySet());
         found.forEach((sourceId, matches) -> {
-            if (!allowsPrefetch(sourceId) || !cataloguing.test(sourceId)) {
+            if (!cataloguing.test(sourceId)) {
                 return;
             }
             try {
                 List<FindingCatalog.Finding> fresh = matches.stream()
                         .filter(match -> query.admits(sourceId, match.pageId()))
+                        .filter(match -> !exclusions.excluded(sourceId, null, match.pageId()))
                         // Fundstelle 23: in dieser Suche nur, was sie noch nicht angeboten hat.
                         .filter(match -> offered == null || !offered.contains(new PageKey(sourceId, match.pageId())))
                         .map(match -> new FindingCatalog.Finding(match.pageId(), match.version())).toList();
@@ -961,7 +1003,7 @@ public class KeywordSearch {
     /** Keep implicit search extensions inside the configured global source scope. */
     public boolean includesSource(Query query, String sourceId) {
         return query.sourceId() != null || !query.sourceIds().isEmpty() || query.pages() != null
-                || catalog.includeInGlobalSearch(sourceId);
+                || query.boundary() != null || catalog.includeInGlobalSearch(sourceId);
     }
 
     public boolean allowsPrefetch(String sourceId) {
@@ -1052,6 +1094,14 @@ public class KeywordSearch {
 
     /** Der Volltextindex, mit Seitenmenge der Anfrage vor der Rangfolge gefiltert (ADR 0029), ohne wie bisher. */
     private List<PageTextIndex.Match> searchTexts(String text, Set<String> sourceIds, Query query, int wanted) {
+        if (query.boundary() != null) {
+            // Teilbaum-Grenze: Die Seitenmenge kennt nicht alle Seiten der Grenze; der Index sucht in Quellen und
+            // Spaces, und vor der Rangfolge bleibt nur, was die Anfrage zulässt.
+            List<PageTextIndex.Match> all = query.kinds().isEmpty()
+                    ? texts.search(text, sourceIds, query.spaces(), wanted)
+                    : texts.search(text, sourceIds, query.spaces(), null, query.kinds(), wanted);
+            return all.stream().filter(match -> query.admits(match.sourceId(), match.pageId())).toList();
+        }
         if (!query.kinds().isEmpty()) {
             return texts.search(text, sourceIds, query.spaces(), query.pages(), query.kinds(), wanted);
         }
@@ -1315,6 +1365,9 @@ public class KeywordSearch {
             // Nur mit Grenze, aus demselben Grund; eine andere Auswahl macht den Cursor ungültig (ADR 0029).
             canonical += "\u0000p" + query.pages().fingerprint();
         }
+        if (query.boundary() != null) {
+            canonical += "\u0000b" + query.boundary().fingerprint();
+        }
         if (!query.kinds().isEmpty()) {
             // Nur mit Arten, aus demselben Grund; andere Arten machen den Cursor ungültig.
             canonical += "\u0000k" + query.kinds().stream().map(Enum::name).sorted()
@@ -1504,7 +1557,14 @@ public class KeywordSearch {
      */
     public record Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
                         Set<String> excludedSpaceKeys, PageSet pages, Set<DocumentKind> kinds,
-                        boolean glossarySynonyms) {
+                        boolean glossarySynonyms, SearchBoundary boundary) {
+
+        /** Ohne Teilbaum-Grenze ({@link SearchBoundary}). */
+        public Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
+                     Set<String> excludedSpaceKeys, PageSet pages, Set<DocumentKind> kinds,
+                     boolean glossarySynonyms) {
+            this(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms, null);
+        }
 
         public Query {
             kinds = kinds == null || kinds.isEmpty() ? Set.of() : Set.copyOf(kinds);
@@ -1547,12 +1607,27 @@ public class KeywordSearch {
 
         /** Dieselbe Suche, begrenzt auf diese Seiten (ADR 0029); {@code null} hebt die Grenze auf. */
         public Query within(PageSet pages) {
-            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms);
+            // Eingrenzen auf genau diese Seiten (etwa die Kandidaten einer Runde): ohne Teilbaum-Grenze, die sonst
+            // wieder erweitern würde.
+            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms,
+                    null);
+        }
+
+        /**
+         * Dieselbe Suche über die Seiten {@code pages} (die bekannten, etwa aus dem Katalog) und alles, was
+         * {@code boundary} zulässt (Teilbäume, die keine Seitenmenge vollständig kennt). Die Grenze gilt für jeden
+         * Schritt: Funde außerhalb werden weder katalogisiert noch geladen, bewertet oder Nachbarn.
+         */
+        public Query bounded(PageSet pages, SearchBoundary boundary) {
+            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys,
+                    pages == null ? PageSet.EMPTY : pages, kinds, glossarySynonyms,
+                    java.util.Objects.requireNonNull(boundary, "boundary"));
         }
 
         /** Dieselbe Suche, nur Dokumente dieser Arten; leer hebt die Grenze auf. */
         public Query ofKinds(Set<DocumentKind> kinds) {
-            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms);
+            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms,
+                    boundary);
         }
 
         /**
@@ -1560,17 +1635,25 @@ public class KeywordSearch {
          * Fachbegriffen des Glossars kommen auch ihre vorgeschlagenen Synonyme als Anfragen dazu.
          */
         public Query withGlossarySynonyms(boolean on) {
-            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, on);
+            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, on, boundary);
         }
 
         /** Derselbe Umfang und dieselben Methoden mit anderem Wortlaut (Varianten der progressiven Suche). */
         public Query withText(String other) {
-            return new Query(other, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms);
+            return new Query(other, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms,
+                    boundary);
         }
 
-        /** Ob die Seite in der Grenze der Suche liegt; ohne Grenze jede. */
-        boolean admits(String sourceId, String pageId) {
-            return pages == null || pages.contains(sourceId, pageId);
+        /**
+         * Ob die Seite in der Grenze der Suche liegt: in der Seitenmenge oder, mit Teilbaum-Grenze, nach dieser; ohne
+         * beides jede.
+         */
+        public boolean admits(String sourceId, String pageId) {
+            if (pages == null && boundary == null) {
+                return true;
+            }
+            return pages != null && pages.contains(sourceId, pageId)
+                    || boundary != null && boundary.admits(new PageKey(sourceId, pageId));
         }
 
         /**
@@ -1592,7 +1675,11 @@ public class KeywordSearch {
 
         /** Ob die Quelle Seiten in der Grenze der Suche hat; ohne Grenze jede. */
         boolean reaches(String sourceId) {
-            return pages == null || !pages.pagesOf(sourceId).isEmpty();
+            if (pages == null && boundary == null) {
+                return true;
+            }
+            return pages != null && !pages.pagesOf(sourceId).isEmpty()
+                    || boundary != null && boundary.reaches(sourceId);
         }
 
         /** Alle freigegebenen Quellen. */
@@ -1611,8 +1698,10 @@ public class KeywordSearch {
         }
 
         PageSearchQuery scope() {
+            // Mit Teilbaum-Grenze bestimmen Quellen und Spaces den Umfang; die Seitenmenge kennt nicht jede Seite der
+            // Grenze, und welche Funde bleiben, entscheidet admits.
             return new PageSearchQuery(sourceId, sourceIds, spaceKeys, List.of(), null, null, null, null, null,
-                    SearchSort.TITLE, pages);
+                    SearchSort.TITLE, boundary != null ? null : pages);
         }
     }
 

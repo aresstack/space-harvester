@@ -4,7 +4,6 @@ import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleMessageRow;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubblePalette;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleSide;
-import com.aresstack.enterpriseai.ui.comic.bubble.MessageCopyButton;
 import com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton;
 import com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel;
 import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownMessage;
@@ -2194,6 +2193,9 @@ public final class ChatPanel extends JPanel {
                     : new com.aresstack.spaceharvester.application.snapshot.PageKey(open.sourceId(),
                             open.pageId()));
             turn.releasing(releases(runtime, open));
+            // Die Wurzeln der Auswahl wie im Baum: Was der Katalog davon nicht kennt (etwa ein SharePoint-Ordner),
+            // erschließen die Werkzeuge über die Navigation (Angelo 26.11.2026).
+            turn.area(chatRoots(runtime, open));
             // ADR 0034 §5: Ein Favoriten-Ordner nennt seine Unterordner und Favoriten in seiten_auflisten.
             if (open instanceof Selection.Collection collection) {
                 turn.collection(collectionNodes(context.favorites(), collection));
@@ -2234,6 +2236,19 @@ public final class ChatPanel extends JPanel {
         send.setToolTipText("Antwort abbrechen");
         turn.inView(view);
         turn.start();
+    }
+
+    /** Die Wurzeln der Auswahl für den Chat; leer ohne Auswahl oder wenn sie sich nicht bestimmen lassen. */
+    static List<com.aresstack.spaceharvester.application.holdings.Selection.Root> chatRoots(AppRuntime runtime,
+                                                                                         Selection open) {
+        if (runtime == null || open == null) {
+            return List.of();
+        }
+        try {
+            return open.roots(runtime);
+        } catch (RuntimeException gone) {
+            return List.of();
+        }
     }
 
     /** Die Werkzeugrunden je Antwort aus dem Menü am Pfeil der Websuche, in den erlaubten Grenzen. */
@@ -2477,7 +2492,7 @@ public final class ChatPanel extends JPanel {
             links.standalone(false);
             bubble.setSources(links);
             row.setVisible(true);
-            links.setVisible(links.getComponentCount() > 0);
+            links.setVisible(links.hasEntries());
             transcript.revalidate();
             transcript.repaint();
             scrollDown();
@@ -2780,6 +2795,8 @@ public final class ChatPanel extends JPanel {
                                         String text, long at) {
         SpeechBubblePanel bubble = new SpeechBubblePanel(side, background, foreground, header, text);
         bubble.setMaximumBubbleWidth(640);
+        bubble.setHeaderAccessory(copyAction(foreground, () -> text,
+                com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.HEADER_HEIGHT));
         bubble.setHeaderTrailingAccessory(userMessageActions(foreground, header, () -> text, at));
         BubbleMessageRow row = new BubbleMessageRow(bubble, side);
         row.setAlignmentX(LEFT_ALIGNMENT);
@@ -2805,8 +2822,10 @@ public final class ChatPanel extends JPanel {
         AssistantMarkdownMessage bubble = new AssistantMarkdownMessage(view, theme.getMutedForeground());
         bubble.setTimestamp(at);
         // Read the current Markdown when an action is invoked, including a streamed response.
-        bubble.setActions(copyActions(theme.getMutedForeground(), view::getMarkdown));
-        bubble.setQrAction(qrAction(theme.getMutedForeground(), ASSISTANT, view::getMarkdown));
+        bubble.setCopyAction(copyAction(theme.getMutedForeground(), view::getMarkdown,
+                com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.SIZE));
+        bubble.setQrAction(qrAction(theme.getMutedForeground(), ASSISTANT, view::getMarkdown,
+                com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.SIZE));
         emptyNote.setVisible(false);
         transcript.add(bubble);
         answeringRow = bubble;
@@ -2819,28 +2838,43 @@ public final class ChatPanel extends JPanel {
         return bubble;
     }
 
-    /** Keep the copy action, timestamp and QR action together at the right edge of a user message. */
+    /**
+     * Uhrzeit und QR-Knopf rechts in der Kopfzeile einer Frage. Der Kopierknopf steht nicht hier, sondern direkt
+     * hinter dem Namen (Angelo, 26.11.2026), damit er nie neben dem QR-Knopf liegt; bei der Antwort steht er dafür
+     * abgesetzt links am Textanfang.
+     */
     private JComponent userMessageActions(Color foreground, String name, java.util.function.Supplier<String> text, long at) {
-        JPanel controls = copyActions(foreground, text);
+        JPanel controls = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 3, 0));
+        controls.setOpaque(false);
         com.aresstack.spaceharvester.app.ui.markdown.MessageTimestamp timestamp =
                 new com.aresstack.spaceharvester.app.ui.markdown.MessageTimestamp(messageInk(foreground));
         timestamp.setTime(at);
         controls.add(timestamp);
-        controls.add(qrAction(foreground, name, text));
+        controls.add(qrAction(foreground, name, text,
+                com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.HEADER_HEIGHT));
         return controls;
     }
 
-    private JPanel copyActions(Color foreground, java.util.function.Supplier<String> text) {
-        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 3, 0));
-        buttons.setOpaque(false);
-        MessageCopyButton copy = new MessageCopyButton(messageInk(foreground), text, value -> clipboard.accept(value));
-        copy.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
-        buttons.add(copy);
-        return buttons;
+    /**
+     * Der Kopierknopf einer Nachricht: das Kopieren-Symbol der App (zwei Blätter), flach und in der Tinte der Zeile.
+     *
+     * @param height Höhe des Knopfs; die Kopfzeile einer Blase lässt nichts Höheres als ihre Beschriftung zu
+     */
+    private com.aresstack.spaceharvester.app.ui.controls.CopyButton copyAction(Color foreground,
+            java.util.function.Supplier<String> text, int height) {
+        com.aresstack.spaceharvester.app.ui.controls.CopyButton copy =
+                new com.aresstack.spaceharvester.app.ui.controls.CopyButton(text, value -> clipboard.accept(value))
+                        .flat(messageInk(foreground), height);
+        copy.setName("transcript.copyMessage");
+        return copy;
     }
 
-    private MessageQrButton qrAction(Color foreground, String name, java.util.function.Supplier<String> text) {
-        return new MessageQrButton(messageInk(foreground), () -> qrCodes.accept(name, text.get()));
+    private MessageQrButton qrAction(Color foreground, String name, java.util.function.Supplier<String> text,
+            int height) {
+        MessageQrButton qr = new MessageQrButton(messageInk(foreground), () -> qrCodes.accept(name, text.get()));
+        // Derselbe flache Stil wie Kopieren und Export daneben (Angelos Proxy-Programm).
+        com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.style(qr, height);
+        return qr;
     }
 
     private static Color messageInk(Color foreground) {
@@ -2870,11 +2904,16 @@ public final class ChatPanel extends JPanel {
             status.setText("Chat-ID kopiert");
         });
         return List.of(exportMenu("Exportieren", snapshot, null,
-                        com.aresstack.spaceharvester.app.chat.ChatExport.Scope.CHAT),
-                exportMenu("Quellen exportieren", snapshot, null,
-                        com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES), id);
+                        com.aresstack.spaceharvester.app.chat.ChatExport.Scope.CHAT), id);
     }
 
+    /** Untereintrag des Exports: nur die Quellen, als Markdown (Angelo, 26.11.2026: kein eigener Knopf, ein Format). */
+    static final String SOURCES_ONLY = "Nur Quellen exportieren";
+
+    /**
+     * Die Formate für Chat oder Antwort und darunter, abgesetzt, „Nur Quellen exportieren“ (Markdown). Der Eintrag
+     * ist aus, wenn es keine Quellen gibt.
+     */
     private javax.swing.JMenu exportMenu(String label, ChatRecord snapshot, ChatRecord.Message answer,
             com.aresstack.spaceharvester.app.chat.ChatExport.Scope scope) {
         javax.swing.JMenu menu = new javax.swing.JMenu(label);
@@ -2884,25 +2923,30 @@ public final class ChatPanel extends JPanel {
             item.addActionListener(e -> export(snapshot, answer, scope, format));
             menu.add(item);
         }
-        menu.setEnabled(scope == com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES
-                ? !com.aresstack.spaceharvester.app.chat.ChatExport.sources(answer == null
-                        ? snapshot.messages() : List.of(answer)).isEmpty() : !snapshot.isEmpty());
+        menu.addSeparator();
+        JMenuItem sources = new JMenuItem(SOURCES_ONLY);
+        sources.setEnabled(!com.aresstack.spaceharvester.app.chat.ChatExport.sources(answer == null
+                ? snapshot.messages() : List.of(answer)).isEmpty());
+        sources.addActionListener(e -> export(snapshot, answer,
+                com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES,
+                com.aresstack.spaceharvester.app.chat.ChatExport.Format.MARKDOWN));
+        menu.add(sources);
+        menu.setEnabled(!snapshot.isEmpty());
         return menu;
     }
 
     private void answerActions(AssistantMarkdownMessage message, ChatRecord snapshot, ChatRecord.Message answer) {
-        Color ink = MarkdownTheme.forSurface(transcriptScroll.getViewport().getBackground()).getMutedForeground();
-        JPanel buttons = copyActions(ink, message.view()::getMarkdown);
+        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 3, 0));
+        buttons.setOpaque(false);
         addExportButton(buttons, Glyph.EXPORT, "Antwort exportieren", snapshot, answer,
                 com.aresstack.spaceharvester.app.chat.ChatExport.Scope.ANSWER);
-        addExportButton(buttons, Glyph.SOURCES_EXPORT, "Quellen exportieren", snapshot, answer,
-                com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES);
         message.setActions(buttons);
     }
 
     private void addExportButton(JPanel buttons, javax.swing.Icon icon, String label, ChatRecord snapshot,
             ChatRecord.Message answer, com.aresstack.spaceharvester.app.chat.ChatExport.Scope scope) {
-        IconButton button = new IconButton(icon, label).compact();
+        com.aresstack.spaceharvester.app.ui.controls.FlatIconButton button =
+                new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(icon, label);
         button.setForeground(MarkdownTheme.forSurface(transcriptScroll.getViewport().getBackground()).getMutedForeground());
         javax.swing.JMenu formats = exportMenu(label, snapshot, answer, scope);
         button.setEnabled(formats.isEnabled());
@@ -3319,13 +3363,31 @@ public final class ChatPanel extends JPanel {
      * Die Quellen einer Antwort als Zeile unter ihrer Blase (Entwurf Chat-Seitenleiste, Punkt 8): je Quelle ein Link
      * „[n] Titel“ in der Nummer, die die Antwort nennt. Ohne Quellen ist die Zeile nicht da; die Links brechen in
      * der schmalen Leiste um. Eine Quelle ohne Seite (ein Dateianhang) steht als Text da.
+     *
+     * <p>Die Liste ist zunächst eingeklappt (Angelo, 26.11.2026): eine einzige Zeile, die die Quellen als schlichten
+     * Text aufzählt und am Ende mit „…“ abschneidet, was nicht hineinpasst. Links davor, nah bei den Knöpfen der
+     * Antwort, steht immer ein Pfeil: eingeklappt nach rechts, aufgeklappt nach unten. Aufgeklappt stehen die
+     * Quellen untereinander, jede als Link.
      */
     static final class SourceLinks extends JPanel implements com.aresstack.enterpriseai.ui.comic.bubble.WidthAwareHeight {
 
         static final int TITLE_LENGTH = 48;
 
+        static final String SHOW_ALL = "Alle Quellen zeigen";
+        static final String SHOW_LESS = "Quellen einklappen";
+        /** Zeilenhöhe wie die Knöpfe daneben, damit die erste Zeile mit ihnen auf einer Linie steht. */
+        private static final int ROW = com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.SIZE;
+        private static final int ROW_GAP = 2;
+        private static final int TOGGLE_GAP = 4;
+
         private final java.util.function.Consumer<ChatRecord.Source> open;
         private List<ChatRecord.Source> shown = List.of();
+        private final List<JComponent> entries = new ArrayList<>();
+        /** Die eingeklappte Zeile: alle Quellen als Text; JLabel kürzt selbst mit „…“, wenn der Platz nicht reicht. */
+        private final JLabel summary = Comic.muted("");
+        private final com.aresstack.spaceharvester.app.ui.controls.FlatIconButton toggle =
+                new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(Glyph.EXPAND, SHOW_ALL);
+        private boolean expanded;
 
         SourceLinks(java.util.function.Consumer<ChatRecord.Source> open) {
             super(null);
@@ -3333,6 +3395,51 @@ public final class ChatPanel extends JPanel {
             setOpaque(false);
             standalone(false);
             setVisible(false);
+            summary.setFont(Comic.regular(11f));
+            summary.setName("transcript.sourcesSummary");
+            // Auch ein Klick auf die Zeile klappt auf, nicht nur der kleine Pfeil.
+            Cursors.set(summary, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+            summary.addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent event) {
+                    if (SwingUtilities.isLeftMouseButton(event)) {
+                        expanded(true);
+                    }
+                }
+            });
+            toggle.setName("transcript.sourcesToggle");
+            toggle.setForeground(Comic.BLUE);
+            toggle.setVisible(false);
+            toggle.addActionListener(e -> expanded(!expanded));
+        }
+
+        /** Klappt die Liste auf oder zu; die Antwort darüber und der Verlauf rücken nach. */
+        void expanded(boolean value) {
+            if (expanded == value) {
+                return;
+            }
+            expanded = value;
+            toggle.setIcon(expanded ? Glyph.COLLAPSE : Glyph.EXPAND);
+            toggle.setToolTipText(expanded ? SHOW_LESS : SHOW_ALL);
+            toggle.getAccessibleContext().setAccessibleName(toggle.getToolTipText());
+            for (java.awt.Container up = this; up != null; up = up.getParent()) {
+                up.invalidate();
+            }
+            revalidate();
+            repaint();
+        }
+
+        boolean expanded() {
+            return expanded;
+        }
+
+        /** Der Pfeil links vor den Quellen; immer da, wenn es Quellen gibt. */
+        javax.swing.JButton toggle() {
+            return toggle;
+        }
+
+        boolean hasEntries() {
+            return !entries.isEmpty();
         }
 
         void show(List<ChatRecord.Source> sources) {
@@ -3341,9 +3448,16 @@ public final class ChatPanel extends JPanel {
             }
             shown = List.copyOf(sources);
             removeAll();
+            entries.clear();
             for (int index = 0; index < shown.size(); index++) {
-                add(entry(index + 1, shown.get(index)));
+                JComponent entry = entry(index + 1, shown.get(index));
+                entries.add(entry);
+                add(entry);
             }
+            add(toggle);
+            add(summary);
+            summary.setText(String.join(", ", texts()));
+            summary.setToolTipText(SHOW_ALL);
             setVisible(!shown.isEmpty());
             revalidate();
             repaint();
@@ -3374,7 +3488,7 @@ public final class ChatPanel extends JPanel {
         /** Die gezeigten Einträge als Text; für Tests. */
         List<String> texts() {
             List<String> texts = new ArrayList<>();
-            for (Component entry : getComponents()) {
+            for (Component entry : entries) {
                 texts.add(entry instanceof javax.swing.AbstractButton button ? button.getText()
                         : ((JLabel) entry).getText());
             }
@@ -3395,27 +3509,39 @@ public final class ChatPanel extends JPanel {
             layoutEntries(getWidth(), true);
         }
 
+        /** Die eingeklappte Zeile als Text; für Tests. */
+        String summary() {
+            return summary.getText();
+        }
+
+        /**
+         * Eingeklappt: Pfeil und eine Textzeile über die restliche Breite. Aufgeklappt: Pfeil und darunter bündig
+         * je Quelle eine Zeile mit ihrem Link.
+         */
         private int layoutEntries(int width, boolean place) {
             java.awt.Insets insets = getInsets();
             int available = Math.max(1, width - insets.left - insets.right);
-            int x = 0;
-            int y = insets.top + 2;
-            int rowHeight = 0;
-            for (Component entry : getComponents()) {
-                Dimension preferred = entry.getPreferredSize();
-                int entryWidth = Math.min(available, preferred.width);
-                if (x > 0 && x + entryWidth > available) {
-                    x = 0;
-                    y += rowHeight + 2;
-                    rowHeight = 0;
+            int indent = ROW + TOGGLE_GAP;
+            int usable = Math.max(1, available - indent);
+            int rows = expanded ? Math.max(1, entries.size()) : 1;
+            if (place) {
+                toggle.setVisible(!entries.isEmpty());
+                toggle.setBounds(insets.left, insets.top, ROW, ROW);
+                int summaryHeight = Math.min(ROW, summary.getPreferredSize().height);
+                summary.setVisible(!expanded);
+                summary.setBounds(insets.left + indent, insets.top + (ROW - summaryHeight) / 2,
+                        Math.min(usable, summary.getPreferredSize().width), summaryHeight);
+                int row = 0;
+                for (JComponent entry : entries) {
+                    Dimension preferred = entry.getPreferredSize();
+                    int height = Math.min(ROW, preferred.height);
+                    entry.setVisible(expanded);
+                    entry.setBounds(insets.left + indent, insets.top + row * (ROW + ROW_GAP) + (ROW - height) / 2,
+                            Math.min(usable, preferred.width), height);
+                    row++;
                 }
-                if (place) {
-                    entry.setBounds(insets.left + x, y, entryWidth, preferred.height);
-                }
-                x += entryWidth + 10;
-                rowHeight = Math.max(rowHeight, preferred.height);
             }
-            return y + rowHeight + 2 + insets.bottom;
+            return insets.top + rows * ROW + (rows - 1) * ROW_GAP + insets.bottom;
         }
 
         @Override

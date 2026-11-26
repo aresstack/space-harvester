@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
 import com.aresstack.spaceharvester.app.ui.Background;
+import com.aresstack.spaceharvester.application.changelog.ChangeLevel;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Facts;
@@ -1253,19 +1254,30 @@ public final class PageDetailPanel extends JPanel {
      * als Ausschnitt dieses Space; {@code spaceKey == null} die ganze Quelle.
      */
     public void showSource(String sourceId, String spaceKey, String title) {
-        String shownTitle = title == null || title.isBlank() ? spaceKey == null ? sourceId : spaceKey : title;
+        ChangeLevel level = ChangeLevel.of(spaceKey);
+        String shownTitle = title == null || title.isBlank() ? spaceKey == null ? sourceId
+                : level.subtree() ? level.rootPageId() : spaceKey : title;
         remember(Place.level(sourceId, spaceKey, shownTitle));
         clearState();
         this.title.setText(shownTitle);
         empty.setText(EMPTY_SOURCE);
         sourceView.source(sourceId, spaceKey, shownTitle);
         sourceChanges.source(sourceId, spaceKey, shownTitle);
-        areaView.area(sourceId, spaceKey);
-        areaPodcast.area(sourceId, spaceKey);
+        areaView.area(sourceId, level.spaceKey(), level.rootPageId());
+        areaPodcast.area(sourceId, level.spaceKey(), level.rootPageId());
         // Kennzahlen und Einstellungen gibt es vorerst nur für die ganze Quelle.
         sourceProperties.source(spaceKey == null ? sourceId : null);
         pageCard = SOURCE_CARD;
         showDeck();
+    }
+
+    /**
+     * Ein Knoten ohne eigenen Inhalt, etwa ein Ordner in SharePoint, BSCW oder lokalen Dateien in jeder Tiefe (Angelo
+     * 26.11.2026): dieselbe Seite wie Quelle und Space, mit „Änderungen | Bereich“ für den Teilbaum unter ihm, statt die
+     * vorher geöffnete Seite stehen zu lassen. Eine KI-Zusammenfassung entsteht dort nur per Klick.
+     */
+    public void showContainer(String sourceId, String spaceKey, String pageId, String title) {
+        showSource(sourceId, ChangeLevel.key(spaceKey, pageId), title);
     }
 
     /**
@@ -5962,9 +5974,9 @@ public final class PageDetailPanel extends JPanel {
             feedback.warning("FTP-Wissensquelle nicht für KI freigegeben", "Freigabe unter Einstellungen prüfen.");
             return;
         }
-        com.aresstack.spaceharvester.app.runtime.program.CobolBusinessAnalysis.Budget budget;
+        com.aresstack.spaceharvester.app.runtime.ModelBudget budget;
         try {
-            budget = com.aresstack.spaceharvester.app.runtime.program.CobolBusinessAnalysis.Budget.of(
+            budget = com.aresstack.spaceharvester.app.runtime.ModelBudget.of(
                     ai.contextTokens(), ai.chatMaxTokens());
         } catch (IllegalStateException missing) {
             feedback.warning("Kontextbudget nicht bestimmbar", missing.getMessage());

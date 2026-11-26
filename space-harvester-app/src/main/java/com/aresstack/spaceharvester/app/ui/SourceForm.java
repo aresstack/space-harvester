@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.app.settings.WindowsLogin;
 import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
 import com.aresstack.spaceharvester.app.settings.SourceFieldSpec;
 import com.aresstack.spaceharvester.app.settings.SourceFields;
+import com.aresstack.spaceharvester.application.sources.SourceDefaults;
 import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -164,6 +165,10 @@ final class SourceForm {
     private String suggestedId = "";
     private String suggestedTitle = "";
     private boolean authChosen;
+    /** Ob „Zugangsdaten beziehen über“ von Hand gewählt wurde; sonst gilt beim Anlegen die Vorgabe des Quellentyps. */
+    private boolean originChosen;
+    /** Die Auswahl wird gerade vom Formular selbst gesetzt, nicht von Hand. */
+    private boolean adjustingOrigin;
     /** Ob die Anmeldeart bei KeePass von Hand gewählt wurde; dann belegt ein gelesener Eintrag sie nicht mehr vor. */
     private boolean authPickedInKeePass;
     private boolean deriving;
@@ -183,7 +188,7 @@ final class SourceForm {
         Comic.style(sessionValue);
         PasswordReveal.install(sessionValue);
 
-        for (SourceType type : sourceTypes(context)) {
+        for (SourceType type : context.sourceTypes()) {
             String label = label(type);
             types.put(label, type);
             kind.addItem(label);
@@ -214,7 +219,7 @@ final class SourceForm {
         origin.setSelectedItem(editing != null
                 ? (settings != null && settings.keePassEntry(editing.draft().id()) != null
                         ? AiSettingsPanel.KEEPASS : AiSettingsPanel.MANUAL)
-                : context.keePassPreferred() ? AiSettingsPanel.KEEPASS : AiSettingsPanel.MANUAL);
+                : standardOrigin());
         keePassEntry.setEditable(true);
         String knownEntry = editing != null && settings != null ? settings.keePassEntry(editing.draft().id()) : null;
         if (knownEntry != null) {
@@ -222,6 +227,7 @@ final class SourceForm {
             keePassEntry.setSelectedItem(knownEntry);
         }
         origin.addActionListener(e -> {
+            originChosen |= !adjustingOrigin;
             if (windowsLogin()) {
                 auth.setSelectedItem(NONE);
             }
@@ -786,6 +792,9 @@ final class SourceForm {
         }
         if (editing != null) {
             draft = draft.withUsage(editing.draft().showInExplorer(), editing.draft().includeInGlobalSearch());
+        } else {
+            // Neue Quelle: ob sie zur globalen Suche gehört, gibt ihr Typ vor (F37-11, Angelo 26.11.).
+            draft = draft.withUsage(draft.showInExplorer(), selectedDefaults().includeInGlobalSearch());
         }
         if (generic && authType == SourceSettingsConfig.AuthType.BASIC && !typed()
                 && !SourceSaving.secretAvailable(context, editing, draft, false)) {
@@ -884,22 +893,49 @@ final class SourceForm {
     }
 
     private void refreshWindowsOrigin() {
-        if (WindowsLogin.SHAREPOINT.equals(typeId())) {
-            for (int i = 0; i < origin.getItemCount(); i++) {
-                if (WINDOWS_LOGIN.equals(origin.getItemAt(i))) {
-                    if (windowsLogin()) {
-                        auth.setSelectedItem(NONE);
-                    }
-                    return;
+        boolean was = adjustingOrigin;
+        adjustingOrigin = true;
+        try {
+            if (WindowsLogin.SHAREPOINT.equals(typeId())) {
+                boolean listed = false;
+                for (int i = 0; i < origin.getItemCount(); i++) {
+                    listed |= WINDOWS_LOGIN.equals(origin.getItemAt(i));
                 }
+                if (!listed) {
+                    origin.addItem(WINDOWS_LOGIN);
+                }
+                if (typeDefaultsApply() && selectedDefaults().integratedLogin()) {
+                    // Neue SharePoint-Quelle: Windows-Anmeldung vorbelegt, Vorgabe des Quellentyps (Angelo 26.11.).
+                    origin.setSelectedItem(WINDOWS_LOGIN);
+                }
+                if (windowsLogin()) {
+                    auth.setSelectedItem(NONE);
+                }
+            } else {
+                if (WINDOWS_LOGIN.equals(origin.getSelectedItem())) {
+                    origin.setSelectedItem(typeDefaultsApply() ? standardOrigin() : AiSettingsPanel.MANUAL);
+                }
+                origin.removeItem(WINDOWS_LOGIN);
             }
-            origin.addItem(WINDOWS_LOGIN);
-        } else {
-            if (WINDOWS_LOGIN.equals(origin.getSelectedItem())) {
-                origin.setSelectedItem(AiSettingsPanel.MANUAL);
-            }
-            origin.removeItem(WINDOWS_LOGIN);
+        } finally {
+            adjustingOrigin = was;
         }
+    }
+
+    /** Beim Anlegen, solange die Herkunft der Zugangsdaten nicht von Hand gewählt ist. */
+    private boolean typeDefaultsApply() {
+        return editing == null && !originChosen;
+    }
+
+    /** KeePass, wenn das Programm es bevorzugt, sonst Manuell; Vorgabe aller Typen ohne Windows-Anmeldung. */
+    private String standardOrigin() {
+        return context.keePassPreferred() ? AiSettingsPanel.KEEPASS : AiSettingsPanel.MANUAL;
+    }
+
+    /** Vorbelegung des gewählten Quellentyps ({@link SourceDefaults}). */
+    private SourceDefaults selectedDefaults() {
+        SourceType type = selectedType();
+        return type == null ? SourceDefaults.STANDARD : type.defaults();
     }
 
     private SourceType selectedType() {
@@ -922,28 +958,6 @@ final class SourceForm {
     private boolean usesBaseUrl() {
         SourceType type = selectedType();
         return type != null && type.baseUrl();
-    }
-
-    /**
-     * Die Typen des Core ({@code Harvester.sourceTypes()}, #375) in seiner Reihenfolge; ohne Laufzeit nur Confluence
-     * und Ordner.
-     */
-    private static List<SourceType> sourceTypes(AppContext context) {
-        AppRuntime runtime = context.runtime();
-        if (runtime != null) {
-            try {
-                List<SourceType> listed = runtime.workspace().sourceTypes();
-                if (!listed.isEmpty()) {
-                    return listed;
-                }
-            } catch (RuntimeException e) {
-                // Ohne Liste bleiben die beiden Arten mit eigenem Formular.
-            }
-        }
-        return List.of(new SourceType(SourceDraft.CONFLUENCE, "Confluence", false, null, List.of(),
-                        List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC, SourceType.AuthMode.PAT),
-                        false, true),
-                new SourceType(SourceDraft.FILES, "Ordner", false, "directory", List.of(), List.of()));
     }
 
     /** Confluence und Ordner mit den bisherigen Worten, sonst der Anzeigename des Core. */

@@ -41,6 +41,17 @@ class AreaSummaryViewTest {
                 "area-summary-v1:gpt-test", AT, 0, false, Map.of("BAU", "Bauwesen Beispiel"), "bereich-key");
     }
 
+    /** Ein Ordner im Baum: der Teilbaum unter ihm, und ein Überblick entsteht nur per Klick (Angelo 26.11.2026). */
+    @Test
+    void aFolderInTheTreeSummarizesItsSubtreeOnlyOnClick() {
+        AreaSummaryView.Target folder = AreaSummaryView.Target.subtree("bscw", "ablage", "ordner");
+        assertThat(folder.core().roots()).containsExactly(
+                com.aresstack.spaceharvester.application.holdings.Selection.Root.subtree("bscw", "ablage", "ordner"));
+        assertThat(folder.automatic()).isFalse();
+        assertThat(AreaSummaryView.Target.area("bscw", "ablage").automatic()).isTrue();
+        assertThat(folder.identity()).isNotEqualTo(AreaSummaryView.Target.area("bscw", "ablage").identity());
+    }
+
     @Test
     void readingShowsTheOverviewWithoutRedOrGreenAndOpensItsPages() {
         actions.stored = overview("wiki-lesen");
