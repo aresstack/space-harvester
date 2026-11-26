@@ -108,7 +108,17 @@ class SourceDiagramsTest {
                            CALL 'BOOKING'.
                            EXIT.
                 """;
-        for (DiagramType type : new DiagramType[]{DiagramType.STRUCTURE, DiagramType.FLOWCHART, DiagramType.SEQUENCE}) {
+        // The flowchart is the parser's static control flow: GOBACK terminates, UNUSED-PARA is not reached from MAIN-PARA.
+        var flow = SourceDiagrams.generate(cobol, "DEMO.cbl", Optional.of(SourceLanguage.COBOL),
+                DiagramType.FLOWCHART, 0, false, false, null);
+        assertThat(flow.type()).isEqualTo(DiagramType.FLOWCHART);
+        assertThat(flow.mermaid().orElseThrow()).startsWith("flowchart TD").contains("PERFORM_CALL", "TERMINATE")
+                .doesNotContain("STOP RUN");
+        // Without a complete graph (unresolved COPY) the structure is shown instead of an invented order.
+        var unresolved = SourceDiagrams.generate(cobol.replace("GOBACK.", "COPY MISSING.\n               GOBACK."),
+                "DEMO.cbl", Optional.of(SourceLanguage.COBOL), DiagramType.FLOWCHART, 0, false, false, null);
+        assertThat(unresolved.type()).isEqualTo(DiagramType.STRUCTURE);
+        for (DiagramType type : new DiagramType[]{DiagramType.STRUCTURE, DiagramType.SEQUENCE}) {
             for (boolean compact : new boolean[]{false, true}) {
                 var diagram = SourceDiagrams.generate(cobol, "DEMO.cbl", Optional.of(SourceLanguage.COBOL),
                         type, 0, compact, false, null);
