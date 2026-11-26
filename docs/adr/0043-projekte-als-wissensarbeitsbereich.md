@@ -141,7 +141,8 @@ Projekt.
   wird.
 - Was in Writing4j selbst passiert, regelt die Bibliothek. Für die Abnahme ist festgehalten:
   - Fragen werden aus zwei Richtungen abgeleitet: aus dem Auftrag allein und aus den Clustern des Materials.
-    Eine Kernfrage ohne Beleg ist sichtbar.
+    Eine Kernfrage ohne Beleg ist sichtbar. Der Nachtrag vom 27.11.2026 ordnet das neu ein: Die Fragen aus dem
+    Auftrag zeigen nur Lücken an, sie sind nicht das Ziel.
   - Passagen werden vor dem Clustern gegen den Weidezaun gefiltert.
 - Recherche und Schreiben sind keine Core-Funktionen (Festlegung: im Core keine Recherche und keine Agenten). Der
   Core liefert nur, was er schon kann:
@@ -178,6 +179,98 @@ Projekt.
 - Zwischenergebnisse (Fragen, Belege, offene Fragen) sind vor dem Manuskript sichtbar. So lässt sich prüfen, was
   die KI vorhat, bevor sie ein ganzes Dokument schreibt.
 
+## Nachtrag vom 27.11.2026: Erschließen statt Abfragen
+
+Quelle: Angelos Nachricht vom 27.11.2026, 00:50 MEZ, und der Auftrag des Koordinators von 00:53 MEZ. Der Nachtrag
+ergänzt die Abschnitte 6 und 7. Er ändert nichts an den Abschnitten 1 bis 5.
+
+### N1. Ziel der Schreibphase
+- Der Leser kennt das Thema nicht, sonst bräuchte er das Dokument nicht. Er steckt nur den Rahmen ab: Mission und
+  Weidezaun. Die Einzelheiten kann er nicht vorgeben.
+- Der Mehrwert sind die **Eckpfeiler**, die erst im Material sichtbar werden, und die Fragen, die der Leser mangels
+  Fachkenntnis nicht stellen konnte. Aus einem unscharfen Bild soll ein scharfes werden.
+- Ausgewählt wird deshalb nicht danach, ob der Benutzer nach einem Sachverhalt gefragt hat. Maßgeblich ist, ob der
+  Leser ihn verstehen muss, um den Gegenstand zu begreifen. Kriterien:
+  - Gegenstandsbezug
+  - Grundlagenwissen
+  - Erklärungswert
+  - Vernetzung
+  - Erkenntnisgewinn
+  - angemessene Detailtiefe
+- Die Größe eines Clusters ist kein Maß für Wichtigkeit.
+- Fragen, die sich allein aus dem Auftrag ergeben, zeigen nur Lücken an. Wie viele davon das Material beantwortet,
+  ist eine Nebengröße, nicht das Ziel.
+
+### N2. Recherche und Schreiben sind eine Schleife
+- **Befund:** Die Entdeckung endet am Rand des Materials. Was nicht in den Favoriten liegt, bildet keinen Cluster
+  und wird nie zur Frage. Das Recherchekonzept stammt von jemandem ohne Fachkenntnis; seine blinden Flecken wandern
+  sonst unbemerkt ins Dokument.
+- **Entscheidung:** Phase 3 und Phase 4 laufen als Schleife, nicht als einmalige Abfolge. Eine Runde hat vier
+  Schritte:
+  1. Writing4j analysiert das Material zum Materialstand. Es meldet entdeckte Eckpfeiler mit zu wenig Belegen und
+     offene Fragen als **Nachrecherche-Bedarf**, je mit Eckpfeiler, Frage und Grund.
+  2. Aus dem Bedarf werden Suchaufträge für Research4j oder Vorschläge an den Benutzer.
+  3. Neue Quellen werden Favoriten des Projekts. Herkunft „Recherche“ und die Runde sind am Favoriten sichtbar.
+  4. Die nächste Analyse bekommt einen neuen Materialstand (Abschnitt 4.3).
+- **Ende der Schleife.** Sie endet, sobald einer dieser Fälle eintritt:
+  - Eine Runde bringt innerhalb des Weidezauns keine neuen Eckpfeiler.
+  - Die eingestellte Höchstzahl an Runden ist erreicht.
+  - Der Benutzer bricht ab.
+
+  Nie endet sie stillschweigend: Der Bestandteil „Recherche“ zeigt je Runde, was gesucht und was gefunden wurde.
+- **Wer die Schleife steuert.** Die Anwendung steuert sie, also der Adapter in Space Harvester. Keine Bibliothek
+  ruft die andere auf, beide bleiben voneinander unabhängig (Abschnitt 6). Die Schleife ist keine Core-Funktion.
+- **Selbsttätig oder vorgeschlagen.**
+  - Hat der Benutzer für das Projekt eine automatische Recherche gestartet, läuft die Nachrecherche in diesen
+    Grenzen selbsttätig weiter.
+  - Bei einem von Hand gefüllten Projekt wird sie nur vorgeschlagen.
+- **Weidezaun.** Er wirkt in jeder Runde auf die einzelne Passage, bevor geclustert wird. Sonst bilden fachfremde
+  Kapitel einer aufgenommenen Quelle eigene Themen.
+- **Recherchekonzept.** Entdeckte Eckpfeiler dürfen es erweitern. Es bleibt reine Suchsteuerung und geht weiterhin
+  nie an Writing4j.
+- **Manuskript.** Geschrieben wird erst aus dem Materialstand der letzten Runde. Frühere Runden liefern nur Analyse.
+- **Betriebsarten.** Die Fragenernte je Cluster und das Beantworten je Frage sind unabhängige Teile eines Auftrags
+  (Abschnitt 7). Mit einer GPU laufen sie nacheinander, in der Cloud nebeneinander, mit demselben Ergebnis.
+
+### N3. Beziehung „setzt voraus“
+- **Befund:** Eine solche Beziehung gibt es in Space Harvester nicht. Die Kanten des Wissensgraphen sind Verben aus
+  Aussagen (`DomainTermGraph`). `RelationKind.BEFORE` ist die zeitliche Abfolge von Handlungen. Beides wird nicht
+  zur Wissensvoraussetzung umgedeutet.
+- **Entscheidung:** Die didaktische Gliederung entsteht aus der Beziehung „A setzt B voraus“ zwischen Eckpfeilern
+  bzw. Fragen.
+  - Jede Beziehung trägt einen **Beleg**: die Passage mit Seite, Revision und Fundstelle, in der A mit Hilfe von B
+    erklärt wird.
+  - Eine Beziehung ohne Beleg gilt als „vermutet“. Sie ist sichtbar, bestimmt aber nie allein die Reihenfolge.
+- **Zyklen** werden erkannt und nie stillschweigend aufgelöst.
+  - Begriffe, die sich gegenseitig voraussetzen, bilden eine gemeinsame Einheit. Sie werden zusammen eingeführt.
+  - Ist das nicht sinnvoll, wird der Zyklus an der am schwächsten belegten Beziehung aufgetrennt.
+  - Beides steht mit Grund im Bestandteil „Qualität“.
+- **Reihenfolge.** Sie ist deterministisch: topologisch nach den belegten Beziehungen, bei Gleichstand nach Zahl
+  der Belege, dann nach Eingabereihenfolge.
+- **Wo es liegt.** Die Beziehung entsteht in Writing4j und ist ein Kriterium seiner Abnahme. Space Harvester legt
+  das Ergebnis in „Wissensanalyse“ und „Gliederung“ ab.
+- **Hinweise aus dem Bestand.** Gibt es zu den Seiten bestätigte Glossarbegriffe und Aussagen, darf der Adapter sie
+  als Hinweise mitgeben. Voraussetzung ist das nicht: Der Wissensgraph kennt nur bestätigte Begriffe, und bei einem
+  neuen Thema ist das Glossar leer.
+
+### N4. Messung
+- Die Abdeckung vorab formulierter Fragen misst das Ziel aus N1 nicht.
+- **Sollwert:** Gemessen wird an einem Thema mit anerkanntem, öffentlich zugänglichem Lehrwerk. Sein
+  Inhaltsverzeichnis ist das Soll der Eckpfeiler. Das Lehrwerk selbst liegt nicht im Material.
+- **Messgrößen:**
+  - Anteil der Soll-Eckpfeiler, die gefunden wurden,
+  - Anteil fachfremder unter den behaltenen Fragen,
+  - Übereinstimmung der Reihenfolge mit dem Lehrwerk, paarweise über „setzt voraus“,
+  - als Nebengröße die Abdeckung der Fragen aus dem Auftrag.
+- Gemessen wird in beiden Betriebsarten, mit einer GPU und parallel.
+- Im Repo liegt nur die Liste der Soll-Eckpfeiler als Begriffe. Texte des Lehrwerks und interne Inhalte liegen
+  nicht im Repo.
+
+### N5. Befund zum Clustern in Space Harvester
+`TopicClusterer` (`application.passages`) gruppiert Absätze eines einzelnen Dokuments rein nach Ähnlichkeit der
+Vektoren. Für das Material eines ganzen Projekts ist er nicht gebaut: Er vergleicht in jeder Runde alle Paare neu.
+Das Clustern über das Projektmaterial gehört zu Writing4j. `TopicClusterer` wird dafür weder umgebaut noch kopiert.
+
 ## Umsetzung
 
 Erst nach der Abnahme von Research4j und Writing4j. Dann starten alle Pakete der Gruppe 1 sofort und gleichzeitig
@@ -199,8 +292,8 @@ anderes Paket der Gruppe 2.
 
 ## Offene Punkte
 - Freigegebene oder gemeinsame Projekte mehrerer Benutzer sind nicht Teil dieser Runde.
-- Ob ein Nachrecherche-Vorschlag Research4j selbsttätig startet oder nur vorgeschlagen wird: Vorgabe ist „nur
-  vorgeschlagen“, bis Angelo anders entscheidet.
+- Ob die Nachrecherche selbsttätig läuft: Vorgabe siehe Nachtrag, Abschnitt N2, bis Angelo anders entscheidet.
+- Die Schwellen für die Abnahme der Messung (Nachtrag, Abschnitt N4) werden nach der ersten Messung festgelegt.
 
 ## Folgen
 - Space Harvester wird zusätzlich zur Wissensverwaltung eine Arbeitsumgebung für wissensbasierte Projekte. Der
