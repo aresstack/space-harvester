@@ -67,8 +67,8 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Fakten je Ergebnis und Seite (`EnrichmentFacts.MAX_PER_RESULT`, `LuceneEnrichmentStore.MAX_PER_PAGE`) | 2000 / 1000 | Fakten darüber werden nicht geliefert | beseitigen: paginieren |
 | Links und Tabellenzellen (`TikaDocumentStructure.MAX_LINKS`, `MAX_TABLE_CELLS`) | 1000 / 10.000 | die übrigen fehlen in der Struktur | beseitigen |
 | Confluence-Listen (`RestJson.MAX_LIST_PAGES` × `LIST_LIMIT`) | 200 × 100 | Listen mit mehr als 20.000 Einträgen scheitern | beseitigen: weiterblättern, bis die Quelle endet |
-| Baum und Listen in der REST-API (`PageQueries.MAX_TREE_DEPTH`, `MAX_PAGE_LIMIT`, `ContentListing.MAX_START`, `TermQueries.MAX_SCAN`) | 200 / 100 / 10.000 / 50.000 | tiefere Ebenen und spätere Einträge sind nicht erreichbar | beseitigen: Baum ebenenweise (F40-6), Seitengröße einstellbar |
-| Cache-Vorschau und Explorer (`Explorer.TREE_LIMIT`, `Payloads.MAX_DISPLAY_CHARS`) | 5000 Knoten / 2.000.000 Zeichen | große Bäume und lange Inhalte werden abgeschnitten | beseitigen: paginieren (F40-5) |
+| Baum und Listen in der REST-API (`PageQueries.MAX_TREE_LEVELS`, `MAX_PAGE_LIMIT`, `ContentListing.MAX_START`, `TermQueries.MAX_SCAN`) | 200 Ebenen je Antwort / 100 / 10.000 / 50.000 | spätere Einträge der Listen sind nicht erreichbar | beseitigen: Seitengröße einstellbar. **Baum erledigt (F40-6):** `GET …/tree` liefert ebenenweise (`root`, `levels`); ein Knoten mit `more` hat tiefere Kinder, die `root=<id>` nachliefert; die Gesamttiefe ist nicht begrenzt. 200 Ebenen je Antwort sind eine Invariante des JSON-Formats (Jackson schachtelt höchstens 500) |
+| Cache-Vorschau und Explorer (`Payloads.MAX_DISPLAY_CHARS`) | 2.000.000 Zeichen | lange Inhalte werden sichtbar gekürzt angezeigt („Speichern unter …“ speichert vollständig) | beseitigen: paginieren (F40-5). **Erledigt:** Die Vorschau aus dem Cache (`PageNavigation.cachedChildren`, früher höchstens 1000 Kinder) ist paginiert, „Weitere laden“ blättert im Cache, auch ohne Quelle; der Seitenbaum ohne Live-Baum (`Explorer.wholeSpace`, früher 5000 Knoten) und die Kinder für Bereichspodcasts (früher 200) lesen alle Einträge. Die Stapelgröße ist `Explorer.BATCH` |
 | Diagrammtexte (`DiagramLabels`, Zahl ohne Konstante) | 4000 Zeichen Code | der Code wurde vor dem Modellaufruf abgeschnitten (F41-7) | **beseitigt**: zu langer Code wird nach dem Tokenbudget des Modells (`ModelBudget`) an Zeilengrenzen in Teile zerlegt und teilweise beschriftet |
 | Progressive Suchen (`ProgressiveSearches.DEFAULT_MAX_RUNNING`, `DEFAULT_MAX_WAITING`, `DEFAULT_RETENTION`, `DEFAULT_MAX_TIME_BUDGET`) | 256 laufend / 256 wartend / 5 min / 2 min | laufen schon `max-running` Suchen, wartet eine neue (`waiting`) und startet, sobald ein Platz frei wird; erst wenn auch `max-waiting` voll ist, wird sie mit 429 abgewiesen; eine neue verdrängt nie eine andere; ein größeres Zeitbudget wird gekürzt | **einstellbar**: `space-harvester.search.progressive.max-running`, `.max-waiting`, `.retention`, `.max-time-budget` (F38-4, ADR 0038 Punkt 10) |
 | Speicher und Pakete (Desktop-`FileSystemAssetStore.DEFAULT_MAX_TOTAL_BYTES`, `ZipExportPackageReader`, `ImportController.MAX_PACKAGE_BYTES`, `LocalFilesSourceAdapter.MAX_FILE_MEGABYTES`, `BscwSourceAdapter`) | 20 GiB, 256 MiB, 4 GiB, 64 MB, Tiefe 50 | größere Dateien und tiefere Ordner werden nicht geerntet oder importiert | Speicherbudget einstellbar, Bestandsgrenzen beseitigen |
@@ -314,7 +314,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `PageLinks.BATCH` | `500` | fest | Stapel-/Seitengröße | einstellbar |
 | `PageLinks.MAX_PAGES_PER_MESSAGE` | `1_000` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `PageMarks.MAX_DEPTH` | `64` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
-| `PageNavigation.MAX_CACHED_CHILDREN` | `1000` | fest | Cache-Aufbewahrung | einstellbar |
 | `PageNavigation.MAX_TITLE_DEPTH` | `1000` | fest | Bestandsgrenze | beseitigen |
 | `PageNavigation.MAX_TITLE_LIMIT` | `100` | fest | Stapel-/Seitengröße | einstellbar |
 | `PagePassages.TITLE_CHARS` | `80` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
@@ -326,7 +325,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `PagePodcasts.SUBPAGE_CHARS` | `1500` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `PageQueries.MAX_CHECKED` | `10_000` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `PageQueries.MAX_PAGE_LIMIT` | `100` | fest | Stapel-/Seitengröße | einstellbar |
-| `PageQueries.MAX_TREE_DEPTH` | `200` | fest | Bestandsgrenze | beseitigen |
+| `PageQueries.MAX_TREE_LEVELS` | `200` | fest | Stapel-/Seitengröße | Invariante: Ebenen je JSON-Antwort, Fortsetzung über `root` (F40-6) |
 | `PageQueries.TREE_BATCH` | `1000` | fest | Stapel-/Seitengröße | einstellbar |
 | `PageSearch.MAX_LIMIT` | `100` | fest | Stapel-/Seitengröße | einstellbar |
 | `PageSearchQuery.MAX_SOURCE_IDS` | `50` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
@@ -585,7 +584,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `Explorer.BATCH` | `100` | fest | Stapel-/Seitengröße | einstellbar |
 | `Explorer.MATCH_LIMIT` | `50` | fest | Stapel-/Seitengröße | einstellbar |
 | `Explorer.PREFETCH_LIMIT` | `25` | fest | Stapel-/Seitengröße | einstellbar |
-| `Explorer.TREE_LIMIT` | `5_000` | fest | Bestandsgrenze | beseitigen |
 | `Feedback.MAX_LINES` | `4` | fest | Invariante/Darstellung | im Code belassen |
 | `Feedback.MAX_LINES_OPEN` | `9` | fest | Invariante/Darstellung | im Code belassen |
 | `FilesChatTools.MAX_ENTRIES` | `300` | fest | Cache-Aufbewahrung | einstellbar |

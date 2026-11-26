@@ -165,10 +165,14 @@ public final class Workspace {
 
     /**
      * Kindseiten nur aus dem Cache, ohne die Quelle zu fragen ({@code PageNavigation.cachedChildren}): zuerst zeigen,
-     * dann {@link #children} im Hintergrund holen und tauschen (Angelo 17.11.2026).
+     * dann {@link #children} im Hintergrund holen und tauschen (Angelo 17.11.2026). Paginiert, ohne Gesamtgrenze.
+     *
+     * @param cursor {@code null} oder {@code nextCursor} des vorigen Stapels
+     * @param limit  Stapelgröße
      */
-    public PageNavigation.Children cachedChildren(String sourceId, String spaceKey, String parentPageId) {
-        return harvester.navigation().cachedChildren(caller, sourceId, spaceKey, parentPageId);
+    public PageNavigation.Children cachedChildren(String sourceId, String spaceKey, String parentPageId,
+                                                  String cursor, int limit) {
+        return harvester.navigation().cachedChildren(caller, sourceId, spaceKey, parentPageId, cursor, limit);
     }
 
     /** Wo eine Seite steht: Space und Vorfahren von oben nach unten ({@code PageNavigation.position}). */

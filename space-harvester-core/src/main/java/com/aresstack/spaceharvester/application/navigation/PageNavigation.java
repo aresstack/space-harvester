@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
+import com.aresstack.spaceharvester.application.sources.InvalidNavigationCursorException;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
@@ -155,34 +156,50 @@ public class PageNavigation {
         return seen == null ? null : seen.parentPageId();
     }
 
-    /** Höchstens so viele Kinder liefert {@link #cachedChildren} je Knoten. */
-    public static final int MAX_CACHED_CHILDREN = 1000;
-
     /**
      * Kindseiten, wie sie der Cache kennt, ohne die Quelle zu fragen: für den Baum, der zuerst diesen Stand zeigt und
-     * {@link #children} danach im Hintergrund holt (Angelo 17.11.2026). Ein Stapel ohne Cursor in der Reihenfolge, in
-     * der die Quelle die Kinder zuletzt lieferte (von {@link #children} gemerkt), damit der Baum nach ihrer Antwort nicht
-     * umsortiert; Kinder ohne bekannte Position folgen nach Titel. {@code hasChildren} ist {@code true}, wenn der Cache
-     * Kinder kennt, sonst unbekannt. Rechte wie bei {@link #children}.
+     * {@link #children} danach im Hintergrund holt (Angelo 17.11.2026). In der Reihenfolge, in der die Quelle die Kinder
+     * zuletzt lieferte (von {@link #children} gemerkt), damit der Baum nach ihrer Antwort nicht umsortiert; Kinder ohne
+     * bekannte Position folgen nach Titel. {@code hasChildren} ist {@code true}, wenn der Cache Kinder kennt, sonst
+     * unbekannt. Rechte wie bei {@link #children}.
      *
-     * @return leer ohne Cache oder wenn der Cache keine Kinder kennt
+     * <p>Paginiert wie die Live-Navigation (ADR 0040, Punkt 11): Es gibt keine Gesamtgrenze, alle lokal bekannten Kinder
+     * sind über {@link Children#nextCursor()} erreichbar, auch wenn die Quelle nicht antwortet. Der Cursor trägt den
+     * Sortierschlüssel des letzten gelieferten Kindes; ändert sich der Cache dazwischen, setzt der nächste Stapel
+     * dahinter fort, ohne Kinder doppelt zu liefern oder zu überspringen, die vorher schon da waren.
+     *
+     * @param cursor {@code null} oder {@link Children#nextCursor()} eines vorigen Aufrufs für denselben Knoten
+     * @param limit  Stapelgröße, mindestens 1; ein Stapel kann nach dem Beschneiden kleiner sein
+     * @return leer ohne Cache oder wenn der Cache keine (weiteren) Kinder kennt
+     * @throws InvalidNavigationCursorException wenn {@code cursor} nicht von hier stammt
      */
-    public Children cachedChildren(AccessContext caller, String sourceId, String spaceKey, String parentPageId) {
+    public Children cachedChildren(AccessContext caller, String sourceId, String spaceKey, String parentPageId,
+                                   String cursor, int limit) {
+        if (limit < 1) {
+            throw new InvalidQueryException("limit muss mindestens 1 sein");
+        }
         HarvestSource source = source(sourceId);
         access.require(caller, parentPageId == null
                 ? ResourceScope.space(sourceId, Objects.requireNonNull(spaceKey, "spaceKey"))
                 : ResourceScope.source(sourceId), AccessKind.METADATA);
+        CachedChildKey after = cursor == null ? null : CachedChildKey.decode(cursor);
         if (cache == null || source.navigationUsesGroups()) {
             return new Children(sourceId, spaceKey, parentPageId, List.of(), null);
         }
-        List<com.aresstack.spaceharvester.application.snapshot.PageHeader> headers;
+        List<com.aresstack.spaceharvester.application.sources.PageMetadata> pages = new java.util.ArrayList<>();
         try {
-            headers = cache.children(sourceId, spaceKey, parentPageId, MAX_CACHED_CHILDREN);
+            String afterPageId = null;
+            List<PageHeader> batch;
+            do {
+                batch = cache.children(sourceId, spaceKey, parentPageId, afterPageId, limit);
+                batch.forEach(header -> pages.add(header.metadata()));
+                afterPageId = batch.isEmpty() ? null : batch.getLast().metadata().pageId();
+            } while (afterPageId != null);
         } catch (com.aresstack.spaceharvester.application.query.CacheUnavailableException e) {
             return new Children(sourceId, spaceKey, parentPageId, List.of(), null);
         }
         String partition = spaceKey != null ? spaceKey
-                : headers.isEmpty() ? null : headers.getFirst().metadata().partitionKey();
+                : pages.isEmpty() ? null : pages.getFirst().partitionKey();
         if (parentPageId != null && partition != null) {
             access.requireConcealed(caller, ResourceScope.page(sourceId, partition, parentPageId),
                     AccessKind.METADATA);
@@ -196,28 +213,68 @@ public class PageNavigation {
         } catch (RuntimeException e) {
             // Ohne bekannte Reihenfolge ordnet der Titel.
         }
-        List<PageNode> nodes = headers.stream()
-                .map(header -> header.metadata())
-                .sorted(java.util.Comparator.comparingInt((com.aresstack.spaceharvester.application.sources.PageMetadata
-                        page) -> positions.getOrDefault(page.pageId(), Integer.MAX_VALUE))
-                        .thenComparing(page -> page.title().toLowerCase(java.util.Locale.ROOT))
-                        .thenComparing(com.aresstack.spaceharvester.application.sources.PageMetadata::pageId))
-                .map(page -> {
-                    PageNode.Kind kind = switch (page.attributes().getOrDefault(
-                            com.aresstack.spaceharvester.application.sources.PageMetadata.RESOURCE_KIND, "")) {
-                        case com.aresstack.spaceharvester.application.sources.PageMetadata.FOLDER_KIND ->
-                                PageNode.Kind.FOLDER;
-                        case com.aresstack.spaceharvester.application.sources.PageMetadata.FILE_KIND,
-                             com.aresstack.spaceharvester.application.sources.PageMetadata.LINK_KIND ->
-                                PageNode.Kind.FILE;
-                        default -> PageNode.Kind.PAGE;
-                    };
-                    Boolean children = kind == PageNode.Kind.FILE ? Boolean.FALSE
-                            : cache.hasChildren(sourceId, page.pageId()) ? Boolean.TRUE : null;
-                    return new PageNode(page.pageId(), page.title(), page.partitionKey(), children, kind);
-                })
+        List<CachedChildKey> ordered = pages.stream()
+                .map(page -> new CachedChildKey(positions.getOrDefault(page.pageId(), Integer.MAX_VALUE),
+                        page.title().toLowerCase(java.util.Locale.ROOT), page.pageId(), page))
+                .filter(key -> after == null || key.compareTo(after) > 0)
+                .sorted()
                 .toList();
-        return new Children(sourceId, partition, parentPageId, visible(caller, sourceId, nodes), null);
+        List<CachedChildKey> shown = ordered.subList(0, Math.min(limit, ordered.size()));
+        List<PageNode> nodes = shown.stream().map(key -> cachedChild(sourceId, key.page())).toList();
+        String next = ordered.size() > shown.size() ? shown.getLast().encode() : null;
+        return new Children(sourceId, partition, parentPageId, visible(caller, sourceId, nodes), next);
+    }
+
+    private PageNode cachedChild(String sourceId, com.aresstack.spaceharvester.application.sources.PageMetadata page) {
+        PageNode.Kind kind = switch (page.attributes().getOrDefault(
+                com.aresstack.spaceharvester.application.sources.PageMetadata.RESOURCE_KIND, "")) {
+            case com.aresstack.spaceharvester.application.sources.PageMetadata.FOLDER_KIND -> PageNode.Kind.FOLDER;
+            case com.aresstack.spaceharvester.application.sources.PageMetadata.FILE_KIND,
+                 com.aresstack.spaceharvester.application.sources.PageMetadata.LINK_KIND -> PageNode.Kind.FILE;
+            default -> PageNode.Kind.PAGE;
+        };
+        Boolean children = kind == PageNode.Kind.FILE ? Boolean.FALSE
+                : cache.hasChildren(sourceId, page.pageId()) ? Boolean.TRUE : null;
+        return new PageNode(page.pageId(), page.title(), page.partitionKey(), children, kind);
+    }
+
+    /** Sortierschlüssel eines Kindes aus dem Cache; als Cursor trägt er die Fortsetzung selbst (ADR 0040). */
+    private record CachedChildKey(int position, String title, String pageId,
+                                  com.aresstack.spaceharvester.application.sources.PageMetadata page)
+            implements Comparable<CachedChildKey> {
+
+        private static final String PREFIX = "cache:";
+        private static final java.util.Comparator<CachedChildKey> ORDER = java.util.Comparator
+                .comparingInt(CachedChildKey::position).thenComparing(CachedChildKey::title)
+                .thenComparing(CachedChildKey::pageId);
+
+        @Override
+        public int compareTo(CachedChildKey other) {
+            return ORDER.compare(this, other);
+        }
+
+        String encode() {
+            String plain = position + "\0" + title + "\0" + pageId;
+            return PREFIX + java.util.Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(plain.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+
+        static CachedChildKey decode(String cursor) {
+            try {
+                if (!cursor.startsWith(PREFIX)) {
+                    throw new IllegalArgumentException("fremder Cursor");
+                }
+                String plain = new String(java.util.Base64.getUrlDecoder().decode(cursor.substring(PREFIX.length())),
+                        java.nio.charset.StandardCharsets.UTF_8);
+                String[] parts = plain.split("\0", -1);
+                if (parts.length != 3) {
+                    throw new IllegalArgumentException("unvollständiger Cursor");
+                }
+                return new CachedChildKey(Integer.parseInt(parts[0]), parts[1], parts[2], null);
+            } catch (IllegalArgumentException e) {
+                throw new InvalidNavigationCursorException();
+            }
+        }
     }
 
     /**

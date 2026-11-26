@@ -56,9 +56,9 @@ class LucenePageCacheReaderTest {
         cache.save(page("wiki", "101", "DEV", "100", "1", json("{}")));
         cache.save(page("wiki", "102", "DEV", "100", "1", json("{}")));
 
-        assertThat(reader.children("wiki", "DEV", null, 10)).extracting(header -> header.key().pageId())
+        assertThat(reader.children("wiki", "DEV", null, null, 10)).extracting(header -> header.key().pageId())
                 .containsExactly("100");
-        assertThat(reader.children("wiki", null, "100", 10)).extracting(header -> header.key().pageId())
+        assertThat(reader.children("wiki", null, "100", null, 10)).extracting(header -> header.key().pageId())
                 .containsExactlyInAnyOrder("101", "102");
         assertThat(reader.hasChildren("wiki", "100")).isTrue();
         assertThat(reader.hasChildren("wiki", "101")).isFalse();

@@ -183,9 +183,9 @@ class PageQueryApiTest {
     }
 
     @Test
-    void deepestAllowedTreeIsSerialized() throws Exception {
+    void aDeeperTreeIsDeliveredLevelByLevel() throws Exception {
         List<PageSnapshot> chain = new ArrayList<>();
-        for (int i = 0; i < PageQueries.MAX_TREE_DEPTH; i++) {
+        for (int i = 0; i < PageQueries.MAX_TREE_LEVELS + 5; i++) {
             chain.add(page("wiki", "DEEP", String.format("c%04d", i), i == 0 ? null : String.format("c%04d", i - 1)));
         }
         cache.publish("wiki", "DEEP", confirmed("g1"), chain);
@@ -193,7 +193,16 @@ class PageQueryApiTest {
         HttpResponse<String> response = get("/api/v1/sources/wiki/spaces/DEEP/tree");
 
         assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
-        assertThat(json.readTree(response.body()).get("depth").asInt()).isEqualTo(PageQueries.MAX_TREE_DEPTH);
+        assertThat(json.readTree(response.body()).get("depth").asInt()).isEqualTo(PageQueries.MAX_TREE_LEVELS);
+        String last = String.format("c%04d", PageQueries.MAX_TREE_LEVELS - 1);
+        assertThat(response.body()).contains("\"id\":\"" + last + "\",\"children\":[],\"more\":true");
+
+        HttpResponse<String> rest = get("/api/v1/sources/wiki/spaces/DEEP/tree?root=" + last + "&levels=10");
+        assertThat(rest.statusCode()).as(rest.body()).isEqualTo(200);
+        assertThat(json.readTree(rest.body()).get("depth").asInt()).isEqualTo(6);
+        assertThat(rest.body()).doesNotContain("more");
+        assertProblem(get("/api/v1/sources/wiki/spaces/DEEP/tree?root=unbekannt"), 404, "cache-miss");
+        assertProblem(get("/api/v1/sources/wiki/spaces/DEEP/tree?levels=0"), 400, "invalid-request");
     }
 
     @Test

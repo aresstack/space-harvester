@@ -54,11 +54,12 @@ public class PageQueries {
     public static final int MAX_PAGE_LIMIT = 100;
 
     /**
-     * Größte Baumtiefe einer synchronen Antwort. Jede Ebene kostet im JSON zwei Verschachtelungen (Knoten und
-     * {@code children}); darüber würde die übliche Grenze von 500 Ebenen (etwa Jacksons Standard beim Schreiben und
-     * Lesen) gesprengt. Solche Bäume liefert der Export.
+     * Höchstens so viele Ebenen enthält eine Antwort der REST-API (ADR 0040, Punkt 12); tiefere fragt der Client ab
+     * dem Knoten mit {@code more} nach, die Gesamttiefe ist nicht begrenzt. Jede Ebene kostet im JSON zwei
+     * Verschachtelungen (Knoten und {@code children}); darüber würde die übliche Grenze von 500 Ebenen (Jacksons
+     * Standard beim Schreiben und Lesen) gesprengt. Invariante des JSON-Formats, keine fachliche Grenze.
      */
-    public static final int MAX_TREE_DEPTH = 200;
+    public static final int MAX_TREE_LEVELS = 200;
 
     private static final int TREE_BATCH = 1000;
 
@@ -186,7 +187,8 @@ public class PageQueries {
      * @throws AccessDeniedException           wenn der Space nicht für {@code metadata} freigegeben ist
      * @throws UnknownSourceException          wenn keine Quelle mit dieser ID konfiguriert ist
      * @throws CacheMissException              wenn für den Space nichts im Cache liegt
-     * @throws TreeTooLargeException           wenn der Baum für eine synchrone Antwort zu groß oder zu tief ist
+     * @throws TreeTooLargeException           wenn der Baum mehr sichtbare Seiten hat als {@code maxTreeNodes}; die
+     *                                         Tiefe ist nicht begrenzt (ADR 0040, Punkt 12)
      * @throws CacheGenerationChangedException wenn die Generation während des Lesens ersetzt wurde
      */
     public SpaceTree tree(AccessContext caller, String sourceId, String spaceKey) {
@@ -210,11 +212,7 @@ public class PageQueries {
                 }
             }
         } while (batch.size() == TREE_BATCH);
-        PageTree tree = PageTreeBuilder.build(entries);
-        if (tree.depth() > MAX_TREE_DEPTH) {
-            throw new TreeTooLargeException("Der Baum ist tiefer als " + MAX_TREE_DEPTH + " Ebenen");
-        }
-        return new SpaceTree(sourceId, spaceKey, generation, tree, pages);
+        return new SpaceTree(sourceId, spaceKey, generation, PageTreeBuilder.build(entries), pages);
     }
 
     /**

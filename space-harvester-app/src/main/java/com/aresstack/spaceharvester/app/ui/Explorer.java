@@ -89,7 +89,6 @@ public final class Explorer {
             + "Wissensquelle startet sofort ein eigener Auftrag, der die Änderungen nachholt.";
     static final String ALL_NODES = "Alle Knoten zeigen";
     private static final int MATCH_LIMIT = 50;
-    private static final int TREE_LIMIT = 5_000;
     private static final int BATCH = 100;
     private static final int ACTION_WIDTH = 30;
     /** Spalte des Bestandszeichens links vom Stern. */
@@ -227,7 +226,15 @@ public final class Explorer {
     }
 
     /** Platzhalter für den nächsten Stapel Kindseiten. */
-    record MoreItem(String cursor) implements Item {
+    /**
+     * „Weitere laden“ bzw. „Ordner neu laden“ ({@code cursor} null). {@code cached}: der nächste Stapel kommt aus dem
+     * Cache (Vorschau, ADR 0040 Punkt 11), nicht von der Quelle; der Abgleich mit der Quelle ersetzt ihn.
+     */
+    record MoreItem(String cursor, boolean cached) implements Item {
+        MoreItem(String cursor) {
+            this(cursor, false);
+        }
+
         @Override
         public String toString() {
             return cursor == null ? "Ordner neu laden" : MORE;
@@ -1374,11 +1381,11 @@ public final class Explorer {
             loadLive(runtime, node);
             return;
         }
-        Background.run(() -> cachedChildren(runtime, item), cached -> {
+        Background.run(() -> cachedChildren(runtime, item, null), cached -> {
             if (!cached.nodes().isEmpty()) {
                 // Noch steht nur „Lädt …“ darunter: Neuaufbau dieses Knotens verliert nichts.
                 node.removeAllChildren();
-                append(node, cached);
+                appendCached(node, cached);
                 node.fromCache = true;
                 model.nodeStructureChanged(node);
             }
@@ -1449,14 +1456,19 @@ public final class Explorer {
         }
     }
 
-    /** Die Kindseiten aus dem Cache, ohne die Quelle zu fragen; leer, wenn dort nichts liegt oder es nicht geht. */
-    static Batch cachedChildren(AppRuntime runtime, Item item) {
+    /**
+     * Ein Stapel Kindseiten aus dem Cache, ohne die Quelle zu fragen; leer, wenn dort nichts liegt oder es nicht geht.
+     * Weitere Stapel folgen über „Weitere laden“ ({@link MoreItem#cached()}), auch wenn die Quelle nicht antwortet.
+     *
+     * @param cursor {@code null} für den ersten Stapel, sonst {@link Batch#nextCursor()} des vorigen
+     */
+    static Batch cachedChildren(AppRuntime runtime, Item item, String cursor) {
         try {
             return switch (item) {
-                case SpaceItem space -> nodes(space.sourceId(),
-                        runtime.workspace().cachedChildren(space.sourceId(), space.spaceKey(), null));
-                case PageItem page -> nodes(page.sourceId(),
-                        runtime.workspace().cachedChildren(page.sourceId(), page.spaceKey(), page.pageId()));
+                case SpaceItem space -> nodes(space.sourceId(), runtime.workspace()
+                        .cachedChildren(space.sourceId(), space.spaceKey(), null, cursor, BATCH));
+                case PageItem page -> nodes(page.sourceId(), runtime.workspace()
+                        .cachedChildren(page.sourceId(), page.spaceKey(), page.pageId(), cursor, BATCH));
                 default -> new Batch(List.of(), null);
             };
         } catch (RuntimeException notCached) {
@@ -1505,6 +1517,11 @@ public final class Explorer {
     /** Lädt den nächsten Stapel Kinder von {@code parent}; {@code then} läuft danach auf dem EDT (etwa der Abstieg). */
     private void loadMore(Node parent, Node moreNode, MoreItem more, Runnable then) {
         AppRuntime runtime = context.runtime();
+        if (runtime != null && parent != null && more.cached()) {
+            // Die Vorschau blättert auch, während der Abgleich mit der Quelle noch läuft oder sie nicht antwortet.
+            loadCachedMore(runtime, parent, moreNode, more, then);
+            return;
+        }
         if (runtime == null || parent == null || parent.loading) {
             return;
         }
@@ -1536,6 +1553,51 @@ public final class Explorer {
         });
     }
 
+
+    /**
+     * Der nächste Stapel der Vorschau aus dem Cache: hängt die noch nicht gezeigten Kinder an, ohne die Quelle zu fragen.
+     * Ein inzwischen eingetroffener Abgleich mit der Quelle hat „Weitere laden“ schon ersetzt; dann geschieht nichts.
+     */
+    private void loadCachedMore(AppRuntime runtime, Node parent, Node moreNode, MoreItem more, Runnable then) {
+        moreNode.setUserObject(new Note(LOADING));
+        model.nodeChanged(moreNode);
+        Background.run(() -> cachedChildren(runtime, parent.item(), more.cursor()), batch -> {
+            if (moreNode.getParent() != parent || !parent.fromCache) {
+                return;
+            }
+            keepingView(parent, () -> {
+                model.removeNodeFromParent(moreNode);
+                Set<String> shown = new HashSet<>();
+                for (int i = 0; i < parent.getChildCount(); i++) {
+                    shown.add(key(((Node) parent.getChildAt(i)).item()));
+                }
+                for (Node child : batch.nodes()) {
+                    if (shown.add(key(child.item()))) {
+                        model.insertNodeInto(child, parent, parent.getChildCount());
+                    }
+                }
+                if (batch.nextCursor() != null) {
+                    model.insertNodeInto(new Node(new MoreItem(batch.nextCursor(), true)), parent,
+                            parent.getChildCount());
+                }
+            });
+            if (then != null) {
+                then.run();
+            }
+        }, error -> {
+            moreNode.setUserObject(more);
+            model.nodeChanged(moreNode);
+            note.setText("Nicht geladen: " + Problems.describe(error).title());
+        });
+    }
+
+    /** Hängt den ersten Stapel der Vorschau aus dem Cache an; weitere Stapel kommen ebenfalls aus dem Cache. */
+    private static void appendCached(Node parent, Batch batch) {
+        append(parent, new Batch(batch.nodes(), null));
+        if (batch.nextCursor() != null) {
+            parent.add(new Node(new MoreItem(batch.nextCursor(), true)));
+        }
+    }
 
     private static void append(Node parent, Batch batch) {
         for (Node child : batch.nodes()) {
@@ -1800,7 +1862,7 @@ public final class Explorer {
                         folders.add(page.pageId());
                     }
                 }
-                next = entries.size() >= TREE_LIMIT ? null : listing.nextCursor();
+                next = listing.nextCursor();
             } while (next != null);
             pageTree = PageTreeBuilder.build(entries.values());
         } catch (RuntimeException unreachable) {

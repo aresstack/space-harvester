@@ -126,7 +126,7 @@ class HarvesterMediaWikiTest {
             assertThat(members.pages()).extracting(PageNode::pageId).contains(id("Verwaist"));
             assertThat(harvester.navigation().position(harvester.caller(), "wiki", id("Verwaist")).spaceKey())
                     .isEqualTo("wiki");
-            assertThat(harvester.navigation().cachedChildren(harvester.caller(), "wiki", "wiki", null).pages()).isEmpty();
+            assertThat(harvester.navigation().cachedChildren(harvester.caller(), "wiki", "wiki", null, null, 100).pages()).isEmpty();
             assertThat(front.queries()).noneSatisfy(query -> assertThat(query).contains("action=parse"));
             String article = new String(harvester.pages().page(harvester.caller(), "wiki", id("Verwaist"), false)
                     .snapshot().payload().bytes(), StandardCharsets.UTF_8);

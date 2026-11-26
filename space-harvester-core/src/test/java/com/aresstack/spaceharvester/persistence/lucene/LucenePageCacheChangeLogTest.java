@@ -286,8 +286,8 @@ class LucenePageCacheChangeLogTest {
         int count = cache.countSpacePages("wiki", "DEV");
         var spacePages = cache.spacePages("wiki", "DEV", null, 100);
         var sourcePages = cache.sourcePages("wiki", null, 100);
-        var roots = cache.rootPages("wiki", "DEV", 100);
-        var children = cache.children(root.key(), 100);
+        var roots = cache.rootPages("wiki", "DEV", null, 100);
+        var children = cache.children(root.key(), null, 100);
         var known = cache.knownPages("wiki", "DEV");
         assertThat(cache.changeEntries("wiki")).isNotEmpty();
 
@@ -298,8 +298,8 @@ class LucenePageCacheChangeLogTest {
         assertThat(cache.countSpacePages("wiki", "DEV")).isEqualTo(count).isEqualTo(2);
         assertThat(cache.spacePages("wiki", "DEV", null, 100)).isEqualTo(spacePages);
         assertThat(cache.sourcePages("wiki", null, 100)).isEqualTo(sourcePages);
-        assertThat(cache.rootPages("wiki", "DEV", 100)).isEqualTo(roots);
-        assertThat(cache.children(root.key(), 100)).isEqualTo(children);
+        assertThat(cache.rootPages("wiki", "DEV", null, 100)).isEqualTo(roots);
+        assertThat(cache.children(root.key(), null, 100)).isEqualTo(children);
         assertThat(cache.knownPages("wiki", "DEV")).isEqualTo(known);
     }
 

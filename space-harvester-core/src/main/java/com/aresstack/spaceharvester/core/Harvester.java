@@ -1248,7 +1248,7 @@ public final class Harvester implements AutoCloseable {
 
                         @Override
                         public List<String> children(AccessContext who, String sourceId, String pageId) {
-                            return podcastCache.children(new PageKey(sourceId, pageId), 200).stream()
+                            return podcastCache.allChildren(new PageKey(sourceId, pageId)).stream()
                                     .map(com.aresstack.spaceharvester.persistence.lucene.CachedPageHeader::header)
                                     .sorted(java.util.Comparator.comparing(header -> header.metadata().title(),
                                             String.CASE_INSENSITIVE_ORDER))
