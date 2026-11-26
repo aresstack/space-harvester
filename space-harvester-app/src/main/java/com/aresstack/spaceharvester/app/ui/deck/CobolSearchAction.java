@@ -153,6 +153,8 @@ final class CobolSearchAction {
                     case DATA -> "Datenfelder";
                     case CALLERS -> "Aufrufer (statisch)";
                     case CALLEES -> "Aufgerufene Programme";
+                    case CALLERS_HIERARCHY -> "Aufrufhierarchie (eingehend)";
+                    case CALLEES_HIERARCHY -> "Aufrufhierarchie (ausgehend)";
                 });
                 return this;
             }
@@ -167,12 +169,18 @@ final class CobolSearchAction {
         var page = new JPanel(new BorderLayout(8, 0));
         page.add(previous, BorderLayout.WEST);
         page.add(count, BorderLayout.CENTER);
-        page.add(next, BorderLayout.EAST);
+        var pageActions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 0));
+        var root = new JButton("Als Startprogramm verwenden");
+        root.setEnabled(false);
+        pageActions.add(root);
+        pageActions.add(next);
+        page.add(pageActions, BorderLayout.EAST);
         int[] offset = {0};
         var input = new JPanel(new BorderLayout(8, 0));
         input.add(modes, BorderLayout.WEST);
         input.add(query, BorderLayout.CENTER);
         var find = new JButton("Suchen");
+        query.setToolTipText("Für die Hierarchie: exakte PROGRAM-ID oder Member; bei mehreren Treffern ROOT_SELECTOR verwenden.");
         input.add(find, BorderLayout.EAST);
         var body = new JPanel(new BorderLayout(0, 8));
         var header = new JPanel(new BorderLayout(0, 4));
@@ -197,6 +205,20 @@ final class CobolSearchAction {
             offset[0] = 0;
             refresh.run();
         };
+        table.getSelectionModel().addListSelectionListener(event -> {
+            int selected = table.getSelectedRow();
+            root.setEnabled(selected >= 0 && rows.at(table.convertRowIndexToModel(selected))
+                    .attributes().containsKey("ROOT_SELECTOR"));
+        });
+        root.addActionListener(event -> {
+            int selected = table.getSelectedRow();
+            if (selected < 0) return;
+            String selector = rows.at(table.convertRowIndexToModel(selected)).attributes().get("ROOT_SELECTOR");
+            if (selector != null) {
+                query.setText(selector);
+                firstPage.run();
+            }
+        });
         find.addActionListener(event -> firstPage.run());
         query.addActionListener(event -> firstPage.run());
         modes.addActionListener(event -> firstPage.run());
@@ -216,6 +238,26 @@ final class CobolSearchAction {
         }
     }
 
+    private static String hierarchyDetails(CobolSearch.Fact fact) {
+        String status = fact.attributes().get("HIERARCHY_STATUS");
+        if (status == null) return fact.attributes().toString();
+        String label = switch (status) {
+            case "ROOT" -> "Startprogramm";
+            case "SELECT_ROOT" -> "Startprogramm auswählen";
+            case "AMBIGUOUS_CALLER" -> "Aufrufendes Programm nicht eindeutig";
+            case "AMBIGUOUS_TARGET" -> "Mehrere mögliche Ziele";
+            case "DYNAMIC_TARGET" -> "Dynamisches Ziel";
+            case "TARGET_NOT_IN_SNAPSHOT" -> "Ziel nicht im analysierten Bestand";
+            case "RESOLVED_IN_SNAPSHOT" -> "Eindeutiger Kandidat im Bestand";
+            default -> status;
+        };
+        String selector = fact.attributes().get("ROOT_SELECTOR");
+        if (selector != null) return label + " · " + selector;
+        return label + " · " + fact.attributes().getOrDefault("CALLER_CANDIDATES", "")
+                + " → " + fact.attributes().getOrDefault("TARGET_CANDIDATES", "")
+                + (fact.attributes().containsKey("ALREADY_VISITED") ? " · Bereits erreicht" : "");
+    }
+
     private static final class Results extends AbstractTableModel {
         private final String[] columns = {"Art", "Name", "Programm", "Fundstelle", "Zeile", "Details"};
         private List<CobolSearch.Fact> hits = List.of();
@@ -230,12 +272,13 @@ final class CobolSearchAction {
         @Override public Object getValueAt(int row, int col) {
             var f = hits.get(row);
             return switch (col) {
-                case 0 -> f.kind();
+                case 0 -> f.attributes().containsKey("HIERARCHY_DEPTH")
+                        ? "Ebene " + f.attributes().get("HIERARCHY_DEPTH") + " · " + f.kind() : f.kind();
                 case 1 -> f.name();
                 case 2 -> f.program();
                 case 3 -> f.source();
                 case 4 -> f.line() > 0 ? f.line() : "–";
-                default -> (f.partial() ? "Teilanalyse · " : "") + f.attributes();
+                default -> (f.partial() ? "Teilanalyse · " : "") + hierarchyDetails(f);
             };
         }
     }

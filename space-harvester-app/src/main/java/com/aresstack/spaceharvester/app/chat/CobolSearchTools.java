@@ -32,9 +32,11 @@ public final class CobolSearchTools implements ChatToolset {
                         + "COPYBOOK: aufgelöste Copybooks und SYSLIB-Kandidaten; COPY_USAGE: COPY-Verwendungen samt aufgelöstem Pfad; "
                         + "DATA: Datenfelder; PROGRAM: PROGRAM-ID; CALLERS: statische Aufrufer eines Namens; "
                         + "CALLEES: Aufrufe eines Programms einschließlich dynamischer Ziele. "
+                        + "CALLERS_HIERARCHY / CALLEES_HIERARCHY: mehrstufige statische Beziehungen, exakte PROGRAM-ID oder Member; "
+                        + "bei mehreren Wurzeln den ROOT_SELECTOR verwenden. ALREADY_VISITED kennzeichnet erneut erreichte Knoten. "
                         + "Keine Live-Suche und keine Laufzeitaussage. Teilanalysen beachten.",
                 """
-                {"type":"object","properties":{"art":{"type":"string","enum":["ALL","PROGRAM","COPYBOOK","COPY_USAGE","DATA","CALLERS","CALLEES"]},"suchtext":{"type":"string"},"ab":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["art","suchtext"]}
+                {"type":"object","properties":{"art":{"type":"string","enum":["ALL","PROGRAM","COPYBOOK","COPY_USAGE","DATA","CALLERS","CALLEES","CALLERS_HIERARCHY","CALLEES_HIERARCHY"]},"suchtext":{"type":"string"},"ab":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}},"required":["art","suchtext"]}
                 """));
         return List.copyOf(tools);
     }

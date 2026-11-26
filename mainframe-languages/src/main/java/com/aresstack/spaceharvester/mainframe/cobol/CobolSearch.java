@@ -8,7 +8,7 @@ import java.util.Objects;
 
 /** Query immutable parser facts without reading sources or depending on a presentation. */
 public final class CobolSearch {
-    public enum Mode { ALL, PROGRAM, COPYBOOK, COPY_USAGE, DATA, CALLERS, CALLEES }
+    public enum Mode { ALL, PROGRAM, COPYBOOK, COPY_USAGE, DATA, CALLERS, CALLEES, CALLERS_HIERARCHY, CALLEES_HIERARCHY }
     public enum Kind { PROGRAM, COPYBOOK, COPYBOOK_CANDIDATE, COPY_USAGE, DATA, CALL, DYNAMIC_CALL }
 
     public record Fact(Kind kind, String name, String program, String member, String source, int line,
@@ -25,6 +25,7 @@ public final class CobolSearch {
     }
 
     private final List<Fact> facts;
+    private final CobolCallHierarchy hierarchy;
 
     public CobolSearch(List<Fact> facts) {
         List<Fact> searchable = new ArrayList<>();
@@ -45,12 +46,19 @@ public final class CobolSearch {
         }
         searchable.addAll(copybooks.values());
         this.facts = List.copyOf(searchable);
+        this.hierarchy = new CobolCallHierarchy(this.facts);
     }
 
     public Result search(Mode mode, String query, int limit, int offset) {
         Objects.requireNonNull(mode);
         if (limit < 1 || limit > 500 || offset < 0) {
             throw new IllegalArgumentException("Invalid search page");
+        }
+        if (mode == Mode.CALLERS_HIERARCHY || mode == Mode.CALLEES_HIERARCHY) {
+            List<Fact> rows = hierarchy.find(normalize(query), mode == Mode.CALLERS_HIERARCHY);
+            int start = Math.min(offset, rows.size());
+            int end = start + Math.min(limit, rows.size() - start);
+            return new Result(rows.subList(start, end), rows.size());
         }
         String needle = normalize(query);
         List<Fact> hits = new ArrayList<>();
@@ -81,6 +89,7 @@ public final class CobolSearch {
             case CALLERS -> fact.kind() == Kind.CALL && contains(fact.name(), needle);
             case CALLEES -> (fact.kind() == Kind.CALL || fact.kind() == Kind.DYNAMIC_CALL)
                     && (contains(fact.program(), needle) || contains(fact.member(), needle));
+            case CALLERS_HIERARCHY, CALLEES_HIERARCHY -> throw new IllegalStateException("Hierarchy query handled separately");
         };
     }
 

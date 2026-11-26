@@ -12,6 +12,27 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class CobolSearchToolsTest {
     @Test
+    void exposesMultiHopHierarchyFromTheSameReleasedSnapshot() {
+        var first = hierarchyFact(CobolSearch.Kind.PROGRAM, "A", "LIB(A)", 1);
+        var second = hierarchyFact(CobolSearch.Kind.PROGRAM, "B", "LIB(B)", 1);
+        var third = hierarchyFact(CobolSearch.Kind.PROGRAM, "C", "LIB(C)", 1);
+        var search = new CobolSearch(List.of(first, second, third,
+                hierarchyFact(CobolSearch.Kind.CALL, "B", "LIB(A)", 5),
+                hierarchyFact(CobolSearch.Kind.CALL, "C", "LIB(B)", 7)));
+        var current = new CobolSearchTools.Snapshot(search, "3/3 Member");
+        var tools = new CobolSearchTools(new FtpChatTools(null, null),
+                () -> Optional.of(current), () -> true);
+        var call = new AiChat.ToolCall("2", CobolSearchTools.SEARCH,
+                "{\"art\":\"CALLEES_HIERARCHY\",\"suchtext\":\"A\"}");
+        assertThat(tools.run(call)).contains("Fundstellen: 3", "LIB(A):5", "LIB(B):7",
+                "HIERARCHY_DEPTH=2", "RESOLVED_IN_SNAPSHOT");
+    }
+
+    private static CobolSearch.Fact hierarchyFact(CobolSearch.Kind kind, String name, String member, int line) {
+        return new CobolSearch.Fact(kind, name, member, member, member, line, "r", Map.of(), false);
+    }
+
+    @Test
     void searchesTheSameSnapshotAndHonorsRevocation() {
         var fact = new CobolSearch.Fact(CobolSearch.Kind.COPY_USAGE, "CUST", "DEMO", "USER.COBOL(DEMO)",
                 "USER.COBOL(DEMO)", 5, "r", Map.of("RESOLVED_SOURCE", "USER.COPY(CUST)"), false);
