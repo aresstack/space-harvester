@@ -24,6 +24,7 @@ final class ProgramAnalysisTabs {
     private final List<String> textTabs;
     private final Map<String, Section> sections = new LinkedHashMap<>();
     private final ControlFlowView controlFlow = new ControlFlowView();
+    private final DataFlowView dataFlow = new DataFlowView();
 
     ProgramAnalysisTabs(PillTabs tabs) {
         this.tabs = tabs;
@@ -34,6 +35,7 @@ final class ProgramAnalysisTabs {
         register("Aufrufe");
         register("Diagnosen");
         tabs.tab("Kontrollfluss", controlFlow);
+        tabs.tab("Datenfluss", dataFlow);
         reset();
     }
 
@@ -51,6 +53,7 @@ final class ProgramAnalysisTabs {
     void pending() {
         sections.values().forEach(section -> section.replace(List.of(), "Analyse wird geladen …"));
         controlFlow.show(null, "Analyse wird geladen …");
+        dataFlow.show(null, "Analyse wird geladen …");
     }
 
     boolean show(PageSnapshot snapshot, List<Enrichments.View> views) {
@@ -82,6 +85,7 @@ final class ProgramAnalysisTabs {
         render(analysis, message);
         var names = new ArrayList<>(sections.keySet());
         names.add("Kontrollfluss");
+        names.add("Datenfluss");
         tabs.showOnly(names);
         return true;
     }
@@ -89,6 +93,7 @@ final class ProgramAnalysisTabs {
     private void render(CobolAnalysis analysis, String message) {
         sections.values().forEach(section -> section.replace(List.of(), message));
         controlFlow.show(analysis, message);
+        dataFlow.show(analysis, message);
         if (analysis == null) return;
         List<Object[]> structure = new ArrayList<>();
         List<Object[]> data = new ArrayList<>();

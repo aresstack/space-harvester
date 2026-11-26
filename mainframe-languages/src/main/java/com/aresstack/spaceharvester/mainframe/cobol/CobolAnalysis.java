@@ -6,7 +6,12 @@ import java.util.Map;
 /** Expose analysis facts without leaking parser or presentation types. */
 public record CobolAnalysis(List<Element> elements, List<ProgramCall> calls,
                             List<SymbolReference> references, List<Diagnostic> diagnostics,
-                            boolean semanticAnalysisComplete, CobolControlFlow controlFlow) {
+                            boolean semanticAnalysisComplete, CobolControlFlow controlFlow, CobolDataFlow dataFlow) {
+    public CobolAnalysis(List<Element> elements, List<ProgramCall> calls,
+                         List<SymbolReference> references, List<Diagnostic> diagnostics,
+                         boolean semanticAnalysisComplete, CobolControlFlow controlFlow) {
+        this(elements, calls, references, diagnostics, semanticAnalysisComplete, controlFlow, CobolDataFlow.EMPTY);
+    }
     public CobolAnalysis(List<Element> elements, List<ProgramCall> calls,
                          List<SymbolReference> references, List<Diagnostic> diagnostics,
                          boolean semanticAnalysisComplete) {
@@ -18,6 +23,7 @@ public record CobolAnalysis(List<Element> elements, List<ProgramCall> calls,
         references = List.copyOf(references);
         diagnostics = List.copyOf(diagnostics);
         controlFlow = controlFlow == null ? CobolControlFlow.EMPTY : controlFlow;
+        dataFlow = dataFlow == null ? CobolDataFlow.EMPTY : dataFlow;
     }
 
     public enum Kind {

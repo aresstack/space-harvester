@@ -19,7 +19,11 @@ public record CobolControlFlow(List<Procedure> procedures, List<Limitation> limi
         NEXT_SENTENCE, TERMINATE, CALL_RETURN, PERFORM_CALL, PERFORM_RETURN, FALLTHROUGH, UNKNOWN
     }
 
-    public record Node(String id, NodeKind kind, String label, CobolAnalysis.Span span) { }
+    public record Node(String id, NodeKind kind, String label, CobolAnalysis.Span span, int syntaxIndex) {
+        public Node(String id, NodeKind kind, String label, CobolAnalysis.Span span) {
+            this(id, kind, label, span, -1);
+        }
+    }
     public record Edge(String from, String to, EdgeKind kind, String condition, String callSite) { }
     public record Limitation(String message, CobolAnalysis.Position position) { }
     public record Procedure(String name, String entry, String exit, List<Node> nodes, List<Edge> edges) {

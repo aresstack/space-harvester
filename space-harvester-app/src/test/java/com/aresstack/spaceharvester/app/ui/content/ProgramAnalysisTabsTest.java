@@ -76,7 +76,7 @@ class ProgramAnalysisTabsTest {
                 ProgramAnalysisTabs analysis = new ProgramAnalysisTabs(tabs);
                 assertThat(tabs.names()).containsExactly("Absätze", "Aussagen");
                 assertThat(analysis.show(program, views)).isTrue();
-                assertThat(tabs.names()).containsExactly("Programmstruktur", "Datenstrukturen", "Copybooks", "Aufrufe", "Diagnosen", "Kontrollfluss");
+                assertThat(tabs.names()).containsExactly("Programmstruktur", "Datenstrukturen", "Copybooks", "Aufrufe", "Diagnosen", "Kontrollfluss", "Datenfluss");
                 tabs.select("Kontrollfluss");
                 assertThat(cells(tabs)).anyMatch(value -> value.toString().contains("CALL BOOKING")
                         || value.toString().contains("CALL 'BOOKING'"));
@@ -90,6 +90,37 @@ class ProgramAnalysisTabsTest {
                 assertThat(tabs.selected()).isEqualTo("Absätze");
                 tabs.select("Aufrufe");
                 assertThat(tabs.selected()).isEqualTo("Absätze");
+            });
+        }
+    }
+
+    @Test
+    void reopensDataFlowAndClearsStaleRows() throws Exception {
+        String code = CODE.replace("           CALL 'BOOKING'.", "           MOVE 'A' TO CUSTOMER.\n           DISPLAY CUSTOMER.");
+        PageSnapshot program = snapshot("ftp", code, code);
+        PageSnapshot changed = snapshot("ftp", code.replace("'A'", "'B'"), code.replace("'A'", "'B'"));
+        try (var store = LuceneEnrichmentStore.open(home)) {
+            assertThat(enrichments(store).refresh(program).computed()).isEqualTo(1);
+            store.flush();
+        }
+        try (var store = LuceneEnrichmentStore.open(home)) {
+            var enrichments = enrichments(store);
+            var views = enrichments.view(program);
+            var stored = CobolProgramEnrichment.read(views.getFirst().enrichment().payloadJson()).analysis();
+            var flow = stored.dataFlow();
+            assertThat(flow.operations()).extracting(op -> op.verb()).containsExactly("MOVE", "DISPLAY");
+            assertThat(flow.readSites()).singleElement().satisfies(read ->
+                    assertThat(com.aresstack.spaceharvester.mainframe.cobol.CobolReachingDefinitions.candidates(stored, read))
+                            .singleElement().satisfies(candidate ->
+                            assertThat(candidate.span().start().line()).isEqualTo(7)));
+            SwingUtilities.invokeAndWait(() -> {
+                var tabs = new PillTabs().tab("Absätze", new JPanel());
+                var analysis = new ProgramAnalysisTabs(tabs);
+                assertThat(analysis.show(program, views)).isTrue();
+                tabs.select("Datenfluss");
+                assertThat(cells(tabs)).contains("Schreiben", "Lesen", "'A'");
+                assertThat(analysis.show(changed, enrichments.view(changed))).isTrue();
+                assertThat(cells(tabs)).doesNotContain("Schreiben", "Lesen", "'A'", "Explizite Schreibstelle");
             });
         }
     }

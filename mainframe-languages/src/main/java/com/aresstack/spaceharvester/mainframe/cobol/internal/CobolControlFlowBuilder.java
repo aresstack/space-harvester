@@ -102,7 +102,7 @@ final class CobolControlFlowBuilder extends CobolBaseVisitor<Void> {
             String display = label.isEmpty() ? (section.isEmpty() ? "Procedure body" : section + " SECTION") : label;
             String start = node(NodeKind.LABEL, display, header);
             ParserRuleContext end = sentences.isEmpty() ? header : sentences.getLast();
-            String boundary = "n" + nodes.size();
+            String boundary = nodeId();
             nodes.add(new Node(boundary, NodeKind.BOUNDARY, "End of " + display,
                     source.span(end.getStop(), end.getStop())));
             blocks.add(new Block(label, section, start, boundary, List.copyOf(sentences), paragraph));
@@ -339,9 +339,14 @@ final class CobolControlFlowBuilder extends CobolBaseVisitor<Void> {
         }
 
         private String node(NodeKind kind, String label, ParserRuleContext ctx) {
-            String id = "n" + nodes.size();
-            nodes.add(new Node(id, kind, label, source.span(ctx.getStart(), ctx.getStop())));
+            String id = nodeId();
+            nodes.add(new Node(id, kind, label, source.span(ctx.getStart(), ctx.getStop()),
+                    ctx.getStart().getTokenIndex()));
             return id;
+        }
+
+        private String nodeId() {
+            return "n" + division.getStart().getTokenIndex() + "_" + nodes.size();
         }
 
         private void edge(String from, String to, EdgeKind kind) {

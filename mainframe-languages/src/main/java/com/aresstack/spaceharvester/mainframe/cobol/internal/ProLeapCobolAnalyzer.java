@@ -56,8 +56,28 @@ final class ProLeapCobolAnalyzer implements CobolAnalyzer {
         List<Element> elements = new ArrayList<>(visitor.elements());
         elements.addAll(copyReferences);
         var controlFlow = controlFlow(prepared, tokens, tree, diagnostics);
+        var dataFlow = dataFlow(prepared, tokens, tree, program, controlFlow, diagnostics);
         return new CobolAnalysis(elements, visitor.calls(), visitor.references(), diagnostics,
-                program != null && diagnostics.isEmpty(), controlFlow);
+                program != null && diagnostics.isEmpty(), controlFlow, dataFlow);
+    }
+
+    private com.aresstack.spaceharvester.mainframe.cobol.CobolDataFlow dataFlow(
+            MappedCobolText prepared, CommonTokenStream tokens, CobolParser.StartRuleContext tree, Program program,
+            com.aresstack.spaceharvester.mainframe.cobol.CobolControlFlow controlFlow, List<Diagnostic> diagnostics) {
+        if (program == null || diagnostics.stream().anyMatch(d -> d.kind() == CobolAnalysis.DiagnosticKind.COPYBOOK
+                || d.kind() == CobolAnalysis.DiagnosticKind.SYNTAX_ERROR)) {
+            return new com.aresstack.spaceharvester.mainframe.cobol.CobolDataFlow(List.of(), List.of(),
+                    List.of(new com.aresstack.spaceharvester.mainframe.cobol.CobolDataFlow.Limitation(
+                            "Data flow withheld: incomplete syntax, COPY expansion or symbol resolution", Position.UNKNOWN)));
+        }
+        try {
+            return new CobolDataFlowBuilder(prepared, tokens, new CobolDataSymbols(prepared, program, tree),
+                    controlFlow).build(tree);
+        } catch (RuntimeException error) {
+            return new com.aresstack.spaceharvester.mainframe.cobol.CobolDataFlow(List.of(), List.of(),
+                    List.of(new com.aresstack.spaceharvester.mainframe.cobol.CobolDataFlow.Limitation(
+                            "Data flow incomplete: " + error.getMessage(), Position.UNKNOWN)));
+        }
     }
 
     private com.aresstack.spaceharvester.mainframe.cobol.CobolControlFlow controlFlow(
