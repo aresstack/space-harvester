@@ -10,9 +10,10 @@ import com.vladsch.flexmark.util.ast.Node;
 import javax.swing.AbstractCellEditor;
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
-import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTable;
+import javax.swing.JTextArea;
+import javax.swing.border.Border;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.TableColumnModelEvent;
@@ -23,7 +24,10 @@ import javax.swing.table.DefaultTableModel;
 import javax.swing.table.JTableHeader;
 import javax.swing.table.TableCellEditor;
 import javax.swing.table.TableCellRenderer;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.Element;
 import javax.swing.text.JTextComponent;
+import javax.swing.text.StyledDocument;
 import javax.swing.text.View;
 import java.awt.Color;
 import java.awt.Component;
@@ -46,8 +50,9 @@ import java.util.List;
  *
  * <p>Jede Zelle wird wie ein Absatz über den {@link InlineMarkdownRenderer} gesetzt: Links, Fett, Kursiv, Code und das
  * Inline-HTML, das Modelle in Zellen schreiben ({@code <ul><li>}, {@code <br>}), erscheinen formatiert statt als
- * Quelltext. Breite Zellen brechen ab {@value #MAX_COLUMN_WIDTH} px um, die Zeile wächst mit; Links in Zellen sind
- * klickbar.
+ * Quelltext. Die Spaltenbreiten folgen dem Inhalt wie in HTML ({@link ColumnWidths}): schmale Beschriftungsspalten,
+ * breite Textspalten; die Tabelle passt in die verfügbare Breite, Zellen und Spaltentitel brechen um, die Zeile wächst
+ * mit. Links in Zellen sind klickbar.
  *
  * <p>Text in cells is selectable like a paragraph: a mouse press puts the cell's own non-editable text pane into the
  * table (via the cell editor mechanism, which forwards the drag to it) instead of selecting the row, so the quote flow
@@ -55,18 +60,25 @@ import java.util.List;
  */
 final class MarkdownTablePanel extends MarkdownScrollPane implements SelectableTextHost {
 
-    static final int MAX_COLUMN_WIDTH = 420;
+    /** Breite, bevor das Layout eine echte Breite zuweist (wie bei den Codeblöcken). */
+    private static final int PREFERRED_WIDTH = 400;
     private static final int CELL_PADDING = 18;
     /** Stärke der Linie unter dem Spaltenkopf. */
     private static final int HEADER_RULE = 2;
 
     private final DesktopLinkOpener linkOpener;
+    private final JTable table;
+    /** Mindest- und Wunschbreite je Spalte, siehe {@link ColumnWidths}. */
+    private final int[] minimumWidths;
+    private final int[] maximumWidths;
+    /** Die Breite, für die die Spalten zuletzt verteilt wurden; danach gezogene Spalten bleiben so. */
+    private int distributedFor = -1;
 
     MarkdownTablePanel(TableBlock tableBlock, MarkdownTheme theme, InlineMarkdownRenderer inlineRenderer,
                        DesktopLinkOpener linkOpener) {
-        super(new JTable(createModel(tableBlock, theme, inlineRenderer)), 400, 4, theme);
+        super(new JTable(createModel(tableBlock, theme, inlineRenderer)), PREFERRED_WIDTH, 4, theme);
         this.linkOpener = linkOpener;
-        final JTable table = (JTable) getViewport().getView();
+        this.table = (JTable) getViewport().getView();
         table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         // Select text, not rows: a row highlight would replace the character selection the quote flow needs.
         table.setRowSelectionAllowed(false);
@@ -84,10 +96,13 @@ final class MarkdownTablePanel extends MarkdownScrollPane implements SelectableT
         table.setIntercellSpacing(new Dimension(8, 4));
         table.setRowHeight(minimumRowHeight(table));
         JTableHeader header = table.getTableHeader();
-        installHeader(header, theme);
+        HeaderRenderer headerRenderer = installHeader(header, theme);
         table.setDefaultRenderer(Object.class, new RichCellRenderer());
         table.setDefaultEditor(Object.class, new RichCellSelector());
-        fitColumns(table);
+        minimumWidths = new int[table.getColumnCount()];
+        maximumWidths = new int[table.getColumnCount()];
+        measureColumns(headerRenderer);
+        distributeColumns(PREFERRED_WIDTH);
         updateRowHeights(table);
         table.getColumnModel().addColumnModelListener(new RowHeightUpdater(table));
         installLinkHandling(table);
@@ -104,7 +119,7 @@ final class MarkdownTablePanel extends MarkdownScrollPane implements SelectableT
      * eine Stufe über den Zellen, fette Blasenschrift, linksbündig wie die Zellen, darunter eine kräftigere Linie.
      * Die Basis-UI zeichnet nur die Renderer; Spalten lassen sich weiter in der Breite ziehen, aber nicht verschieben.
      */
-    private static void installHeader(JTableHeader header, MarkdownTheme theme) {
+    private HeaderRenderer installHeader(JTableHeader header, MarkdownTheme theme) {
         header.setUI(new BasicTableHeaderUI());
         header.setReorderingAllowed(false);
         header.setOpaque(true);
@@ -112,7 +127,13 @@ final class MarkdownTablePanel extends MarkdownScrollPane implements SelectableT
         header.setForeground(theme.getForeground());
         header.setFont(theme.getBodyFont().deriveFont(Font.BOLD));
         header.setBorder(null);
-        header.setDefaultRenderer(new HeaderRenderer(theme));
+        HeaderRenderer renderer = new HeaderRenderer(theme);
+        header.setDefaultRenderer(renderer);
+        // Je Spalte gesetzt: die Kopfhöhe misst sonst nur den ersten Titel, umbrochene Titel würden abgeschnitten.
+        for (int column = 0; column < table.getColumnCount(); column++) {
+            table.getColumnModel().getColumn(column).setHeaderRenderer(renderer);
+        }
+        return renderer;
     }
 
     private static DefaultTableModel createModel(TableBlock tableBlock, MarkdownTheme theme,
@@ -193,25 +214,57 @@ final class MarkdownTablePanel extends MarkdownScrollPane implements SelectableT
         return table.getFontMetrics(table.getFont()).getHeight() + 8;
     }
 
-    private static void fitColumns(JTable table) {
+    /** Mindest- und Wunschbreite je Spalte aus Titel und Zellen, jeweils samt Zellrand. */
+    private void measureColumns(HeaderRenderer headerRenderer) {
         for (int column = 0; column < table.getColumnCount(); column++) {
-            int width = table.getTableHeader().getDefaultRenderer()
-                    .getTableCellRendererComponent(table, table.getColumnName(column), false, false, -1, column)
-                    .getPreferredSize().width + CELL_PADDING;
+            String title = table.getColumnName(column);
+            int minimum = headerRenderer.widestWord(title);
+            int maximum = headerRenderer.naturalWidth(title);
             for (int row = 0; row < table.getRowCount(); row++) {
                 Object value = table.getValueAt(row, column);
-                int cellWidth = value instanceof RichCell
-                        ? ((RichCell) value).naturalWidth()
-                        : table.prepareRenderer(table.getCellRenderer(row, column), row, column)
-                        .getPreferredSize().width;
-                width = Math.max(width, cellWidth + CELL_PADDING);
+                if (value instanceof RichCell) {
+                    minimum = Math.max(minimum, ((RichCell) value).widestWord());
+                    maximum = Math.max(maximum, ((RichCell) value).naturalWidth());
+                } else {
+                    int width = table.prepareRenderer(table.getCellRenderer(row, column), row, column)
+                            .getPreferredSize().width;
+                    minimum = Math.max(minimum, width);
+                    maximum = Math.max(maximum, width);
+                }
             }
-            // Auch die aktuelle Breite setzen: die Zeilenhöhen werden gleich danach bei dieser Breite gemessen,
-            // nicht erst nach dem ersten Layout der Tabelle.
-            int fitted = Math.min(MAX_COLUMN_WIDTH, width);
-            table.getColumnModel().getColumn(column).setPreferredWidth(fitted);
-            table.getColumnModel().getColumn(column).setWidth(fitted);
+            minimumWidths[column] = minimum + CELL_PADDING;
+            maximumWidths[column] = maximum + CELL_PADDING;
         }
+    }
+
+    @Override
+    public int preferredHeightForWidth(int width) {
+        // Die Höhe hängt am Umbruch und damit an den Spaltenbreiten für genau diese Breite.
+        distributeColumns(width);
+        return super.preferredHeightForWidth(width);
+    }
+
+    @Override
+    public void doLayout() {
+        distributeColumns(getWidth());
+        super.doLayout();
+    }
+
+    /** Verteilt die Spalten neu, sobald sich die Breite der Tabelle ändert; die Zeilenhöhen folgen. */
+    private void distributeColumns(int width) {
+        if (table == null || minimumWidths == null || width <= 0 || width == distributedFor) {
+            return;
+        }
+        distributedFor = width;
+        Insets insets = getInsets();
+        int[] widths = ColumnWidths.distribute(minimumWidths, maximumWidths, width - insets.left - insets.right);
+        for (int column = 0; column < widths.length; column++) {
+            // Auch die aktuelle Breite setzen: die Zeilenhöhen werden gleich danach bei dieser Breite gemessen,
+            // nicht erst nach dem nächsten Layout der Tabelle.
+            table.getColumnModel().getColumn(column).setPreferredWidth(widths[column]);
+            table.getColumnModel().getColumn(column).setWidth(widths[column]);
+        }
+        updateRowHeights(table);
     }
 
     /** Jede Zeile so hoch wie ihre höchste umbrochene Zelle bei der aktuellen Spaltenbreite. */
@@ -317,6 +370,30 @@ final class MarkdownTablePanel extends MarkdownScrollPane implements SelectableT
             return (int) Math.ceil(root.getPreferredSpan(View.X_AXIS)) + insets.left + insets.right;
         }
 
+        /** Breite des breitesten Worts, mit der Schrift des jeweiligen Textstücks (fett, Code) gemessen. */
+        int widestWord() {
+            StyledDocument document = pane.getStyledDocument();
+            final String content;
+            try {
+                content = document.getText(0, document.getLength());
+            } catch (BadLocationException impossible) {
+                return naturalWidth();
+            }
+            Insets insets = pane.getInsets();
+            return ColumnWidths.widestWord(content, (start, end) -> {
+                int width = 0;
+                int position = start;
+                while (position < end) {
+                    Element run = document.getCharacterElement(position);
+                    int runEnd = Math.min(end, run.getEndOffset());
+                    Font font = document.getFont(run.getAttributes());
+                    width += pane.getFontMetrics(font).stringWidth(content.substring(position, runEnd));
+                    position = runEnd;
+                }
+                return width;
+            }) + insets.left + insets.right;
+        }
+
         @Override
         public String toString() {
             return text;
@@ -324,24 +401,27 @@ final class MarkdownTablePanel extends MarkdownScrollPane implements SelectableT
     }
 
     /**
-     * Spaltentitel als flaches Etikett; Titel bleiben Text und werden nie als Swing-HTML gedeutet (ein
-     * „&lt;html&gt;…“ aus der Modellantwort bleibt Text).
+     * Spaltentitel als flache, umbrechende Textfläche: ein langer Titel bricht in einer schmalen Spalte um, statt sie
+     * zu verbreitern oder abgeschnitten zu werden. Titel bleiben reiner Text (ein „&lt;html&gt;…“ aus der
+     * Modellantwort bleibt Text).
      */
-    static final class HeaderRenderer extends JLabel implements TableCellRenderer {
+    static final class HeaderRenderer extends JTextArea implements TableCellRenderer {
 
         private final Color rule;
         private final Color divider;
 
         HeaderRenderer(MarkdownTheme theme) {
-            putClientProperty("html.disable", Boolean.TRUE);
+            setEditable(false);
+            setFocusable(false);
+            setLineWrap(true);
+            setWrapStyleWord(true);
             setOpaque(true);
-            setHorizontalAlignment(LEFT);
-            setVerticalAlignment(CENTER);
             setBackground(theme.getTableHeaderBackground());
             setForeground(theme.getForeground());
             setFont(theme.getBodyFont().deriveFont(Font.BOLD));
             this.rule = theme.getQuoteBorder();
             this.divider = theme.getSeparatorColor();
+            setBorder(border(false));
         }
 
         @Override
@@ -349,12 +429,30 @@ final class MarkdownTablePanel extends MarkdownScrollPane implements SelectableT
                                                        boolean hasFocus, int row, int column) {
             setText(value == null ? "" : value.toString());
             boolean last = table != null && column == table.getColumnCount() - 1;
-            setBorder(BorderFactory.createCompoundBorder(
+            setBorder(border(last));
+            if (table != null && column >= 0 && column < table.getColumnCount()) {
+                // Bei der Spaltenbreite messen: die Kopfhöhe richtet sich nach dem umbrochenen Titel.
+                setSize(table.getColumnModel().getColumn(column).getWidth(), Short.MAX_VALUE);
+            }
+            return this;
+        }
+
+        private Border border(boolean last) {
+            return BorderFactory.createCompoundBorder(
                     BorderFactory.createMatteBorder(0, 0, HEADER_RULE, 0, rule),
                     BorderFactory.createCompoundBorder(
                             BorderFactory.createMatteBorder(0, 0, 0, last ? 0 : 1, divider),
-                            BorderFactory.createEmptyBorder(5, 6, 5, 6))));
-            return this;
+                            BorderFactory.createEmptyBorder(5, 6, 5, 6)));
+        }
+
+        int widestWord(String title) {
+            Insets insets = getInsets();
+            return ColumnWidths.widestWord(title, getFontMetrics(getFont())) + insets.left + insets.right;
+        }
+
+        int naturalWidth(String title) {
+            Insets insets = getInsets();
+            return getFontMetrics(getFont()).stringWidth(title) + insets.left + insets.right;
         }
     }
 

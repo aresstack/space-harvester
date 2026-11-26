@@ -8,6 +8,7 @@ import javax.swing.text.StyledDocument;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Insets;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.util.ArrayList;
@@ -94,7 +95,7 @@ public class MarkdownTablePanelTest {
     }
 
     @Test
-    public void longTablesShowEveryRowAndReserveSpaceForHorizontalScrolling() throws Exception {
+    public void longTablesShowEveryRowAndFitTheAvailableWidth() throws Exception {
         javax.swing.SwingUtilities.invokeAndWait(() -> {
             StringBuilder markdown = new StringBuilder("| Spalte A | Spalte B |\n|---|---|\n");
             for (int row = 0; row < 50; row++) {
@@ -116,7 +117,9 @@ public class MarkdownTablePanelTest {
                 assertTrue(height > 320);
                 assertEquals(javax.swing.JScrollPane.VERTICAL_SCROLLBAR_NEVER, panel.getVerticalScrollBarPolicy());
                 assertFalse(panel.getVerticalScrollBar().isVisible());
-                assertEquals(width == 260, panel.getHorizontalScrollBar().isVisible());
+                assertFalse(panel.getHorizontalScrollBar().isVisible(), "Fit the table into width " + width);
+                Insets insets = panel.getInsets();
+                assertEquals(width - insets.left - insets.right, table.getColumnModel().getTotalColumnWidth());
                 Rectangle last = table.getCellRect(table.getRowCount() - 1, 0, true);
                 assertTrue(panel.getViewport().getExtentSize().height >= last.y + last.height,
                         "Display the entire last row at width " + width);
