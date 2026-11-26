@@ -2,6 +2,8 @@
 
 - Status: **Angenommen** (23.11.2026) für Angelos Vorgaben; Zuschnitt von UX-Manager und Architekt abgenommen. Die
   offenen Punkte unten gelten als Empfehlung, bis Angelo widerspricht.
+- Teilweise geändert durch [ADR 0043](0043-projekte-als-wissensarbeitsbereich.md) (27.11.2026): Favoriten gehören
+  zu einem Projekt, dieselbe Quelle darf in mehreren Projekten vorkommen, und es gibt die Wurzel „nur Seite“.
 - Bezüge: [ADR 0027](0027-beobachter-statt-abfragen.md) (kein Polling), [ADR 0028](0028-ki-freigabe-je-seite.md)
   (KI-Freigabe), [ADR 0029](0029-auswahl-und-ausgabe-aus-dem-bestand.md) (Auswahl), ADR 0030/0031
   (Update-Zusammenfassung, Quellenseite), [ADR 0033](0033-wissen-des-chats-per-verweis-und-werkzeug.md) (Chat-Wissen).
