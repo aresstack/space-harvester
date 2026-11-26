@@ -15,15 +15,18 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
 ## Entscheidung
 
 1. **Was ich sehe, sieht der Bot auch** (Angelo): Ist links eine Seite gewählt, geht diese Seite im Volltext als
-   Quelle [1] mit, gleich wie viele Unterseiten sie hat. Bei sehr langen Seiten geht der Anfang mit (24 000 Zeichen)
-   und ein Hinweis, mit `seite_lesen` ab dem Versatz weiterzulesen. Ist ein Space, eine Quelle oder die Wurzel aller
+   Quelle [1] mit, gleich wie viele Unterseiten sie hat. Bei sehr langen Seiten geht der Anfang mit (so viel, wie in
+   die erste Anfrage passt, `ChatRoom`; Nachtrag 26.11.2026, früher fest 24 000 Zeichen) und ein Hinweis, mit `seite_lesen` ab dem Versatz weiterzulesen. Ist ein Space, eine Quelle oder die Wurzel aller
    Quellen gewählt, geht kein Seitentext mit, nur eine Zeile zum Bereich. *Annahme, von Angelo noch nicht bestätigt:*
    der Anfang plus Versatz bei sehr langen Seiten.
 2. **Alles andere nur über Werkzeuge**, keine Verweisliste im Text und keine automatischen Auszüge anderer Seiten:
    - `im_bereich_suchen(text)`: dieselbe progressive Suche wie die Suche mit Auswahl links, höchstens 10 Treffer.
-   - `seiten_auflisten(knoten?, blatt?)`: wie der Baum links je Knoten, ohne Knoten die Startseiten des Bereichs,
-     100 Einträge je Blatt, mit Kennzeichen „hat Unterseiten“.
-   - `seite_lesen(kennung, versatz?)`: höchstens 12 000 Zeichen je Aufruf, mit Fortsetzung.
+   - `seiten_auflisten(knoten?, ab?)`: wie der Baum links je Knoten, ohne Knoten die Startseiten des Bereichs,
+     mit Kennzeichen „hat Unterseiten“; je Aufruf so viele Einträge, wie in die Anfrage passen, weiter mit `ab`
+     (Nachtrag 26.11.2026, früher Blätter zu 100 Einträgen).
+   - `seite_lesen(kennung, versatz?)`: je Aufruf so viel, wie in die Anfrage passt (`ChatRoom`: Kontextlänge des
+     Modells abzüglich Ausgabelimit und dem, was die Anfrage schon enthält; Aufrufe einer Runde teilen sich den
+     Platz), mit Fortsetzung. Nachtrag 26.11.2026, früher fest 12 000 Zeichen.
    - `begriff_nachschlagen(begriff)` (Nachtrag W7, 22.11.2026): was der Wissensgraph im Bereich über einen
      bestätigten Fachbegriff weiß (`TermKnowledge#answer`): Aussagen mit Verb, Merkmalen, Vertrauensstufe und
      Belegseiten, Synonyme, verwandte Begriffe, was gekappt wurde; sonst ähnliche Fachbegriffe. Bereich (die Auswahl

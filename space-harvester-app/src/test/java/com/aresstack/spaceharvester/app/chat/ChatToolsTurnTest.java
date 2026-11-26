@@ -274,7 +274,7 @@ class ChatToolsTurnTest {
         assertThat(port.requests.get(0).messages().get(0).text()).contains(ChatKnowledge.NO_OPEN_PAGE)
                 .doesNotContain("Berechtigungsmanagement");
         List<AiChat.Message> messages = port.requests.get(1).messages();
-        assertThat(messages.get(messages.size() - 1).text()).startsWith("Startseiten des Bereichs, Blatt 1 von 1")
+        assertThat(messages.get(messages.size() - 1).text()).startsWith("Startseiten des Bereichs, Einträge 1 bis 3 von 3")
                 .contains(ChatTools.ref(page("datenhaus"))).contains(ChatTools.ref(page("glossar")));
     }
 
@@ -294,17 +294,17 @@ class ChatToolsTurnTest {
         ChatTools tools = new ChatTools(workspace, scope, java.util.Set.of(), sources(new ArrayList<>()))
                 .collection(nodes);
 
-        String first = tools.list("", 1);
-        String sub = tools.list(ChatTools.FOLDER + "f-2", 1);
+        String first = tools.list("", 0);
+        String sub = tools.list(ChatTools.FOLDER + "f-2", 0);
 
-        assertThat(first).startsWith("Favoriten des Bereichs, Blatt 1 von 1 (2 Einträge)")
+        assertThat(first).startsWith("Favoriten des Bereichs, Einträge 1 bis 2 von 2")
                 .contains("- " + ChatTools.FOLDER + "f-2 | Betrieb | Ordner")
                 .contains("- " + ChatTools.ref(datenhaus) + " | ")
                 .doesNotContain(ChatTools.ref(nachtlauf)).doesNotContain("glossar");
         assertThat(first.indexOf(ChatTools.FOLDER)).as("Ordner zuerst").isLessThan(first.indexOf(datenhaus.pageId()));
         assertThat(sub).startsWith("Inhalt des Ordners").contains(ChatTools.ref(nachtlauf))
                 .doesNotContain(ChatTools.ref(datenhaus));
-        assertThat(tools.list(ChatTools.FOLDER + "fremd", 1)).as("geprüft wie allows()")
+        assertThat(tools.list(ChatTools.FOLDER + "fremd", 0)).as("geprüft wie allows()")
                 .isEqualTo(ChatTools.UNAVAILABLE);
         assertThat(tools.toolDefinitions().stream().filter(tool -> tool.name().equals(ChatTools.LIST))
                 .findFirst().orElseThrow().description()).contains(ChatTools.FOLDER);
@@ -851,7 +851,7 @@ class ChatToolsTurnTest {
             throw new IllegalStateException("zu groß");
         });
 
-        assertThat(tools.list("", 1)).isEqualTo(ChatTools.TOO_LARGE);
+        assertThat(tools.list("", 0)).isEqualTo(ChatTools.TOO_LARGE);
         assertThat(tools.list(ChatTools.ref(page("datenhaus")), 1)).isEqualTo(ChatTools.TOO_LARGE);
     }
 

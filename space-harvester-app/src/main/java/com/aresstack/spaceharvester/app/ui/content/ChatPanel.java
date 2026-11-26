@@ -18,6 +18,7 @@ import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.chat.ChatKnowledge;
 import com.aresstack.spaceharvester.app.chat.ChatNode;
 import com.aresstack.spaceharvester.app.chat.ChatRecord;
+import com.aresstack.spaceharvester.app.chat.ChatRoom;
 import com.aresstack.spaceharvester.app.chat.ChatStore;
 import com.aresstack.spaceharvester.app.chat.ChatTurn;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
@@ -1377,7 +1378,7 @@ public final class ChatPanel extends JPanel {
             ToolHints hints = toolHints == null ? null : toolHints.get();
             for (QuickAction action : hints == null ? List.<QuickAction>of() : hints.actions()) {
                 quickActions.add(chip(action.label(), action.tip(), turn == null, () -> {
-                    ToolScope custom = toolScope == null ? null : toolScope.get();
+                    ToolScope custom = currentToolScope(action.question());
                     if (custom != null) {
                         submit(action.question(), null, custom.area(), ChatTurn.Kind.QUESTION, custom);
                     }
@@ -2160,13 +2161,37 @@ public final class ChatPanel extends JPanel {
         if (text.isEmpty() || !send.isEnabled()) {
             return;
         }
-        ToolScope custom = toolScope == null ? null : toolScope.get();
+        ToolScope custom = currentToolScope(withAttachments(text));
         if (custom != null) {
             submit(withAttachments(text), null, custom.area(), ChatTurn.Kind.QUESTION, custom);
             return;
         }
         submit(withAttachments(text), resolved, areaText(selection, resolved == null ? null : resolved.counts()),
                 ChatTurn.Kind.QUESTION);
+    }
+
+    /**
+     * Die Werkzeuge der Perspektive für {@code question}, gelesen beim Senden: Die Ansicht in der Systemnachricht geht
+     * so weit mit, wie sie neben Verlauf und Frage in die Anfrage passt ({@link ChatRoom}).
+     */
+    private ToolScope currentToolScope(String question) {
+        if (toolScope == null) {
+            return null;
+        }
+        List<com.aresstack.spaceharvester.ai.AiChat.Message> asked = new java.util.ArrayList<>();
+        for (ChatRecord.Message message : chat.messages()) {
+            asked.add(com.aresstack.spaceharvester.ai.AiChat.Message.user(message.text() == null ? ""
+                    : message.text()));
+        }
+        asked.add(com.aresstack.spaceharvester.ai.AiChat.Message.user(question));
+        return ChatRoom.within(ChatRoom.left(chatBudget(), asked, List.of(), 1), toolScope::get);
+    }
+
+    /** Tokenbudget des Chat-Modells aus Kontextlänge und Ausgabelimit; {@code null}, wenn eines fehlt. */
+    private com.aresstack.spaceharvester.app.runtime.ModelBudget chatBudget() {
+        AppSettings settings = context.settings();
+        return settings == null || settings.ai() == null ? null : com.aresstack.spaceharvester.app.runtime.ModelBudget
+                .known(settings.ai().contextTokens(), settings.ai().chatMaxTokens());
     }
 
     /**
@@ -2239,7 +2264,7 @@ public final class ChatPanel extends JPanel {
         listener.card = thinking;
         thinking.open();
         turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
-                listener, SwingUtilities::invokeLater);
+                listener, SwingUtilities::invokeLater).budget(chatBudget());
         if (custom != null) {
             // #1151: dieselbe Unterhaltung, aber die Werkzeuge der Perspektive (Command Deck: Maskenassistent).
             custom.tools().modelSelected(modelName);

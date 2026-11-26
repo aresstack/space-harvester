@@ -58,8 +58,7 @@ public final class NdvChatTools implements ChatToolset {
                                 + "\"bibliothek\":{\"type\":\"string\"},"
                                 + "\"muster\":{\"type\":\"string\",\"description\":\"Namensmuster mit *, Vorgabe *\"}},"
                                 + "\"required\":[\"bibliothek\"]}"),
-                new AiChat.Tool(READ, "Liest den Quelltext eines Objekts, höchstens " + DeckChatTools.TEXT_CHARS
-                        + " Zeichen je Aufruf, mit ab weiter.", "{\"type\":\"object\",\"properties\":{"
+                new AiChat.Tool(READ, "Liest den Quelltext eines Objekts, " + DeckChatTools.PIECE, "{\"type\":\"object\",\"properties\":{"
                                 + "\"bibliothek\":{\"type\":\"string\"},"
                                 + "\"name\":{\"type\":\"string\"},"
                                 + "\"ab\":{\"type\":\"integer\"}},\"required\":[\"bibliothek\",\"name\"]}"));

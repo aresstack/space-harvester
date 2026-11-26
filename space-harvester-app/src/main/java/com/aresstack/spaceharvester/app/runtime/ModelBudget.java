@@ -44,6 +44,12 @@ public record ModelBudget(int contextTokens, int answerTokens) {
         return new ModelBudget(contextTokens, answerTokens);
     }
 
+    /** Wie {@link #of}, aber {@code null}, wenn Kontextlänge oder Ausgabelimit fehlen (dann gilt keine Grenze). */
+    public static ModelBudget known(Integer contextTokens, Integer answerTokens) {
+        return contextTokens == null || contextTokens < 1 || answerTokens == null || answerTokens < 1 ? null
+                : new ModelBudget(contextTokens, answerTokens);
+    }
+
     /** Vorsichtige Schätzung der Tokens eines Anfrageteils, siehe {@link #CHARACTERS_PER_TOKEN}. */
     public static int tokens(String text) {
         int byLength = (text.length() + CHARACTERS_PER_TOKEN - 1) / CHARACTERS_PER_TOKEN;

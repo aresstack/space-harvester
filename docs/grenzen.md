@@ -78,6 +78,7 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Speicher und Pakete (Desktop-`FileSystemAssetStore.DEFAULT_MAX_TOTAL_BYTES`, `ZipExportPackageReader`, `ImportController.MAX_PACKAGE_BYTES`, `LocalFilesSourceAdapter.MAX_FILE_MEGABYTES`, `BscwSourceAdapter`) | 20 GiB, 256 MiB, 4 GiB, 64 MB, Tiefe 50 | größere Dateien und tiefere Ordner werden nicht geerntet oder importiert | Speicherbudget einstellbar, Bestandsgrenzen beseitigen |
 | KI-Textbudgets (Chat 24.000 Zeichen / 8 Quellen, Podcast, Zusammenfassungen, Fristen 12.000 Zeichen) | fest | Material wird vor dem Modellaufruf gekürzt | aus der Tokenlänge des Modells ableiten |
 | Modellname in der MVS-Diagnose (`MvsDiagnosisTools`) | `gpt-oss-120b` | die Diagnose lief nur mit diesem Modell | **einstellbar** (Angelo 26.11.2026): Zeile „Diagnose“ unter Einstellungen › KI-Dienst › Modelle mit Schalter „Diagnose per KI“ (`ai.diagnosis-enabled`, Standard an) und Modell (`ai.diagnosis-model`, vorbelegt `gpt-oss-120b`, Anbieter-Präfix wie `openai/` egal) |
+| Lesemengen der Chat-Werkzeuge (früher `ChatTools.READ_CHARS`, `ChatTools.PAGE_SIZE`, `ChatTurn.OPEN_PAGE_CHARS`, `DeckChatTools.TEXT_CHARS`, `VIEW_CHARS`, `VIEW_BLOCK_CHARS`, `SYSTEM_VIEW_CHARS`, `SYSTEM_BLOCK_CHARS`) | 12.000 Zeichen je Lesen / 100 Einträge je Blatt / 24.000 Zeichen offene Seite / 12.000 / 30.000 / 4.000 / 8.000 / 2.000 Zeichen | lange Seiten und Texte kamen nur in festen Stücken, auch wenn das Modell viel mehr Platz hatte | **aus dem Modell abgeleitet** (`ChatRoom`): jedes Ergebnis bringt so viel mit, wie in der laufenden Anfrage noch Platz hat (Kontextlänge abzüglich Ausgabelimit, Nachrichten und Werkzeugbeschreibungen; Aufrufe einer Runde teilen sich den Platz). Der Rest kommt mit Versatz (`versatz`, `ab`); die Liste hat statt Blättern den Versatz `ab`. Ohne eingestellte Kontextlänge gibt es keine Grenze |
 | Fristen im Command Deck außerhalb des Terminals (früher `FtpChatTools.TIMEOUT_SECONDS`, `EakteDocumentContent.TIMEOUT_SECONDS`, `HttpBetaViewServer.TIMEOUT`, `NetUseLogin.TIMEOUT_SECONDS`) | 120 / 120 / 60 / 60 s | langsame Hosts brachen ab | **einstellbar**: `DeckTimeouts` in `app-state.json` (`deck.timeouts.*`), Einstellungen › Mainframe › „Fristen im Command Deck“. Die Fristen des Terminals (Makros, Anmeldung, OpenTerm) bleiben bis zu einer Entscheidung |
 | Fristen je Anfrage einzelner KI-Aufgaben (früher `RemoteAi.SUMMARY_TIMEOUT`, `LABEL_TIMEOUT`, `EXPANSION_TIMEOUT`) | 5 min / 60 s / 90 s | große Modelle oder langsame Dienste brachen ab | **einstellbar**: `ai.summary-timeout`, `ai.label-timeout`, `ai.expansion-timeout` (`AiServiceSettings.Timeouts`), Einstellungen › KI-Dienst › Modelle › „Fristen je Anfrage“ |
 | Netz-Fristen der Quellen (früher `DelegatedConfluenceHttp.TIMEOUT`, `RoutedWebDavHttp.REQUEST_TIMEOUT`, `SourceDiagnostics.PROBE_TIMEOUT`) | 10 s / 90 s / 15 s | langsame Netze oder Proxys brachen Token-Prüfung, BSCW-Abrufe und Verbindungsprüfung ab | **einstellbar**: `network.timeouts.delegated-check`, `webdav-request`, `probe` (`SourceTimeouts`), für alle Quellen wie die Proxy-Frist |
@@ -558,19 +559,12 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ChatPanel.QUIET_ROUNDS_DEFAULT` | `3` | Vorgabe | Stillstand der Werkzeugrunden (askai `stagnationRounds`) | einstellbar (Menü am Dreieck des Chats) |
 | `ChatPanel.WEB_DELAY_MAX` | `10000` | fest | Timeout | einstellbar |
 | `ChatPanel.WEB_DELAY_SLIDER_MAX` | `2000` | fest | Timeout | einstellbar |
+| `ChatRoom.UNLIMITED` | `Integer.MAX_VALUE` | fest | Invariante/Darstellung | im Code belassen: Kennwert „keine Grenze“ (Kontextlänge unbekannt oder außerhalb eines Turns) |
 | `ChatTools.MAX_TERM_CHARS` | `200` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatTools.PAGE_SIZE` | `100` | fest | Stapel-/Seitengröße | einstellbar |
-| `ChatTools.READ_CHARS` | `12_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatTurn.MAX_QUERY_CHARS` | `500` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatTurn.OPEN_PAGE_CHARS` | `24_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
+| `ChatTurn.MAX_QUERY_CHARS` | `KeywordSearch.MAX_TEXT_LENGTH` | fest | Invariante/Darstellung | im Code belassen: die Grenze der Suche selbst (früher fest 500; die Suche lehnte über 200 Zeichen ab) |
 | `ChatTurn.SUB_AGENT_CHARS` | `ChatKnowledge.MAX_PAGE_CHARS` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatWebBrowser.FIREFOX_START_TIMEOUT_MILLIS` | `30000L` | fest | Timeout | einstellbar |
 | `ComicDivider.GRIP_MAX` | `36` | fest | Invariante/Darstellung | im Code belassen |
-| `DeckChatTools.SYSTEM_BLOCK_CHARS` | `2_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `DeckChatTools.SYSTEM_VIEW_CHARS` | `8_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `DeckChatTools.TEXT_CHARS` | `12_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `DeckChatTools.VIEW_BLOCK_CHARS` | `4_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `DeckChatTools.VIEW_CHARS` | `30_000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `DeckHome.MAX_COLUMNS` | `3` | fest | Invariante/Darstellung | im Code belassen |
 | `DiagramLabels.CACHE_SIZE` | `1000` | fest | Cache-Aufbewahrung | einstellbar |
 | `DiagramLabels.TIMEOUT_SECONDS` | `30` | fest | Timeout | einstellbar |
