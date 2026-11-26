@@ -48,6 +48,9 @@ public class PageNavigation {
     private final AccessGuard access;
     private final FindingCatalog findings;
     private final PageLinks links;
+    /** Was der Benutzer ausgeschlossen hat, fehlt im Baum und in der Titelsuche (Angelo 26.11.2026). */
+    private volatile com.aresstack.spaceharvester.application.sync.Exclusions exclusions =
+            com.aresstack.spaceharvester.application.sync.Exclusions.NONE;
 
     /** Remember navigation paths independently of downloaded documents. */
     private final Map<PageKey, SeenPage> browsedPages = new java.util.concurrent.ConcurrentHashMap<>();
@@ -82,6 +85,11 @@ public class PageNavigation {
         this.access = Objects.requireNonNull(access, "access");
     }
 
+    /** Ausgeschlossenes lässt die Navigation weg; ohne Aufruf ist nichts ausgeschlossen. */
+    public void exclusions(com.aresstack.spaceharvester.application.sync.Exclusions exclusions) {
+        this.exclusions = Objects.requireNonNull(exclusions, "exclusions");
+    }
+
     /**
      * Ein Stapel Kindseiten. Die Quelle wählt die Stapelgröße; ein Stapel kann nach dem Beschneiden leer sein und
      * trotzdem einen {@link Children#nextCursor()} haben.
@@ -95,6 +103,16 @@ public class PageNavigation {
      */
     public Children children(AccessContext caller, String sourceId, String spaceKey, String parentPageId,
                              String cursor) {
+        return children(caller, sourceId, spaceKey, parentPageId, cursor, false);
+    }
+
+    /**
+     * Wie {@link #children(AccessContext, String, String, String, String)}, mit {@code withExcluded} auch die
+     * ausgeschlossenen Kinder: für die Übersicht in den Einstellungen, in der der Benutzer selbst ausschließt und
+     * wieder einblendet. Rechte gelten unverändert.
+     */
+    public Children children(AccessContext caller, String sourceId, String spaceKey, String parentPageId,
+                             String cursor, boolean withExcluded) {
         HarvestSource source = source(sourceId);
         // Ohne Freigabe auf die Quelle fragt der Anwendungsfall sie gar nicht erst; der Space einer Seite steht erst
         // nach dem Lesen fest, die Prüfung danach verdeckt eine Verweigerung wie eine unbekannte Seite.
@@ -109,8 +127,9 @@ public class PageNavigation {
                     AccessKind.METADATA);
         }
         String nextCursor = navigationOrder.complete(request, batch);
-        List<PageNode> shown = visible(caller, sourceId, batch.pages());
-        rememberBrowsed(source, sourceId, parentPageId, shown);
+        List<PageNode> permitted = permitted(caller, sourceId, batch.pages());
+        rememberBrowsed(source, sourceId, parentPageId, permitted);
+        List<PageNode> shown = withExcluded ? permitted : withoutExcluded(sourceId, permitted);
         return new Children(sourceId, batch.partitionKey(), parentPageId, shown, nextCursor);
     }
 
@@ -125,6 +144,15 @@ public class PageNavigation {
         for (PageNode page : pages) {
             browsedPages.put(new PageKey(sourceId, page.pageId()), new SeenPage(page, parentId));
         }
+    }
+
+    /**
+     * Elternseite einer Seite, wie sie das Durchblättern zuletzt gezeigt hat, auch ohne geladenes Dokument;
+     * {@code null}, wenn unbekannt oder eine Wurzel.
+     */
+    public String browsedParent(String sourceId, String pageId) {
+        SeenPage seen = pageId == null ? null : browsedPages.get(new PageKey(sourceId, pageId));
+        return seen == null ? null : seen.parentPageId();
     }
 
     /** Höchstens so viele Kinder liefert {@link #cachedChildren} je Knoten. */
@@ -492,6 +520,21 @@ public class PageNavigation {
     }
 
     private List<PageNode> visible(AccessContext caller, String sourceId, List<PageNode> nodes) {
+        return withoutExcluded(sourceId, permitted(caller, sourceId, nodes));
+    }
+
+    /** Ohne die Knoten unter einem Ausschluss; die Vorfahren kennt der Bestand oder das Durchblättern. */
+    private List<PageNode> withoutExcluded(String sourceId, List<PageNode> nodes) {
+        com.aresstack.spaceharvester.application.sync.Exclusions excluded = exclusions;
+        if (nodes.isEmpty() || !excluded.any(sourceId)) {
+            return nodes;
+        }
+        return nodes.stream().filter(node -> !excluded.excluded(sourceId, node.partitionKey(), node.pageId()))
+                .toList();
+    }
+
+    /** Die Knoten, die der Aufrufer sehen darf, mit Space; ohne Rücksicht auf Ausschlüsse. */
+    private List<PageNode> permitted(AccessContext caller, String sourceId, List<PageNode> nodes) {
         return nodes.stream().map(node -> withSpace(sourceId, node))
                 .filter(node -> access.permits(caller, ResourceScope.page(sourceId, node.partitionKey(),
                         node.pageId()), AccessKind.METADATA))

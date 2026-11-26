@@ -135,6 +135,9 @@ public class KeywordSearch {
 
     private final SourceCatalog catalog;
     private final AccessGuard access;
+    /** Was der Benutzer ausgeschlossen hat, fehlt in jeder Trefferliste (Angelo 26.11.2026). */
+    private volatile com.aresstack.spaceharvester.application.sync.Exclusions exclusions =
+            com.aresstack.spaceharvester.application.sync.Exclusions.NONE;
     private final PageTextIndex texts;
     private final Prefetch prefetch;
     private final java.util.function.Predicate<String> prefetching;
@@ -507,7 +510,8 @@ public class KeywordSearch {
         long started = System.nanoTime();
         Tally tally = new Tally();
         tally.searchId = searchId;
-        Results results = batch(caller, query, cursor, limit, tally, found);
+        Found shown = found == null ? null : (sourceId, hits) -> found.found(sourceId, withoutExcluded(hits));
+        Results results = withoutExcluded(batch(caller, query, cursor, limit, tally, shown));
         if (runs == SearchRunLog.NONE) {
             return results;
         }
@@ -524,6 +528,41 @@ public class KeywordSearch {
                 SearchRun.ownerOf(caller), query.text(), startedAt, Duration.ofNanos(System.nanoTime() - started),
                 results.sources().stream().map(KeywordSearch::outcome).toList(), stages, results.complete(), null));
         return recorded ? results.withSearchRun(id.value()) : results;
+    }
+
+    /** Ausgeschlossenes lässt die Suche weg; ohne Aufruf ist nichts ausgeschlossen. */
+    public void exclusions(com.aresstack.spaceharvester.application.sync.Exclusions exclusions) {
+        this.exclusions = Objects.requireNonNull(exclusions, "exclusions");
+    }
+
+    /** Der Stapel ohne Treffer unter einem Ausschluss; der Zähler „lädt“ bleibt, er betrifft nur den Fortschritt. */
+    private Results withoutExcluded(Results results) {
+        List<Hit> hits = withoutExcluded(results.hits());
+        List<Hit> found = withoutExcluded(results.found());
+        if (hits.size() == results.hits().size() && found.size() == results.found().size()) {
+            return results;
+        }
+        return new Results(results.sourceId(), hits, results.sources(), results.nextCursor(), results.complete(),
+                results.loading(), found, results.progress(), results.searchRun());
+    }
+
+    private List<Hit> withoutExcluded(List<Hit> hits) {
+        com.aresstack.spaceharvester.application.sync.Exclusions excluded = exclusions;
+        if (hits.isEmpty() || hits.stream().noneMatch(hit -> excluded.any(hit.sourceId()))) {
+            return hits;
+        }
+        return hits.stream().filter(hit -> !excluded(excluded, hit)).toList();
+    }
+
+    /** Ob der Treffer unter einem Ausschluss liegt; seine Elternseite gilt vor dem Bestand. */
+    private boolean excluded(Hit hit) {
+        com.aresstack.spaceharvester.application.sync.Exclusions excluded = exclusions;
+        return excluded.any(hit.sourceId()) && excluded(excluded, hit);
+    }
+
+    private static boolean excluded(com.aresstack.spaceharvester.application.sync.Exclusions exclusions, Hit hit) {
+        return exclusions.within(hit.sourceId(), hit.spaceKey(),
+                pageId -> pageId.equals(hit.pageId()) ? hit.parentPageId() : null).test(hit.pageId());
     }
 
     private static SearchRun.SourceOutcome outcome(SourceState state) {
@@ -809,6 +848,8 @@ public class KeywordSearch {
         List<Hit> stillLoading = List.of();
         Progress progress = null;
         toLoad.removeIf(hit -> !allowsPrefetch(hit.sourceId()));
+        // Ausgeschlossenes wird nie nachgeladen (Angelo 26.11.2026).
+        toLoad.removeIf(this::excluded);
         if (loads && !toLoad.isEmpty()) {
             try {
                 Prefetch.Fill fill = prefetch.prefetch(caller, toLoad);
@@ -939,6 +980,7 @@ public class KeywordSearch {
             try {
                 List<FindingCatalog.Finding> fresh = matches.stream()
                         .filter(match -> query.admits(sourceId, match.pageId()))
+                        .filter(match -> !exclusions.excluded(sourceId, null, match.pageId()))
                         // Fundstelle 23: in dieser Suche nur, was sie noch nicht angeboten hat.
                         .filter(match -> offered == null || !offered.contains(new PageKey(sourceId, match.pageId())))
                         .map(match -> new FindingCatalog.Finding(match.pageId(), match.version())).toList();
