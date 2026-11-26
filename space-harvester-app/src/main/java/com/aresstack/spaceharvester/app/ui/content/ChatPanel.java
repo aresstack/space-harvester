@@ -161,16 +161,12 @@ public final class ChatPanel extends JPanel {
     static final String WEB_ON = "Websuche für diesen Chat ist an (Klick: aus)";
     static final String WEB_UNAVAILABLE = "Websuche nicht verfügbar: Firefox nicht gefunden (Pfad mit "
             + "-Denterpriseai.firefox=... angeben)";
-    static final String WEB_BUDGET_LABEL = "Browser-Budget";
-    static final String WEB_BUDGET_TIP = "Browser-Budget: %d Werkzeugrunden je Antwort, Tabs und Verzögerung";
+    static final String WEB_BUDGET_LABEL = "Browser-Einstellungen";
+    /** Kein Rundenbudget mehr (Angelo 26.11.2026): Der Chat sucht, bis er fertig ist; am Pfeil bleibt der Browser. */
+    static final String WEB_BUDGET_TIP = "Browser-Einstellungen: Profil, Verzögerung, menschliche Eingabe";
     static final String BOTH_ON_WARNING = "Websuche und interne Suche sind gleichzeitig an. "
             + "Inhalte aus Wissensquellen können in Browseraufrufe einfließen.";
     /** Vorgaben wie {@code BrowserBudget} und {@code BrowserLoad} im Enterprise AI Client. */
-    static final int WEB_BUDGET_DEFAULT = 20;
-    static final int WEB_BUDGET_MIN = 1;
-    static final int WEB_BUDGET_MAX = 999;
-    static final int WEB_BUDGET_SLIDER_MIN = 4;
-    static final int WEB_BUDGET_SLIDER_MAX = 60;
     /**
      * Die drei Grenzen der Parallelität im Menü am Dreieck der Chat-Leiste (Angelo 24.11.2026), mit denselben Stufen
      * und „Benutzerdefiniert …“ wie bei den Aufträgen: Tabs der Websuche, Agenten der internen Suche, Dateien und
@@ -1770,7 +1766,7 @@ public final class ChatPanel extends JPanel {
         webBudget.setEnabled(available);
         web.setEmphasized(webOn);
         web.setToolTipText(!available ? WEB_UNAVAILABLE : webOn ? WEB_ON : WEB);
-        webBudget.setToolTipText(String.format(WEB_BUDGET_TIP, webInt("budget", WEB_BUDGET_DEFAULT)));
+        webBudget.setToolTipText(WEB_BUDGET_TIP);
     }
 
     private static int webInt(String key, int fallback) {
@@ -1815,14 +1811,9 @@ public final class ChatPanel extends JPanel {
         return com.aresstack.spaceharvester.app.ui.ParallelChoice.stored(WEB_KEY + key, fallback);
     }
 
-    /** Öffnet das Menü am Pfeil: Profil, Werkzeugrunden, Verzögerung, Human Emulation, Maus. */
+    /** Öffnet das Menü am Pfeil: Profil, Verzögerung, Human Emulation, Maus. */
     private void openWebPopup() {
         java.util.List<WebSearchPopup.Row> rows = new ArrayList<>();
-        rows.add(new WebSearchPopup.Row(WebSearchPopup.TITLE, webInt("budget", WEB_BUDGET_DEFAULT), WEB_BUDGET_MIN,
-                WEB_BUDGET_MAX, WEB_BUDGET_SLIDER_MIN, WEB_BUDGET_SLIDER_MAX, value -> {
-                    webPut("budget", value);
-                    showWebState();
-                }));
         rows.add(new WebSearchPopup.Row(WebSearchPopup.DELAY_TITLE, webInt("delay", 0), 0, WEB_DELAY_MAX, 0,
                 WEB_DELAY_SLIDER_MAX, value -> webPut("delay", value)));
         java.util.List<WebSearchPopup.Check> checks = new ArrayList<>();
@@ -1863,7 +1854,6 @@ public final class ChatPanel extends JPanel {
         java.util.concurrent.atomic.AtomicLong begun = new java.util.concurrent.atomic.AtomicLong(-1);
         return new ChatTurn.WebSearch(new com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools(
                 browser.tools(chatId), call -> browser.asking(prompt, call)), rules,
-                researchBudget(),
                 () -> begun.set(browser.beginTurn(chatId,
                         progress -> SwingUtilities.invokeLater(() -> card.update(progress)))),
                 () -> {
@@ -2328,11 +2318,6 @@ public final class ChatPanel extends JPanel {
         } catch (RuntimeException gone) {
             return List.of();
         }
-    }
-
-    /** Die Werkzeugrunden je Antwort aus dem Menü am Pfeil der Websuche, in den erlaubten Grenzen. */
-    private int researchBudget() {
-        return Math.max(WEB_BUDGET_MIN, Math.min(WEB_BUDGET_MAX, webInt("budget", WEB_BUDGET_DEFAULT)));
     }
 
     /** {@code low}, {@code medium}, {@code high} aus der Wahl im Composer. */

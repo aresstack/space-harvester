@@ -556,11 +556,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ChatPanel.MAX_NORMAL_EDITOR_HEIGHT` | `400` | fest | Invariante/Darstellung | im Code belassen |
 | `ChatPanel.PARALLEL_MAX` | `com.aresstack.spaceharvester.app.ui.ParallelChoice.CUSTOM_MAX` | fest | Parallelität | einstellbar |
 | `ChatPanel.QUIET_ROUNDS_DEFAULT` | `3` | Vorgabe | Stillstand der Werkzeugrunden (askai `stagnationRounds`) | einstellbar (Menü am Dreieck des Chats) |
-| `ChatPanel.WEB_BUDGET_DEFAULT` | `20` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatPanel.WEB_BUDGET_MAX` | `999` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `ChatPanel.WEB_BUDGET_MIN` | `1` | fest | Invariante/Darstellung | im Code belassen |
-| `ChatPanel.WEB_BUDGET_SLIDER_MAX` | `60` | fest | Invariante/Darstellung | im Code belassen |
-| `ChatPanel.WEB_BUDGET_SLIDER_MIN` | `4` | fest | Invariante/Darstellung | im Code belassen |
 | `ChatPanel.WEB_DELAY_MAX` | `10000` | fest | Timeout | einstellbar |
 | `ChatPanel.WEB_DELAY_SLIDER_MAX` | `2000` | fest | Timeout | einstellbar |
 | `ChatTools.MAX_TERM_CHARS` | `200` | fest | Modellkontext | aus Modellfähigkeit ableiten |

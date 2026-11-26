@@ -73,7 +73,7 @@ class ChatTurnWebSearchTest {
 
         ChatTurn turn = new ChatTurn(workspace(), port, "modell", null, List.of(), "Wie ist das Wetter?", null, "Test",
                 events, Runnable::run).withToolset(base, "System").webSearch(new ChatTurn.WebSearch(browser,
-                "[Browserprofil] Extern", 30, () -> order.add("begin"), ended::countDown));
+                "[Browserprofil] Extern", () -> order.add("begin"), ended::countDown));
         turn.start();
         assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(ended.await(10, TimeUnit.SECONDS)).isTrue();
@@ -131,7 +131,7 @@ class ChatTurnWebSearchTest {
                     public String describe(AiChat.ToolCall call) {
                         return "";
                     }
-                }, "System").webSearch(new ChatTurn.WebSearch(browser, null, 8, null, null));
+                }, "System").webSearch(new ChatTurn.WebSearch(browser, null, null, null));
 
         turn.start();
         assertThat(asked.await(30, TimeUnit.SECONDS)).isTrue();

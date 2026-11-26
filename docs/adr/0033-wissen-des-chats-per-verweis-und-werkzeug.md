@@ -83,7 +83,7 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
     Websuche des EAC vollständig: die Browser-Werkzeuge (`BrowserMcpTools`) mit einem sichtbaren Firefox und eigenem
     Profil je Chat, gesteuert über WebDriver BiDi, damit auch Intranetseiten erreichbar sind. Das Modul
     `enterprise-ai-browser` ist eine unveränderte Kopie des EAC (Prüfsummen, `sync-from-upstream.sh`). Am Pfeil der
-    Weltkugel stehen Browser-Budget (Werkzeugrunden je Antwort), parallele Tabs, Verzögerung, menschliche Eingabe und
+    Weltkugel stehen ~~Browser-Budget (Werkzeugrunden je Antwort)~~ (entfernt 26.11.2026, kein Rundenbudget), parallele Tabs, Verzögerung, menschliche Eingabe und
     das Profil Extern oder Intern; deren Regeln (Whitelist, Blacklist, Such-URLs) stehen in den Einstellungen unter
     „Browser“. Unbekannte Websites und verändernde Aktionen fragt der Chat in seinem Verlauf nach (Einmal erlauben,
     Immer erlauben, Immer verbieten, Abbrechen). Rückfragen gehören zu ihrem Chat; Stopp oder Chatwechsel beendet sie
