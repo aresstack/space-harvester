@@ -41,7 +41,8 @@ import java.util.function.BooleanSupplier;
  * Die Werkzeuge des Chats (ADR 0033): Was nicht offen ist, holt sich das Modell selbst, und zwar nur aus dem Bereich,
  * der beim Senden links gewählt war. Jeder Aufruf wird gegen diesen Bereich geprüft; eine Seite außerhalb, ohne
  * Recht oder unbekannt bekommt dieselbe Antwort {@link #UNAVAILABLE}, ohne zu verraten, ob es sie gibt. Gelesen wird
- * nur aus dem Cache, nie bei der Quelle.
+ * aus dem Cache; eine Seite des Bereichs, die nicht lokal liegt, holt {@value #READ} wie die Leseansicht von der Quelle.
+ * Wurzeln, die der Katalog nicht kennt, erschließt {@link LiveArea} über die gemeinsame Navigation aller Quellen.
  *
  * <ul>
  *   <li>{@value #LIST}: die Kinder eines Knotens (ohne Angabe die Startseiten des Bereichs), nach Titel, blätternd,
@@ -88,6 +89,15 @@ final class ChatTools {
     /** Die eine Antwort für fremd, unbekannt, ohne Recht. */
     static final String UNAVAILABLE = "Diese Seite ist im gewählten Bereich nicht verfügbar.";
     static final String NOT_STORED = "Diese Seite liegt im gewählten Bereich, ist aber nicht lokal gespeichert.";
+    /** Eine Seite des Bereichs ließ sich nicht von der Quelle holen; das Modell darf ihren Inhalt nicht erraten. */
+    static final String NOT_FETCHED = "Diese Seite liegt im gewählten Bereich, ließ sich aber nicht von der Quelle "
+            + "laden (%s). Ihr Inhalt ist dir unbekannt; erfinde ihn nicht.";
+    /** Ordner haben keinen eigenen Text. */
+    static final String FOLDER_ONLY = "Das ist ein Ordner ohne eigenen Text; seinen Inhalt zeigt " + LIST
+            + " mit dieser Kennung als knoten.";
+    /** Der Bereich ist gewählt, aber weder Katalog noch Navigation kennen eine Seite darin. */
+    static final String EMPTY_AREA = "Im gewählten Bereich ist keine Seite bekannt. Sage das dem Benutzer und "
+            + "erfinde keine Inhalte.";
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final System.Logger LOG = System.getLogger(ChatTools.class.getName());
@@ -213,6 +223,17 @@ final class ChatTools {
     }
 
     private CollectionNodes nodes;
+
+    /**
+     * Die Wurzeln des Bereichs, die der Katalog nicht kennt (etwa ein SharePoint-Ordner, ein nie abgeglichener Space),
+     * über die gemeinsame Navigation ({@link LiveArea}); {@link LiveArea#NONE}, wenn der Katalog alles abdeckt.
+     */
+    ChatTools liveArea(LiveArea area) {
+        this.live = Objects.requireNonNull(area, "area");
+        return this;
+    }
+
+    private LiveArea live = LiveArea.NONE;
 
     /** Die Werkzeuge dieses Turns: die vier des Bereichs, mit „Interne Suche“ dazu {@value #APP_SEARCH}. */
     List<AiChat.Tool> toolDefinitions() {
@@ -399,7 +420,8 @@ final class ChatTools {
 
     /** Ob die Seite im Bereich liegt oder ausdrücklich erlaubt ist. */
     boolean allows(PageKey key) {
-        return key != null && (scope != null && scope.contains(key) || granted.contains(key));
+        return key != null && (scope != null && scope.contains(key) || granted.contains(key)
+                || scope != null && live.contains(key));
     }
 
     /** Trägt die Seite ein, bevor ihr Inhalt an das Modell geht; scheitert es, {@link ReleaseFailed}. */
@@ -418,9 +440,24 @@ final class ChatTools {
         if (!allows(key)) {
             return UNAVAILABLE;
         }
+        if (live.isFolder(key)) {
+            return FOLDER_ONLY;
+        }
         Page page = page(key);
         if (page == null) {
-            return NOT_STORED;
+            // Im Bereich, aber nicht lokal (Angelo 26.11.2026: Auf den gewählten Bereich hat der Chat Zugriff): wie
+            // beim Öffnen in der Leseansicht von der Quelle holen; sie liegt danach lokal und wird wie jede andere
+            // Seite vor dem Senden freigegeben.
+            try {
+                workspace.page(key.sourceId(), key.pageId(), false);
+            } catch (RuntimeException failed) {
+                diagnosis.accept("Chat-Werkzeug " + READ + ": Abruf gescheitert: " + failed.getClass().getSimpleName());
+                return NOT_FETCHED.formatted(failed.getClass().getSimpleName());
+            }
+            page = page(key);
+            if (page == null) {
+                return NOT_STORED;
+            }
         }
         String text = page.text();
         int from = Math.min(offset, text.length());
@@ -428,6 +465,9 @@ final class ChatTools {
         String spaceKey = spaceOf(key);
         if (spaceKey == null) {
             spaceKey = page.spaceKey();
+        }
+        if (spaceKey == null) {
+            spaceKey = live.spaceOf(key);
         }
         if (spaceKey == null) {
             // Ohne Space lässt sich die Seite nicht freigeben; dann geht ihr Text nicht hinaus.
@@ -488,8 +528,36 @@ final class ChatTools {
             }
         }
         Listing listing = entries(parent, null);
+        if (!live.isEmpty() && (parent == null || listing.entries().isEmpty() && live.contains(parent))) {
+            listing = withLive(listing, parent);
+        }
         return sheet(listing, parent == null ? "Startseiten des Bereichs" : "Unterseiten",
                 parent == null ? "Der Bereich enthält keine Seiten." : "Diese Seite hat keine Unterseiten.", sheet);
+    }
+
+    /**
+     * Die Liste aus dem Katalog, ergänzt um das, was die Navigation unter den Wurzeln außerhalb des Katalogs zeigt
+     * ({@link LiveArea}), wie der Baum links. Lehnt die Quelle ab, steht das in der Liste, statt den Bereich als leer
+     * auszugeben.
+     */
+    private Listing withLive(Listing listing, PageKey parent) {
+        List<Entry> entries = new ArrayList<>(listing.entries());
+        Set<String> seen = new java.util.HashSet<>();
+        entries.forEach(entry -> seen.add(entry.ref()));
+        boolean failed = listing.failed();
+        try {
+            for (LiveArea.Node node : live.children(parent, () -> cancelled)) {
+                String ref = ref(node.key());
+                if (seen.add(ref)) {
+                    entries.add(new Entry(ref, node.title(), Boolean.TRUE.equals(node.children()) ? -1 : 1,
+                            node.folder()));
+                }
+            }
+        } catch (RuntimeException e) {
+            diagnosis.accept("Chat-Werkzeug " + LIST + ": Navigation gescheitert: " + e.getClass().getSimpleName());
+            failed = true;
+        }
+        return new Listing(entries, listing.unreadable(), failed);
     }
 
     /**
@@ -574,7 +642,7 @@ final class ChatTools {
                         : entry.title().toLowerCase(java.util.Locale.ROOT)).thenComparing(Entry::ref));
         int sheets = Math.max(1, (entries.size() + PAGE_SIZE - 1) / PAGE_SIZE);
         if (entries.isEmpty()) {
-            return listing.unreadable() ? TOO_LARGE : empty;
+            return listing.failed() ? NAVIGATION_FAILED : listing.unreadable() ? TOO_LARGE : empty;
         }
         if (sheet > sheets) {
             return "Blatt " + sheet + " gibt es nicht; es gibt " + sheets + ".";
@@ -589,11 +657,16 @@ final class ChatTools {
                 b.append(" | Ordner");
             } else if (entry.size() > 1) {
                 b.append(" | hat Unterseiten (").append(entry.size() - 1).append(')');
+            } else if (entry.size() < 0) {
+                b.append(" | hat Unterseiten");
             }
             b.append('\n');
         }
         if (sheet < sheets) {
             b.append("(weiter mit blatt ").append(sheet + 1).append(")\n");
+        }
+        if (listing.failed()) {
+            b.append("Hinweis: Die Quelle lieferte nicht alle Einträge; nutze auch ").append(SEARCH).append(".\n");
         }
         if (listing.unreadable()) {
             b.append("Hinweis: Nicht alle Spaces ließen sich auflisten (zu groß); nutze ").append(SEARCH).append('.');
@@ -601,7 +674,12 @@ final class ChatTools {
         return b.toString().stripTrailing();
     }
 
-    private record Listing(List<Entry> entries, boolean unreadable) {
+    /** @param failed die Quelle lehnte die Liste eines Knotens ab (nur Navigation) */
+    private record Listing(List<Entry> entries, boolean unreadable, boolean failed) {
+
+        Listing(List<Entry> entries, boolean unreadable) {
+            this(entries, unreadable, false);
+        }
     }
 
     /** Der Space einer Seite des Bereichs aus dem Bestand; {@code null}, wenn kein Space der Auswahl sie kennt. */
@@ -636,6 +714,10 @@ final class ChatTools {
 
     private static final Map<String, PageHolding> UNREADABLE = java.util.Collections.unmodifiableMap(
             new java.util.HashMap<>());
+    static final String NAVIGATION_FAILED = "Die Quelle lieferte die Einträge dieses Bereichs gerade nicht; nutze "
+            + SEARCH + " oder sage dem Benutzer, dass die Quelle nicht erreichbar war. Erfinde keine Inhalte.";
+    static final String NO_TERMS = "Zu diesem Bereich ist noch nichts lokal ausgewertet, der Wissensgraph kennt dort "
+            + "keine Fachbegriffe; suche mit " + SEARCH + " und lies die Treffer mit " + READ + ".";
     static final String TOO_LARGE = "Der Bestand dieses Bereichs lässt sich nicht als Liste zeigen (zu groß); nutze "
             + SEARCH + ".";
 
@@ -676,8 +758,12 @@ final class ChatTools {
      * Antwort (ADR 0033 Punkt 8).
      */
     String term(String query) {
-        if (scope == null || scope.pages().isEmpty()) {
+        if (scope == null) {
             return "Es ist kein Bereich gewählt.";
+        }
+        if (scope.pages().isEmpty()) {
+            // Der Wissensgraph kennt nur lokal ausgewertete Seiten; ein Bereich nur aus der Navigation hat dort keine.
+            return NO_TERMS;
         }
         String text = query.strip().replaceAll("\\s+", " ");
         if (text.isEmpty()) {
@@ -871,15 +957,18 @@ final class ChatTools {
      * das Modell mit {@link #READ}, und erst dann kommt sie auf die Liste.
      */
     String search(String text) {
-        if (scope == null || scope.pages().isEmpty()) {
+        if (scope == null) {
             return "Es ist kein Bereich gewählt.";
+        }
+        if (scope.pages().isEmpty() && live.isEmpty()) {
+            return EMPTY_AREA;
         }
         String query = text.strip().replaceAll("\\s+", " ");
         if (query.isEmpty()) {
             return "Bitte Suchbegriffe angeben.";
         }
         query = clampQuery(query);
-        KeywordSearch.Query search = areaQuery(query, scope).withGlossarySynonyms(glossarySynonyms);
+        KeywordSearch.Query search = areaQuery(query, scope, live.roots()).withGlossarySynonyms(glossarySynonyms);
         List<KeywordSearch.Hit> bar = barHits(search);
         List<KeywordSearch.Hit> hits = listed(bar, ranked(search, neighbors, false));
         int most = bar.size() + SEARCH_HITS;
@@ -947,6 +1036,38 @@ final class ChatTools {
      * Space einer ihrer Quellen nicht, bleibt es ohne Space-Filter, damit keine Seite verloren geht.
      */
     static KeywordSearch.Query areaQuery(String text, PageSelection scope) {
+        return areaQuery(text, scope, List.of());
+    }
+
+    /**
+     * Wie oben, mit Wurzeln außerhalb des Katalogs ({@link LiveArea}): Ihre Seiten kennt keine Seitenmenge, also sucht
+     * die Anfrage in ihren Quellen und Spaces ohne Seitengrenze; was nicht im Bereich liegt, fällt danach über
+     * {@link #allows} heraus (Lage laut Quelle).
+     */
+    static KeywordSearch.Query areaQuery(String text, PageSelection scope, List<Selection.Root> live) {
+        if (!live.isEmpty()) {
+            Set<String> sources = new java.util.TreeSet<>(scope.pages().sourceIds());
+            Set<String> spaces = new java.util.TreeSet<>();
+            boolean wholeSource = false;
+            for (com.aresstack.spaceharvester.application.holdings.SpaceSummary space : scope.spaces()) {
+                if (sources.contains(space.sourceId())) {
+                    spaces.add(space.spaceKey());
+                }
+            }
+            for (Selection.Root root : live) {
+                sources.add(root.sourceId());
+                if (root.spaceKey() == null) {
+                    wholeSource = true;
+                } else {
+                    spaces.add(root.spaceKey());
+                }
+            }
+            if (wholeSource) {
+                spaces.clear();
+            }
+            String single = sources.size() == 1 ? sources.iterator().next() : null;
+            return new KeywordSearch.Query(text, single, single == null ? sources : Set.of(), spaces);
+        }
         Set<String> sources = scope.pages().sourceIds();
         Set<String> spaces = new java.util.TreeSet<>();
         Set<String> withSpace = new java.util.HashSet<>();
