@@ -1040,6 +1040,62 @@ public final class SourcesView implements View {
     }
 
     /**
+     * „Ohne Erwerbsgrund bereinigen“ (ADR 0037, Punkt 3; Angelo 26.11.2026): erst eine frische Inventur je Bereich
+     * (Statuszeile), dann eine Rückfrage mit Anzahl und Umfang. Ressourcen mit unbekanntem Grund (vor dem Merken der
+     * Gründe erworben) stehen als eigenes Ankreuzfeld da, anfangs leer, und werden nur angekreuzt mit entfernt.
+     * Originale in der Quelle bleiben unberührt; das Entfernen läuft als Abgleichsauftrag.
+     */
+    private void cleanUp(AppSettings.SourceEntry entry) {
+        String id = entry.id();
+        String name = entry.config().title() == null || entry.config().title().isBlank() ? id : entry.config().title();
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        feedback.working("Quelle " + name + " wird inventarisiert, um Ressourcen ohne Erwerbsgrund zu finden …");
+        Background.run(() -> runtime.workspace().cleanupPreviews(id),
+                previews -> cleanUp(runtime, id, name, previews), feedback::problem);
+    }
+
+    private void cleanUp(AppRuntime runtime, String id, String name,
+                         List<com.aresstack.spaceharvester.application.sync.SpaceSyncJobs.CleanupPreview> previews) {
+        CleanupChoice choice = CleanupChoice.of(previews);
+        if (choice.incomplete() > 0 && choice.withoutReason() + choice.unknown() == 0) {
+            feedback.warning("Nichts bereinigt", "Die Inventur von " + choice.incomplete() + " Bereich(en) der "
+                    + "Quelle " + name + " ist nicht vollständig.");
+            return;
+        }
+        if (choice.withoutReason() + choice.unknown() == 0) {
+            feedback.success("Quelle " + name + ": keine Ressourcen ohne Erwerbsgrund");
+            return;
+        }
+        String text = choice.text(name);
+        boolean includeUnknown;
+        if (choice.unknown() == 0) {
+            if (!Dialogs.confirm(root, "Ohne Erwerbsgrund bereinigen", text)) {
+                return;
+            }
+            includeUnknown = false;
+        } else {
+            Boolean answer = Dialogs.confirm(root, "Ohne Erwerbsgrund bereinigen", text,
+                    "Auch die " + choice.unknown() + " Ressourcen mit unbekanntem Grund entfernen", "Bereinigen");
+            if (answer == null) {
+                return;
+            }
+            includeUnknown = answer;
+        }
+        java.util.Map<String, java.util.Set<String>> chosen = choice.chosen(includeUnknown);
+        if (chosen.values().stream().allMatch(java.util.Set::isEmpty)) {
+            feedback.success("Nichts bereinigt");
+            return;
+        }
+        feedback.working("Ressourcen ohne Erwerbsgrund der Quelle " + name + " werden entfernt …");
+        Background.run(() -> runtime.workspace().cleanUp(id, chosen),
+                started -> feedback.success("Ressourcen ohne Erwerbsgrund der Quelle " + name + " werden entfernt; "
+                        + "Fortschritt in der Statuszeile"), feedback::problem);
+    }
+
+    /**
      * „JSON-Paket importieren“: übernimmt nach Rückfrage Pakete „JSON mit Medien“ ({@code export.zip} ab
      * {@code json-package/3}) in den Bestand dieser Quelle ({@code ExportPackageImport}). Mehrere Pakete oder ganze
      * Ordner auf einmal (Angelo 12.11.2026: 20 bis 30 Spaces je Quelle), dann ein Auftrag für alle, nach einer
@@ -1914,6 +1970,13 @@ public final class SourcesView implements View {
                     && !context.runtime().waitingForSecret().contains(entry.id()));
             importing.addActionListener(e -> SourcesView.this.importPackage(entry));
             menu.add(importing);
+            JMenuItem withoutReason = new JMenuItem("Ohne Erwerbsgrund bereinigen …");
+            withoutReason.setToolTipText("Lokal gespeicherte Ressourcen entfernen, die weder der eingestellte Umfang "
+                    + "noch eine Indexieren-Markierung noch die Navigation begründet; Originale bleiben in der Quelle");
+            withoutReason.setEnabled(context.runtime() != null && !dataBeingDeleted(entry)
+                    && !context.runtime().waitingForSecret().contains(entry.id()));
+            withoutReason.addActionListener(e -> SourcesView.this.cleanUp(entry));
+            menu.add(withoutReason);
             JMenuItem purge = new JMenuItem("Daten bereinigen …");
             purge.setToolTipText("Alle lokal gespeicherten Daten dieser Quelle löschen; die Quelle bleibt eingerichtet");
             // Auch abgeschaltet; nur nicht, solange der Core die Quelle nicht geöffnet hat (wartet auf ihr Geheimnis).

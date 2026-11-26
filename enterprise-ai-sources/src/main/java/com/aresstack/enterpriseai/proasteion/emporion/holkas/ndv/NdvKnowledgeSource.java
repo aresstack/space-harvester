@@ -93,6 +93,8 @@ final class NdvKnowledgeSource implements KnowledgeSourcePort, LibraryListingSou
     private final boolean allLibraries;
     private final boolean navigationFill;
     private volatile NdvInventoryCoverage coverage = NdvInventoryCoverage.empty();
+    /** Der eingestellte Umfang der letzten Inventur; {@code null} für alle Bibliotheken oder ohne Inventur. */
+    private volatile NdvInventoryCoverage inventoryScope;
 
     // Bound the reuse to one recent inventory and one download per object.
     private static final int MAX_INVENTORY_METADATA = 10000;
@@ -178,6 +180,7 @@ final class NdvKnowledgeSource implements KnowledgeSourcePort, LibraryListingSou
     @Override
     public List<KnowledgeResource> discover(final SourceScope scope) throws KnowledgeSourceException {
         coverage = NdvInventoryCoverage.empty();
+        inventoryScope = allLibraries ? null : new NdvInventoryCoverage(scope.startPoints());
         if (!allLibraries && scope.startPoints().isEmpty()) {
             return Collections.emptyList();
         }
@@ -232,6 +235,20 @@ final class NdvKnowledgeSource implements KnowledgeSourcePort, LibraryListingSou
             return coverage.covers(pathOf(resourceId));
         } catch (KnowledgeSourceException e) {
             return false;
+        }
+    }
+
+    /** Ob die Ressource im eingestellten Umfang der letzten Inventur liegt; alle Bibliotheken oder unbekannt: ja. */
+    @Override
+    public boolean withinInventoryScope(KnowledgeResourceId resourceId) {
+        NdvInventoryCoverage scope = inventoryScope;
+        if (scope == null) {
+            return true;
+        }
+        try {
+            return scope.covers(pathOf(resourceId));
+        } catch (KnowledgeSourceException e) {
+            return true;
         }
     }
 

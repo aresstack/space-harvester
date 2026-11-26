@@ -758,7 +758,19 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public boolean outsideScope(String pageId) {
         Set<String> current = inScope;
-        return restriction != null && current != null && !current.contains(pageId);
+        if (restriction != null) {
+            return current != null && !current.contains(pageId);
+        }
+        // Eine Partition mit Startpunkten (FTP, NDV): die Quelle kennt ihren Umfang selbst; unbekannt heißt „innen“.
+        if (port instanceof com.aresstack.enterpriseai.source.api.InventoryCoverageSource coverage) {
+            try {
+                KnowledgeResourceId resourceId = resourceIdOf(pageId);
+                return ownResource(resourceId.value()).isPresent() && !coverage.withinInventoryScope(resourceId);
+            } catch (SourceAccessException e) {
+                return false;
+            }
+        }
+        return false;
     }
 
     @Override

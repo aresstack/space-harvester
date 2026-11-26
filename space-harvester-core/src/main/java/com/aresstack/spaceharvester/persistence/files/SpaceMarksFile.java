@@ -96,6 +96,18 @@ public final class SpaceMarksFile {
         }
     }
 
+    /** Hebt diese Markierungen auf; schreibt die Datei höchstens einmal. */
+    public synchronized void removeAll(String sourceId, String spaceKey, java.util.Collection<String> pageIds) {
+        Set<String> ids = new LinkedHashSet<>(ids(sourceId, spaceKey));
+        boolean changed = false;
+        for (String pageId : pageIds) {
+            changed |= ids.remove(id(Objects.requireNonNull(pageId, "pageId")));
+        }
+        if (changed) {
+            store(sourceId, spaceKey, ids);
+        }
+    }
+
     private static String key(String sourceId, String spaceKey) {
         return Objects.requireNonNull(sourceId, "sourceId") + "/" + Objects.requireNonNull(spaceKey, "spaceKey");
     }

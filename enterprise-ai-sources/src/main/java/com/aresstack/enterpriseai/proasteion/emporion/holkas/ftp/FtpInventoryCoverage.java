@@ -15,13 +15,32 @@ import java.util.Locale;
 final class FtpInventoryCoverage {
 
     private final List<String> completeRoots;
+    /** Alle Startpunkte der Inventur; {@code null}, solange keine gelaufen ist (Umfang unbekannt). */
+    private final List<String> roots;
 
-    FtpInventoryCoverage(Collection<String> completeRoots) {
+    FtpInventoryCoverage(Collection<String> completeRoots, Collection<String> roots) {
         this.completeRoots = new ArrayList<String>(completeRoots);
+        this.roots = roots == null ? null : new ArrayList<String>(roots);
     }
 
     static FtpInventoryCoverage empty() {
-        return new FtpInventoryCoverage(Collections.<String>emptyList());
+        return new FtpInventoryCoverage(Collections.<String>emptyList(), null);
+    }
+
+    /**
+     * Ob {@code path} unter einem Startpunkt der letzten Inventur liegt, gleich ob vollständig erfasst. Ohne Inventur
+     * ist der Umfang unbekannt; dann gilt alles als im Umfang, damit nichts als „außerhalb“ entfernt wird.
+     */
+    boolean within(String path) {
+        if (roots == null) {
+            return true;
+        }
+        for (String root : roots) {
+            if (contains(root, path)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Ob {@code path} (ID-Pfad ohne {@code host:port/}) unter einem vollständig erfassten Startpunkt liegt. */

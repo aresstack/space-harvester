@@ -44,7 +44,12 @@ public class InventoryCollector {
      * Einen Umfang zu verkleinern, beweist keine Löschung (ADR 0037, Punkt 12).
      */
     boolean covers(String sourceId, String pageId) {
-        return !queries.outsideScope(sourceId, pageId) && queries.inventoryCovers(sourceId, pageId);
+        return !outsideScope(sourceId, pageId) && queries.inventoryCovers(sourceId, pageId);
+    }
+
+    /** Ob die Seite laut letzter Inventur außerhalb des eingestellten Umfangs liegt (Erwerbsgrund „Bestand“ fehlt). */
+    boolean outsideScope(String sourceId, String pageId) {
+        return queries.outsideScope(sourceId, pageId);
     }
 
     public Inventory collect(String sourceId, String spaceKey) {

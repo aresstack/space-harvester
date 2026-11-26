@@ -106,6 +106,16 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourc
         }
     }
 
+    /** Ob die Ressource unter einem Startpunkt der letzten Inventur liegt; ohne Inventur unbekannt, also ja. */
+    @Override
+    public boolean withinInventoryScope(KnowledgeResourceId resourceId) {
+        try {
+            return coverage.within(pathOf(resourceId));
+        } catch (KnowledgeSourceException e) {
+            return true;
+        }
+    }
+
     @Override
     public KnowledgeResourceId navigationResource(String nativePath) throws KnowledgeSourceException {
         return sessions.run(session -> {

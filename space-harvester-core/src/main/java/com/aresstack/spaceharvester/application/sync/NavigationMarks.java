@@ -23,6 +23,15 @@ public interface NavigationMarks {
         @Override
         public void mark(String sourceId, String spaceKey, Collection<String> pageIds) {
         }
+
+        @Override
+        public Set<String> unknown(String sourceId, String spaceKey, Set<String> withoutReason) {
+            return withoutReason;
+        }
+
+        @Override
+        public void forgetUnknown(String sourceId, String spaceKey, Collection<String> pageIds) {
+        }
     };
 
     /** Die über die Navigation erworbenen Seiten des Bereichs. */
@@ -30,4 +39,15 @@ public interface NavigationMarks {
 
     /** Merkt den Erwerbsgrund „Navigation“ für diese Seiten. */
     void mark(String sourceId, String spaceKey, Collection<String> pageIds);
+
+    /**
+     * Welche der Seiten {@code withoutReason} ihren Grund nur deshalb nicht zeigen, weil sie vor dem Merken der Gründe
+     * erworben wurden (Angelo 26.11.2026: Gruppe „Grund unbekannt“, nur auf ausdrückliches Ankreuzen bereinigt). Beim
+     * ersten Aufruf je Bereich wird festgehalten: dann gilt alles in {@code withoutReason} als unbekannt; später nur, was
+     * damals festgehalten wurde.
+     */
+    Set<String> unknown(String sourceId, String spaceKey, Set<String> withoutReason);
+
+    /** Vergisst bereinigte Seiten; kommen sie wieder, haben sie einen gemerkten Grund oder keinen. */
+    void forgetUnknown(String sourceId, String spaceKey, Collection<String> pageIds);
 }

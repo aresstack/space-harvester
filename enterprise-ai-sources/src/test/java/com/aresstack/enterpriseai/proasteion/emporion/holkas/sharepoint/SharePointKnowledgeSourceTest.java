@@ -269,6 +269,45 @@ public class SharePointKnowledgeSourceTest {
         }
     }
 
+    /**
+     * ADR 0042, point 5: the last batch carries the token of the last processed change as checkpoint; a listing from
+     * that checkpoint continues after it instead of the time window, and a foreign checkpoint falls back to the window.
+     */
+    @Test
+    public void aCheckpointContinuesAfterTheLastProcessedChangeToken() throws Exception {
+        SharePointKnowledgeSource source = source();
+        String list = "11111111-2222-3333-4444-555555555555";
+        String listApi = API + "lists(guid'" + list + "')";
+        json.put(API + "lists?$select=Id,Hidden,RootFolder/ServerRelativeUrl&$expand=RootFolder&$filter=BaseTemplate%20eq%20101",
+                "{\"d\":{\"results\":[{\"Id\":\"" + list + "\",\"Hidden\":false,\"RootFolder\":{\"ServerRelativeUrl\":\"/sites/team/Dokumente\"}}]}}");
+        posts.put(SITE + "/_api/contextinfo", "{\"d\":{\"GetContextWebInformation\":{\"FormDigestValue\":\"test-digest\"}}}");
+        json.put(listApi + "/items(1)?$select=FileSystemObjectType,File/Name,File/ServerRelativeUrl,File/TimeLastModified,File/Length,File/UIVersionLabel&$expand=File",
+                "{\"d\":{\"FileSystemObjectType\":0,\"File\":" + file("/sites/team/Dokumente/Eins.txt", 5) + "}}");
+        String token = "1;3;" + list + ";639000000000000001;1";
+        String event = "{\"__metadata\":{\"type\":\"SP.ChangeItem\"},\"ChangeType\":2,\"ItemId\":1"
+                + ",\"ListId\":\"" + list + "\",\"ChangeToken\":{\"StringValue\":\"" + token + "\"}}";
+        changeLog = body -> body.contains(token + "\"") ? "{\"d\":{\"results\":[]}}"
+                : "{\"d\":{\"results\":[" + event + "]}}";
+        String partition = source.sourceId().value();
+
+        com.aresstack.enterpriseai.source.api.PartitionResources first =
+                source.changedResources(partition, java.time.Duration.ofHours(1), "", 10);
+        assertEquals("Eins.txt", first.resources().get(0).title());
+        assertTrue(first.complete());
+        assertFalse(first.checkpoint().isEmpty());
+
+        postBodies.clear();
+        com.aresstack.enterpriseai.source.api.PartitionResources next =
+                source.changedResourcesSince(partition, first.checkpoint(), java.time.Duration.ofHours(1), "", 10);
+        assertTrue(next.resources().isEmpty());
+        assertTrue(postBodies.stream().anyMatch(body -> body.contains("ChangeTokenStart") && body.contains(token)));
+        assertEquals(first.checkpoint(), next.checkpoint());
+
+        com.aresstack.enterpriseai.source.api.PartitionResources foreign =
+                source.changedResourcesSince(partition, "fremd", java.time.Duration.ofHours(1), "", 10);
+        assertEquals("Eins.txt", foreign.resources().get(0).title());
+    }
+
     @Test
     public void usesResourcePathForSpecialNames() throws Exception {
         SharePointKnowledgeSource source = source();
