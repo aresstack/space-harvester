@@ -298,13 +298,14 @@ class QueryConfiguration {
     AcquisitionScheduler acquisitionScheduler(SourceCatalog catalog, ObjectProvider<PageCacheReader> cache,
                                               PageQueries pages, PageFreshness freshness,
                                               ObjectProvider<PageCacheFill> fill, LiveConfiguration live,
-                                              @Value("${space-harvester.query.max-tree-nodes:50000}") int maxTreeNodes) {
+                                              @Value("${space-harvester.query.max-tree-nodes:50000}") int maxTreeNodes,
+                                              ObjectProvider<JobsProperties> jobs) {
         PageQueries technical = new PageQueries(catalog, cache.getIfAvailable(PageCacheReader::unavailable),
                 new AccessGuard((context, scope, kind) -> context == BACKGROUND ? AccessDecision.ALLOW
                         : AccessDecision.DENY), freshness, fill.getIfAvailable(() -> PageCacheFill.NONE), maxTreeNodes,
                 live::freshnessFor, Clock.systemUTC());
         AcquisitionScheduler.Limits defaults = AcquisitionScheduler.Limits.DEFAULT;
-        return new AcquisitionScheduler((caller, key, background) -> (caller == BACKGROUND ? technical : pages)
+        AcquisitionScheduler scheduler = new AcquisitionScheduler((caller, key, background) -> (caller == BACKGROUND ? technical : pages)
                 .acquire(caller, key, background),
                 new AcquisitionScheduler.Limits(defaults.foreground(), live.current().sync().backgroundParallelism(),
                         defaults.perSource(), defaults.capacity()), null, AcquisitionScheduler.DEFAULT_RESUME_DELAY,
@@ -317,6 +318,12 @@ class QueryConfiguration {
                     }
                     return true;
                 });
+        // Vorübergehend gescheiterte Seiten seitenweise erneut anfordern, nach space-harvester.jobs.retry.* (wie die App).
+        JobsProperties limits = jobs.getIfAvailable();
+        com.aresstack.spaceharvester.application.jobs.RetrySettings retry = limits == null
+                ? com.aresstack.spaceharvester.application.jobs.RetrySettings.DEFAULT : limits.toLimits().retry();
+        scheduler.retry(() -> retry);
+        return scheduler;
     }
 
     /**
