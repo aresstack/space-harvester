@@ -74,6 +74,8 @@ class ChatMarkdownBubbleTest {
             footer.setTimestamp(1700000000000L);
             javax.swing.JButton qr = new javax.swing.JButton("QR");
             footer.setQrAction(qr);
+            javax.swing.JButton copy = new javax.swing.JButton("Kopie");
+            footer.setCopyAction(copy);
             javax.swing.JPanel links = new javax.swing.JPanel();
             links.setPreferredSize(new java.awt.Dimension(300, 60));
             footer.setSources(links);
@@ -90,6 +92,8 @@ class ChatMarkdownBubbleTest {
                 assertThat(controls.y + controls.height).isLessThanOrEqualTo(footer.getHeight());
                 assertThat(qr.getParent().getComponent(qr.getParent().getComponentZOrder(qr) - 1))
                         .isInstanceOf(MessageTimestamp.class);
+                // Der Kopierknopf steht ganz außen, hinter Uhrzeit und QR-Knopf.
+                assertThat(qr.getParent().getComponent(qr.getParent().getComponentCount() - 1)).isSameAs(copy);
             }
         });
     }

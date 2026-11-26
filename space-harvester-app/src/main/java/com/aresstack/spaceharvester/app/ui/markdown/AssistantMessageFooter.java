@@ -20,6 +20,7 @@ final class AssistantMessageFooter extends JPanel implements WidthAwareHeight {
     private final MessageTimestamp timestamp;
     private final javax.swing.JLabel failure = new javax.swing.JLabel("Fehler");
     private JComponent qr;
+    private JComponent copy;
     private JComponent sources;
 
     AssistantMessageFooter(java.awt.Color foreground) {
@@ -54,8 +55,24 @@ final class AssistantMessageFooter extends JPanel implements WidthAwareHeight {
             controls.remove(qr);
         }
         qr = accessory;
+        order();
+    }
+
+    /** Der Kopierknopf: immer ganz rechts in der Reihe, hinter Uhrzeit und QR-Knopf, wie bei der Frage. */
+    void setCopyAction(JComponent accessory) {
+        if (copy != null) {
+            controls.remove(copy);
+        }
+        copy = accessory;
+        order();
+    }
+
+    private void order() {
         if (qr != null) {
             controls.add(qr);
+        }
+        if (copy != null) {
+            controls.add(copy);
         }
         refresh();
     }

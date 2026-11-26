@@ -39,6 +39,8 @@ public final class CopyButton extends JButton {
     public static final String COPIED = "Kopiert";
     /** So lange bleibt die Rückmeldung stehen. */
     public static final int FEEDBACK_MILLIS = 1500;
+    /** Kantenlänge in engen Zeilen, wie {@code IconButton.compact()}. */
+    static final int COMPACT_SIZE = 22;
 
     private final Supplier<String> text;
     /** Holt den Text selbst, etwa im Hintergrund, und gibt ihn an {@link #deliver}; {@code null} ohne. */
@@ -52,6 +54,10 @@ public final class CopyButton extends JButton {
     private boolean copied;
     /** Den Fokus zeigt der Kreis nur, wenn er über die Tastatur kam; nach einem Klick nicht. */
     private final KeyboardFocusRing focusRing = KeyboardFocusRing.install(this);
+    /** Kantenlänge; {@link #compact()} verkleinert sie für enge Zeilen. */
+    private int size = RoundHover.SIZE;
+    /** Auf farbigem Grund ({@link #on}): Hover und Haken in der Schriftfarbe statt heller Kreis und Grün. */
+    private boolean tinted;
 
     /** Kopiert {@code text.get()} in die Zwischenablage des Systems. */
     public CopyButton(Supplier<String> text) {
@@ -99,6 +105,24 @@ public final class CopyButton extends JButton {
         Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         reset.setRepeats(false);
         addActionListener(e -> copy());
+    }
+
+    /** Für enge Zeilen wie die Knopfreihe einer Chat-Nachricht: so groß wie ein kompakter Symbolknopf. */
+    public CopyButton compact() {
+        size = COMPACT_SIZE;
+        revalidate();
+        return this;
+    }
+
+    /**
+     * Für farbigen Grund, etwa die Blase einer Chat-Nachricht: Symbol und Haken in {@code ink}, beim Darüberfahren
+     * eine durchscheinende Fläche in derselben Farbe statt des hellen Kreises, der ein weißes Symbol verschluckte.
+     */
+    public CopyButton on(Color ink) {
+        setForeground(Objects.requireNonNull(ink, "ink"));
+        tinted = true;
+        repaint();
+        return this;
     }
 
     private void copy() {
@@ -170,7 +194,20 @@ public final class CopyButton extends JButton {
     @Override
     protected void paintComponent(Graphics graphics) {
         if (isEnabled() && (getModel().isRollover() || getModel().isPressed() || focusRing.shown())) {
-            RoundHover.paint(graphics, 0, 0, getWidth(), getHeight(), getModel().isPressed());
+            if (tinted) {
+                Graphics2D g = (Graphics2D) graphics.create();
+                try {
+                    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    Color ink = getForeground();
+                    g.setColor(new Color(ink.getRed(), ink.getGreen(), ink.getBlue(),
+                            getModel().isPressed() ? 70 : 36));
+                    g.fillOval(0, 0, getWidth() - 1, getHeight() - 1);
+                } finally {
+                    g.dispose();
+                }
+            } else {
+                RoundHover.paint(graphics, 0, 0, getWidth(), getHeight(), getModel().isPressed());
+            }
         }
         super.paintComponent(graphics);
     }
@@ -182,7 +219,7 @@ public final class CopyButton extends JButton {
 
     @Override
     public Dimension getPreferredSize() {
-        return new Dimension(RoundHover.SIZE, RoundHover.SIZE);
+        return new Dimension(size, size);
     }
 
     @Override
@@ -225,7 +262,7 @@ public final class CopyButton extends JButton {
                 g.translate(x, y);
                 g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                 if (c instanceof CopyButton button && button.copied) {
-                    g.setColor(Comic.GREEN);
+                    g.setColor(button.tinted ? button.getForeground() : Comic.GREEN);
                     Path2D tick = new Path2D.Double();
                     tick.moveTo(3, 8.5);
                     tick.lineTo(6.5, 12);

@@ -4,7 +4,6 @@ import com.aresstack.spaceharvester.app.ui.controls.Cursors;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleMessageRow;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubblePalette;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleSide;
-import com.aresstack.enterpriseai.ui.comic.bubble.MessageCopyButton;
 import com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton;
 import com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel;
 import com.aresstack.spaceharvester.app.ui.markdown.AssistantMarkdownMessage;
@@ -2805,7 +2804,7 @@ public final class ChatPanel extends JPanel {
         AssistantMarkdownMessage bubble = new AssistantMarkdownMessage(view, theme.getMutedForeground());
         bubble.setTimestamp(at);
         // Read the current Markdown when an action is invoked, including a streamed response.
-        bubble.setActions(answerButtons(theme.getMutedForeground(), view::getMarkdown, buttons -> { }));
+        bubble.setCopyAction(copyAction(theme.getMutedForeground(), view::getMarkdown));
         bubble.setQrAction(qrAction(theme.getMutedForeground(), ASSISTANT, view::getMarkdown));
         emptyNote.setVisible(false);
         transcript.add(bubble);
@@ -2819,40 +2818,31 @@ public final class ChatPanel extends JPanel {
         return bubble;
     }
 
-    /** Keep the copy action, timestamp and QR action together at the right edge of a user message. */
+    /**
+     * Uhrzeit, QR-Knopf und ganz außen der Kopierknopf: dieselbe Reihenfolge bei Frage und Antwort (Angelo,
+     * 26.11.2026).
+     */
     private JComponent userMessageActions(Color foreground, String name, java.util.function.Supplier<String> text, long at) {
-        JPanel controls = copyActions(foreground, text);
+        JPanel controls = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 3, 0));
+        controls.setOpaque(false);
         com.aresstack.spaceharvester.app.ui.markdown.MessageTimestamp timestamp =
                 new com.aresstack.spaceharvester.app.ui.markdown.MessageTimestamp(messageInk(foreground));
         timestamp.setTime(at);
         controls.add(timestamp);
         controls.add(qrAction(foreground, name, text));
+        controls.add(copyAction(foreground, text));
         return controls;
     }
 
-    private JPanel copyActions(Color foreground, java.util.function.Supplier<String> text) {
-        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 3, 0));
-        buttons.setOpaque(false);
-        MessageCopyButton copy = new MessageCopyButton(messageInk(foreground), text, value -> clipboard.accept(value));
-        copy.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
-        buttons.add(copy);
-        return buttons;
-    }
-
-    /**
-     * Die Knöpfe unter einer Antwort, linksbündig am Textanfang (Angelo, 26.11.2026). Der Kopierknopf hält rechts
-     * neben seinem Symbol Platz für „Kopiert“ frei; deshalb steht er als letzter der Knöpfe, sein freier Platz trennt
-     * sie von Uhrzeit und QR-Knopf, und die Reihe beginnt ohne Lücke.
-     */
-    private JPanel answerButtons(Color foreground, java.util.function.Supplier<String> text,
-            java.util.function.Consumer<JPanel> before) {
-        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 3, 0));
-        buttons.setOpaque(false);
-        before.accept(buttons);
-        MessageCopyButton copy = new MessageCopyButton(messageInk(foreground), text, value -> clipboard.accept(value));
-        copy.setHorizontalAlignment(javax.swing.SwingConstants.LEFT);
-        buttons.add(copy);
-        return buttons;
+    /** Der Kopierknopf einer Nachricht: das Kopieren-Symbol der App (zwei Blätter), klein und in der Tinte der Zeile. */
+    private com.aresstack.spaceharvester.app.ui.controls.CopyButton copyAction(Color foreground,
+            java.util.function.Supplier<String> text) {
+        com.aresstack.spaceharvester.app.ui.controls.CopyButton copy =
+                new com.aresstack.spaceharvester.app.ui.controls.CopyButton(text, value -> clipboard.accept(value))
+                        .compact().on(messageInk(foreground));
+        copy.setName("transcript.copyMessage");
+        copy.setRequestFocusEnabled(false);
+        return copy;
     }
 
     private MessageQrButton qrAction(Color foreground, String name, java.util.function.Supplier<String> text) {
@@ -2886,11 +2876,16 @@ public final class ChatPanel extends JPanel {
             status.setText("Chat-ID kopiert");
         });
         return List.of(exportMenu("Exportieren", snapshot, null,
-                        com.aresstack.spaceharvester.app.chat.ChatExport.Scope.CHAT),
-                exportMenu("Quellen exportieren", snapshot, null,
-                        com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES), id);
+                        com.aresstack.spaceharvester.app.chat.ChatExport.Scope.CHAT), id);
     }
 
+    /** Untereintrag des Exports: nur die Quellen, als Markdown (Angelo, 26.11.2026: kein eigener Knopf, ein Format). */
+    static final String SOURCES_ONLY = "Nur Quellen exportieren";
+
+    /**
+     * Die Formate für Chat oder Antwort und darunter, abgesetzt, „Nur Quellen exportieren“ (Markdown). Der Eintrag
+     * ist aus, wenn es keine Quellen gibt.
+     */
     private javax.swing.JMenu exportMenu(String label, ChatRecord snapshot, ChatRecord.Message answer,
             com.aresstack.spaceharvester.app.chat.ChatExport.Scope scope) {
         javax.swing.JMenu menu = new javax.swing.JMenu(label);
@@ -2900,20 +2895,24 @@ public final class ChatPanel extends JPanel {
             item.addActionListener(e -> export(snapshot, answer, scope, format));
             menu.add(item);
         }
-        menu.setEnabled(scope == com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES
-                ? !com.aresstack.spaceharvester.app.chat.ChatExport.sources(answer == null
-                        ? snapshot.messages() : List.of(answer)).isEmpty() : !snapshot.isEmpty());
+        menu.addSeparator();
+        JMenuItem sources = new JMenuItem(SOURCES_ONLY);
+        sources.setEnabled(!com.aresstack.spaceharvester.app.chat.ChatExport.sources(answer == null
+                ? snapshot.messages() : List.of(answer)).isEmpty());
+        sources.addActionListener(e -> export(snapshot, answer,
+                com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES,
+                com.aresstack.spaceharvester.app.chat.ChatExport.Format.MARKDOWN));
+        menu.add(sources);
+        menu.setEnabled(!snapshot.isEmpty());
         return menu;
     }
 
     private void answerActions(AssistantMarkdownMessage message, ChatRecord snapshot, ChatRecord.Message answer) {
-        Color ink = MarkdownTheme.forSurface(transcriptScroll.getViewport().getBackground()).getMutedForeground();
-        message.setActions(answerButtons(ink, message.view()::getMarkdown, buttons -> {
-            addExportButton(buttons, Glyph.EXPORT, "Antwort exportieren", snapshot, answer,
-                    com.aresstack.spaceharvester.app.chat.ChatExport.Scope.ANSWER);
-            addExportButton(buttons, Glyph.SOURCES_EXPORT, "Quellen exportieren", snapshot, answer,
-                    com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES);
-        }));
+        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 3, 0));
+        buttons.setOpaque(false);
+        addExportButton(buttons, Glyph.EXPORT, "Antwort exportieren", snapshot, answer,
+                com.aresstack.spaceharvester.app.chat.ChatExport.Scope.ANSWER);
+        message.setActions(buttons);
     }
 
     private void addExportButton(JPanel buttons, javax.swing.Icon icon, String label, ChatRecord snapshot,
