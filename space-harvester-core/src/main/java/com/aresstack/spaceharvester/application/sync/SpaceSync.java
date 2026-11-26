@@ -35,6 +35,8 @@ public class SpaceSync {
     private final Function<String, Duration> withheldRetention;
     /** Was indexiert wird; jeder Lauf liest die Markierungen neu. */
     private volatile IndexMarks marks = IndexMarks.NONE;
+    /** Was ausgeschlossen ist; jeder Lauf fragt neu. */
+    private volatile Exclusions exclusions = Exclusions.NONE;
 
     public SpaceSync(SourceQueries queries, SyncBaselineStore store, Clock clock) {
         this(queries, store, clock, DEFAULT_WITHHELD_RETENTION);
@@ -84,6 +86,14 @@ public class SpaceSync {
         this.marks = Objects.requireNonNull(marks, "marks");
     }
 
+    /**
+     * Ausgeschlossenes ({@link Exclusions}) lädt kein Lauf, auch nicht unter einer Indexmarke; fehlt es in der
+     * Inventur, beweist das nichts ({@link PageChange.Kind#NOT_SEEN}). Der Ausschluss löscht nichts (ADR 0037).
+     */
+    public void exclusions(Exclusions exclusions) {
+        this.exclusions = Objects.requireNonNull(exclusions, "exclusions");
+    }
+
     static Function<String, Duration> fixed(Duration withheldRetention) {
         Objects.requireNonNull(withheldRetention, "withheldRetention");
         if (withheldRetention.isNegative()) {
@@ -127,22 +137,32 @@ public class SpaceSync {
         if (!plan.inventory().confirmed()) {
             return plan;
         }
-        java.util.function.Predicate<String> covered = pageId -> collector.covers(sourceId, pageId);
-        plan = indexed(plan.withinInventoryCoverage(covered));
+        Map<String, String> parents = parents(plan.inventory());
+        java.util.function.Predicate<String> excluded = exclusions.any(sourceId)
+                ? exclusions.within(sourceId, spaceKey, parents::get) : pageId -> false;
+        java.util.function.Predicate<String> covered = pageId -> collector.covers(sourceId, pageId)
+                && !excluded.test(pageId);
+        // Ausschluss nach den Indexmarken, sonst lädt eine Marke unter einem Ausschluss doch (ADR 0037, Punkt 15).
+        plan = indexed(plan.withinInventoryCoverage(covered), parents);
+        if (exclusions.any(sourceId)) {
+            plan = plan.withLoadingLimitedTo(excluded.negate());
+        }
         Map<String, RemovalCheck.Result> removals = removalCheck.verify(plan);
         SyncPlan checked = removals.isEmpty() ? plan : plan.withRemovals(removals);
         return checked.withPurgesDue(clock.instant().minus(retention(sourceId)), covered);
     }
 
     /** Lädt die Seiten unter markierten Wurzeln vollständig; die Vorfahren kommen aus der Inventur. */
-    private SyncPlan indexed(SyncPlan plan) {
+    private SyncPlan indexed(SyncPlan plan, Map<String, String> parents) {
         Set<String> roots = marks.roots(plan.inventory().sourceId(), plan.inventory().spaceKey());
-        if (roots.isEmpty()) {
-            return plan;
-        }
+        return roots.isEmpty() ? plan : plan.withIndexed(IndexScope.of(roots, parents::get));
+    }
+
+    /** Elternseite je Seite laut Inventur. */
+    private static Map<String, String> parents(Inventory inventory) {
         Map<String, String> parents = new java.util.HashMap<>();
-        plan.inventory().pages().forEach(entry -> parents.put(entry.page().pageId(), entry.page().parentPageId()));
-        return plan.withIndexed(IndexScope.of(roots, parents::get));
+        inventory.pages().forEach(entry -> parents.put(entry.page().pageId(), entry.page().parentPageId()));
+        return parents;
     }
 
     /**
