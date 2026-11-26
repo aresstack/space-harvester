@@ -2805,7 +2805,7 @@ public final class ChatPanel extends JPanel {
         AssistantMarkdownMessage bubble = new AssistantMarkdownMessage(view, theme.getMutedForeground());
         bubble.setTimestamp(at);
         // Read the current Markdown when an action is invoked, including a streamed response.
-        bubble.setActions(copyActions(theme.getMutedForeground(), view::getMarkdown));
+        bubble.setActions(answerButtons(theme.getMutedForeground(), view::getMarkdown, buttons -> { }));
         bubble.setQrAction(qrAction(theme.getMutedForeground(), ASSISTANT, view::getMarkdown));
         emptyNote.setVisible(false);
         transcript.add(bubble);
@@ -2835,6 +2835,22 @@ public final class ChatPanel extends JPanel {
         buttons.setOpaque(false);
         MessageCopyButton copy = new MessageCopyButton(messageInk(foreground), text, value -> clipboard.accept(value));
         copy.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
+        buttons.add(copy);
+        return buttons;
+    }
+
+    /**
+     * Die Knöpfe unter einer Antwort, linksbündig am Textanfang (Angelo, 26.11.2026). Der Kopierknopf hält rechts
+     * neben seinem Symbol Platz für „Kopiert“ frei; deshalb steht er als letzter der Knöpfe, sein freier Platz trennt
+     * sie von Uhrzeit und QR-Knopf, und die Reihe beginnt ohne Lücke.
+     */
+    private JPanel answerButtons(Color foreground, java.util.function.Supplier<String> text,
+            java.util.function.Consumer<JPanel> before) {
+        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 3, 0));
+        buttons.setOpaque(false);
+        before.accept(buttons);
+        MessageCopyButton copy = new MessageCopyButton(messageInk(foreground), text, value -> clipboard.accept(value));
+        copy.setHorizontalAlignment(javax.swing.SwingConstants.LEFT);
         buttons.add(copy);
         return buttons;
     }
@@ -2892,12 +2908,12 @@ public final class ChatPanel extends JPanel {
 
     private void answerActions(AssistantMarkdownMessage message, ChatRecord snapshot, ChatRecord.Message answer) {
         Color ink = MarkdownTheme.forSurface(transcriptScroll.getViewport().getBackground()).getMutedForeground();
-        JPanel buttons = copyActions(ink, message.view()::getMarkdown);
-        addExportButton(buttons, Glyph.EXPORT, "Antwort exportieren", snapshot, answer,
-                com.aresstack.spaceharvester.app.chat.ChatExport.Scope.ANSWER);
-        addExportButton(buttons, Glyph.SOURCES_EXPORT, "Quellen exportieren", snapshot, answer,
-                com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES);
-        message.setActions(buttons);
+        message.setActions(answerButtons(ink, message.view()::getMarkdown, buttons -> {
+            addExportButton(buttons, Glyph.EXPORT, "Antwort exportieren", snapshot, answer,
+                    com.aresstack.spaceharvester.app.chat.ChatExport.Scope.ANSWER);
+            addExportButton(buttons, Glyph.SOURCES_EXPORT, "Quellen exportieren", snapshot, answer,
+                    com.aresstack.spaceharvester.app.chat.ChatExport.Scope.SOURCES);
+        }));
     }
 
     private void addExportButton(JPanel buttons, javax.swing.Icon icon, String label, ChatRecord snapshot,

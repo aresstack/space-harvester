@@ -64,7 +64,7 @@ class ChatMarkdownBubbleTest {
     }
 
     @Test
-    void footerReservesRightEdgeForActionsAndWrapsSourcesWithoutOverlap() throws Exception {
+    void footerPutsActionsLeftUnderTheSourcesAtTheStartOfTheAnswer() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             MarkdownTheme theme = MarkdownTheme.forSurface(java.awt.Color.WHITE);
             AssistantMessageFooter footer = new AssistantMessageFooter(theme.getMutedForeground());
@@ -81,10 +81,13 @@ class ChatMarkdownBubbleTest {
                 footer.setSize(width, footer.preferredHeightForWidth(width));
                 footer.doLayout();
                 java.awt.Rectangle controls = qr.getParent().getBounds();
-                assertThat(controls.x + controls.width).isEqualTo(width);
+                // Angelo, 26.11.2026: Knöpfe und Uhrzeit beginnen links am Textanfang, nie allein am rechten Rand.
+                assertThat(controls.x).isLessThanOrEqualTo(0);
                 assertThat(links.getBounds().intersects(controls)).isFalse();
                 assertThat(links.getX()).isZero();
-                assertThat(links.getY() + links.getHeight()).isLessThanOrEqualTo(footer.getHeight());
+                assertThat(links.getWidth()).isEqualTo(width);
+                assertThat(controls.y).isGreaterThanOrEqualTo(links.getY() + links.getHeight());
+                assertThat(controls.y + controls.height).isLessThanOrEqualTo(footer.getHeight());
                 assertThat(qr.getParent().getComponent(qr.getParent().getComponentZOrder(qr) - 1))
                         .isInstanceOf(MessageTimestamp.class);
             }
