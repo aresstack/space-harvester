@@ -142,9 +142,7 @@ class QueryConfiguration {
         }
         return new FindingCataloging(catalog, access, new LuceneFindingStore(available),
                 gaps -> fill.ifAvailable(background -> background.offer(gaps)), Clock.systemUTC(),
-                sourceId -> live.current().sync().override(sourceId)
-                        .effectivePrefetch(live.current().search().prefetchHits())
-                        && live.current().syncFor(sourceId).backgroundFill());
+                sourceId -> live.current().syncFor(sourceId).backgroundFill());
     }
 
     /** Die Titel- und Metadatensuche im Index, etwa für die Confluence-kompatible Fassade. */
