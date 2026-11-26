@@ -745,8 +745,9 @@ public final class EvidencePopup extends JPopupMenu {
             panel.setOpaque(false);
             panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
             panel.setAlignmentX(LEFT_ALIGNMENT);
-            String said = sentenceText(sentence, failed);
-            String found = sentenceOf(sentence);
+            boolean program = com.aresstack.spaceharvester.app.ui.content.StatementProvenance.program(item.statement());
+            String said = program ? hypothesisText(sentence, failed) : sentenceText(sentence, failed);
+            String found = program ? said : sentenceOf(sentence);
             textColor = said.equals(found) ? Comic.INK : Comic.MUTED;
             text = Comic.wrapped(said, textColor, 13f);
             text.setAlignmentX(LEFT_ALIGNMENT);
@@ -1184,6 +1185,24 @@ public final class EvidencePopup extends JPopupMenu {
         String found = sentenceOf(sentence);
         return found == null ? NO_SENTENCE : found;
     }
+
+    /**
+     * Der Wortlaut einer Programmaussage: die Hypothese der Programmanalyse, als solche gekennzeichnet (ADR 0032,
+     * Fortschreibung 26.11.2026); sie steht nicht im Lesetext, ihre Stelle ist die Codestelle.
+     */
+    static String hypothesisText(SentenceText sentence, boolean failed) {
+        if (failed) {
+            return UNREADABLE;
+        }
+        if (sentence == null) {
+            return NO_ACCESS;
+        }
+        return sentence.simplified() == null || sentence.simplified().isBlank() ? NO_SENTENCE
+                : sentence.simplified().strip() + " (" + PROGRAM_HYPOTHESIS + ")";
+    }
+
+    /** Kennzeichen hinter dem Wortlaut einer Programmaussage. */
+    static final String PROGRAM_HYPOTHESIS = "Hypothese der Programmanalyse, Ist-Zustand";
 
     private static String sentenceOf(SentenceText sentence) {
         if (sentence != null && sentence.original() != null && !sentence.original().isBlank()) {

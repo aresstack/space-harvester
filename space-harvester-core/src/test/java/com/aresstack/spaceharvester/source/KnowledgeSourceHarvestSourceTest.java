@@ -308,6 +308,57 @@ class KnowledgeSourceHarvestSourceTest {
     }
 
     /** Nur {@code discover} und {@code load}: ohne Suche, ohne Partitionen. */
+    /** Ob das Fehlen in der Inventur zählt, entscheidet die Quelle selbst nach ihrem tatsächlichen Ergebnis (ADR 0037 P13). */
+    @Test
+    void inventoryCoverageComesFromTheSourceAndOnlyForItsOwnResources() {
+        Covering port = new Covering(Set.of("ftp:localhost:21/HLQ.SRC(A)"));
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("hlq", "ftp", "HLQ", port);
+
+        assertThat(source.inventoryCovers(pageId("ftp:localhost:21/HLQ.SRC(A)"))).isTrue();
+        assertThat(source.inventoryCovers(pageId("ftp:localhost:21/HLQ.SRC(B)"))).isFalse();
+        assertThat(source.inventoryCovers(pageId("ftp:otherhost:21/HLQ.SRC(A)"))).isFalse();
+        assertThat(source.inventoryCovers("kein-base64-!")).isFalse();
+    }
+
+    private static String pageId(String resourceId) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(resourceId.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static final class Covering implements KnowledgeSourcePort,
+            com.aresstack.enterpriseai.source.api.InventoryCoverageSource {
+
+        private final Set<String> covered;
+
+        Covering(Set<String> covered) {
+            this.covered = covered;
+        }
+
+        @Override
+        public boolean inventoryCovers(KnowledgeResourceId resourceId) {
+            return covered.contains(resourceId.value());
+        }
+
+        @Override
+        public SourceAddress sourceId() {
+            return SourceAddress.of("ftp", "localhost:21");
+        }
+
+        @Override
+        public List<KnowledgeResource> discover(SourceScope scope) {
+            return List.of();
+        }
+
+        @Override
+        public KnowledgeDocument load(KnowledgeResourceId resourceId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<SourceLink> discoverLinks(KnowledgeResourceId resourceId) {
+            return List.of();
+        }
+    }
+
     private static class WithoutSearch implements KnowledgeSourcePort {
 
         private final InMemoryKnowledgeSource notes;

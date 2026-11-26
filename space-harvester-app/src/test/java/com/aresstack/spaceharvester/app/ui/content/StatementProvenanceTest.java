@@ -82,6 +82,43 @@ class StatementProvenanceTest {
         assertThat(StatementProvenance.reason("NEU_X")).isEqualTo("NEU_X");
     }
 
+    @Test
+    void aProgramStatementCarriesItsInsightLevelAndIsNeverConfirmedOnStaleEvidence() {
+        var program = com.aresstack.spaceharvester.application.assets.DocumentKey.page(
+                new com.aresstack.spaceharvester.application.snapshot.PageKey("ftp", "ANTRAG01"));
+        var copybook = com.aresstack.spaceharvester.application.assets.DocumentKey.page(
+                new com.aresstack.spaceharvester.application.snapshot.PageKey("ftp", "ANTRAGCP"));
+        var site = new com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence.CodeSite(program,
+                "p1", 120, 121);
+        var evidence = new com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence(program, "p1",
+                List.of(site, new com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence.CodeSite(
+                        copybook, "c1", 3, 3)),
+                List.of(new com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence.ParserFact(
+                        "CONTROL", "IF KZ-STATUS = 'A'", 0, 120, 120)),
+                List.of(com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence.Dependency.resolved(
+                                "ANTRAGCP", copybook, "c1"),
+                        com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence.Dependency.missing(
+                                "FEHLT")), "cobol-program@5");
+        var derivation = ParsedStatements.Derivation.programm("Der Sachbearbeiter prüft den Antrag.", evidence);
+        var open = statement(ParsedStatements.Quality.PLAUSIBLE, ParsedStatements.Review.UNREVIEWED)
+                .withDerivation(derivation);
+        var confirmed = statement(ParsedStatements.Quality.PLAUSIBLE, ParsedStatements.Review.CONFIRMED)
+                .withDerivation(derivation);
+
+        assertThat(StatementProvenance.line(open, null, false))
+                .isEqualTo("Hypothese · Programmanalyse (KI-Hypothese, Ist-Zustand) · nicht geprüft");
+        assertThat(StatementProvenance.marker(confirmed, false)).isEqualTo("von Hand bestätigt");
+        assertThat(StatementProvenance.marker(confirmed, true)).isEqualTo("Hypothese, Bestätigung veraltet");
+        assertThat(StatementProvenance.details(confirmed, null, null, true))
+                .contains("Erkenntnisebene: Hypothese, Bestätigung veraltet")
+                .contains("Bezug: Ist-Zustand des Programms, keine geltende Soll-Regel")
+                .contains("Hypothese: „Der Sachbearbeiter prüft den Antrag.“")
+                .contains("Quellstellen: ANTRAG01 Zeilen 120–121; ANTRAGCP Zeile 3")
+                .contains("Parserfakt (CONTROL, Zeile 120): „IF KZ-STATUS = 'A'“")
+                .contains("Abhängigkeiten: ANTRAGCP, FEHLT (nicht gefunden)")
+                .contains("Programmstand: p1 · Programmanalyse: cobol-program@5");
+    }
+
     private static ParsedStatements.Statement statement(ParsedStatements.Quality quality,
                                                         ParsedStatements.Review review) {
         return new ParsedStatements.Statement("wiki/1@h#s0.v1", 0, 0, 5, "prüft", "prüfen",

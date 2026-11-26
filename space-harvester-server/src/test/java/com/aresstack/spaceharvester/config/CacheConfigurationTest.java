@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobStore;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
@@ -13,6 +14,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import java.nio.file.Path;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -20,8 +22,11 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 /** Der Seiten-Cache entsteht nur mit konfiguriertem Verzeichnis und gibt seine Sperre beim Herunterfahren frei. */
 class CacheConfigurationTest {
 
+    /** Den Textprojektor stellt im Dienst die AssetConfiguration bereit (mit den Extraktionseinstellungen). */
+    private static final PageTextProjector NO_TEXT = snapshot -> Optional.empty();
+
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
-            .withUserConfiguration(CacheConfiguration.class);
+            .withUserConfiguration(CacheConfiguration.class).withBean(PageTextProjector.class, () -> NO_TEXT);
 
     @TempDir
     Path directory;
@@ -58,10 +63,12 @@ class CacheConfigurationTest {
     void withDirectoryJobsAreStoredInLucene() {
         // Reihenfolge wie beim Komponentenscan: CacheConfiguration vor JobsConfiguration.
         new ApplicationContextRunner().withUserConfiguration(CacheConfiguration.class, JobsConfiguration.class)
+                .withBean(PageTextProjector.class, () -> NO_TEXT)
                 .withPropertyValues("space-harvester.cache.directory=" + directory)
                 .run(context -> assertThat(context).hasSingleBean(JobStore.class)
                         .getBean(JobStore.class).isInstanceOf(LuceneJobStore.class));
         new ApplicationContextRunner().withUserConfiguration(CacheConfiguration.class, JobsConfiguration.class)
+                .withBean(PageTextProjector.class, () -> NO_TEXT)
                 .run(context -> assertThat(context).getBean(JobStore.class).isInstanceOf(InMemoryJobStore.class));
     }
 

@@ -17,14 +17,14 @@ import java.util.stream.Stream;
  * {@link ExtractionStore}. Ohne Größengrenze; es gelten die Schutzgrenzen ({@link ExtractionLimits}).
  *
  * <p>Für die heutigen Verbraucher (Volltextindex, Export, REST) entsteht daraus ein {@link AssetText} unter dieser
- * Extraktion, höchstens {@code maxTextChars} Zeichen lang und dann als gekürzt markiert, bis sie abschnittsweise lesen
- * (AP4). Eine Extraktion an einer vorübergehenden Grenze (Zeit, Platz) wird nicht abgelegt, damit ein späterer Lauf
+ * Extraktion, vollständig; nur wer ausdrücklich ein Zeichenbudget übergibt, bekommt einen gekürzten und als gekürzt
+ * markierten Text (F39-10: keine feste Längengrenze mehr). Eine Extraktion an einer vorübergehenden Grenze (Zeit, Platz) wird nicht abgelegt, damit ein späterer Lauf
  * sie erneut versucht; jede andere bleibt samt Status liegen und wird nicht bei jeder Ernte erneut gelesen.
  */
 public final class DocumentExtractions {
 
-    /** So viele Zeichen führt der Volltextindex je Dokument, bis AP4 abschnittsweise liest. */
-    public static final int DEFAULT_MAX_TEXT_CHARS = 1_000_000;
+    /** Ohne Zeichenbudget: der ganze Text (F39-10). */
+    private static final int UNBOUNDED = Integer.MAX_VALUE;
     private static final String PARAGRAPH_BREAK = "\n\n";
 
     private final DocumentStructure structure;
@@ -34,7 +34,7 @@ public final class DocumentExtractions {
     private volatile PartRules rules = PartRules.ALL;
 
     public DocumentExtractions(DocumentStructure structure, ExtractionStore extractions, ExtractionLimits limits) {
-        this(structure, extractions, limits, DEFAULT_MAX_TEXT_CHARS);
+        this(structure, extractions, limits, UNBOUNDED);
     }
 
     public DocumentExtractions(DocumentStructure structure, ExtractionStore extractions, ExtractionLimits limits,
@@ -67,7 +67,7 @@ public final class DocumentExtractions {
         return structure.version();
     }
 
-    /** Maximum size of the compatibility reader projection, not of the section index. */
+    /** Zeichenbudget des Lesetexts; ohne ausdrückliches Budget {@link Integer#MAX_VALUE}, also der ganze Text. */
     public int maxTextChars() {
         return maxTextChars;
     }
@@ -331,8 +331,9 @@ public final class DocumentExtractions {
     }
 
     /**
-     * Der Text eines abgelegten Dokuments für die heutigen Verbraucher: Absätze mit Leerzeile getrennt, höchstens
-     * {@code maxTextChars} Zeichen; gekürzt, wenn die Extraktion gekürzt ist oder mehr Text hat. Legt Extraktion und
+     * Der Text eines abgelegten Dokuments für die heutigen Verbraucher: Absätze mit Leerzeile getrennt, vollständig
+     * (höchstens ein ausdrücklich übergebenes Zeichenbudget); gekürzt, wenn die Extraktion gekürzt ist oder das Budget
+     * nicht reicht. Legt Extraktion und
      * Text ab.
      *
      * @throws DocumentTextException wenn das Dokument keinen Text hat, mit dem passenden bisherigen Grund; an einer
@@ -894,7 +895,8 @@ public final class DocumentExtractions {
                 return;
             }
             int separator = text.isEmpty() ? 0 : PARAGRAPH_BREAK.length();
-            if (text.length() + separator + piece.length() > max) {
+            // long: ohne Budget ist max Integer.MAX_VALUE, die Summe liefe sonst über.
+            if ((long) text.length() + separator + piece.length() > max) {
                 int room = max - text.length() - separator;
                 if (room > 0 && Character.isHighSurrogate(piece.charAt(room - 1))) {
                     room--;

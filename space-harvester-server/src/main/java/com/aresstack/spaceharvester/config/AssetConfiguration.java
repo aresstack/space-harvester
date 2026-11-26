@@ -9,6 +9,10 @@ import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.LargeFileGate;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
+import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
+import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
+import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
+import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.application.release.AiRelease;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
@@ -52,6 +56,25 @@ class AssetConfiguration {
         return new FileSystemAssetStore(directory, maxTotalBytes);
     }
 
+    /**
+     * Tika-Extraktion für Lesetexte lokaler Dateien und Dokument-Anhänge mit den Grenzen aus
+     * {@code space-harvester.assets.extraction.*} (F39-10), statt fester Werte.
+     */
+    @Bean
+    TikaDocumentText documentText(ExtractionProperties extraction) {
+        return new TikaDocumentText(extraction.toLimits());
+    }
+
+    /**
+     * Der Lesetext einer Seite für Volltextindex, Anreicherungen, Begriffe und Änderungsprotokoll: überall derselbe,
+     * sonst passt der Texthash der Fundstellen nicht (vorher an vier Stellen gleich zusammengesetzt).
+     */
+    @Bean
+    PageTextProjector pageTextProjector(TikaDocumentText documentText) {
+        return PageTextProjector.firstOf(java.util.List.of(new ConfluenceStorageTextProjector(),
+                new LocalFilesTextProjector(documentText), new KnowledgeDocumentTextProjector()));
+    }
+
     @Bean
     Assets assets(SourceCatalog catalog, AssetStore store, ObjectProvider<ImageDescriber> describer,
                   ObjectProvider<PageTextIndex> texts, ObjectProvider<SignInRequests> signIns,
@@ -62,11 +85,12 @@ class AssetConfiguration {
                   @Value("${space-harvester.assets.large-file-wait:30s}") Duration largeFileWait,
                   ObjectProvider<JobsProperties> jobs,
                   @Value("${space-harvester.assets.directory:data/assets}") Path directory,
-                  ExtractionProperties extraction, ObjectProvider<AiRelease> release) {
+                  ExtractionProperties extraction, ObjectProvider<AiRelease> release,
+                  TikaDocumentText documentText) {
         LargeFileGate gate = new LargeFileGate(largeFileThreshold.toBytes(), maxConcurrentLargeFiles, largeFileWait);
         // Der Index-Bean selbst, nie eine Hülle der Suche (etwa Auszüge aus Absätzen): Assets schreibt Anhänge hinein.
         Assets assets = new Assets(catalog, store, Assets.maxBytes(maxSize.toBytes()), Clock.systemUTC(),
-                describer.getIfAvailable(), TikaDocumentText.shared(), texts.getIfAvailable(), gate,
+                describer.getIfAvailable(), documentText, texts.getIfAvailable(), gate,
                 signIns.getIfAvailable());
         // ADR 0026, AP3b: abgelegte Dokumente aus der Datei lesen, Text in Abschnitten unter extractions/.
         ExtractionLimits extractionLimits = extraction.toLimits();
