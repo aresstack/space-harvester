@@ -9,6 +9,7 @@ import com.aresstack.enterpriseai.astu.knowledge.KnowledgeRevision;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
+import com.aresstack.enterpriseai.source.api.InventoryCoverageSource;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.NavigationResourceSource;
 import com.aresstack.enterpriseai.source.api.SourceLink;
@@ -41,7 +42,8 @@ import java.util.Map;
  *   <li>Revision: Änderungszeit, falls der Server sie meldet, beim Laden zusätzlich der SHA-256 des Texts.</li>
  * </ul>
  */
-final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourceSource, StoredContentSource {
+final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourceSource, StoredContentSource,
+        InventoryCoverageSource {
 
     static final String SCHEME = "ftp";
 
@@ -51,6 +53,8 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourc
     private final String locator;
     private final FtpSessionPool<FtpClientSession> sessions;
     private final FtpSourceEligibility eligibility;
+    /** Vollständig erfasste Startpunkte der letzten Inventur; vorher deckt die Inventur nichts ab. */
+    private volatile FtpInventoryCoverage coverage = FtpInventoryCoverage.empty();
 
     FtpKnowledgeSource(SourceAddress sourceId, FtpConnectionSettings settings,
                        FtpSessionPool<FtpClientSession> sessions) {
@@ -82,7 +86,34 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourc
 
     @Override
     public List<KnowledgeResource> discover(final SourceScope scope) throws KnowledgeSourceException {
-        return new FtpInventory(sessions, eligibility).discover(scope, this::resource);
+        coverage = FtpInventoryCoverage.empty();
+        FtpInventory inventory = new FtpInventory(sessions, eligibility);
+        List<KnowledgeResource> found = inventory.discover(scope, this::resource);
+        coverage = inventory.coverage();
+        return found;
+    }
+
+    /**
+     * Ob das Fehlen der Ressource in der letzten Inventur etwas über sie aussagt: nur unter einem Startpunkt, den sie
+     * vollständig erfasst hat (ADR 0037 des Space Harvesters, Punkt 13). Ein abgebrochener Lauf deckt nichts ab.
+     */
+    @Override
+    public boolean inventoryCovers(KnowledgeResourceId resourceId) {
+        try {
+            return coverage.covers(pathOf(resourceId));
+        } catch (KnowledgeSourceException e) {
+            return false;
+        }
+    }
+
+    /** Ob die Ressource unter einem Startpunkt der letzten Inventur liegt; ohne Inventur unbekannt, also ja. */
+    @Override
+    public boolean withinInventoryScope(KnowledgeResourceId resourceId) {
+        try {
+            return coverage.within(pathOf(resourceId));
+        } catch (KnowledgeSourceException e) {
+            return true;
+        }
     }
 
     @Override
@@ -195,7 +226,7 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourc
         }
     }
 
-    private KnowledgeResourceId idOf(String idPath) {
+    KnowledgeResourceId idOf(String idPath) {
         return KnowledgeResourceId.of(SCHEME, locator + "/" + idPath);
     }
 

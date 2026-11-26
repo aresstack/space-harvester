@@ -366,7 +366,7 @@ final class CommonsNetFiles implements FileConnection {
 
     @Override
     public BinarySample readBinarySample(String path, int limit) throws IOException {
-        if (limit < 1 || limit > BinarySample.MAX_CAPTURE_BYTES) throw new IllegalArgumentException("Diagnoselimit");
+        if (limit < 1) throw new IllegalArgumentException("Diagnoselimit");
         return binaryTransfer(path, input -> BinarySample.capture(input, limit));
     }
 

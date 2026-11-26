@@ -20,6 +20,10 @@ public final class StatementProvenance {
     public static final String CONFIRMED_BY_HAND = "von Hand bestätigt";
     public static final String REJECTED_BY_HAND = "von Hand verworfen";
     public static final String UNCHECKED = "nicht geprüft";
+    /** Erkenntnisebene einer Programmaussage ohne gültige Bestätigung (ADR 0032, Fortschreibung 26.11.2026). */
+    public static final String HYPOTHESIS = "Hypothese";
+    /** Eine Bestätigung, die für einen früheren Stand von Code, Abhängigkeit oder Programmanalyse gegeben wurde. */
+    public static final String CONFIRMATION_OUTDATED = "Bestätigung veraltet";
     /** Überschrift des Overlays und Beschriftung des Knopfs am Eintrag. */
     public static final String HEADING = "Herkunft und Prüfstatus";
     public static final String CHIP = "Herkunft";
@@ -63,6 +67,18 @@ public final class StatementProvenance {
      * „ungültig“ bei ungültig; {@code null} bei plausibler, nicht von Hand geprüfter Aussage.
      */
     public static String marker(ParsedStatements.Statement statement) {
+        return marker(statement, false);
+    }
+
+    /**
+     * Das Kennzeichen in der Zeile; eine Programmaussage trägt immer ihre Erkenntnisebene ({@link #insight}).
+     *
+     * @param evidenceStale ob die Quellstellenbelege der Analyse nicht mehr aktuell sind
+     */
+    public static String marker(ParsedStatements.Statement statement, boolean evidenceStale) {
+        if (program(statement)) {
+            return insight(statement, evidenceStale);
+        }
         return switch (statement.review()) {
             case CONFIRMED -> CONFIRMED_BY_HAND;
             case REJECTED -> REJECTED_BY_HAND;
@@ -72,6 +88,25 @@ public final class StatementProvenance {
                 case INVALID -> INVALID;
             };
         };
+    }
+
+    /**
+     * Die Erkenntnisebene einer Programmaussage (ADR 0032, Fortschreibung 26.11.2026; Regeln wie
+     * {@link com.aresstack.spaceharvester.application.evidence.SourceInsight}): verworfen bleibt verworfen, bestätigt
+     * nur bei aktuellem Beleg, sonst Hypothese, bei früherer Bestätigung mit „Bestätigung veraltet“. Die Prüfung gilt
+     * für die ganze Analyse der Seite ({@code PageStatements#EVIDENCE_CHANGED}).
+     */
+    public static String insight(ParsedStatements.Statement statement, boolean evidenceStale) {
+        return switch (statement.review()) {
+            case REJECTED -> REJECTED_BY_HAND;
+            case CONFIRMED -> evidenceStale ? HYPOTHESIS + ", " + CONFIRMATION_OUTDATED : CONFIRMED_BY_HAND;
+            case UNREVIEWED -> HYPOTHESIS;
+        };
+    }
+
+    /** Ob die Aussage aus der Programmanalyse stammt und einen Quellstellenbeleg trägt. */
+    public static boolean program(ParsedStatements.Statement statement) {
+        return statement.derivation() != null && statement.derivation().source() != null;
     }
 
     /** Ob die Aussage als unsicher gekennzeichnet ist (Vorschlag oder ungültig, nicht von Hand bestätigt). */
@@ -107,7 +142,12 @@ public final class StatementProvenance {
 
     /** Die knappe Zeile am Eintrag, etwa „Vorschlag · Originalsatz, MaltParser · nicht geprüft“. */
     public static String line(ParsedStatements.Statement statement, String analyzer) {
-        String marker = marker(statement);
+        return line(statement, analyzer, false);
+    }
+
+    /** Die knappe Zeile; eine Programmaussage mit Erkenntnisebene, etwa „Hypothese · Programmanalyse … · …“. */
+    public static String line(ParsedStatements.Statement statement, String analyzer, boolean evidenceStale) {
+        String marker = marker(statement, evidenceStale);
         return (marker == null ? "" : marker + " · ") + origin(statement, analyzer) + " · " + check(statement);
     }
 
@@ -119,8 +159,18 @@ public final class StatementProvenance {
      */
     public static String details(ParsedStatements.Statement statement, String analyzer,
                                  Map<String, ParsedStatements.Mention> mentions) {
+        return details(statement, analyzer, mentions, false);
+    }
+
+    /**
+     * Die Einzelheiten; eine Programmaussage zusätzlich mit Erkenntnisebene, Bezug (Ist) und Quellstellenbeleg.
+     *
+     * @param evidenceStale ob die Quellstellenbelege der Analyse nicht mehr aktuell sind
+     */
+    public static String details(ParsedStatements.Statement statement, String analyzer,
+                                 Map<String, ParsedStatements.Mention> mentions, boolean evidenceStale) {
         List<String> lines = new ArrayList<>();
-        String marker = marker(statement);
+        String marker = marker(statement, evidenceStale);
         lines.add("Kennzeichen: " + (marker == null ? "keins (aus sicheren Parserkanten, fachlich nicht geprüft)"
                 : marker));
         ParsedStatements.Quality effective = statement.effectiveQuality();
@@ -146,7 +196,10 @@ public final class StatementProvenance {
         String sentence = derivation.simplifiedSentence();
         if (sentence != null && !sentence.isBlank()) {
             lines.add((derivation.origin() == ParsedStatements.Origin.MODELL ? CheckTexts.MODEL_SENTENCE_LABEL
-                    : "Vereinfachter Satz") + ": „" + sentence.strip() + "“");
+                    : program(statement) ? HYPOTHESIS : "Vereinfachter Satz") + ": „" + sentence.strip() + "“");
+        }
+        if (program(statement)) {
+            lines.addAll(source(statement, evidenceStale));
         }
         if (mentions != null) {
             for (ParsedStatements.Argument argument : statement.arguments()) {
@@ -158,6 +211,45 @@ public final class StatementProvenance {
             }
         }
         return String.join("\n", lines);
+    }
+
+    /** Erkenntnisebene, Bezug und Quellstellenbeleg einer Programmaussage für das Overlay. */
+    static List<String> source(ParsedStatements.Statement statement, boolean evidenceStale) {
+        com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence source =
+                statement.derivation().source();
+        List<String> lines = new ArrayList<>();
+        lines.add("Erkenntnisebene: " + insight(statement, evidenceStale));
+        lines.add("Bezug: Ist-Zustand des Programms, keine geltende Soll-Regel");
+        List<String> sites = new ArrayList<>();
+        for (var site : source.sites()) {
+            sites.add(name(site.document()) + " " + lines(site.firstLine(), site.lastLine()));
+        }
+        lines.add("Quellstellen: " + String.join("; ", sites));
+        for (var fact : source.facts()) {
+            lines.add("Parserfakt (" + fact.kind() + ", " + lines(fact.firstLine(), fact.lastLine()) + "): „"
+                    + fact.text().strip() + "“");
+        }
+        if (!source.dependencies().isEmpty()) {
+            List<String> dependencies = new ArrayList<>();
+            for (var dependency : source.dependencies()) {
+                dependencies.add(dependency.name() + (dependency.negativeProbe() ? " (nicht gefunden)" : ""));
+            }
+            lines.add("Abhängigkeiten: " + String.join(", ", dependencies));
+        }
+        lines.add("Programmstand: " + source.revision() + " · Programmanalyse: " + source.analysisVersion());
+        if (evidenceStale) {
+            lines.add("Code, Abhängigkeit oder Programmanalyse haben sich seit der Übernahme geändert; der Beleg ist "
+                    + "möglicherweise veraltet.");
+        }
+        return lines;
+    }
+
+    private static String name(com.aresstack.spaceharvester.application.assets.DocumentKey document) {
+        return document.isPage() ? document.page().pageId() : document.value();
+    }
+
+    private static String lines(int first, int last) {
+        return first == last ? "Zeile " + first : "Zeilen " + first + "–" + last;
     }
 
     /** Worauf die Zuordnung eines Beteiligten beruht. */

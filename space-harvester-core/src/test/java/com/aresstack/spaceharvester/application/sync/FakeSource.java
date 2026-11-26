@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.UnaryOperator;
@@ -46,6 +47,10 @@ class FakeSource implements HarvestSource {
     int singlePageCalls;
     /** Fenster der letzten Änderungssuche. */
     java.time.Duration lastWithin;
+    /** Position, ab der die letzte Änderungssuche fragte (ADR 0042, Punkt 5). */
+    String lastCheckpoint;
+    /** Position, die der letzte Stapel der nächsten Änderungssuche meldet, oder {@code null}. */
+    String nextCheckpoint;
 
     @Override
     public String id() {
@@ -137,6 +142,14 @@ class FakeSource implements HarvestSource {
     }
 
     @Override
+    public PageMetadataBatch changedPageMetadata(String partitionKey, String checkpoint, java.time.Duration within,
+                                                 String cursor, int limit) {
+        lastCheckpoint = checkpoint;
+        PageMetadataBatch batch = changedPageMetadata(partitionKey, within, cursor, limit);
+        return new PageMetadataBatch(batch.pages(), batch.nextCursor(), nextCheckpoint);
+    }
+
+    @Override
     public PageMetadataBatch removedPageMetadata(String partitionKey, String cursor, int limit) {
         trashCalls++;
         requireChanges();
@@ -213,6 +226,21 @@ class FakeSource implements HarvestSource {
     }
 
     /** „Nicht gefunden“ bestätigt ab jetzt eine Löschung, wie bei lokalen Dateien (ADR 0014). */
+    /** Seiten außerhalb des eingestellten Umfangs ({@code outsideScope}). */
+    final Set<String> outsideScope = new java.util.HashSet<>();
+    /** Seiten in einem nicht vollständig inventarisierten Bereich ({@code inventoryCovers} falsch). */
+    final Set<String> uncovered = new java.util.HashSet<>();
+
+    @Override
+    public boolean outsideScope(String pageId) {
+        return outsideScope.contains(pageId);
+    }
+
+    @Override
+    public boolean inventoryCovers(String pageId) {
+        return !uncovered.contains(pageId);
+    }
+
     FakeSource confirmingDeletion() {
         confirmsDeletion = true;
         return this;

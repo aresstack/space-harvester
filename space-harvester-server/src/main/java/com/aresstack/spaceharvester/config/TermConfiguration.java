@@ -34,9 +34,6 @@ import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
 import com.aresstack.spaceharvester.persistence.files.FileSynonymVectorCache;
 import com.aresstack.spaceharvester.persistence.files.FileTermRelationStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
-import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
-import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
-import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
@@ -56,6 +53,16 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration(proxyBeanMethods = false)
 class TermConfiguration {
+
+    /**
+     * Derselbe Lesetext wie die Anreicherung (Bean aus {@link AssetConfiguration}), sonst passt der Texthash der
+     * Fundstellen nie.
+     */
+    private final PageTextProjector projector;
+
+    TermConfiguration(PageTextProjector projector) {
+        this.projector = projector;
+    }
 
     private static final TermIndex EMPTY = (filter, from, inclusive, max) -> List.of();
 
@@ -99,7 +106,6 @@ class TermConfiguration {
         SnapshotRepository snapshots = repository.getIfAvailable();
         PageCacheReader cache = reader.getIfAvailable();
         Function<PageKey, Optional<PageSnapshot>> payloads = payloads(snapshots, cache);
-        PageTextProjector projector = projector();
         return new AcronymResolution(catalog, index, access, headers(snapshots, cache),
                 key -> payloads.apply(key).flatMap(projector::project), relations,
                 model.getIfAvailable(() -> AcronymExpansionModel.NONE), resolutions, jobs,
@@ -146,7 +152,6 @@ class TermConfiguration {
         SnapshotRepository snapshots = repository.getIfAvailable();
         PageCacheReader cache = reader.getIfAvailable();
         Function<PageKey, Optional<PageSnapshot>> payloads = payloads(snapshots, cache);
-        PageTextProjector projector = projector();
         return new GlossaryClassification(catalog, index, access, headers(snapshots, cache),
                 key -> payloads.apply(key).flatMap(projector::project), glossary,
                 model.getIfAvailable(() -> AcronymExpansionModel.NONE), glossaryCache, jobs,
@@ -193,7 +198,6 @@ class TermConfiguration {
         SnapshotRepository snapshots = repository.getIfAvailable();
         PageCacheReader cache = reader.getIfAvailable();
         Function<PageKey, Optional<PageSnapshot>> payloads = payloads(snapshots, cache);
-        PageTextProjector projector = projector();
         SynonymJudgmentModel judge = model.getIfAvailable(() -> SynonymJudgmentModel.NONE);
         EmbeddingProcessor processor = embeddings.getIfAvailable();
         SynonymCandidates candidates = new SynonymCandidates(catalog, index, headers(snapshots, cache),
@@ -229,12 +233,6 @@ class TermConfiguration {
         return key -> Optional.empty();
     }
 
-    private static PageTextProjector projector() {
-        // Wie die Anreicherung (EnrichmentConfiguration), sonst passt der Texthash der Fundstellen nie.
-        return PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
-                new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
-    }
-
     private static Function<PageKey, Optional<PageHeader>> headers(SnapshotRepository snapshots,
                                                                    PageCacheReader cache) {
         if (snapshots != null && (cache == null || cache instanceof LucenePageCacheReader)) {
@@ -249,7 +247,8 @@ class TermConfiguration {
     @Bean
     TermQueries termQueries(SourceCatalog catalog, AccessGuard access, Enrichments enrichments,
                             ObjectProvider<SnapshotRepository> repository, ObjectProvider<PageCacheReader> reader,
-                            SentenceSegmenter sentences, ObjectProvider<DocumentEnrichments> documents) {
+                            SentenceSegmenter sentences, ObjectProvider<DocumentEnrichments> documents,
+                            com.aresstack.spaceharvester.application.query.QueryLimits queryLimits) {
         TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
         SnapshotRepository snapshots = repository.getIfAvailable();
         PageCacheReader cache = reader.getIfAvailable();
@@ -267,12 +266,12 @@ class TermConfiguration {
             payloads = key -> Optional.empty();
         }
         // ADR 0026, AP9b: Snippets aus Anhängen nur gegen die am Stand vermerkte Extraktion.
-        return new TermQueries(catalog, index, access, headers, payloads, projector(), termsVersion(sentences),
+        return new TermQueries(catalog, index, access, headers, payloads, projector, termsVersion(sentences),
                 (document, section, inputSha256, extraction) -> {
                     DocumentEnrichments found = documents.getIfAvailable();
                     return found == null ? Optional.empty()
                             : found.sectionText(document, section, inputSha256, extraction);
-                });
+                }, queryLimits);
     }
 
     /** Wie {@code terms} in der Anreicherung (EnrichmentConfiguration): dieselben Satzgrenzen, dieselbe Version. */

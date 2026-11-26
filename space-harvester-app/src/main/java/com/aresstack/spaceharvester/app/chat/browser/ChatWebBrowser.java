@@ -18,7 +18,6 @@ import com.aresstack.enterpriseai.proasteion.application.browser.WebExplorationP
 import com.aresstack.enterpriseai.proasteion.application.config.BrowserProfile;
 import com.aresstack.enterpriseai.proasteion.katagogion.McpToolContribution;
 import com.aresstack.spaceharvester.application.assets.DocumentText;
-import com.aresstack.spaceharvester.source.TikaDocumentText;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -87,10 +86,10 @@ public final class ChatWebBrowser {
         return new ChatWebBrowser(runtime, guard, settings);
     }
 
-    /** Text verlinkter Dokumente (PDF, Office) über Tika wie die Dokumente der Quellen. */
+    /** Text verlinkter Dokumente (PDF, Office) über Tika mit den Grenzen der Quellen ({@code assets.extraction.*}). */
     private static AttachmentTextExtractor documents() {
-        DocumentText text = new TikaDocumentText();
         return (fileName, content) -> {
+            DocumentText text = com.aresstack.spaceharvester.app.deck.DocumentTexts.text();
             try {
                 String type = text.detect(fileName, content).orElse("application/octet-stream");
                 return text.extract(fileName, type, content).text();

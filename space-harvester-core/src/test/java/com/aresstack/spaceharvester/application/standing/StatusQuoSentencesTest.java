@@ -129,4 +129,31 @@ class StatusQuoSentencesTest {
         System.out.println("Wortlaut für 200 Einträge: " + best / 1_000 + " µs");
         assertThat(best / 1_000_000).as("großzügige Obergrenze").isLessThan(5_000);
     }
+
+    @Test
+    void aProgramStatementShowsItsHypothesisAndPointsAtItsCodeSiteNeverAtReaderTextOffsets() {
+        String code = "       IDENTIFICATION DIVISION.\n       PROCEDURE DIVISION.\n       IF KZ-STATUS = 'A'\n"
+                + "           PERFORM ABSCHLUSS.\n";
+        StandingFixtures.PageBuilder builder = page("ANTRAG01", "ANTRAG01", 'c');
+        var program = com.aresstack.spaceharvester.application.assets.DocumentKey.page(builder.key);
+        var evidence = new com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence(program, "p1",
+                List.of(new com.aresstack.spaceharvester.application.evidence.SourceLocationEvidence.CodeSite(
+                        program, "p1", 3, 4)), List.of(), List.of(), "cobol-program@5");
+        builder.add("Sachbearbeiter", "prüft", "Antrag", features(Temporality.GILT), false,
+                ParsedStatements.Quality.PLAUSIBLE, ParsedStatements.Review.UNREVIEWED,
+                ParsedStatements.Derivation.programm("Der Sachbearbeiter prüft den Antrag.", evidence));
+        builder.sentences.add(new ParsedStatements.Sentence(0, 0, 36));
+        KnowledgeGraph.AnalysedPage analysed = builder.build();
+        pages.add(analysed);
+        texts.put("ANTRAG01@" + builder.input, code);
+
+        SentenceText text = statusQuo.statementSentences(EDITOR, Map.of(analysed.page(),
+                analysed.analysis().result().statements())).get(builder.statements.getFirst().id());
+
+        assertThat(text.original()).isNull();
+        assertThat(text.simplified()).isEqualTo("Der Sachbearbeiter prüft den Antrag.");
+        assertThat(code.substring(text.sentenceStart(), text.sentenceEnd()))
+                .isEqualTo("       IF KZ-STATUS = 'A'\n           PERFORM ABSCHLUSS.");
+        assertThat(text.stale()).isFalse();
+    }
 }

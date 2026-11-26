@@ -50,15 +50,14 @@ public class PageQueries {
 
     private static final System.Logger LOG = System.getLogger(PageQueries.class.getName());
 
-    /** Größte Stapelgröße der Seitenliste je Anfrage; zugleich der Standardwert. */
-    public static final int MAX_PAGE_LIMIT = 100;
 
     /**
-     * Größte Baumtiefe einer synchronen Antwort. Jede Ebene kostet im JSON zwei Verschachtelungen (Knoten und
-     * {@code children}); darüber würde die übliche Grenze von 500 Ebenen (etwa Jacksons Standard beim Schreiben und
-     * Lesen) gesprengt. Solche Bäume liefert der Export.
+     * Höchstens so viele Ebenen enthält eine Antwort der REST-API (ADR 0040, Punkt 12); tiefere fragt der Client ab
+     * dem Knoten mit {@code more} nach, die Gesamttiefe ist nicht begrenzt. Jede Ebene kostet im JSON zwei
+     * Verschachtelungen (Knoten und {@code children}); darüber würde die übliche Grenze von 500 Ebenen (Jacksons
+     * Standard beim Schreiben und Lesen) gesprengt. Invariante des JSON-Formats, keine fachliche Grenze.
      */
-    public static final int MAX_TREE_DEPTH = 200;
+    public static final int MAX_TREE_LEVELS = 200;
 
     private static final int TREE_BATCH = 1000;
 
@@ -68,6 +67,7 @@ public class PageQueries {
     private final PageFreshness freshness;
     private final PageCacheFill fill;
     private final int maxTreeNodes;
+    private final QueryLimits limits;
     private final Function<String, CacheFreshness> cacheFreshness;
     private final Clock clock;
     /** Letzte Versionsprüfung ohne neuen Inhalt; die gespeicherten Kopfdaten tragen nur ihren eigenen Stand. */
@@ -105,6 +105,14 @@ public class PageQueries {
     public PageQueries(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, PageFreshness freshness,
                        PageCacheFill fill, int maxTreeNodes, Function<String, CacheFreshness> cacheFreshness,
                        Clock clock) {
+        this(catalog, cache, access, freshness, fill, maxTreeNodes, cacheFreshness, clock, QueryLimits.DEFAULTS);
+    }
+
+    /** Wie oben, mit den eingestellten Stapelgrößen ({@code space-harvester.query.*}). */
+    public PageQueries(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, PageFreshness freshness,
+                       PageCacheFill fill, int maxTreeNodes, Function<String, CacheFreshness> cacheFreshness,
+                       Clock clock, QueryLimits limits) {
+        this.limits = Objects.requireNonNull(limits, "limits");
         this.cacheFreshness = Objects.requireNonNull(cacheFreshness, "cacheFreshness");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.fill = Objects.requireNonNull(fill, "fill");
@@ -116,6 +124,11 @@ public class PageQueries {
             throw new IllegalArgumentException("maxTreeNodes muss positiv sein");
         }
         this.maxTreeNodes = maxTreeNodes;
+    }
+
+    /** Die eingestellte größte Stapelgröße der Seitenliste ({@code space-harvester.query.max-page-limit}). */
+    public int maxPageLimit() {
+        return limits.maxPageLimit();
     }
 
     private static Function<String, CacheFreshness> fixed(CacheFreshness cacheFreshness) {
@@ -132,7 +145,7 @@ public class PageQueries {
      * Ein Stapel der flachen Seitenliste eines Space.
      *
      * @param cursor {@code null} oder leer für den ersten Stapel
-     * @param limit  1 bis {@value #MAX_PAGE_LIMIT}
+     * @param limit  1 bis {@link QueryLimits#maxPageLimit()}
      * @param caller Aufrufer aus der geprüften Anmeldung
      * @throws AccessDeniedException           wenn der Space nicht für {@code metadata} freigegeben ist
      * @throws InvalidQueryException           bei ungültigem Limit oder Cursor
@@ -142,8 +155,9 @@ public class PageQueries {
      */
     public PageListing pages(AccessContext caller, String sourceId, String spaceKey, String cursor, int limit) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA);
-        if (limit < 1 || limit > MAX_PAGE_LIMIT) {
-            throw new InvalidQueryException("limit muss zwischen 1 und " + MAX_PAGE_LIMIT + " liegen");
+        if (limit < 1 || limit > limits.maxPageLimit()) {
+            throw new InvalidQueryException("limit muss zwischen 1 und " + limits.maxPageLimit()
+                    + " liegen (space-harvester.query.max-page-limit)");
         }
         requireSource(sourceId);
         PageCursor position = cursor == null || cursor.isEmpty() ? null
@@ -186,7 +200,8 @@ public class PageQueries {
      * @throws AccessDeniedException           wenn der Space nicht für {@code metadata} freigegeben ist
      * @throws UnknownSourceException          wenn keine Quelle mit dieser ID konfiguriert ist
      * @throws CacheMissException              wenn für den Space nichts im Cache liegt
-     * @throws TreeTooLargeException           wenn der Baum für eine synchrone Antwort zu groß oder zu tief ist
+     * @throws TreeTooLargeException           wenn der Baum mehr sichtbare Seiten hat als {@code maxTreeNodes}; die
+     *                                         Tiefe ist nicht begrenzt (ADR 0040, Punkt 12)
      * @throws CacheGenerationChangedException wenn die Generation während des Lesens ersetzt wurde
      */
     public SpaceTree tree(AccessContext caller, String sourceId, String spaceKey) {
@@ -210,11 +225,7 @@ public class PageQueries {
                 }
             }
         } while (batch.size() == TREE_BATCH);
-        PageTree tree = PageTreeBuilder.build(entries);
-        if (tree.depth() > MAX_TREE_DEPTH) {
-            throw new TreeTooLargeException("Der Baum ist tiefer als " + MAX_TREE_DEPTH + " Ebenen");
-        }
-        return new SpaceTree(sourceId, spaceKey, generation, tree, pages);
+        return new SpaceTree(sourceId, spaceKey, generation, PageTreeBuilder.build(entries), pages);
     }
 
     /**

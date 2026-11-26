@@ -17,11 +17,7 @@ import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.SyncCommitted;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
-import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
-import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
-import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.time.Clock;
-import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 import org.slf4j.Logger;
@@ -43,10 +39,8 @@ class ChangeLogConfiguration {
     @Bean(destroyMethod = "close")
     ChangeLog changeLog(ObjectProvider<LucenePageCache> cache, AccessGuard access, SourceCatalog catalog, Jobs jobs,
                         SummaryModel summaries, ObjectProvider<AiConfiguration.UpdateSummaryPlanner> planner,
-                        AiRelease release) {
+                        AiRelease release, PageTextProjector projector) {
         LucenePageCache available = cache.getIfAvailable();
-        PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
-                new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
         if (available != null) {
             // CL5: Unterschied der Lesetexte, wenn ein gespeicherter Inhalt ersetzt wird.
             available.contentDiffer(new TextContentDiffer(projector));

@@ -20,7 +20,7 @@ public final class VideoSettings {
     public static final String KEY = "space-harvester-app.video";
 
     /** Ein einstellbarer Wert: Schlüssel unter {@link #KEY}, Bezeichnung, Hinweis, Default und Grenzen. */
-    public enum Value {
+    public enum Value implements NumberSetting {
         SIZE_FACTOR("slide-size-factor", "Größenfaktor eines Folienwechsels",
                 "Ein Bild mindestens so viele Male so groß wie der Median aller Bilder gilt als Folienwechsel",
                 20, 2, 1000),
@@ -137,33 +137,34 @@ public final class VideoSettings {
             this.max = max;
         }
 
+        @Override
         public String key() {
             return key;
         }
 
+        @Override
         public String label() {
             return label;
         }
 
+        @Override
         public String hint() {
             return hint;
         }
 
+        @Override
         public long defaultValue() {
             return defaultValue;
         }
 
+        @Override
         public long min() {
             return min;
         }
 
+        @Override
         public long max() {
             return max;
-        }
-
-        /** Ob {@code value} in den Grenzen liegt. */
-        public boolean accepts(long value) {
-            return value >= min && value <= max;
         }
     }
 

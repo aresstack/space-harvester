@@ -202,10 +202,8 @@ class ContentListingTest {
     }
 
     @Test
-    void startBeyondTheCapIsInvalid() {
+    void aDeepStartHasNoCapAndEndsEmptyBehindTheLastPage() {
         publish(confirmed("g1"), List.of(page("1", null, "a")));
-        assertThatThrownBy(() -> listing(ALLOW_ALL).space(CALLER, "wiki", "DEV", null, ContentListing.MAX_START + 1, 25))
-                .isInstanceOf(InvalidQueryException.class);
-        assertThat(listing(ALLOW_ALL).space(CALLER, "wiki", "DEV", null, ContentListing.MAX_START, 25).pages()).isEmpty();
+        assertThat(listing(ALLOW_ALL).space(CALLER, "wiki", "DEV", null, 10_001, 25).pages()).isEmpty();
     }
 }

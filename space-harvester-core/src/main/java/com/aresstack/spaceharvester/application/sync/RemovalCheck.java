@@ -76,6 +76,9 @@ public class RemovalCheck {
         }
     }
 
+    /** Grund bei {@link Verdict#UNVERIFIED} für Seiten außerhalb des eingestellten Umfangs. */
+    static final String OUTSIDE_SCOPE = "außerhalb des eingestellten Umfangs";
+
     private final SourceQueries queries;
 
     public RemovalCheck(SourceQueries queries) {
@@ -116,9 +119,9 @@ public class RemovalCheck {
                           Set<String> listed) {
         try {
             if (queries.outsideScope(sourceId, pageId)) {
-                // Außerhalb von Startpunkten und Tiefe laut vollständiger Discovery dieses Laufs: fällt ohne
-                // Einzelabfrage und ohne Sperre wie eine gelöschte aus dem Katalog; ein Abruf auf Anforderung holt sie.
-                return new Result(pageId, Verdict.DELETED, null, null);
+                // Außerhalb von Startpunkten und Tiefe: Ein kleinerer Umfang beweist keine Löschung (ADR 0037,
+                // Punkt 12). Die Seite bleibt; ob sie entfällt, entscheidet erst „Bereinigen“.
+                return new Result(pageId, Verdict.UNVERIFIED, null, OUTSIDE_SCOPE);
             }
             PageMetadataListing.Entry current = queries.pageMetadata(sourceId, pageId).entry();
             String currentId = current.page().pageId();

@@ -158,12 +158,6 @@ public class Jobs implements AutoCloseable {
     private int localSlots = defaultLocalSlots();
     /** Laufende Hintergrundaufträge ({@link JobType#background()}). */
     private int runningBackground;
-    /**
-     * So viele Hintergrundaufträge dürfen zugleich offen sein (eigener Vorrat, ohne Grenze je Auslöser): je Space einer,
-     * also auch für viele Spaces genug; dass dieselbe Arbeit nicht doppelt eingeplant wird, prüft
-     * {@code BackgroundJobs}.
-     */
-    static final int BACKGROUND_CAPACITY = 1000;
     /** Code der Warnung: ein Hintergrundauftrag wartet, weil nur ein Platz eingestellt ist. */
     public static final String SINGLE_SLOT = "SINGLE_SLOT";
     static final String SINGLE_SLOT_TEXT = "Wartet, nur ein Platz eingestellt: Hintergrundaufträge laufen erst ab zwei "
@@ -669,8 +663,10 @@ public class Jobs implements AutoCloseable {
         if (type.background()) {
             // Eigener Vorrat ohne Grenze je Auslöser: der Hintergrund nimmt nie einem Benutzer den Platz.
             if (open.values().stream().filter(other -> other.type.background() && !heldQuietly(other)).count()
-                    >= BACKGROUND_CAPACITY) {
-                throw new JobCapacityExceededException(BACKGROUND_CAPACITY);
+                    >= limits.maxOpenBackground()) {
+                // Eigener Vorrat (jobs.max-open-background); dass dieselbe Arbeit nicht doppelt eingeplant wird,
+                // prüft BackgroundJobs.
+                throw new JobCapacityExceededException(limits.maxOpenBackground());
             }
             return;
         }

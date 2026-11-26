@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.source.BscwSourceAdapter;
+import com.aresstack.spaceharvester.source.TikaDocumentText;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.ConfluenceDelegatedAccess;
 import com.aresstack.spaceharvester.source.ConfluenceSourceAdapter;
@@ -62,8 +63,8 @@ class SourceConfiguration {
 
     /** Expose the BSCW Classic WebDAV adapter as a selectable source type. */
     @Bean
-    BscwSourceAdapter bscwSourceAdapter() {
-        return new BscwSourceAdapter();
+    BscwSourceAdapter bscwSourceAdapter(TikaDocumentText documentText) {
+        return new BscwSourceAdapter(documentText);
     }
 
     /** Quellentyp {@code mediawiki}: Seiten einer MediaWiki-Site über die {@code api.php} (#187). */

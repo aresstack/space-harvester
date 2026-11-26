@@ -67,7 +67,8 @@ public class SourceQueries {
                 .map(page -> new PageMetadataListing.Entry(page, MetadataHash.of(source.id(), page),
                         AttributesHash.of(source.id(), page)))
                 .toList();
-        return new PageMetadataListing(source.id(), partitionKey, entries, batch.nextCursor(), clock.instant());
+        return new PageMetadataListing(source.id(), partitionKey, entries, batch.nextCursor(), clock.instant(),
+                batch.checkpoint());
     }
 
     /**
@@ -78,9 +79,22 @@ public class SourceQueries {
      */
     public PageMetadataListing changedPageMetadata(String sourceId, String partitionKey, java.time.Duration within,
                                                    String cursor, int limit) {
+        return changedPageMetadata(sourceId, partitionKey, null, within, cursor, limit);
+    }
+
+    /**
+     * Wie {@link #changedPageMetadata(String, String, java.time.Duration, String, int)}, aber ab der exakten Position
+     * {@code checkpoint} einer früheren Änderungssuche (ADR 0042, Punkt 5); Quellen ohne exakte Position und Teile,
+     * die der Checkpoint nicht abdeckt, fragen ab {@code within}.
+     *
+     * @param checkpoint {@link PageMetadataListing#checkpoint()} des letzten Stapels einer früheren Suche oder
+     *                   {@code null}
+     */
+    public PageMetadataListing changedPageMetadata(String sourceId, String partitionKey, String checkpoint,
+                                                   java.time.Duration within, String cursor, int limit) {
         requireLimit(limit);
         HarvestSource source = source(sourceId);
-        return listing(source, partitionKey, source.changedPageMetadata(partitionKey, within,
+        return listing(source, partitionKey, source.changedPageMetadata(partitionKey, checkpoint, within,
                 cursor == null || cursor.isEmpty() ? null : cursor, limit));
     }
 
@@ -152,7 +166,8 @@ public class SourceQueries {
                 .map(page -> new PageMetadataListing.Entry(page, MetadataHash.of(source.id(), page),
                         AttributesHash.of(source.id(), page)))
                 .toList();
-        return new PageMetadataListing(source.id(), partitionKey, entries, batch.nextCursor(), clock.instant());
+        return new PageMetadataListing(source.id(), partitionKey, entries, batch.nextCursor(), clock.instant(),
+                batch.checkpoint());
     }
 
     /**

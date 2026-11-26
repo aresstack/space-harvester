@@ -11,12 +11,18 @@ import java.util.List;
  * @param entries      die Seiten mit Hash
  * @param nextCursor   Cursor für den nächsten Stapel oder {@code null}, wenn vollständig
  * @param retrievedAt  Zeitpunkt der Abfrage bei der Quelle (nicht Teil der Hashes)
+ * @param checkpoint   nur auf dem letzten Stapel einer Änderungssuche: {@link PageMetadataBatch#checkpoint()}
  */
 public record PageMetadataListing(String sourceId, String partitionKey, List<Entry> entries, String nextCursor,
-                                  Instant retrievedAt) {
+                                  Instant retrievedAt, String checkpoint) {
 
     public PageMetadataListing {
         entries = List.copyOf(entries);
+    }
+
+    public PageMetadataListing(String sourceId, String partitionKey, List<Entry> entries, String nextCursor,
+                               Instant retrievedAt) {
+        this(sourceId, partitionKey, entries, nextCursor, retrievedAt, null);
     }
 
     public boolean complete() {

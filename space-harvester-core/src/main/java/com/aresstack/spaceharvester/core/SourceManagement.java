@@ -179,6 +179,21 @@ public final class SourceManagement {
         return moved;
     }
 
+    /**
+     * Ändert nur den Anzeigenamen einer Quelle; die Quelle bleibt geöffnet, Daten, Aufträge und Zugangsdaten bleiben
+     * ({@link ConfiguredSourceCatalog#rename}). Anders als {@link #change} öffnet das die Quelle nicht neu.
+     *
+     * @return ob sich der Anzeigename geändert hat
+     * @throws com.aresstack.spaceharvester.application.sources.UnknownSourceException ohne Quelle dieser ID
+     */
+    public synchronized boolean rename(String sourceId, String title) {
+        boolean renamed = catalog.rename(sourceId, title);
+        if (renamed) {
+            LOG.log(System.Logger.Level.INFO, "Quelle {0} umbenannt", sourceId);
+        }
+        return renamed;
+    }
+
     /** Ob die Quelle eingeschaltet ist; {@code false} auch für unbekannte. */
     public boolean enabled(String sourceId) {
         return catalog.enabled(sourceId);

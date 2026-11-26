@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.assets.DocumentText;
 import com.aresstack.spaceharvester.application.assets.DocumentTextException;
+import com.aresstack.spaceharvester.application.assets.ExtractionLimits;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.function.Function;
@@ -79,8 +80,45 @@ class TikaDocumentTextTest {
     }
 
     @Test
+    void theExtractionSettingsSetSizeAndTextLength() {
+        // F39-10: assets.extraction.* gilt auch hier; die Speicherschranke für alle Typen ist die Größengrenze.
+        ExtractionLimits d = ExtractionLimits.DEFAULTS;
+        ExtractionLimits tight = new ExtractionLimits(0, 10, d.unpackRatio(), d.unpackRatioFromBytes(), d.textRatio(),
+                d.textRatioFromChars(), d.maxDepth(), d.maxEmbeddedFiles(), d.idleTimeout(), d.totalTimeout(),
+                d.tempSpaceReserve(), d.parallel(), java.util.Map.of(ExtractionLimits.ANY_TYPE, 100L));
+        ExtractionLimits shortTexts = new ExtractionLimits(0, 10, d.unpackRatio(), d.unpackRatioFromBytes(),
+                d.textRatio(), d.textRatioFromChars(), d.maxDepth(), d.maxEmbeddedFiles(), d.idleTimeout(),
+                d.totalTimeout(), d.tempSpaceReserve(), d.parallel(), java.util.Map.of());
+
+        assertThatThrownBy(() -> new TikaDocumentText(tight).extract("gross.pdf", DocumentFixtures.PDF,
+                DocumentFixtures.pdf(TEXT)))
+                .isInstanceOf(DocumentTextException.class)
+                .extracting(e -> ((DocumentTextException) e).reason())
+                .isEqualTo(DocumentTextException.Reason.TOO_LARGE);
+        DocumentText.Extracted cut = new TikaDocumentText(shortTexts).extract("lang.docx", DocumentFixtures.DOCX,
+                DocumentFixtures.docx(TEXT));
+        assertThat(cut.text()).isEqualTo(TEXT.substring(0, 10));
+        assertThat(cut.truncated()).isTrue();
+    }
+
+    @Test
+    void withoutACharacterBudgetTheWholeTextStays() {
+        // F39-10: früher endete der Text nach 1 Mio. Zeichen ohne Hinweis.
+        // Fortlaufende Zahlen statt eines wiederholten Worts: sonst hält POI die stark gepackte Datei für eine Zip-Bombe.
+        String longText = "Anfang " + java.util.stream.IntStream.range(0, 200_000).mapToObj(Integer::toString)
+                .collect(java.util.stream.Collectors.joining(" ")) + " Schlusswort";
+
+        DocumentText.Extracted extracted = documents.extract("lang.docx", DocumentFixtures.DOCX,
+                DocumentFixtures.docx(longText));
+
+        assertThat(extracted.text().length()).isGreaterThan(1_000_000);
+        assertThat(extracted.text()).startsWith("Anfang").endsWith("Schlusswort");
+        assertThat(extracted.truncated()).isFalse();
+    }
+
+    @Test
     void longTextsAreCutAtTheCharacterLimit() {
-        TikaDocumentText shortTexts = new TikaDocumentText(TikaDocumentText.DEFAULT_MAX_BYTES, 10,
+        TikaDocumentText shortTexts = new TikaDocumentText(Long.MAX_VALUE, 10,
                 Duration.ofSeconds(30));
 
         DocumentText.Extracted extracted = shortTexts.extract("lang.docx", DocumentFixtures.DOCX,
@@ -93,7 +131,7 @@ class TikaDocumentTextTest {
     @Test
     void anExtractionOverTheTimeLimitIsAbandoned() {
         // Schon das Laden von Tika dauert länger als eine Nanosekunde.
-        TikaDocumentText hasty = new TikaDocumentText(TikaDocumentText.DEFAULT_MAX_BYTES, 1000, Duration.ofNanos(1));
+        TikaDocumentText hasty = new TikaDocumentText(Long.MAX_VALUE, 1000, Duration.ofNanos(1));
 
         assertThatThrownBy(() -> hasty.extract("bericht.pdf", DocumentFixtures.PDF, DocumentFixtures.pdf(TEXT)))
                 .isInstanceOf(DocumentTextException.class)

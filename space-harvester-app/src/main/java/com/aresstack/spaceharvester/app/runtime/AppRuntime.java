@@ -149,7 +149,8 @@ public final class AppRuntime implements AutoCloseable {
                 settings.storage().maxLargeAssets(), settings.storage().searchTimeout(),
                 settings.storage().maxTreeNodes(), null, settings.storage().extraction(),
                 settings.storage().maxPageBytes(), settings.storage().maxTextFileBytes(),
-                settings.storage().checkTimeout(), settings.storage().largeFileTimeout());
+                settings.storage().checkTimeout(), settings.storage().largeFileTimeout(),
+                settings.storage().queryLimits());
         AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
         try (Harvester harvester = builder(settings, storage, List.of(), policy, version, sessionSecrets, false)
                 .build()) {
@@ -167,7 +168,8 @@ public final class AppRuntime implements AutoCloseable {
                 settings.storage().maxLargeAssets(), settings.storage().searchTimeout(),
                 settings.storage().maxTreeNodes(), null, settings.storage().extraction(),
                 settings.storage().maxPageBytes(), settings.storage().maxTextFileBytes(),
-                settings.storage().checkTimeout(), settings.storage().largeFileTimeout());
+                settings.storage().checkTimeout(), settings.storage().largeFileTimeout(),
+                settings.storage().queryLimits());
         AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
         try (Harvester harvester = builder(settings, storage, List.of(), policy, version, sessionSecrets, false)
                 .build()) {
@@ -261,6 +263,7 @@ public final class AppRuntime implements AutoCloseable {
                 .jobLimits(settings.jobLimits())
                 .searchTimeout(storage.searchTimeout())
                 .maxTreeNodes(storage.maxTreeNodes())
+                .queryLimits(storage.queryLimits())
                 .pdfFont(storage.pdfFont())
                 .cacheFreshness(new CacheFreshness(settings.cache().maxAge(), settings.cache().versionCheck()))
                 .withheldRetention(settings.cache().withheldRetention())
@@ -361,9 +364,24 @@ public final class AppRuntime implements AutoCloseable {
         harvester.parallelPreparations(next.jobLimits().parallelPreparations());
         harvester.parallelDownloads(next.jobLimits().parallelDownloads());
         harvester.downloadConnections(next.jobLimits().downloadConnections());
+        retitle(settings, next);
         settings = next;
         lastRejection = List.of();
         return Reconfiguration.APPLIED;
+    }
+
+    /**
+     * Übernimmt geänderte Anzeigenamen in den laufenden Core, ohne eine Quelle neu zu öffnen; {@link #liveChange} hat
+     * schon geprüft, dass sich an den Quellen nur der Name geändert hat.
+     */
+    private void retitle(AppSettings current, AppSettings next) {
+        java.util.Map<String, String> before = new java.util.HashMap<>();
+        current.sources().forEach(entry -> before.put(entry.id(), entry.config().title()));
+        for (AppSettings.SourceEntry entry : next.sources()) {
+            if (!java.util.Objects.equals(before.get(entry.id()), entry.config().title())) {
+                harvester.sourceManagement().rename(entry.id(), entry.config().title());
+            }
+        }
     }
 
     /**

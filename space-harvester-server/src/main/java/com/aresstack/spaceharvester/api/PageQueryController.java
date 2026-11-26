@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.api;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
+import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.query.PageListing;
@@ -106,9 +107,12 @@ public class PageQueryController {
             @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey,
             @Parameter(description = "nextCursor der vorigen Antwort; leer für den ersten Stapel")
             @RequestParam(required = false) String cursor,
-            @Parameter(description = "Größe des Stapels, 1 bis " + PageQueries.MAX_PAGE_LIMIT)
-            @RequestParam(defaultValue = "" + PageQueries.MAX_PAGE_LIMIT) int limit) {
-        return PagesResponse.of(queries.pages(caller, sourceId, spaceKey, cursor, limit));
+            @Parameter(description = "Größe des Stapels, 1 bis space-harvester.query.max-page-limit (Standard "
+                    + com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULT_MAX_PAGE_LIMIT
+                    + "); ohne Angabe der eingestellte Höchstwert")
+            @RequestParam(required = false) Integer limit) {
+        return PagesResponse.of(queries.pages(caller, sourceId, spaceKey, cursor,
+                limit == null ? queries.maxPageLimit() : limit));
     }
 
     @GetMapping("/{sourceId}/spaces/{spaceKey}/tree")
@@ -117,7 +121,9 @@ public class PageQueryController {
                     + "ohne Seiteninhalte; mehrere Wurzeln sind normal. Jede Seite erscheint genau einmal. Seiten, "
                     + "deren Elternseite nicht im Baum ist (nicht geerntet, gelöscht, verschoben oder nicht "
                     + "sichtbar), und Elternzyklen werden zu Wurzeln und in anomalies genannt. Kinder und Wurzeln "
-                    + "aufsteigend nach pageId. Größere Bäume liefert der Export.")
+                    + "aufsteigend nach pageId. Ebenenweise (ADR 0040, Punkt 12): eine Antwort enthält höchstens "
+                    + "levels Ebenen; ein Knoten mit more=true hat tiefere Kinder, die root=<seine id> nachliefert. "
+                    + "Die Gesamttiefe ist nicht begrenzt.")
     @ApiResponse(responseCode = "200", description = "Der Baum")
     @ApiResponse(responseCode = "400", description = "Nicht unterstützter include-Wert (invalid-request)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -125,13 +131,14 @@ public class PageQueryController {
     @ApiResponse(responseCode = "403", description = "Keine metadata-Freigabe für diesen Space oder keine Quelle mit dieser ID (access-denied)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
-    @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found) oder Space nicht im "
-            + "Cache (cache-miss)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+    @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found), Space nicht im "
+            + "Cache oder root nicht im Baum (cache-miss)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "409", description = "Cache-Generation während des Lesens ersetzt "
             + "(cache-generation-changed)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
-    @ApiResponse(responseCode = "422", description = "Baum zu groß oder zu tief für eine synchrone Antwort "
+    @ApiResponse(responseCode = "422", description = "Mehr sichtbare Seiten als space-harvester.query.max-tree-nodes "
             + "(tree-too-large)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "503", description = "Cache nicht eingerichtet oder nicht lesbar (cache-unavailable)",
@@ -145,7 +152,14 @@ public class PageQueryController {
             @Parameter(description = "Zusätzliche Angaben je Knoten. Derzeit nur metadata (title, version, url, "
                     + "modifiedAt); content und enrichments folgen mit eigenen Grenzen.",
                     array = @ArraySchema(schema = @Schema(allowableValues = {"metadata"})))
-            @RequestParam(required = false) List<String> include) {
+            @RequestParam(required = false) List<String> include,
+            @Parameter(description = "Seite, deren Teilbaum geliefert wird; leer für den ganzen Baum ab den Wurzeln")
+            @RequestParam(required = false) String root,
+            @Parameter(description = "Ebenen dieser Antwort, 1 bis " + PageQueries.MAX_TREE_LEVELS)
+            @RequestParam(defaultValue = "" + PageQueries.MAX_TREE_LEVELS) int levels) {
+        if (levels < 1 || levels > PageQueries.MAX_TREE_LEVELS) {
+            throw new InvalidQueryException("levels muss zwischen 1 und " + PageQueries.MAX_TREE_LEVELS + " liegen");
+        }
         boolean metadata = false;
         for (String value : include == null ? List.<String>of() : include) {
             switch (value.trim()) {
@@ -157,7 +171,11 @@ public class PageQueryController {
                 default -> throw new InvalidQueryException("include kennt nur metadata");
             }
         }
-        return TreeResponse.of(queries.tree(caller, sourceId, spaceKey), metadata);
+        SpaceTree whole = queries.tree(caller, sourceId, spaceKey);
+        PageTree part = whole.tree().levels(root == null || root.isBlank() ? null : root, levels)
+                .orElseThrow(() -> new CacheMissException(sourceId, "Seite " + root + " ist nicht im Baum"));
+        return TreeResponse.of(new SpaceTree(whole.sourceId(), whole.spaceKey(), whole.generation(), part,
+                whole.pages()), metadata);
     }
 
     @GetMapping("/{sourceId}/pages/{pageId}")
@@ -528,19 +546,23 @@ public class PageQueryController {
      *
      * @param id       pageId
      * @param children Kinder, aufsteigend nach pageId
+     * @param more     {@code true}, wenn die Seite tiefere Kinder hat, die {@code root=<id>} nachliefert; sonst fehlt
+     *                 das Feld
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record TreeNode(String id, String title, String version, Instant modifiedAt, URI url,
-                           List<TreeNode> children) {
+                           List<TreeNode> children, Boolean more) {
 
         static TreeNode of(PageTree.Node node, Map<String, ListedPage> pages) {
             ListedPage listed = pages.get(node.pageId());
             List<TreeNode> children = node.children().stream().map(child -> of(child, pages)).toList();
+            Boolean more = node.more() ? Boolean.TRUE : null;
             if (listed == null) {
-                return new TreeNode(node.pageId(), null, null, null, null, children);
+                return new TreeNode(node.pageId(), null, null, null, null, children, more);
             }
             PageMetadata page = listed.header().metadata();
-            return new TreeNode(node.pageId(), page.title(), page.version(), page.modifiedAt(), page.url(), children);
+            return new TreeNode(node.pageId(), page.title(), page.version(), page.modifiedAt(), page.url(), children,
+                    more);
         }
     }
 

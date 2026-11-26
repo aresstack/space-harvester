@@ -69,7 +69,18 @@ class ParitySharePointTest {
             assertThat(children.spaceKey()).isEqualTo("parity");
             assertThat(children.pages()).extracting(node -> node.title())
                     .containsExactlyInAnyOrder("Betrieb", "Lies mich.txt", "Notizen.md", "bild.png");
-            assertThat(sync(harvester).keySet()).containsExactlyInAnyOrder(ParitySharePoint.DOCUMENTS);
+            // Die vollständige Inventur bringt die Ordner mit (leer, Ordner-ID wie im Baum), damit jeder Ordner seinen
+            // Teilbaum kennt (Angelo 26.11.2026: Zusammenfassen und Änderungen auf jedem Ordner).
+            Map<String, String> synced = sync(harvester);
+            List<String> expected = new java.util.ArrayList<>(List.of(ParitySharePoint.DOCUMENTS));
+            expected.addAll(List.of("Dokumente", "Betrieb", "Nacht"));
+            assertThat(synced.keySet()).containsExactlyInAnyOrderElementsOf(expected);
+            assertThat(synced.get("Betrieb")).isEmpty();
+            var folder = harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages().stream()
+                    .filter(page -> page.header().metadata().title().equals("Betrieb")).findFirst().orElseThrow();
+            assertThat(folder.header().key().pageId()).isEqualTo(children.pages().stream()
+                    .filter(node -> node.title().equals("Betrieb")).findFirst().orElseThrow().pageId());
+            assertThat(folder.header().metadata().parentPageId()).isEqualTo(library.pageId());
         }
     }
 

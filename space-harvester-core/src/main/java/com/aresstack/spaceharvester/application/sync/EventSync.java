@@ -248,7 +248,8 @@ public class EventSync {
         }
         missing.removeAll(pages.keySet());
         return new SyncBaseline(baseline.sourceId(), baseline.spaceKey(), baseline.generation() + 1, now, pages,
-                stale, missing, withheld, baseline.changesSince());
+                stale, missing, withheld, baseline.changesSince(),
+                baseline.changeCheckpoint());
     }
 
     private SyncBaseline confirmed(String sourceId, String spaceKey) {

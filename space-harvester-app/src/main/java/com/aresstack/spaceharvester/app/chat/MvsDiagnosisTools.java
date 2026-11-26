@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.chat;
 
 import com.aresstack.spaceharvester.ai.AiChat;
+import com.aresstack.spaceharvester.app.ui.deck.MvsDiagnosisSettings;
 import com.aresstack.spaceharvester.deck.ftp.BinarySample;
 import com.aresstack.spaceharvester.deck.ftp.FtpSession;
 import com.aresstack.spaceharvester.deck.ftp.RemoteEntry;
@@ -18,20 +19,25 @@ public final class MvsDiagnosisTools implements ChatToolset {
     public static final String INSPECT = "inspect_mvs_dataset";
     public static final String READ = "read_mvs_bytes";
     public static final String RECORDS = "inspect_mvs_records";
-    private static final int PAGE = 4096;
-    private static final int BUDGET = 65536;
     private static final String DENIED = "Binärdiagnose nicht freigegeben oder Auswahl geändert.";
 
     public static final class Grant {
         private final FtpSession session;
         private final RemoteEntry entry;
         private volatile boolean revoked;
+        private final MvsDiagnosisSettings settings;
         private CompletableFuture<Snapshot> pending;
-        private int remaining = BUDGET;
+        private long remaining;
 
         public Grant(FtpSession session, RemoteEntry entry) {
+            this(session, entry, MvsDiagnosisSettings.shared());
+        }
+
+        Grant(FtpSession session, RemoteEntry entry, MvsDiagnosisSettings settings) {
             this.session = session;
             this.entry = entry;
+            this.settings = settings;
+            this.remaining = settings.get(MvsDiagnosisSettings.Value.BUDGET_BYTES);
         }
 
         public String path() { return entry.path(); }
@@ -50,7 +56,8 @@ public final class MvsDiagnosisTools implements ChatToolset {
                     if (revoked) throw new IllegalStateException(DENIED);
                     var details = c.datasetDetails(entry.path());
                     if (details.equals(RemoteEntry.Details.NONE)) details = entry.details();
-                    return new Snapshot(details, c.readBinarySample(entry.path(), BinarySample.MAX_CAPTURE_BYTES));
+                    return new Snapshot(details, c.readBinarySample(entry.path(),
+                            settings.number(MvsDiagnosisSettings.Value.SAMPLE_BYTES)));
                 });
             }
             return pending;
@@ -58,8 +65,9 @@ public final class MvsDiagnosisTools implements ChatToolset {
 
         private synchronized byte[] read(BinarySample sample, long offset, int length) {
             if (revoked) throw new IllegalStateException(DENIED);
-            if (length < 1 || length > PAGE || offset < 0 || offset >= sample.capturedBytes()) {
-                throw new IllegalArgumentException("Offset außerhalb der Stichprobe oder Länge nicht 1–4096.");
+            int page = settings.number(MvsDiagnosisSettings.Value.READ_BYTES);
+            if (length < 1 || length > page || offset < 0 || offset >= sample.capturedBytes()) {
+                throw new IllegalArgumentException("Offset außerhalb der Stichprobe oder Länge nicht 1–" + page + ".");
             }
             int count = (int) Math.min(length, sample.capturedBytes() - offset);
             if (count > remaining) throw new IllegalStateException("Diagnosebudget erschöpft; erneut freigeben.");
@@ -72,6 +80,7 @@ public final class MvsDiagnosisTools implements ChatToolset {
 
     private final ChatToolset base;
     private final Grant grant;
+    private final MvsDiagnosisSettings settings;
     private final BooleanSupplier shown;
     private volatile boolean approvedModel;
     private volatile boolean cancelled;
@@ -80,6 +89,7 @@ public final class MvsDiagnosisTools implements ChatToolset {
         this.base = base;
         this.grant = grant;
         this.shown = shown;
+        this.settings = grant.settings;
     }
 
     @Override
@@ -98,10 +108,13 @@ public final class MvsDiagnosisTools implements ChatToolset {
         var tools = new ArrayList<>(base.definitions());
         if (available()) {
             tools.add(new AiChat.Tool(INSPECT, "Ermittelt DCB-Metadaten, Länge und SHA-256 des freigegebenen "
-                    + "binären FTP-Transfers (maximal 8 MiB im Speicher).",
+                    + "binären FTP-Transfers (Stichprobe der ersten "
+                    + settings.get(MvsDiagnosisSettings.Value.SAMPLE_BYTES) + " Bytes im Speicher).",
                     "{\"type\":\"object\",\"properties\":{}}"));
             tools.add(new AiChat.Tool(READ, "Liest Originalbytes aus der Stichprobe als Hex, ASCII und IBM1047; "
-                    + "Offset nullbasiert, höchstens 4096 Bytes pro Aufruf, 65536 Bytes pro Freigabe.",
+                    + "Offset nullbasiert, höchstens " + settings.get(MvsDiagnosisSettings.Value.READ_BYTES)
+                    + " Bytes pro Aufruf, " + settings.get(MvsDiagnosisSettings.Value.BUDGET_BYTES)
+                    + " Bytes pro Freigabe.",
                     "{\"type\":\"object\",\"properties\":{\"offset\":{\"type\":\"integer\"},"
                     + "\"length\":{\"type\":\"integer\"}},\"required\":[\"offset\",\"length\"]}"));
             tools.add(new AiChat.Tool(RECORDS, "Prüft mögliche Satzgrenzen bei RECFM F anhand LRECL und "
@@ -123,10 +136,12 @@ public final class MvsDiagnosisTools implements ChatToolset {
             var args = DeckChatTools.arguments(call);
             long offset = args.path("offset").asLong(-1);
             int length = args.path("length").asInt(-1);
-            if (READ.equals(call.name()) && (offset < 0 || length < 1 || length > PAGE)) {
-                return "Offset muss >= 0 sein, Länge 1–4096.";
+            int page = settings.number(MvsDiagnosisSettings.Value.READ_BYTES);
+            if (READ.equals(call.name()) && (offset < 0 || length < 1 || length > page)) {
+                return "Offset muss >= 0 sein, Länge 1–" + page + ".";
             }
-            Snapshot snapshot = grant.snapshot().get(120, TimeUnit.SECONDS);
+            Snapshot snapshot = grant.snapshot().get(settings.get(MvsDiagnosisSettings.Value.TIMEOUT_SECONDS),
+                    TimeUnit.SECONDS);
             if (!available()) return DENIED;
             String result = switch (call.name()) {
                 case INSPECT -> describe(snapshot);

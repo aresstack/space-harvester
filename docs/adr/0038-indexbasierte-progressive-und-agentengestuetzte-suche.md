@@ -104,7 +104,7 @@ Zur Wahl standen drei eigenständige Suchmaschinen. Das ist verworfen.
 | Prefetch je Quelle in `KeywordSearch` und `SemanticPreparation` | auf main (#1462) |
 | Vorläufige native Funde bei ausgeschaltetem Prefetch | auf main (#1462) |
 | Vorläufige native Funde in der semantischen Suche | **nicht umgesetzt**, beschlossen (F38-1) |
-| Register laufender progressiver Suchen mit einstellbaren Grenzen (Punkt 10) | **weicht ab:** feste Größe 256 und 5 Minuten. Eine laufende Suche wird schon heute nie verdrängt; ist das Register voll, wird die neue Suche abgewiesen (`CapacityExceededException`) |
+| Register laufender progressiver Suchen mit einstellbaren Grenzen (Punkt 10) | umgesetzt auf develop: laufend, wartend, Aufbewahrung und größtes Zeitbudget getrennt einstellbar (`space-harvester.search.progressive.*`); eine laufende Suche wird nie verdrängt, eine neue wartet, erst bei voller Warteschlange wird sie abgewiesen. Prüfung Auftragsinfrastruktur: bleibt getrennt, weil Aufträge dauerhaft gespeichert, sieben Tage aufbewahrt und in der Auftragsleiste gezeigt werden, Suchen aber kurzlebig im Speicher liegen |
 | Temporäre Kandidatenbewertung ohne dauerhafte Ablage | nicht gebaut, bleibt Erweiterung (F38-3) |
 | Agenten-Spur (Freigaben am Verbindungsprofil, eigener Ergebnisblock) | **nicht umgesetzt**, im Code gibt es dafür nichts |
 
@@ -139,7 +139,7 @@ Nach ADR 0036, Punkt 12. Stand main `69835ca8`. Die Budgets der progressiven Suc
 | Semantische Variantensuche: Wartezeiten | 20 s, 60 s | **fest im Code** (`SemanticVariantSearch`) | nein |
 | KI-Erweiterung der Frage: Wartezeit, Länge je Variante, Länge der Frage, Größe der Antwort (**Größenlimit**) | 6 s, 200 Zeichen, 2000 Zeichen, 64 KiB | **fest im Code** (`AiQueryExpansion`) | nein |
 | Ausweitung über Begriffsbeziehungen | 3 | **fest im Code** (`SearchExpansion.MAX_EXPANSIONS`) | nein |
-| Server: gleichzeitig laufende progressive Suchen, Aufbewahrung, größtes Zeitbudget | 256, 5 Minuten, 2 Minuten | **fest im Code** (`ProgressiveSearches`, `ProgressiveSearchController`) | nein |
+| Server: laufende und wartende progressive Suchen, Aufbewahrung, größtes Zeitbudget | 256, 256 wartend, 5 Minuten, 2 Minuten | `space-harvester.search.progressive.max-running`, `.max-waiting`, `.retention`, `.max-time-budget` | nein |
 
 Die Agenten-Spur (Punkt 7) nennt ein Zeit- und Werkzeugbudget. Sie ist nicht gebaut; die Budgets entstehen als
 Einstellungen.

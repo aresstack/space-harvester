@@ -17,9 +17,6 @@ import java.util.Optional;
  */
 final class Payloads {
 
-    /** Größere Payloads werden nur gekürzt angezeigt; gespeichert wird immer vollständig. */
-    static final int MAX_DISPLAY_CHARS = 2_000_000;
-
     private static final ObjectMapper JSON = JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build();
 
     private Payloads() {
@@ -30,7 +27,7 @@ final class Payloads {
         return type.startsWith("application/json") || type.contains("+json");
     }
 
-    /** Render source text only; never decode arbitrary binary data into a Swing text component. */
+    /** Render source text only, always complete ({@link ProgressiveText} fills it); never decode arbitrary binary data into a Swing text component. */
     static String display(NativePayload payload) {
         if (!isText(payload)) {
             return "Binärinhalt (" + payload.mediaType() + ", " + payload.length()
@@ -47,9 +44,7 @@ final class Payloads {
         if (text == null) {
             text = new String(payload.bytes(), StandardCharsets.UTF_8);
         }
-        return text.length() > MAX_DISPLAY_CHARS
-                ? text.substring(0, MAX_DISPLAY_CHARS) + "\n… gekürzt angezeigt; „Speichern unter …“ speichert vollständig"
-                : text;
+        return text;
     }
 
     /** Keep binary payload bytes out of diagnostic text fields and text decoders. */

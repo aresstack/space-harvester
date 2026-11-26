@@ -193,6 +193,67 @@ public class FtpInventoryTest {
         assertEquals(Collections.singletonList("HLQ"), session.listed);
     }
 
+    /** Ein gesetztes Limit macht nichts unvollständig; erst was es tatsächlich abschneidet, und nur je Startpunkt. */
+    @Test
+    public void coverageFollowsWhatTheLimitsActuallyCutOffPerStartPoint() throws Exception {
+        FakeSession session = new FakeSession();
+        session.children.put("SMALL", Collections.singletonList(directory("SMALL.SRC")));
+        session.children.put("SMALL.SRC", Arrays.asList(file("SMALL.SRC(A)"), file("SMALL.SRC(B)")));
+        session.children.put("DEEP", Collections.singletonList(directory("DEEP.LIB")));
+        session.children.put("DEEP.LIB", Collections.singletonList(directory("DEEP.LIB.MORE")));
+        FtpKnowledgeSource source = source(session);
+        assertFalse("vor der ersten Inventur deckt nichts ab", source.inventoryCovers(id(source, "SMALL.SRC(X)")));
+
+        source.discover(SourceScope.builder().startPoints("SMALL", "DEEP").maxDepth(1).maxResources(100).build());
+
+        assertTrue("Limits gesetzt, aber nichts abgeschnitten", source.inventoryCovers(id(source, "SMALL.SRC(X)")));
+        assertFalse("maxDepth hat DEEP.LIB.MORE abgeschnitten", source.inventoryCovers(id(source, "DEEP.LIB(X)")));
+        assertFalse("außerhalb aller Startpunkte", source.inventoryCovers(id(source, "OTHER.SRC(X)")));
+
+        source.discover(SourceScope.builder().startPoints("SMALL").maxDepth(5).maxResources(1).build());
+        assertFalse("maxResources hat SMALL.SRC(B) abgeschnitten", source.inventoryCovers(id(source, "SMALL.SRC(B)")));
+
+        session.children.put("SMALL.SRC", Collections.singletonList(file("SMALL.SRC(A)")));
+        source.discover(SourceScope.builder().startPoints("SMALL").maxDepth(5).maxResources(1).build());
+        assertTrue("genau am Limit, aber vollständig", source.inventoryCovers(id(source, "SMALL.SRC(B)")));
+    }
+
+    /** Im Umfang heißt: unter einem Startpunkt, auch wenn er abgeschnitten wurde; ohne Inventur unbekannt, also ja. */
+    @Test
+    public void withinTheScopeMeansUnderAStartPointEvenIfItWasCutOff() throws Exception {
+        FakeSession session = new FakeSession();
+        session.children.put("DEEP", Collections.singletonList(directory("DEEP.LIB")));
+        session.children.put("DEEP.LIB", Collections.singletonList(directory("DEEP.LIB.MORE")));
+        FtpKnowledgeSource source = source(session);
+        assertTrue("ohne Inventur unbekannt", source.withinInventoryScope(id(source, "OTHER.SRC(X)")));
+
+        source.discover(SourceScope.builder().startPoints("DEEP").maxDepth(1).build());
+
+        assertTrue(source.withinInventoryScope(id(source, "DEEP.LIB(X)")));
+        assertFalse(source.inventoryCovers(id(source, "DEEP.LIB(X)")));
+        assertFalse(source.withinInventoryScope(id(source, "OTHER.SRC(X)")));
+    }
+
+    @Test
+    public void aFailedInventoryCoversNothing() throws Exception {
+        FakeSession session = new FakeSession();
+        session.children.put("HLQ", Collections.singletonList(file("HLQ.SRC(A)")));
+        FtpKnowledgeSource source = source(session);
+        source.discover(SourceScope.of("HLQ"));
+        assertTrue(source.inventoryCovers(id(source, "HLQ.SRC(B)")));
+        try {
+            source.discover(SourceScope.of("HLQ", "%"));
+            fail("Reject a global wildcard");
+        } catch (KnowledgeSourceException expected) {
+            assertFalse(source.inventoryCovers(id(source, "HLQ.SRC(B)")));
+        }
+    }
+
+    private static com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId id(FtpKnowledgeSource source,
+                                                                                   String path) {
+        return source.idOf(path);
+    }
+
     private static FtpKnowledgeSource source(FakeSession session) {
         return source(session, false);
     }

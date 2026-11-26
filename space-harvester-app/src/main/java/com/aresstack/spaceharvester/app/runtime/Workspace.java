@@ -165,10 +165,14 @@ public final class Workspace {
 
     /**
      * Kindseiten nur aus dem Cache, ohne die Quelle zu fragen ({@code PageNavigation.cachedChildren}): zuerst zeigen,
-     * dann {@link #children} im Hintergrund holen und tauschen (Angelo 17.11.2026).
+     * dann {@link #children} im Hintergrund holen und tauschen (Angelo 17.11.2026). Paginiert, ohne Gesamtgrenze.
+     *
+     * @param cursor {@code null} oder {@code nextCursor} des vorigen Stapels
+     * @param limit  Stapelgröße
      */
-    public PageNavigation.Children cachedChildren(String sourceId, String spaceKey, String parentPageId) {
-        return harvester.navigation().cachedChildren(caller, sourceId, spaceKey, parentPageId);
+    public PageNavigation.Children cachedChildren(String sourceId, String spaceKey, String parentPageId,
+                                                  String cursor, int limit) {
+        return harvester.navigation().cachedChildren(caller, sourceId, spaceKey, parentPageId, cursor, limit);
     }
 
     /** Wo eine Seite steht: Space und Vorfahren von oben nach unten ({@code PageNavigation.position}). */
@@ -728,12 +732,19 @@ public final class Workspace {
     /**
      * Schedule direct native resources through the shared acquisition and index pipeline. Stops at the first failure
      * of the source itself (refused login, unreachable host), so one visit never repeats a failing login per member.
+     * Records the acquisition reason "navigation" for every scheduled resource (ADR 0037, point 3). Resources already
+     * stored are checked for freshness against the source on every visit (Angelo 26.11.2026): the shared refresh path
+     * ({@code PageLoads.join} with {@code refresh}) compares the source version first and fetches content only when it
+     * changed.
+     *
+     * @return the background loads to wait for, or {@code null} when nothing was scheduled
      */
-    public void acquireVisitedResources(String sourceId, java.util.Collection<String> paths) {
+    public com.aresstack.spaceharvester.application.background.PageLoads.Joined acquireVisitedResources(
+            String sourceId, java.util.Collection<String> paths) {
         HarvestSource source = sources().stream().filter(candidate -> candidate.id().equals(sourceId))
                 .findFirst().orElse(null);
         if (source == null) {
-            return;
+            return null;
         }
         java.util.Set<PageKey> keys = new java.util.LinkedHashSet<>();
         for (String path : paths) {
@@ -754,8 +765,11 @@ public final class Workspace {
             }
         }
         if (!keys.isEmpty()) {
-            harvester.pageLoads().join(caller, "Besuchte Quelltexte laden", keys);
+            // Erwerbsgrund „Navigation“ merken (ADR 0037, Punkt 3); Bereich ist bei FTP/NDV die Quelle selbst.
+            harvester.navigationMarks().mark(sourceId, sourceId, keys.stream().map(PageKey::pageId).toList());
+            return harvester.pageLoads().join(caller, "Besuchte Quelltexte laden", keys, true);
         }
+        return null;
     }
 
     /**
@@ -965,6 +979,35 @@ public final class Workspace {
         JobStatus status = harvester.sourceManagement().purge(sourceId, Harvester.OWNER);
         activities.remember(status.id());
         return status;
+    }
+
+    /**
+     * Vorschau für „Bereinigen“ (ADR 0037, Punkt 3) je abgeglichenem Bereich der Quelle: Ressourcen ohne Erwerbsgrund
+     * und mit unbekanntem Grund nach einer frischen Inventur; schreibt nichts. Fragt die Quelle, also nie auf dem EDT.
+     */
+    public java.util.List<com.aresstack.spaceharvester.application.sync.SpaceSyncJobs.CleanupPreview> cleanupPreviews(
+            String sourceId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        return harvester.cleanupPreviews(sourceId);
+    }
+
+    /**
+     * „Bereinigen“: entfernt je Bereich die gewählten Ressourcen aus dem lokalen Bestand, soweit sie nach einer neuen
+     * Inventur noch keinen Erwerbsgrund haben; Originale in der Quelle bleiben. Ein Abgleichsauftrag je Bereich.
+     *
+     * @param pageIds je Bereich die zu bereinigenden Ressourcen; leere Bereiche werden übersprungen
+     */
+    public java.util.List<JobStatus> cleanUp(String sourceId, java.util.Map<String, java.util.Set<String>> pageIds) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        java.util.List<JobStatus> started = new java.util.ArrayList<>();
+        pageIds.forEach((spaceKey, ids) -> {
+            if (!ids.isEmpty()) {
+                JobStatus status = harvester.cleanUp(sourceId, spaceKey, ids);
+                activities.remember(status.id());
+                started.add(status);
+            }
+        });
+        return started;
     }
 
     /**

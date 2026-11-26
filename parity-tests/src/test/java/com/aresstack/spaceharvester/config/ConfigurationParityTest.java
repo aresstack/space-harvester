@@ -107,6 +107,9 @@ class ConfigurationParityTest {
                   - confluence/DOC
                 mode: sync-cache
                 catch-up-on-start: true
+              query:
+                max-page-limit: 250
+                max-term-scan: 70000
               jobs:
                 parallel-preparations: 3
                 parallel-downloads: 0
@@ -332,6 +335,13 @@ class ConfigurationParityTest {
         assertThat(extraction.memoryLimit("application/msword")).isEqualTo(40L * 1024 * 1024);
         assertThat(extraction.memoryLimit("message/rfc822")).isZero();
         assertThat(extraction.memoryLimit("application/pdf")).as("Nachweis bleibt").isZero();
+
+        // Stapelgrößen der Abfragen (Angelo 26.11.2026): beim Dienst @Value in QueryConfiguration.
+        assertThat(app.storage().queryLimits())
+                .isEqualTo(new com.aresstack.spaceharvester.application.query.QueryLimits(
+                        environment.getProperty("space-harvester.query.max-page-limit", Integer.class),
+                        environment.getProperty("space-harvester.query.max-term-scan", Integer.class)))
+                .isEqualTo(new com.aresstack.spaceharvester.application.query.QueryLimits(250, 70_000));
 
         // Terminal-Ausgabe (Angelo 12.11.2026): dieselbe Stufe wie die Konsolen-Schwelle, die Spring Boot setzt.
         assertThat(app.consoleOutput()).isEqualTo(ConsoleOutput.WARN);

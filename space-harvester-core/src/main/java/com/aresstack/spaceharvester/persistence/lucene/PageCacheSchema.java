@@ -125,6 +125,8 @@ public final class PageCacheSchema {
     static final String WITHHELD_PAGE = "withheldPage";
     /** {@link SyncBaseline#changesSince()}; fehlt in älteren Generationen und gilt dann als {@code confirmedAt}. */
     static final String CHANGES_SINCE = "changesSince";
+    /** {@link SyncBaseline#changeCheckpoint()}; fehlt ohne exakte Position der Quelle und in älteren Generationen. */
+    static final String CHANGE_CHECKPOINT = "changeCheckpoint";
 
     static final String PAGE = "page";
     static final String REVISION = "revision";
@@ -348,6 +350,9 @@ public final class PageCacheSchema {
         doc.add(new StoredField(GENERATION, baseline.generation()));
         doc.add(new StoredField(CONFIRMED_AT, baseline.confirmedAt().toString()));
         doc.add(new StoredField(CHANGES_SINCE, baseline.changesSince().toString()));
+        if (baseline.changeCheckpoint() != null) {
+            doc.add(new StoredField(CHANGE_CHECKPOINT, baseline.changeCheckpoint()));
+        }
         for (String pageId : baseline.stalePageIds()) {
             doc.add(new StoredField(STALE_PAGE_ID, pageId));
         }
@@ -509,7 +514,8 @@ public final class PageCacheSchema {
         return new SyncBaseline(space.get(SPACE_DOC + SOURCE_ID), space.get(SPACE_DOC + SPACE_KEY), generation(space),
                 instant(space.get(CONFIRMED_AT)), pages, new TreeSet<>(List.of(space.getValues(STALE_PAGE_ID))),
                 new TreeSet<>(List.of(space.getValues(MISSING_PAGE_ID))), withheld(space),
-                space.get(CHANGES_SINCE) == null ? null : instant(space.get(CHANGES_SINCE)));
+                space.get(CHANGES_SINCE) == null ? null : instant(space.get(CHANGES_SINCE)),
+                space.get(CHANGE_CHECKPOINT));
     }
 
     /** Gesperrte Seiten der bestätigten Generation aus ihrem Kopf; reicht das Feld {@link #WITHHELD_PAGE}. */

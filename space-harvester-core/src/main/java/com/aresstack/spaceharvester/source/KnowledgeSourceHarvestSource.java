@@ -159,7 +159,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     private final String id;
     private final String type;
-    private final String title;
+    /** Anzeigename; nur Anzeige, nie Kennung. {@link #retitle} ändert ihn ohne neue Instanz (Rechtsklick „Umbenennen“). */
+    private volatile String title;
     private final KnowledgeSourcePort port;
     private final InFlightLimit inFlight;
     /**
@@ -321,6 +322,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public String title() {
         return title;
+    }
+
+    /** Ändert nur den Anzeigenamen; Port, Web-Sitzung, Umfang und Zugangsdaten bleiben unberührt. */
+    void retitle(String title) {
+        this.title = java.util.Objects.requireNonNull(title, "title");
     }
 
     @Override
@@ -752,7 +758,19 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public boolean outsideScope(String pageId) {
         Set<String> current = inScope;
-        return restriction != null && current != null && !current.contains(pageId);
+        if (restriction != null) {
+            return current != null && !current.contains(pageId);
+        }
+        // Eine Partition mit Startpunkten (FTP, NDV): die Quelle kennt ihren Umfang selbst; unbekannt heißt „innen“.
+        if (port instanceof com.aresstack.enterpriseai.source.api.InventoryCoverageSource coverage) {
+            try {
+                KnowledgeResourceId resourceId = resourceIdOf(pageId);
+                return ownResource(resourceId.value()).isPresent() && !coverage.withinInventoryScope(resourceId);
+            } catch (SourceAccessException e) {
+                return false;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -765,20 +783,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 return false;
             }
         }
-        if (!"ftp".equals(type) || scope == null) {
-            return true;
-        }
-        try {
-            KnowledgeResourceId resourceId = resourceIdOf(pageId);
-            if (ownResource(resourceId.value()).isEmpty()) {
-                return false;
-            }
-            String specific = resourceId.schemeSpecificPart();
-            String path = specific.substring(port.sourceId().locator().length() + 1);
-            return FtpInventoryCoverage.covers(scope, path);
-        } catch (SourceAccessException e) {
-            return false;
-        }
+        return true;
     }
 
     /**
@@ -919,15 +924,23 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public PageMetadataBatch changedPageMetadata(String partitionKey, java.time.Duration within, String cursor,
                                                  int limit) {
+        return changedPageMetadata(partitionKey, null, within, cursor, limit);
+    }
+
+    @Override
+    public PageMetadataBatch changedPageMetadata(String partitionKey, String checkpoint, java.time.Duration within,
+                                                 String cursor, int limit) {
         ChangeListingSource changes = changes();
         PartitionResources batch;
         try {
-            batch = changes.changedResources(changePartition(partitionKey), within, cursor == null ? "" : cursor, limit);
+            batch = changes.changedResourcesSince(changePartition(partitionKey), checkpoint == null ? "" : checkpoint,
+                    within, cursor == null ? "" : cursor, limit);
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
         return new PageMetadataBatch(batch.resources().stream()
-                .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
+                .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor(),
+                batch.checkpoint());
     }
 
     @Override

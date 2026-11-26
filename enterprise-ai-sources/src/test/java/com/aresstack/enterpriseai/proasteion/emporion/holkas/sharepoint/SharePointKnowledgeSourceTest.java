@@ -22,6 +22,7 @@ import org.junit.Test;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +45,8 @@ public class SharePointKnowledgeSourceTest {
 
     private final List<String> postBodies = new ArrayList<String>();
     private final Map<String, String> posts = new HashMap<String, String>();
+    /** Answers GetChanges from the request body, if set (continuation after a token). */
+    private java.util.function.Function<String, String> changeLog;
 
     private final SharePointTransport fake = new SharePointTransport() {
         @Override
@@ -51,7 +54,8 @@ public class SharePointKnowledgeSourceTest {
             String key = uri.toString();
             postBodies.add(new String(body, StandardCharsets.UTF_8));
             if (key.endsWith("/GetChanges")) assertEquals("test-digest", digest);
-            String payload = posts.get(key);
+            String payload = key.endsWith("/GetChanges") && changeLog != null
+                    ? changeLog.apply(new String(body, StandardCharsets.UTF_8)) : posts.get(key);
             return payload == null ? new Response(404, "application/json", null)
                     : new Response(200, "application/json", payload.getBytes(StandardCharsets.UTF_8),
                     java.time.Instant.parse("2026-11-25T20:00:00Z").toEpochMilli());
@@ -190,18 +194,118 @@ public class SharePointKnowledgeSourceTest {
         assertEquals(1, changed.resources().size());
         assertEquals("IAR Handbuch.txt", changed.resources().get(0).title());
         assertTrue(requestedUris.contains(item));
-        assertTrue(postBodies.get(1).contains("ChangeTokenStart"));
-        assertTrue(postBodies.get(1).contains("1;3;" + list + ";"));
+        assertTrue(postBodies.stream().anyMatch(body -> body.contains("ChangeTokenStart")
+                && body.contains("1;3;" + list + ";")));
         assertTrue(requestedUris.stream().noneMatch(uri -> uri.contains("GetFolderByServerRelativeUrl")));
         posts.put(listApi + "/GetChanges", "{\"d\":{\"results\":[" + event.replace("\"ChangeType\":2", "\"ChangeType\":3") + "]}}");
         com.aresstack.enterpriseai.source.api.PartitionResources first =
                 source.changedResources(source.sourceId().value(), java.time.Duration.ofHours(1), "", 1);
         assertEquals(1, first.resources().size());
         assertFalse(first.complete());
-        com.aresstack.enterpriseai.source.api.PartitionResources last =
+        // The structural fallback is the full inventory: both files and their two folders, page by page.
+        List<String> titles = new ArrayList<String>(Collections.singletonList(first.resources().get(0).title()));
+        com.aresstack.enterpriseai.source.api.PartitionResources last = first;
+        while (!last.complete()) {
+            last = source.changedResources(source.sourceId().value(), java.time.Duration.ofHours(1),
+                    last.nextCursor(), 1);
+            assertTrue(last.resources().size() <= 1);
+            for (KnowledgeResource resource : last.resources()) titles.add(resource.title());
+        }
+        assertEquals(java.util.Arrays.asList("Dokumente", "IAR Handbuch.txt", "Unter", "NIZZA.txt"), titles);
+    }
+
+    /**
+     * ADR 0042, point 6: the cursor continues after the token the server delivered, and no register limits the number
+     * of listings; the first of six listings still continues after the other five started.
+     */
+    @Test
+    public void changeListingsContinueAfterTheServerTokenWithoutARegister() throws Exception {
+        SharePointKnowledgeSource source = source();
+        String list = "11111111-2222-3333-4444-555555555555";
+        String listApi = API + "lists(guid'" + list + "')";
+        json.put(API + "lists?$select=Id,Hidden,RootFolder/ServerRelativeUrl&$expand=RootFolder&$filter=BaseTemplate%20eq%20101",
+                "{\"d\":{\"results\":[{\"Id\":\"" + list + "\",\"Hidden\":false,\"RootFolder\":{\"ServerRelativeUrl\":\"/sites/team/Dokumente\"}}]}}");
+        posts.put(SITE + "/_api/contextinfo", "{\"d\":{\"GetContextWebInformation\":{\"FormDigestValue\":\"test-digest\"}}}");
+        String[] names = {"Eins.txt", "Zwei.txt"};
+        String[] tokens = new String[names.length];
+        String[] events = new String[names.length];
+        for (int i = 0; i < names.length; i++) {
+            int item = i + 1;
+            json.put(listApi + "/items(" + item + ")?$select=FileSystemObjectType,File/Name,File/ServerRelativeUrl,File/TimeLastModified,File/Length,File/UIVersionLabel&$expand=File",
+                    "{\"d\":{\"FileSystemObjectType\":0,\"File\":" + file("/sites/team/Dokumente/" + names[i], 5) + "}}");
+            tokens[i] = "1;3;" + list + ";63900000000000000" + item + ";" + item;
+            events[i] = "{\"__metadata\":{\"type\":\"SP.ChangeItem\"},\"ChangeType\":2,\"ItemId\":" + item
+                    + ",\"ListId\":\"" + list + "\",\"ChangeToken\":{\"StringValue\":\"" + tokens[i] + "\"}}";
+        }
+        // Wie der Server: nach dem ersten Token nur noch die zweite Änderung, nach dem zweiten keine.
+        changeLog = body -> {
+            if (body.contains(tokens[1] + "\"")) return "{\"d\":{\"results\":[]}}";
+            if (body.contains(tokens[0] + "\"")) return "{\"d\":{\"results\":[" + events[1] + "]}}";
+            return "{\"d\":{\"results\":[" + events[0] + "," + events[1] + "]}}";
+        };
+        List<com.aresstack.enterpriseai.source.api.PartitionResources> firsts =
+                new ArrayList<com.aresstack.enterpriseai.source.api.PartitionResources>();
+        for (int i = 0; i < 6; i++) {
+            firsts.add(source.changedResources(source.sourceId().value(), java.time.Duration.ofHours(1), "", 1));
+        }
+        com.aresstack.enterpriseai.source.api.PartitionResources first = firsts.get(0);
+        assertEquals("Eins.txt", first.resources().get(0).title());
+        assertFalse(first.complete());
+
+        postBodies.clear();
+        com.aresstack.enterpriseai.source.api.PartitionResources second =
                 source.changedResources(source.sourceId().value(), java.time.Duration.ofHours(1), first.nextCursor(), 1);
-        assertEquals(1, last.resources().size());
+        assertEquals("Zwei.txt", second.resources().get(0).title());
+        assertTrue(postBodies.stream().anyMatch(body -> body.contains("ChangeTokenStart") && body.contains(tokens[0])));
+        com.aresstack.enterpriseai.source.api.PartitionResources last =
+                source.changedResources(source.sourceId().value(), java.time.Duration.ofHours(1), second.nextCursor(), 1);
+        assertTrue(last.resources().isEmpty());
         assertTrue(last.complete());
+        try {
+            source.changedResources(source.sourceId().value(), java.time.Duration.ofHours(1), first.nextCursor() + "x", 1);
+            fail("Foreign cursor accepted");
+        } catch (KnowledgeSourceException e) {
+            assertEquals(KnowledgeSourceException.Kind.UNSUPPORTED, e.kind());
+        }
+    }
+
+    /**
+     * ADR 0042, point 5: the last batch carries the token of the last processed change as checkpoint; a listing from
+     * that checkpoint continues after it instead of the time window, and a foreign checkpoint falls back to the window.
+     */
+    @Test
+    public void aCheckpointContinuesAfterTheLastProcessedChangeToken() throws Exception {
+        SharePointKnowledgeSource source = source();
+        String list = "11111111-2222-3333-4444-555555555555";
+        String listApi = API + "lists(guid'" + list + "')";
+        json.put(API + "lists?$select=Id,Hidden,RootFolder/ServerRelativeUrl&$expand=RootFolder&$filter=BaseTemplate%20eq%20101",
+                "{\"d\":{\"results\":[{\"Id\":\"" + list + "\",\"Hidden\":false,\"RootFolder\":{\"ServerRelativeUrl\":\"/sites/team/Dokumente\"}}]}}");
+        posts.put(SITE + "/_api/contextinfo", "{\"d\":{\"GetContextWebInformation\":{\"FormDigestValue\":\"test-digest\"}}}");
+        json.put(listApi + "/items(1)?$select=FileSystemObjectType,File/Name,File/ServerRelativeUrl,File/TimeLastModified,File/Length,File/UIVersionLabel&$expand=File",
+                "{\"d\":{\"FileSystemObjectType\":0,\"File\":" + file("/sites/team/Dokumente/Eins.txt", 5) + "}}");
+        String token = "1;3;" + list + ";639000000000000001;1";
+        String event = "{\"__metadata\":{\"type\":\"SP.ChangeItem\"},\"ChangeType\":2,\"ItemId\":1"
+                + ",\"ListId\":\"" + list + "\",\"ChangeToken\":{\"StringValue\":\"" + token + "\"}}";
+        changeLog = body -> body.contains(token + "\"") ? "{\"d\":{\"results\":[]}}"
+                : "{\"d\":{\"results\":[" + event + "]}}";
+        String partition = source.sourceId().value();
+
+        com.aresstack.enterpriseai.source.api.PartitionResources first =
+                source.changedResources(partition, java.time.Duration.ofHours(1), "", 10);
+        assertEquals("Eins.txt", first.resources().get(0).title());
+        assertTrue(first.complete());
+        assertFalse(first.checkpoint().isEmpty());
+
+        postBodies.clear();
+        com.aresstack.enterpriseai.source.api.PartitionResources next =
+                source.changedResourcesSince(partition, first.checkpoint(), java.time.Duration.ofHours(1), "", 10);
+        assertTrue(next.resources().isEmpty());
+        assertTrue(postBodies.stream().anyMatch(body -> body.contains("ChangeTokenStart") && body.contains(token)));
+        assertEquals(first.checkpoint(), next.checkpoint());
+
+        com.aresstack.enterpriseai.source.api.PartitionResources foreign =
+                source.changedResourcesSince(partition, "fremd", java.time.Duration.ofHours(1), "", 10);
+        assertEquals("Eins.txt", foreign.resources().get(0).title());
     }
 
     @Test
@@ -279,9 +383,38 @@ public class SharePointKnowledgeSourceTest {
         List<KnowledgeResource> found = new ArrayList<KnowledgeResource>();
         java.util.concurrent.atomic.AtomicInteger checkpoints = new java.util.concurrent.atomic.AtomicInteger();
         source.visitInventory(source.sourceId().value(), checkpoints::incrementAndGet, found::add);
-        assertEquals(2002, found.size());
+        assertEquals("2002 files and their 2 folders", 2004, found.size());
         assertTrue(checkpoints.get() > 2000);
         assertTrue(found.stream().anyMatch(r -> r.title().equals("large.txt")));
+    }
+
+    @Test
+    public void inventoryReportsFoldersWithTheirParentsSoTheHierarchyCanBeRebuilt() throws Exception {
+        SharePointKnowledgeSource source = source();
+        List<KnowledgeResource> found = new ArrayList<KnowledgeResource>();
+        source.visitInventory(source.sourceId().value(), () -> { }, found::add);
+        Map<String, KnowledgeResource> byTitle = new HashMap<String, KnowledgeResource>();
+        for (KnowledgeResource resource : found) byTitle.put(resource.title(), resource);
+
+        KnowledgeResource library = byTitle.get("Dokumente");
+        KnowledgeResource folder = byTitle.get("Unter");
+        assertEquals("folder", library.metadata().asMap().get("resource.kind"));
+        assertFalse("a library root hangs below the site", library.parentId().isPresent());
+        assertEquals(library.id(), folder.parentId().get());
+        assertEquals(library.id(), byTitle.get("IAR Handbuch.txt").parentId().get());
+        assertEquals(folder.id(), byTitle.get("NIZZA.txt").parentId().get());
+        assertTrue("folder before its files", found.indexOf(folder) < found.indexOf(byTitle.get("NIZZA.txt")));
+
+        // Same id as the navigation node; a folder has no content of its own.
+        com.aresstack.enterpriseai.source.api.NavigationNode root =
+                com.aresstack.enterpriseai.source.api.NavigationNode.root("root", "root", "root",
+                        com.aresstack.enterpriseai.source.api.NavigationNode.Children.UNKNOWN);
+        assertEquals(library.id(), source.children(root, "").nodes().get(0).resource());
+        com.aresstack.enterpriseai.source.api.StoredContent stored = source.storedContent(source.localId(folder.id()));
+        assertEquals(SharePointKnowledgeSource.FOLDER_FORMAT, stored.nativeFormat());
+        assertEquals(0, stored.payload().length);
+        assertEquals(library.id(), source.resourceMetadata(source.localId(folder.id())).parentId().get());
+        assertEquals("", source.load(folder.id()).text());
     }
 
     @Test

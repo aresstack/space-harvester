@@ -27,7 +27,7 @@ public final class VerbForms {
     }
 
     /**
-     * Ob die Aussage als Verb zählt: Herkunft {@link ParsedStatements.Origin#ORIGINAL} (eine Aussage der Vorstufe
+     * Ob die Aussage als Verb zählt: eigene Stelle ({@link ParsedStatements.Derivation#ownSite}; eine Aussage der Vorstufe
      * oder eine Korrektur des Prüfschritts steht neben ihrem Original und zählte es sonst doppelt, ADR 0032), keine
      * Zustandsaussage (ihr Prädikat ist kein Verb), zählt nach {@link CountedStatements}, und das Prädikat ist nicht
      * leer.
@@ -38,7 +38,6 @@ public final class VerbForms {
     }
 
     private static boolean original(ParsedStatements.Statement statement) {
-        return statement.derivation() == null
-                || statement.derivation().origin() == ParsedStatements.Origin.ORIGINAL;
+        return statement.derivation() == null || statement.derivation().ownSite();
     }
 }

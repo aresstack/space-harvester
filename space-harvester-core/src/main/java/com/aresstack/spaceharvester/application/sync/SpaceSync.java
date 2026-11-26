@@ -35,6 +35,10 @@ public class SpaceSync {
     private final Function<String, Duration> withheldRetention;
     /** Was indexiert wird; jeder Lauf liest die Markierungen neu. */
     private volatile IndexMarks marks = IndexMarks.NONE;
+    /** Was ausgeschlossen ist; jeder Lauf fragt neu. */
+    private volatile Exclusions exclusions = Exclusions.NONE;
+    /** Erwerbsgrund „Navigation“ (ADR 0037, Punkt 3); nur „Bereinigen“ liest ihn. */
+    private volatile NavigationMarks navigationMarks = NavigationMarks.NONE;
 
     public SpaceSync(SourceQueries queries, SyncBaselineStore store, Clock clock) {
         this(queries, store, clock, DEFAULT_WITHHELD_RETENTION);
@@ -84,6 +88,19 @@ public class SpaceSync {
         this.marks = Objects.requireNonNull(marks, "marks");
     }
 
+    /**
+     * Ausgeschlossenes ({@link Exclusions}) lädt kein Lauf, auch nicht unter einer Indexmarke; fehlt es in der
+     * Inventur, beweist das nichts ({@link PageChange.Kind#NOT_SEEN}). Der Ausschluss löscht nichts (ADR 0037).
+     */
+    public void exclusions(Exclusions exclusions) {
+        this.exclusions = Objects.requireNonNull(exclusions, "exclusions");
+    }
+
+    /** Welche Seiten die Navigationsbefüllung erworben hat; „Bereinigen“ lässt sie stehen. */
+    public void navigationMarks(NavigationMarks marks) {
+        this.navigationMarks = Objects.requireNonNull(marks, "marks");
+    }
+
     static Function<String, Duration> fixed(Duration withheldRetention) {
         Objects.requireNonNull(withheldRetention, "withheldRetention");
         if (withheldRetention.isNegative()) {
@@ -127,22 +144,91 @@ public class SpaceSync {
         if (!plan.inventory().confirmed()) {
             return plan;
         }
-        java.util.function.Predicate<String> covered = pageId -> collector.covers(sourceId, pageId);
-        plan = indexed(plan.withinInventoryCoverage(covered));
+        Map<String, String> parents = parents(plan.inventory());
+        java.util.function.Predicate<String> excluded = exclusions.any(sourceId)
+                ? exclusions.within(sourceId, spaceKey, parents::get) : pageId -> false;
+        java.util.function.Predicate<String> covered = pageId -> collector.covers(sourceId, pageId)
+                && !excluded.test(pageId);
+        // Ausschluss nach den Indexmarken, sonst lädt eine Marke unter einem Ausschluss doch (ADR 0037, Punkt 15).
+        plan = indexed(plan.withinInventoryCoverage(covered), parents);
+        if (exclusions.any(sourceId)) {
+            plan = plan.withLoadingLimitedTo(excluded.negate());
+        }
         Map<String, RemovalCheck.Result> removals = removalCheck.verify(plan);
         SyncPlan checked = removals.isEmpty() ? plan : plan.withRemovals(removals);
         return checked.withPurgesDue(clock.instant().minus(retention(sourceId)), covered);
     }
 
     /** Lädt die Seiten unter markierten Wurzeln vollständig; die Vorfahren kommen aus der Inventur. */
-    private SyncPlan indexed(SyncPlan plan) {
+    private SyncPlan indexed(SyncPlan plan, Map<String, String> parents) {
         Set<String> roots = marks.roots(plan.inventory().sourceId(), plan.inventory().spaceKey());
-        if (roots.isEmpty()) {
-            return plan;
-        }
+        return roots.isEmpty() ? plan : plan.withIndexed(IndexScope.of(roots, parents::get));
+    }
+
+    /** Elternseite je Seite laut Inventur. */
+    private static Map<String, String> parents(Inventory inventory) {
         Map<String, String> parents = new java.util.HashMap<>();
-        plan.inventory().pages().forEach(entry -> parents.put(entry.page().pageId(), entry.page().parentPageId()));
-        return plan.withIndexed(IndexScope.of(roots, parents::get));
+        inventory.pages().forEach(entry -> parents.put(entry.page().pageId(), entry.page().parentPageId()));
+        return parents;
+    }
+
+    /**
+     * Seiten ohne Erwerbsgrund (ADR 0037, Punkt 3): im Bestand des Space, aber weder von der Inventur gelistet
+     * („Bestand“) noch unter einer Indexieren-Markierung („ausdrücklich“) noch über die Navigation erworben, und
+     * außerhalb des eingestellten Umfangs. Ausgeschlossenes ({@link Exclusions}) verliert den Grund „Bestand“, auch
+     * wenn die Inventur es listet. Seiten in einem unvollständig erfassten Bereich haben nie „keinen Grund“; ohne
+     * bestätigte Inventur ist die Menge leer.
+     */
+    public Set<String> withoutReason(SyncPlan plan) {
+        Inventory inventory = plan.inventory();
+        if (!inventory.confirmed()) {
+            return Set.of();
+        }
+        String sourceId = inventory.sourceId();
+        String spaceKey = inventory.spaceKey();
+        Set<String> known = new java.util.TreeSet<>(store.knownPages(sourceId, spaceKey).keySet());
+        if (plan.baseline() != null) {
+            known.addAll(plan.baseline().pages().keySet());
+        }
+        Map<String, ?> listed = inventory.byPageId();
+        Map<String, String> parents = parents(inventory);
+        Set<String> roots = marks.roots(sourceId, spaceKey);
+        java.util.function.Predicate<String> indexed = roots.isEmpty() ? pageId -> false
+                : IndexScope.of(roots, parents::get);
+        java.util.function.Predicate<String> excluded = exclusions.any(sourceId)
+                ? exclusions.within(sourceId, spaceKey, parents::get) : pageId -> false;
+        Set<String> navigated = navigationMarks.pages(sourceId, spaceKey);
+        Set<String> without = new java.util.TreeSet<>();
+        for (String pageId : known) {
+            boolean noInventoryReason = excluded.test(pageId)
+                    || !listed.containsKey(pageId) && collector.outsideScope(sourceId, pageId);
+            if (noInventoryReason && !indexed.test(pageId) && !navigated.contains(pageId)) {
+                without.add(pageId);
+            }
+        }
+        return Set.copyOf(without);
+    }
+
+    /**
+     * Vorschau für „Bereinigen“: eine Inventur wie {@link SyncMode#CATALOG_ONLY}, ohne zu schreiben. Ihr Plan liefert
+     * mit {@link #withoutReason} die Kandidaten; ist die Inventur nicht bestätigt, gibt es keine.
+     */
+    public SyncPlan cleanupPlan(String sourceId, String spaceKey, SyncListener listener) {
+        return plan(sourceId, spaceKey, SyncMode.CATALOG_ONLY, listener);
+    }
+
+    /**
+     * „Bereinigen“: ein Abgleich wie {@link SyncMode#CATALOG_ONLY}, der zusätzlich die angefragten Seiten aus Katalog
+     * und Generation entfernt, soweit sie nach der neuen Inventur noch {@link #withoutReason keinen Grund} haben. Über
+     * dieselbe Generation wie jeder Abgleich, kein eigener Löschweg; Originale in der Quelle bleiben unberührt.
+     */
+    public SyncRun cleanUp(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener,
+                           Set<String> pageIds) {
+        Objects.requireNonNull(pageIds, "pageIds");
+        SyncPlan planned = cleanupPlan(sourceId, spaceKey, listener);
+        Set<String> allowed = new java.util.TreeSet<>(withoutReason(planned));
+        allowed.retainAll(pageIds);
+        return execute(sourceId, spaceKey, applier, listener, planned.withCleanup(allowed));
     }
 
     /**
@@ -222,6 +308,11 @@ public class SpaceSync {
                 : planned.withLoadingLimitedTo(inScope);
         SyncPlan plan = reloadAll && planned.inventory().confirmed() && mode.refreshesContent()
                 ? limited.withContentReloaded(inScope) : limited;
+        return execute(sourceId, spaceKey, applier, listener, plan);
+    }
+
+    private SyncRun execute(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener,
+                            SyncPlan plan) {
         listener.inventoried(plan.inventory());
         Optional<String> unconfirmable = plan.unconfirmable();
         if (unconfirmable.isPresent()) {

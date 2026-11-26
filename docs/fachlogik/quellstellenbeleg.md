@@ -82,7 +82,17 @@ Aufrufers. Laufzeiten ohne Programmanalyse (Dienst) richten keinen ein; dort zä
 Reiter nennt den Grund und verweist auf eine neue „Fachliche KI-Analyse“. Erst sie erzeugt neue Aussagen-IDs, frühere
 Bestätigungen wandern nicht mit.
 
-## Teil 3b (offen)
+## Teil 3b: Anzeige und Zählung
 
-Anzeige von Erkenntnisebene (Hypothese, bestätigt, Bestätigung veraltet) und Quellstelle in Aussagen-Reiter und Belege-
-Overlay; Zählung der Programmaussagen in Fachsicht, Glossar und Stand als Ist.
+- Aussagen-Reiter: Eine Programmaussage trägt in der Zeile ihre Erkenntnisebene („Hypothese“, „von Hand bestätigt“,
+  „von Hand verworfen“ oder „Hypothese, Bestätigung veraltet“, solange die Analyse auf `EVIDENCE_CHANGED` steht). Das
+  Overlay „Herkunft“ zeigt Hypothese, Bezug (Ist-Zustand, keine Soll-Regel), Quellstellen mit Zeilen, Parserfakten,
+  Abhängigkeiten, Programmstand und Analyseversion (`StatementProvenance`). Sie springt nie an Satzgrenzen im Lesetext,
+  denn sie steht in der Hypothese, nicht im Programmtext.
+- Belege-Overlay und Reiter „Stand“: `StatusQuo.statementSentences` liefert für eine Programmaussage die Hypothese als
+  Wortlaut und die erste Codestelle im Programm als Zeichenbereich (`CodeSite.characters`). „Im Text zeigen“ markiert
+  damit die Codezeilen. Das Belege-Overlay kennzeichnet den Wortlaut als „Hypothese der Programmanalyse, Ist-Zustand“.
+- Zählung: `Derivation.ownSite()` (Originalsatz oder Programmanalyse) ist die eine Regel für Fachsicht
+  (`DomainTermGraph.counts`) und Verben (`VerbForms.counts`). Vorstufe und Korrekturen zählen weiter nie. Der Stand zählt
+  Programmaussagen bereits mit eigenen Merkmalen. Das Glossar bleibt beim Text: Seine Belege sind Wortfundstellen im
+  Lesetext (Textbeleg), die eine Hypothese nicht hat.

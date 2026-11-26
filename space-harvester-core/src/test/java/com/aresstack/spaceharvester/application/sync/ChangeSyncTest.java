@@ -8,12 +8,16 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.persistence.files.FileExclusionMarks;
+import com.aresstack.spaceharvester.persistence.files.FileIndexMarks;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashSet;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /** ADR 0014: Nachholen per Änderungssuche; Löschungen über die vollständige Seitenliste, nie über den Papierkorb. */
 class ChangeSyncTest {
@@ -79,6 +83,55 @@ class ChangeSyncTest {
         assertThat(run.summary().notLoaded()).isEqualTo(1);
         assertThat(run.summary().contentChanged()).isEqualTo(1);
         assertThat(source.lastWithin).isEqualTo(Duration.ofHours(1).plus(ChangeSync.OVERLAP));
+    }
+
+    @TempDir
+    Path dir;
+
+    /** ADR 0037, Punkt 15: Eine geänderte ausgeschlossene Seite lädt die Änderungssuche nicht, auch unter Indexmarke. */
+    @Test
+    void aChangedExcludedPageIsOnlyCatalogedEvenUnderAnIndexMark() {
+        cached("1");
+        cached("2");
+        cached("3");
+        run(null);
+        FileIndexMarks marks = new FileIndexMarks(dir.resolve("index"));
+        marks.mark("wiki", "DOC", null);
+        changes.indexMarks(marks);
+        Exclusions exclusions = new Exclusions(new FileExclusionMarks(dir), (sourceId, id) -> null,
+                (sourceId, id) -> null);
+        exclusions.exclude("wiki", "DOC", "1");
+        changes.exclusions(exclusions);
+        source.change("2", "2", 5).change("3", "8", 5);
+
+        SpaceSync.SyncRun run = run(AN_HOUR_AGO);
+
+        assertThat(fetched).as("Unterseite von 1 bleibt ausgeschlossen").containsExactly("3");
+        assertThat(run.confirmed().stalePageIds()).containsExactly("2");
+    }
+
+    /** ADR 0042, Punkt 5: Die exakte Position wird erst mit der bestätigten Generation fortgeschrieben. */
+    @Test
+    void theExactPositionOfTheSourceIsStoredWithTheConfirmedGenerationOnly() {
+        cached("1");
+        source.nextCheckpoint = "position-1";
+        assertThat(run(AN_HOUR_AGO).confirmed().changeCheckpoint()).isEqualTo("position-1");
+        assertThat(source.lastCheckpoint).as("eine ausdrückliche Zeitmarke fragt ohne Position").isNull();
+
+        source.nextCheckpoint = "position-2";
+        source.failListingAtCall(0);
+        SpaceSync.SyncRun failed = run(null);
+        assertThat(source.lastCheckpoint).isEqualTo("position-1");
+        assertThat(failed.confirmed()).isNull();
+        assertThat(store.confirmed("wiki", "DOC").orElseThrow().changeCheckpoint()).isEqualTo("position-1");
+
+        SpaceSync.SyncRun next = run(null);
+        assertThat(source.lastCheckpoint).isEqualTo("position-1");
+        assertThat(next.confirmed().changeCheckpoint()).isEqualTo("position-2");
+
+        source.nextCheckpoint = null;
+        assertThat(run(null).confirmed().changeCheckpoint())
+                .as("ohne Position der Quelle gilt beim nächsten Mal wieder die Zeitmarke").isNull();
     }
 
     @Test

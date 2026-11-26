@@ -448,7 +448,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * Terminal-Ausgabe, Export „Analytics“, Hintergrund des Bildbetrachters. Gleicht das Ergebnis {@code other}, unterscheiden sich beide nur darin.
      */
     public AppSettings withLive(AppSettings other) {
-        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage,
+        return new AppSettings(file, retitled(sources, other.sources), proxy, asyncTransport, trustStores, storage,
                 jobLimits.withParallel(other.jobLimits.parallelPreparations(), other.jobLimits.parallelDownloads())
                         .withConnections(other.jobLimits.downloadConnections()),
                 other.ai,
@@ -456,6 +456,29 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 other.sync, other.aiAccess, other.localFiles, other.sourceKeePass, other.inactiveRoots, other.terms,
                 other.consoleOutput, other.enrichment, other.analytics, other.simplification, other.standing, other.check, other.viewerBackground, other.video,
                 other.whisperModel, other.images, other.dictationModel, other.analyzer);
+    }
+
+    /**
+     * Die Quellen {@code current} mit den Anzeigenamen aus {@code next}, wenn sich beide nur darin unterscheiden: Der
+     * Name ist reine Anzeige, die Laufzeit übernimmt ihn ohne Neustart (Rechtsklick „Umbenennen“). Unterscheidet sich
+     * mehr, bleibt {@code current}, und der Vergleich in {@code AppRuntime.liveChange} verlangt einen Neustart.
+     */
+    static List<SourceEntry> retitled(List<SourceEntry> current, List<SourceEntry> next) {
+        if (current.size() != next.size()) {
+            return current;
+        }
+        List<SourceEntry> result = new java.util.ArrayList<>(current.size());
+        for (int i = 0; i < current.size(); i++) {
+            SourceEntry before = current.get(i);
+            SourceEntry after = next.get(i);
+            SourceEntry renamed = new SourceEntry(before.config().withTitle(after.config().title()),
+                    before.secretMissing(), before.secretVariable(), before.placeholderOptions());
+            if (!renamed.equals(after)) {
+                return current;
+            }
+            result.add(renamed);
+        }
+        return List.copyOf(result);
     }
 
     /** Dieselbe Konfiguration mit gesetztem Merker des Einrichtungsassistenten; die Laufzeit braucht ihn nicht. */
@@ -603,11 +626,13 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param checkTimeout    Frist einer Prüfung gegen die Quelle beim Öffnen und Beschaffen ({@code cache.check-timeout})
      * @param largeFileTimeout dieselbe Frist für eine Datei, deren Textauszug das ganze Original braucht
      *                        ({@code cache.large-file-timeout})
+     * @param queryLimits     Stapelgrößen der Abfragen ({@code query.max-page-limit}, {@code query.max-term-scan})
      */
     public record Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
                           long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
                           Path pdfFont, ExtractionLimits extraction, long maxPageBytes, long maxTextFileBytes,
-                          Duration checkTimeout, Duration largeFileTimeout) {
+                          Duration checkTimeout, Duration largeFileTimeout,
+                          com.aresstack.spaceharvester.application.query.QueryLimits queryLimits) {
 
         /** Vorgabe für {@link #checkTimeout}, wie im Core. */
         public static final Duration DEFAULT_CHECK_TIMEOUT =
@@ -638,6 +663,18 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                     ? DEFAULT_CHECK_TIMEOUT : checkTimeout;
             largeFileTimeout = largeFileTimeout == null || largeFileTimeout.isNegative() || largeFileTimeout.isZero()
                     ? DEFAULT_LARGE_FILE_TIMEOUT : largeFileTimeout;
+            queryLimits = queryLimits == null
+                    ? com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULTS : queryLimits;
+        }
+
+        /** Mit den Vorgaben der Stapelgrößen ({@code query.max-page-limit}, {@code max-term-scan}). */
+        public Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
+                       long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
+                       Path pdfFont, ExtractionLimits extraction, long maxPageBytes, long maxTextFileBytes,
+                       Duration checkTimeout, Duration largeFileTimeout) {
+            this(dataDirectory, exportDirectory, assetDirectory, maxAssetBytes, largeAssetBytes, maxLargeAssets,
+                    searchTimeout, maxTreeNodes, pdfFont, extraction, maxPageBytes, maxTextFileBytes, checkTimeout,
+                    largeFileTimeout, null);
         }
 
         /** Mit den Vorgaben für die größte Datei im Cache und den Textauszug. */

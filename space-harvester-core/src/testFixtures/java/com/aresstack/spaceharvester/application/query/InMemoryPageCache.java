@@ -106,20 +106,23 @@ public final class InMemoryPageCache implements PageCacheReader {
     }
 
     @Override
-    public List<PageHeader> children(String sourceId, String spaceKey, String parentPageId, int limit) {
+    public List<PageHeader> children(String sourceId, String spaceKey, String parentPageId, String afterPageId,
+                                     int limit) {
         return spaces.entrySet().stream()
                 .filter(entry -> entry.getKey().startsWith(sourceId + "\n"))
                 .flatMap(entry -> entry.getValue().headers().values().stream())
                 .filter(header -> parentPageId == null
                         ? header.metadata().parentPageId() == null && header.metadata().partitionKey().equals(spaceKey)
                         : parentPageId.equals(header.metadata().parentPageId()))
+                .filter(header -> afterPageId == null || header.metadata().pageId().compareTo(afterPageId) > 0)
+                .sorted(java.util.Comparator.comparing(header -> header.metadata().pageId()))
                 .limit(limit)
                 .toList();
     }
 
     @Override
     public boolean hasChildren(String sourceId, String pageId) {
-        return !children(sourceId, null, pageId, 1).isEmpty();
+        return !children(sourceId, null, pageId, null, 1).isEmpty();
     }
 
     private final Map<String, ChildOrderState> childOrders = new ConcurrentHashMap<>();

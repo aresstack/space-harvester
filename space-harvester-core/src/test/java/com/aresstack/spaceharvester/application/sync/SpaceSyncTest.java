@@ -5,11 +5,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.persistence.files.FileExclusionMarks;
+import com.aresstack.spaceharvester.persistence.files.FileIndexMarks;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /** Ablauf über mehrere Läufe: erste Ernte, Wiederholung, Änderungen, Umzug, Löschung, Abbruch und Fehlschläge. */
 class SpaceSyncTest {
@@ -113,6 +117,124 @@ class SpaceSyncTest {
         assertThat(next.pages()).containsOnlyKeys("1", "3");
         assertThat(next.stalePageIds()).isEmpty();
         assertThat(next.withheldPageIds()).isEmpty();
+    }
+
+    /** ADR 0037, Punkt 12: Ein verkleinerter Umfang beweist keine Löschung, auch wenn die Quelle Löschungen bestätigt. */
+    @Test
+    void aPageOutsideTheScopeStaysUnchangedWithoutALookup() {
+        source.confirmingDeletion();
+        firstRun();
+        source.remove("2");
+        source.outsideScope.add("2");
+        int lookups = source.singlePageCalls;
+
+        SyncPlan plan = sync.plan("wiki", "DOC");
+
+        assertThat(only(plan, "2").kind()).isEqualTo(PageChange.Kind.NOT_SEEN);
+        assertThat(plan.removals()).isEmpty();
+        assertThat(source.singlePageCalls).as("keine Einzelabfrage").isEqualTo(lookups);
+        SyncBaseline next = sync.confirm(plan, Set.of());
+        assertThat(next.pages()).containsOnlyKeys("1", "2", "3");
+        assertThat(next.stalePageIds()).isEmpty();
+        assertThat(next.withheldPageIds()).isEmpty();
+        // Auch der nächste Lauf lässt sie stehen.
+        SyncBaseline after = sync.confirm(sync.plan("wiki", "DOC"), Set.of());
+        assertThat(after.pages()).containsKey("2");
+    }
+
+    @TempDir
+    Path dir;
+
+    /** Ausschluss mit Vorfahren nur aus der Inventur; der Bestand kennt hier nichts. */
+    private Exclusions excluding(String spaceKey, String pageId) {
+        Exclusions exclusions = new Exclusions(new FileExclusionMarks(dir), (sourceId, id) -> null,
+                (sourceId, id) -> null);
+        exclusions.exclude("wiki", spaceKey, pageId);
+        sync.exclusions(exclusions);
+        return exclusions;
+    }
+
+    /** ADR 0037, Punkt 15: Ausgeschlossenes lädt kein Lauf, auch nicht unter einer Indexmarke; nur Kopfdaten. */
+    @Test
+    void anExcludedSubtreeIsCatalogedButNeverLoadedEvenUnderAnIndexMark() {
+        FileIndexMarks marks = new FileIndexMarks(dir.resolve("index"));
+        marks.mark("wiki", "DOC", null);
+        sync.indexMarks(marks);
+        excluding("DOC", "1");
+
+        SyncPlan plan = sync.plan("wiki", "DOC");
+
+        assertThat(change(plan, "1").kind()).isEqualTo(PageChange.Kind.NOT_LOADED);
+        assertThat(change(plan, "2").kind()).as("Unterseite folgt der Wurzel").isEqualTo(PageChange.Kind.NOT_LOADED);
+        assertThat(change(plan, "3").kind()).isEqualTo(PageChange.Kind.NEW);
+        assertThat(plan.contentToFetch()).extracting(PageChange::pageId).containsExactly("3");
+    }
+
+    /** Ein Ausschluss ist nie ein Löschbeleg (ADR 0037, Punkt 3 und 12): Fehlt die Seite, bleibt sie ungeprüft. */
+    @Test
+    void aMissingExcludedPageIsNotSeenAndKeptWithoutALookup() {
+        source.confirmingDeletion();
+        firstRun();
+        excluding("DOC", "3");
+        source.remove("3");
+        int lookups = source.singlePageCalls;
+
+        SyncPlan plan = sync.plan("wiki", "DOC");
+
+        assertThat(only(plan, "3").kind()).isEqualTo(PageChange.Kind.NOT_SEEN);
+        assertThat(plan.removals()).isEmpty();
+        assertThat(source.singlePageCalls).as("keine Einzelabfrage").isEqualTo(lookups);
+        assertThat(sync.confirm(plan, Set.of()).pages()).containsKey("3");
+    }
+
+    /** Ein ausgeschlossener Bereich: Bekanntes bleibt, Neues und Geändertes wird nicht geladen. */
+    @Test
+    void aWholeExcludedSpaceLoadsNoContentButKeepsWhatItHas() {
+        firstRun();
+        excluding("DOC", null);
+        source.put("3", "DOC", null, "8", null);
+
+        SyncPlan plan = sync.plan("wiki", "DOC");
+
+        assertThat(only(plan, "3").kind()).isEqualTo(PageChange.Kind.OUTDATED);
+        assertThat(plan.contentToFetch()).isEmpty();
+        assertThat(sync.confirm(plan, Set.of()).pages()).containsOnlyKeys("1", "2", "3");
+    }
+
+    /** ADR 0037, Punkt 13: Fehlt eine Seite in einem unvollständig inventarisierten Bereich, bleibt sie, wie sie war. */
+    @Test
+    void aPageInAnIncompleteAreaKeepsItsStateIncludingStale() {
+        source.confirmingDeletion();
+        firstRun();
+        source.put("3", "DOC", null, "8", null);
+        SyncBaseline stale = sync.confirm(sync.plan("wiki", "DOC", SyncMode.CATALOG_ONLY), Set.of());
+        assertThat(stale.stalePageIds()).containsExactly("3");
+        source.remove("3");
+        source.uncovered.add("3");
+
+        SyncPlan plan = sync.plan("wiki", "DOC");
+
+        assertThat(only(plan, "3").kind()).isEqualTo(PageChange.Kind.NOT_SEEN);
+        assertThat(plan.removals()).isEmpty();
+        SyncBaseline next = sync.confirm(plan, Set.of());
+        assertThat(next.pages()).containsKey("3");
+        assertThat(next.pages().get("3")).isEqualTo(stale.pages().get("3"));
+        assertThat(next.stalePageIds()).containsExactly("3");
+    }
+
+    /** Auch im Nachholen mit reiner ID-Liste ({@link ChangeSync}) ist „außerhalb des Umfangs“ kein Löschbeleg. */
+    @Test
+    void theRemovalCheckKeepsAPageOutsideTheScope() {
+        source.confirmingDeletion();
+        source.remove("2");
+        source.outsideScope.add("2");
+
+        RemovalCheck.Result result = new RemovalCheck(source.queries())
+                .verify("wiki", "DOC", List.of("2"), Set.of("1", "3")).get("2");
+
+        assertThat(result.verdict()).isEqualTo(RemovalCheck.Verdict.UNVERIFIED);
+        assertThat(result.removes()).isFalse();
+        assertThat(result.problem()).isEqualTo(RemovalCheck.OUTSIDE_SCOPE);
     }
 
     @Test
@@ -294,6 +416,10 @@ class SpaceSyncTest {
         sync.confirm(sync.plan("wiki", "DOC"), Set.of());
 
         assertThatThrownBy(() -> sync.confirm(slow, Set.of())).isInstanceOf(SyncConflictException.class);
+    }
+
+    private static PageChange change(SyncPlan plan, String pageId) {
+        return plan.changes().stream().filter(change -> change.pageId().equals(pageId)).findFirst().orElseThrow();
     }
 
     private static PageChange only(SyncPlan plan, String pageId) {

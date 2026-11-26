@@ -76,7 +76,7 @@ Einzelseite; nur die Hülle schreibt der Harvester.
 | `type` | nur `page` (Standard); `blogpost` und andere ergeben 400 |
 | `title` | nur Seiten mit genau diesem Titel (Groß-/Kleinschreibung zählt) |
 | `status` | nur `current` |
-| `start` | übersprungene sichtbare Seiten, Standard 0; negativ ergibt 400 |
+| `start` | übersprungene sichtbare Seiten, Standard 0, ohne Höchstwert (jede übersprungene Seite wird gelesen und geprüft; schneller blättert `next`); negativ ergibt 400 |
 | `limit` | Standard 25, höchstens 100; größere Werte werden wie bei Confluence auf 100 gesenkt, `limit` in der Antwort nennt den verwendeten Wert; negativ ergibt 400 |
 | `expand` | wie bei der Einzelseite, für jede Seite der Antwort geprüft |
 | `ids`, `postingDay` | 400; ignoriert ergäben sie eine Liste, die nicht filtert, was der Client verlangt |
@@ -139,7 +139,7 @@ Referenz dokumentiert nur 200 und 404; 304, 400, 401, 403 und 503 sind Ergänzun
 - `ConfluenceCompatApiTest`: Bytevergleich der Antwort mit der gespeicherten Confluence-Antwort für verschiedene
   `expand`-Kombinationen, Ablehnung nicht gespeicherter Erweiterungen, Fehlerkörper, 304, Rechte und 405; Hülle der
   Listen mit unveränderten Payloads, `next`-Link, Kinder, Titelfilter und Ablehnung unvollständiger Listen.
-- `ContentListingTest`: `start`/`limit` über mehrere interne Stapel, Obergrenze, Titel, Kinder, Seiten ohne
+- `ContentListingTest`: `start`/`limit` über mehrere interne Stapel, tiefer Offset ohne Obergrenze, Titel, Kinder, Seiten ohne
   Freigabe, unvollständige Abgleiche, Seiten nur mit Kopfdaten und das Bytebudget je Antwort.
 - `ApiRouteCoverageTest`: Die Fassade verlangt wie jede Route unter `/api` eine Anmeldung und gibt ohne Freigabe
   nichts heraus.

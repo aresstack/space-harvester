@@ -59,6 +59,8 @@ public class ChangeSync {
     private final Function<String, Duration> withheldRetention;
     /** Was indexiert wird; jeder Lauf liest die Markierungen neu. */
     private volatile IndexMarks marks = IndexMarks.NONE;
+    /** Was ausgeschlossen ist; jeder Lauf fragt neu. */
+    private volatile Exclusions exclusions = Exclusions.NONE;
 
     public ChangeSync(SourceQueries queries, SyncBaselineStore store, Clock clock) {
         this(queries, store, clock, sourceId -> SpaceSync.DEFAULT_WITHHELD_RETENTION);
@@ -88,6 +90,11 @@ public class ChangeSync {
     /** Geänderte Seiten unter diesen Markierungen lädt jeder Lauf vollständig, auch unbekannte. */
     public void indexMarks(IndexMarks marks) {
         this.marks = Objects.requireNonNull(marks, "marks");
+    }
+
+    /** Ausgeschlossenes ({@link Exclusions}) lädt die Änderungssuche nie, auch nicht unter einer Indexmarke. */
+    public void exclusions(Exclusions exclusions) {
+        this.exclusions = Objects.requireNonNull(exclusions, "exclusions");
     }
 
     /** Ob die Quelle Änderungen gezielt meldet; sonst bleibt nur die Inventur. */
@@ -120,11 +127,17 @@ public class ChangeSync {
         Instant startedAt = clock.instant();
         Instant from = since != null ? since : baseline == null ? null : baseline.changesSince();
         List<PageMetadataListing.Entry> changed = List.of();
+        // ADR 0042, Punkt 5: ab der exakten Position der letzten bestätigten Suche, sonst ab der Zeitmarke. Die neue
+        // Position wird erst mit der bestätigten Generation gespeichert; scheitert der Lauf, bleibt die alte.
+        String checkpoint = since == null && baseline != null ? baseline.changeCheckpoint() : null;
+        String reached = null;
         if (from != null) {
             Duration within = Duration.between(from, startedAt).plus(OVERLAP);
             try {
-                changed = collect(cursor -> queries.changedPageMetadata(sourceId, spaceKey, within, cursor,
-                        batchSize));
+                Changes listed = collect(cursor -> queries.changedPageMetadata(sourceId, spaceKey, checkpoint, within,
+                        cursor, batchSize));
+                changed = listed.entries();
+                reached = listed.checkpoint();
             } catch (SourceAccessException e) {
                 return aborted(sourceId, spaceKey, baseline, startedAt, listener, e);
             }
@@ -154,22 +167,27 @@ public class ChangeSync {
         Map<String, BaselineEntry> known = new HashMap<>(baseline == null ? Map.of() : baseline.pages());
         known.putAll(store.knownPages(sourceId, spaceKey));
         // Indexieren: Vorfahren aus den gemeldeten Seiten, sonst aus Generation und Cache.
-        java.util.function.Predicate<String> indexed = IndexScope.of(marks.roots(sourceId, spaceKey), pageId -> {
+        java.util.function.Function<String, String> parentOf = pageId -> {
             PageMetadataListing.Entry listed = current.get(pageId);
             if (listed != null) {
                 return listed.page().parentPageId();
             }
             BaselineEntry stored = known.get(pageId);
             return stored == null ? null : stored.parentPageId();
-        });
+        };
+        java.util.function.Predicate<String> indexed = IndexScope.of(marks.roots(sourceId, spaceKey), parentOf);
+        // Ausschluss vor Indexmarke (ADR 0037, Punkt 15): nur Kopfdaten, kein Inhalt.
+        java.util.function.Predicate<String> excluded = exclusions.any(sourceId)
+                ? exclusions.within(sourceId, spaceKey, parentOf) : pageId -> false;
         List<PageChange> changes = new ArrayList<>();
         current.forEach((pageId, entry) -> {
             BaselineEntry previous = known.get(pageId);
-            if (reload.contains(pageId) && previous != null) {
+            if (reload.contains(pageId) && previous != null && !excluded.test(pageId)) {
                 // Veraltet aus einem früheren Lauf ohne Inhalte: immer laden, auch wenn die Version schon bekannt ist.
                 changes.add(new PageChange(pageId, PageChange.Kind.CONTENT_CHANGED, previous, entry));
             } else {
-                changes.add(SyncPlanner.within(indexed.test(pageId) ? SyncMode.FULL : mode,
+                changes.add(SyncPlanner.within(excluded.test(pageId) ? SyncMode.CATALOG_ONLY
+                        : indexed.test(pageId) ? SyncMode.FULL : mode,
                         SyncPlanner.classify(previous, entry)));
             }
         });
@@ -186,7 +204,7 @@ public class ChangeSync {
                 purgesDue(sourceId, baseline, listedIds));
         try (StagedGeneration staged = store.begin(sourceId, spaceKey)) {
             Set<String> failed = applier.apply(plan, staged, listener);
-            SyncBaseline next = next(baseline, known, plan, failed, startedAt);
+            SyncBaseline next = next(baseline, known, plan, failed, startedAt, reached);
             listener.checkpoint();
             staged.commit(next);
             return new SpaceSync.SyncRun(plan, failed, next, null);
@@ -336,7 +354,7 @@ public class ChangeSync {
 
     /** Die bisherige Generation, fortgeschrieben um die Änderungen; ohne Generation das, was der Cache kennt. */
     private SyncBaseline next(SyncBaseline baseline, Map<String, BaselineEntry> known, SyncPlan plan,
-                              Set<String> failed, Instant startedAt) {
+                              Set<String> failed, Instant startedAt, String checkpoint) {
         SortedMap<String, BaselineEntry> pages = new TreeMap<>(baseline == null ? known : baseline.pages());
         SortedSet<String> stale = new TreeSet<>(baseline == null ? Set.of() : baseline.stalePageIds());
         SortedSet<String> missing = new TreeSet<>(baseline == null ? Set.of() : baseline.missingPageIds());
@@ -393,22 +411,28 @@ public class ChangeSync {
         missing.removeAll(pages.keySet());
         long generation = baseline == null ? 1 : baseline.generation() + 1;
         return new SyncBaseline(plan.inventory().sourceId(), plan.inventory().spaceKey(), generation, confirmedAt,
-                pages, stale, missing, withheld, startedAt.isAfter(confirmedAt) ? confirmedAt : startedAt);
+                pages, stale, missing, withheld, startedAt.isAfter(confirmedAt) ? confirmedAt : startedAt, checkpoint);
     }
 
-    private static List<PageMetadataListing.Entry> collect(Function<String, PageMetadataListing> batch) {
+    /** Alle Stapel einer Änderungssuche und die Position der Quelle nach dem letzten, oder {@code null}. */
+    private record Changes(List<PageMetadataListing.Entry> entries, String checkpoint) {
+    }
+
+    private static Changes collect(Function<String, PageMetadataListing> batch) {
         List<PageMetadataListing.Entry> entries = new ArrayList<>();
         Set<String> cursors = new HashSet<>();
         String cursor = null;
+        String checkpoint;
         do {
             PageMetadataListing listing = batch.apply(cursor);
             entries.addAll(listing.entries());
+            checkpoint = listing.checkpoint();
             cursor = listing.nextCursor();
             if (cursor != null && !cursors.add(cursor)) {
                 throw new SourceAccessException(listing.sourceId(), SourceAccessException.Reason.UNAVAILABLE,
                         "Die Quelle hat denselben Cursor wiederholt geliefert", null);
             }
         } while (cursor != null);
-        return entries;
+        return new Changes(entries, checkpoint);
     }
 }

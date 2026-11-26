@@ -66,8 +66,9 @@ public interface HarvestSource {
 
     /**
      * Ob eine Seite, die es in der Quelle gibt, außerhalb des eingestellten Umfangs liegt (Startpunkte und Tiefe,
-     * {@code startPoints}/{@code maxDepth}), laut der letzten vollständigen Auflistung. Eine solche Seite fällt beim
-     * Abgleich aus dem Katalog wie eine gelöschte. Standard {@code false}: ohne Umfang gehört jede Seite dazu.
+     * {@code startPoints}/{@code maxDepth}), laut der letzten vollständigen Auflistung. Fehlt eine solche Seite in der
+     * Inventur, beweist das keine Löschung: Der Abgleich lässt sie unverändert (ADR 0037, Punkt 12); nur „Bereinigen“
+     * entfernt sie. Standard {@code false}: ohne Umfang gehört jede Seite dazu.
      */
     default boolean outsideScope(String pageId) {
         return false;
@@ -475,6 +476,19 @@ public interface HarvestSource {
                                                   int limit) {
         throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle meldet keine Änderungen", null);
+    }
+
+    /**
+     * Wie {@link #changedPageMetadata(String, java.time.Duration, String, int)}, aber ab der exakten Position
+     * {@code checkpoint} einer früheren, vollständig verarbeiteten Änderungssuche (ADR 0042, Punkt 5). Der letzte
+     * Stapel trägt die neue Position ({@link PageMetadataBatch#checkpoint()}). Ohne exakte Positionen, wie
+     * standardmäßig, gilt {@code within}.
+     *
+     * @param checkpoint {@code null} oder {@link PageMetadataBatch#checkpoint()} einer früheren Suche
+     */
+    default PageMetadataBatch changedPageMetadata(String partitionKey, String checkpoint, java.time.Duration within,
+                                                  String cursor, int limit) {
+        return changedPageMetadata(partitionKey, within, cursor, limit);
     }
 
     /**

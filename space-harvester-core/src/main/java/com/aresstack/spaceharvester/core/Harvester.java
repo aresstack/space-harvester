@@ -184,6 +184,7 @@ import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileReadStates;
 import com.aresstack.spaceharvester.persistence.files.FileExclusionMarks;
 import com.aresstack.spaceharvester.persistence.files.FileIndexMarks;
+import com.aresstack.spaceharvester.persistence.files.FileNavigationMarks;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore;
 import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
@@ -371,6 +372,7 @@ public final class Harvester implements AutoCloseable {
     private final SpaceSyncJobs syncs;
     private final Indexing indexing;
     private final Exclusions exclusions;
+    private final com.aresstack.spaceharvester.application.sync.NavigationMarks navigationMarks;
     private final ChangeEvents changeEvents;
     private final Reconciliation reconciliation;
     /** Bestandsinventur nach {@code sync.inventory-interval}, nur aus der Konfiguration (ADR 0014/0015). */
@@ -485,6 +487,9 @@ public final class Harvester implements AutoCloseable {
         // unterbrochener Teile, damit nichts doppelt beginnt.
         List<Runnable> startScans = new ArrayList<>();
         StartTimer start = new StartTimer();
+        // F39-10: eine Tika-Extraktion mit den Grenzen aus assets.extraction.* für lokale Dateien, Anhänge, Export
+        // und Fristen, statt der gemeinsamen Instanz mit festen Werten.
+        TikaDocumentText documentText = new TikaDocumentText(builder.extractionLimits);
         try {
             this.networkFollows = builder.configuration != null && !builder.networkFixed;
             // Folgt das Netzwerk der Konfiguration, liest das Vertrauen ohne Bundle die Regel je Handshake.
@@ -534,8 +539,9 @@ public final class Harvester implements AutoCloseable {
             // Angelo 22.11.2026: ohne Netz warten statt scheitern; ein Netzzustand für alle Netz-Aufträge.
             this.network = new com.aresstack.spaceharvester.application.network.NetworkState();
             opened.add(network);
+            // jobs.max-waiting-prefetches, wirkt beim Start.
             this.attachmentPrefetches = new com.aresstack.spaceharvester.application.background.AttachmentPrefetches(
-                    backgroundJobs);
+                    backgroundJobs, builder.jobLimits.maxWaitingPrefetches());
             opened.add(attachmentPrefetches);
             attachmentPrefetches.network(network);
 
@@ -646,7 +652,7 @@ public final class Harvester implements AutoCloseable {
             DocumentExtractions structuredDocuments = new DocumentExtractions(documentStructure,
                     new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits);
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
-                    new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector(),
+                    new LocalFilesTextProjector(documentText), new KnowledgeDocumentTextProjector(),
                     new com.aresstack.spaceharvester.source.LocalReferenceTextProjector(structuredDocuments),
                     // Angelo 20.11.2026: Videoseiten ohne Text lesen ihr Transkript, die letzte Korrektur zuerst; die
                     // Ablage entsteht erst weiter unten.
@@ -731,7 +737,7 @@ public final class Harvester implements AutoCloseable {
             LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
             opened.add(textIndex);
             PageTextIndexing texts = new PageTextIndexing(List.of(new ConfluenceStorageTextProjector(),
-                    new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()), textIndex,
+                    new LocalFilesTextProjector(documentText), new KnowledgeDocumentTextProjector()), textIndex,
                     new com.aresstack.spaceharvester.application.query.LocalPageSections(structuredDocuments));
 
             this.access = new AccessGuard(builder.accessPolicy);
@@ -800,7 +806,7 @@ public final class Harvester implements AutoCloseable {
                                     sections.indexedLocal(snapshot);
                                 }
                             }),
-                    builder.maxTreeNodes, freshnessRule(builder), clock);
+                    builder.maxTreeNodes, freshnessRule(builder), clock, builder.queryLimits);
             this.addresses = new PageAddresses(catalog, access, pages);
             // ADR 0026, AP9a: Lesetexte der Abschnitte von Anhängen, sobald die Analysen je Dokument stehen (unten).
             DocumentTexts documentTexts = (document, section, inputSha256, extraction) -> sectionTexts.get() == null
@@ -832,7 +838,7 @@ public final class Harvester implements AutoCloseable {
             this.search = new PageSearch(catalog, index, access);
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
             this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
-                    termProcessor.version(), documentTexts);
+                    termProcessor.version(), documentTexts, builder.queryLimits);
             // Die Verwalter der Begriffszahlen hören wie Bestand und Verweise auf jeden Commit des Seiten-Caches.
             // Die gemerkten Verben je Seite (VerbQueries) entstehen erst später; bis dahin geht die Meldung ins Leere.
             java.util.concurrent.atomic.AtomicReference<Runnable> verbsStale =
@@ -1149,8 +1155,12 @@ public final class Harvester implements AutoCloseable {
                     (sourceId, pageId) -> reader.header(new PageKey(sourceId, pageId))
                             .map(header -> header.metadata().title()).orElse(null));
             navigation.exclusions(exclusions);
+            // Erwerbsgrund „Navigation“ (ADR 0037, Punkt 3): nur dieser Grund wird gespeichert.
+            this.navigationMarks = new FileNavigationMarks(builder.dataDirectory);
+            syncs.navigationMarks(navigationMarks);
             keywordSearch.exclusions(exclusions);
             findings.exclusions(exclusions);
+            syncs.exclusions(exclusions);
             // Automatische Auslöser laden Ausgeschlossenes nie; ausdrückliches Öffnen, Lesen und Export bleiben möglich.
             Exclusions excluded = this.exclusions;
             acquisition.withhold((key, trigger) -> automatic(trigger)
@@ -1239,7 +1249,7 @@ public final class Harvester implements AutoCloseable {
 
                         @Override
                         public List<String> children(AccessContext who, String sourceId, String pageId) {
-                            return podcastCache.children(new PageKey(sourceId, pageId), 200).stream()
+                            return podcastCache.allChildren(new PageKey(sourceId, pageId)).stream()
                                     .map(com.aresstack.spaceharvester.persistence.lucene.CachedPageHeader::header)
                                     .sorted(java.util.Comparator.comparing(header -> header.metadata().title(),
                                             String.CASE_INSENSITIVE_ORDER))
@@ -1279,7 +1289,7 @@ public final class Harvester implements AutoCloseable {
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, holdingsCatalog, clock);
             exports.localExports(new com.aresstack.spaceharvester.application.export.LocalExportSnapshots(
                     structuredDocuments, snapshots::exportLocalOriginal, builder.maxPageBytes));
-            exports.fileTexts(new LocalFilesTextProjector());
+            exports.fileTexts(new LocalFilesTextProjector(documentText));
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
             // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit
             // der Seite als Eltern; Bildanhänge dort mit ihrer vorhandenen Beschreibung (#371)
@@ -1288,7 +1298,7 @@ public final class Harvester implements AutoCloseable {
             this.signIns = new SignInRequests(builder.signInWait, clock);
             long maxAssetBytes = Assets.maxBytes(builder.maxAssetBytes);
             this.assets = new Assets(catalog, assetStore, maxAssetBytes, clock, describer,
-                    TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
+                    documentText, textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
                             builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
             // ADR 0026, AP3b: abgelegte Dokumente aus der Datei lesen, Text in Abschnitten unter extractions/.
             assets.documentExtractions(structuredDocuments);
@@ -1385,7 +1395,7 @@ public final class Harvester implements AutoCloseable {
             ChatStepModel deadlineModel = new ChatStepModel(DEADLINE_STEP, deadlineAi, () -> null, catalog,
                     trustBundles, builder.userAgent);
             this.documentAnalyses = new com.aresstack.spaceharvester.application.deadlines.DeadlineAnalysisService(
-                    jobs, OWNER, TikaDocumentText.shared(),
+                    jobs, OWNER, documentText,
                     new com.aresstack.spaceharvester.application.deadlines.IdentifierExtractor(sentences),
                     new com.aresstack.spaceharvester.application.deadlines.AiFactExtractor(deadlineModel,
                             com.aresstack.spaceharvester.ai.ModelRetry.logging(
@@ -1683,7 +1693,7 @@ public final class Harvester implements AutoCloseable {
             exports.onSubmitted(images::announce);
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
-            conversions.fileTexts(new LocalFilesTextProjector());
+            conversions.fileTexts(new LocalFilesTextProjector(documentText));
             // ADR 0026, Punkt 11: abgelegte Dokumente ohne Download neu lesen; der Space für den Volltextindex
             // kommt aus dem Cache.
             this.rereads = new DocumentRereads(jobs, assets, assetStore,
@@ -2860,6 +2870,11 @@ public final class Harvester implements AutoCloseable {
         return exclusions;
     }
 
+    /** Die über die Navigationsbefüllung erworbenen Ressourcen (ADR 0037, Punkt 3). */
+    public com.aresstack.spaceharvester.application.sync.NavigationMarks navigationMarks() {
+        return navigationMarks;
+    }
+
     /** Bilder und Anhänge einer markierten Wurzel beschaffen; vor dem Aufbau der Beschaffung nichts. */
     private void collectIndexedAssets(String sourceId, String spaceKey, String pageId) {
         ExportAssetCollection collection = assetCollection;
@@ -3163,6 +3178,42 @@ public final class Harvester implements AutoCloseable {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
         requireActive(sourceId);
         return syncs.start(sourceId, spaceKey, OWNER);
+    }
+
+    /**
+     * Vorschau für „Bereinigen“ (ADR 0037, Punkt 3): Seiten des Space ohne Erwerbsgrund und mit unbekanntem Grund,
+     * nach einer frischen Inventur; schreibt nichts. Fragt die Quelle, also nie auf dem EDT.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne {@code SYNC} für den Space
+     */
+    public SpaceSyncJobs.CleanupPreview cleanupPreview(String sourceId, String spaceKey) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        requireActive(sourceId);
+        return syncs.cleanupPreview(sourceId, spaceKey);
+    }
+
+    /**
+     * {@link #cleanupPreview} für jeden abgeglichenen Bereich der Quelle, in der Reihenfolge der Bereiche.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne {@code SYNC} für die Quelle
+     */
+    public java.util.List<SpaceSyncJobs.CleanupPreview> cleanupPreviews(String sourceId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        requireActive(sourceId);
+        return syncs.confirmedSpaces().stream().filter(space -> space.sourceId().equals(sourceId))
+                .map(space -> syncs.cleanupPreview(sourceId, space.spaceKey())).toList();
+    }
+
+    /**
+     * „Bereinigen“: entfernt von {@code pageIds} die Seiten, die nach einer neuen Inventur noch keinen Erwerbsgrund
+     * haben, aus dem lokalen Bestand; Originale in der Quelle bleiben unberührt. Ein Abgleichsauftrag.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne {@code SYNC} für den Space
+     */
+    public JobStatus cleanUp(String sourceId, String spaceKey, java.util.Set<String> pageIds) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        requireActive(sourceId);
+        return syncs.startCleanup(sourceId, spaceKey, OWNER, pageIds);
     }
 
     /**
@@ -3547,11 +3598,13 @@ public final class Harvester implements AutoCloseable {
         private TrustSettings trust = TrustSettings.jvm();
         private ConfiguredSourceCatalog.AsyncTransport asyncTransport = ConfiguredSourceCatalog.AsyncTransport.WEB_CLIENT;
         private AccessPolicy accessPolicy = new TrustedCaller();
-        private JobLimits jobLimits = new JobLimits(2, 20, Duration.ofHours(6));
+        private JobLimits jobLimits = JobLimits.DEFAULTS;
         private Duration searchTimeout = Duration.ofSeconds(5);
         private Duration checkTimeout = PageFreshness.DEFAULT_TIMEOUT;
         private Duration largeFileTimeout = PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT;
         private int maxTreeNodes = 50_000;
+        private com.aresstack.spaceharvester.application.query.QueryLimits queryLimits =
+                com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULTS;
         private int maxPageBytes = LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES;
         private boolean localOriginalReferences = true;
         private long maxTextFileBytes = DEFAULT_MAX_TEXT_FILE_BYTES;
@@ -4076,6 +4129,12 @@ public final class Harvester implements AutoCloseable {
 
         public Builder maxTreeNodes(int maxTreeNodes) {
             this.maxTreeNodes = maxTreeNodes;
+            return this;
+        }
+
+        /** Stapelgrößen der Abfragen ({@code space-harvester.query.max-page-limit}, {@code max-term-scan}). */
+        public Builder queryLimits(com.aresstack.spaceharvester.application.query.QueryLimits queryLimits) {
+            this.queryLimits = java.util.Objects.requireNonNull(queryLimits, "queryLimits");
             return this;
         }
 

@@ -1127,8 +1127,8 @@ public final class PageDetailPanel extends JPanel {
         analysisView.scope(null);
         properties.reset();
         technical.reset();
-        raw.setText("");
-        storage.setText("");
+        ProgressiveText.clear(raw);
+        ProgressiveText.clear(storage);
         title.setText(" ");
         path.setText(" ");
         state.setText(" ");
@@ -1818,8 +1818,8 @@ public final class PageDetailPanel extends JPanel {
         renderDetails();
         properties.reset();
         technical.reset();
-        raw.setText("");
-        storage.setText("");
+        ProgressiveText.clear(raw);
+        ProgressiveText.clear(storage);
         feedback.working(refresh ? "Seite wird mit der Quelle verglichen …" : "Seite wird geladen …");
         setActionsEnabled(false);
         Font font = reader.getFont();
@@ -2627,10 +2627,8 @@ public final class PageDetailPanel extends JPanel {
         showOriginalContent(viewable(metadata, snapshot.metadata()), snapshot.payload());
         showStoredProgram(snapshot);
         showTextOriginal(loaded.reader());
-        raw.setText(loaded.display());
-        raw.setCaretPosition(0);
-        storage.setText(loaded.storage() == null ? "Diese Payload hat kein body.storage." : loaded.storage());
-        storage.setCaretPosition(0);
+        ProgressiveText.show(raw, loaded.display());
+        ProgressiveText.show(storage, loaded.storage() == null ? "Diese Payload hat kein body.storage." : loaded.storage());
 
         properties.reset();
         properties.add("Seiten-ID", metadata.pageId())

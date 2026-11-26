@@ -19,13 +19,83 @@ public record PageTree(List<Node> roots, List<Anomaly> anomalies, int nodeCount,
         anomalies = List.copyOf(anomalies);
     }
 
-    /** Ein Knoten mit seinen Kindern. */
-    public record Node(String pageId, List<Node> children) {
+    /**
+     * Ein Knoten mit seinen Kindern.
+     *
+     * @param more {@code true}, wenn der Knoten Kinder hat, die dieser Ausschnitt nicht enthält ({@link #levels});
+     *             {@code children} ist dann leer
+     */
+    public record Node(String pageId, List<Node> children, boolean more) {
 
         public Node {
             Objects.requireNonNull(pageId, "pageId");
             children = List.copyOf(children);
         }
+
+        public Node(String pageId, List<Node> children) {
+            this(pageId, children, false);
+        }
+    }
+
+    /**
+     * Ein Ausschnitt von höchstens {@code levels} Ebenen ab {@code rootPageId} bzw. ab den Wurzeln (ADR 0040, Punkt 12):
+     * tiefere Ebenen fragt der Aufrufer mit dem Knoten, der {@link Node#more()} trägt, als neuer Wurzel nach. So ist
+     * jede Tiefe erreichbar, ohne dass eine Antwort beliebig tief verschachtelt ist. Abweichungen bleiben, soweit ihre
+     * Seite im Ausschnitt liegt.
+     *
+     * @param rootPageId Seite, deren Teilbaum gemeint ist, oder {@code null} für den ganzen Baum
+     * @param levels     Zahl der Ebenen, mindestens 1
+     * @return leer, wenn {@code rootPageId} nicht im Baum ist
+     */
+    public java.util.Optional<PageTree> levels(String rootPageId, int levels) {
+        if (levels < 1) {
+            throw new IllegalArgumentException("levels muss mindestens 1 sein");
+        }
+        List<Node> start;
+        if (rootPageId == null) {
+            start = roots;
+        } else {
+            Node found = find(rootPageId);
+            if (found == null) {
+                return java.util.Optional.empty();
+            }
+            start = List.of(found);
+        }
+        int[] count = {0};
+        int[] deepest = {0};
+        List<Node> cut = start.stream().map(node -> cut(node, 1, levels, count, deepest)).toList();
+        java.util.Set<String> included = new java.util.HashSet<>();
+        java.util.ArrayDeque<Node> open = new java.util.ArrayDeque<>(cut);
+        while (!open.isEmpty()) {
+            Node node = open.pop();
+            included.add(node.pageId());
+            open.addAll(node.children());
+        }
+        return java.util.Optional.of(new PageTree(cut,
+                anomalies.stream().filter(anomaly -> included.contains(anomaly.pageId())).toList(),
+                count[0], deepest[0]));
+    }
+
+    private Node find(String pageId) {
+        java.util.ArrayDeque<Node> open = new java.util.ArrayDeque<>(roots);
+        while (!open.isEmpty()) {
+            Node node = open.pop();
+            if (node.pageId().equals(pageId)) {
+                return node;
+            }
+            open.addAll(node.children());
+        }
+        return null;
+    }
+
+    private static Node cut(Node node, int level, int levels, int[] count, int[] deepest) {
+        count[0]++;
+        deepest[0] = Math.max(deepest[0], level);
+        if (level == levels) {
+            return node.children().isEmpty() ? node : new Node(node.pageId(), List.of(), true);
+        }
+        return new Node(node.pageId(), node.children().stream()
+                .map(child -> cut(child, level + 1, levels, count, deepest)).toList(), node.more());
     }
 
     /**

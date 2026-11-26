@@ -199,4 +199,18 @@ class SourceLocationEvidenceTest {
             return version;
         }
     }
+
+    @Test
+    void aCodeSiteFindsItsLinesInTheDocumentText() {
+        var document = com.aresstack.spaceharvester.application.assets.DocumentKey.page(
+                new com.aresstack.spaceharvester.application.snapshot.PageKey("ftp", "DEMO"));
+        String text = "eins\r\nzwei\r\ndrei";
+
+        assertThat(new SourceLocationEvidence.CodeSite(document, "r", 2, 2).characters(text))
+                .contains(new SourceLocationEvidence.Characters(6, 10));
+        assertThat(new SourceLocationEvidence.CodeSite(document, "r", 2, 3).characters(text))
+                .contains(new SourceLocationEvidence.Characters(6, 16));
+        assertThat(new SourceLocationEvidence.CodeSite(document, "r", 3, 4).characters(text)).isEmpty();
+        assertThat(new SourceLocationEvidence.CodeSite(document, "r", 9, 9).characters(text)).isEmpty();
+    }
 }

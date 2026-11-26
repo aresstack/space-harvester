@@ -80,9 +80,9 @@ class LucenePageCacheTest {
         assertThat(restarted.find(child.key())).contains(child);
         assertThat(restarted.find(child.key()).orElseThrow().payload().bytes()).isEqualTo(NOT_UTF8);
         assertThat(restarted.revisions(child.key())).extracting(CachedRevision::revision).containsExactly("3");
-        assertThat(restarted.children(parent.key(), 10)).extracting(CachedPageHeader::key)
+        assertThat(restarted.children(parent.key(), null, 10)).extracting(CachedPageHeader::key)
                 .containsExactly(child.key());
-        assertThat(restarted.rootPages("wiki", "DEV", 10)).extracting(CachedPageHeader::key)
+        assertThat(restarted.rootPages("wiki", "DEV", null, 10)).extracting(CachedPageHeader::key)
                 .containsExactly(parent.key());
     }
 
@@ -201,8 +201,8 @@ class LucenePageCacheTest {
         assertThat(cache.spacePages("wiki", "DEV", null, 10)).isEmpty();
         assertThat(cache.spacePages("wiki", "OPS", null, 10)).singleElement()
                 .satisfies(listed -> assertThat(listed.rawSha256()).isEqualTo(before.payload().rawSha256()));
-        assertThat(cache.children(new PageKey("wiki", "100"), 10)).isEmpty();
-        assertThat(cache.children(new PageKey("wiki", "200"), 10)).hasSize(1);
+        assertThat(cache.children(new PageKey("wiki", "100"), null, 10)).isEmpty();
+        assertThat(cache.children(new PageKey("wiki", "200"), null, 10)).hasSize(1);
     }
 
     @Test
@@ -218,7 +218,7 @@ class LucenePageCacheTest {
             assertThat(listed.header().metadata().parentPageId()).isEqualTo("200");
             assertThat(listed.rawSha256()).isEqualTo(snapshot.payload().rawSha256());
         });
-        assertThat(cache.children(new PageKey("wiki", "200"), 10)).hasSize(1);
+        assertThat(cache.children(new PageKey("wiki", "200"), null, 10)).hasSize(1);
         assertThat(cache.find(snapshot.key())).contains(snapshot);
         assertThat(cache.revisions(snapshot.key())).hasSize(1);
     }
@@ -232,7 +232,7 @@ class LucenePageCacheTest {
 
         assertThat(cache.spacePages("wiki", "DEV", null, 10)).singleElement()
                 .satisfies(listed -> assertThat(listed.rawSha256()).isNull());
-        assertThat(cache.rootPages("wiki", "DEV", 10)).hasSize(1);
+        assertThat(cache.rootPages("wiki", "DEV", null, 10)).hasSize(1);
         assertThat(cache.find(header.key())).isEmpty();
         assertThat(cache.revisions(header.key())).isEmpty();
     }

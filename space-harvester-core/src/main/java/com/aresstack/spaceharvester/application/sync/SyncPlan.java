@@ -94,15 +94,23 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
     }
 
     /**
-     * Legt fest, welche gesperrten Seiten dieser Lauf endgültig entfernt: die, deren Sperre spätestens bei
-     * {@code cutoff} begann und die die Inventur nicht wieder listet. Nur bei bestätigter Inventur, sonst unverändert.
+     * Fehlt eine Seite in der Inventur, ist das nur dort ein Hinweis auf ihre Löschung, wo die Inventur sie abdeckt
+     * ({@code covered}): innerhalb des eingestellten Umfangs und in einem vollständig inventarisierten Bereich (ADR 0037,
+     * Punkt 12 und 13). Alle übrigen fehlenden Seiten werden {@link PageChange.Kind#NOT_SEEN}: nicht geprüft, nicht
+     * entfernt, unverändert in der nächsten Generation. Ob sie bleiben, entscheidet erst „Bereinigen“.
      */
     public SyncPlan withinInventoryCoverage(java.util.function.Predicate<String> covered) {
-        List<PageChange> scoped = changes.stream().filter(change -> change.current() != null
-                || covered.test(change.pageId())).toList();
+        Objects.requireNonNull(covered, "covered");
+        List<PageChange> scoped = changes.stream().map(change -> change.kind() == PageChange.Kind.MISSING
+                && !covered.test(change.pageId())
+                ? new PageChange(change.pageId(), PageChange.Kind.NOT_SEEN, change.previous(), null) : change).toList();
         return new SyncPlan(inventory, baseline, scoped, removals, purges);
     }
 
+    /**
+     * Legt fest, welche gesperrten Seiten dieser Lauf endgültig entfernt: die, deren Sperre spätestens bei
+     * {@code cutoff} begann und die die Inventur nicht wieder listet. Nur bei bestätigter Inventur, sonst unverändert.
+     */
     public SyncPlan withPurgesDue(Instant cutoff) {
         return withPurgesDue(cutoff, pageId -> true);
     }
@@ -120,6 +128,20 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
             }
         });
         return new SyncPlan(inventory, baseline, changes, removals, due);
+    }
+
+    /**
+     * „Bereinigen“ (ADR 0037, Punkt 3): entfernt zusätzlich diese Seiten aus Katalog und Generation. Welche Seiten das
+     * sein dürfen, entscheidet der Aufrufer ({@link SpaceSync#withoutReason}); Originale in der Quelle bleiben unberührt.
+     */
+    public SyncPlan withCleanup(Set<String> pageIds) {
+        Objects.requireNonNull(pageIds, "pageIds");
+        if (pageIds.isEmpty()) {
+            return this;
+        }
+        Set<String> all = new TreeSet<>(purges);
+        all.addAll(pageIds);
+        return new SyncPlan(inventory, baseline, changes, removals, all);
     }
 
     public List<PageChange> changes(PageChange.Kind first, PageChange.Kind... more) {
@@ -162,7 +184,7 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
      * <p>Seiten aus der Inventur übernehmen ihren neuen Stand. Ist ihr Abgleich fehlgeschlagen, behalten sie den
      * bisherigen (und gelten als veraltet) oder fehlen weiter, wenn sie neu waren; so gleicht der nächste Lauf sie
      * erneut ab. Fehlende Seiten fallen nur bei {@link RemovalCheck.Result#removes()} weg, sonst bleiben sie veraltet
-     * erhalten. {@link RemovalCheck.Verdict#INACCESSIBLE} sperrt ab {@code confirmedAt}; bisher gesperrte Seiten bleiben
+     * erhalten; von der Inventur nicht abgedeckte ({@link PageChange.Kind#NOT_SEEN}) bleiben unverändert. {@link RemovalCheck.Verdict#INACCESSIBLE} sperrt ab {@code confirmedAt}; bisher gesperrte Seiten bleiben
      * gesperrt, bis die Inventur sie wieder listet oder sie in {@link #purges()} stehen.
      *
      * @param confirmedAt   Zeitpunkt der Bestätigung
@@ -181,6 +203,19 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
         SortedSet<String> stale = new TreeSet<>();
         SortedSet<String> missing = new TreeSet<>();
         for (PageChange change : changes) {
+            if (change.kind() == PageChange.Kind.NOT_SEEN) {
+                // Von der Inventur nicht abgedeckt: unverändert übernehmen, auch ein bisheriges „veraltet“ und „fehlend“.
+                if (change.previous() != null) {
+                    pages.put(change.pageId(), change.previous());
+                }
+                if (baseline != null && baseline.stalePageIds().contains(change.pageId())) {
+                    stale.add(change.pageId());
+                }
+                if (baseline != null && baseline.missingPageIds().contains(change.pageId())) {
+                    missing.add(change.pageId());
+                }
+                continue;
+            }
             if (change.kind() == PageChange.Kind.NOT_LOADED) {
                 missing.add(change.pageId());
                 continue;
@@ -211,6 +246,10 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
         if (!failed.isEmpty()) {
             throw new IllegalArgumentException("Seiten nicht im Plan: " + new TreeSet<>(failed));
         }
+        // Endgültig Entferntes führt die Generation nicht weiter.
+        purges.forEach(pages::remove);
+        stale.removeAll(purges);
+        missing.removeAll(purges);
         SortedMap<String, Instant> withheld = new TreeMap<>();
         if (baseline != null) {
             Map<String, PageMetadataListing.Entry> listed = inventory.byPageId();

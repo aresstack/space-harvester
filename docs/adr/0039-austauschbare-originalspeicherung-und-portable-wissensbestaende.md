@@ -192,7 +192,7 @@ Vorgabe steht jedes davon zur Prüfung, ob es entfallen oder durch Strom und Abs
 | Größter Payload einer Seite im Cache (**Größenlimit**) | 20 MiB; größere werden abgewiesen, nie gekürzt | `space-harvester.cache.max-payload-size` (Server) | nein; die Desktop-App liest die Einstellung nicht |
 | Textdateien, ab denen nur der Textauszug abgelegt wird (**Größenlimit**) | 200 MiB, `0` = nie | `space-harvester.cache.max-text-file-size` | ja; in `docs/CONFIGURATION.md` nicht gefunden |
 | Lokale Dateien: größte Datei (**Größenlimit**) | 50 MB, 1 bis 2000 | Quellenoption `maxFileMegabytes` | ja, Quellenformular |
-| Lesetext je Dokument (**Größenlimit**) | 1 000 000 Zeichen | **fest im Code**, an vier Stellen (`LucenePageTextIndex.MAX_TEXT_CHARS`, `DocumentExtractions.DEFAULT_MAX_TEXT_CHARS`, `TikaDocumentText.DEFAULT_MAX_CHARS`, `OneNotePreviewReader.MAX_CHARS`) | nein |
+| Lesetext je Dokument (**Größenlimit**) | keiner; die frühere Grenze von 1 000 000 Zeichen in `LucenePageTextIndex`, `DocumentExtractions` und `TikaDocumentText` ist beseitigt (F39-10, #1500 und Folge-PR). Nur die OneNote-Vorschau liest noch höchstens 1 000 000 Zeichen (`OneNotePreviewReader.MAX_CHARS`) | – | nein |
 | Vorschau in der Originalreferenz (**Größenlimit**) | 8192 Zeichen | **fest im Code** | nein |
 | Gelesener Dateianfang zur Erkennung (**Größenlimit**) | 8192 Bytes | **fest im Code** (`PREFIX_BYTES`) | nein |
 | Extraktion: größte Datei, größter Text (**Größenlimit**) | `0` = ohne Grenze | `space-harvester.assets.extraction.max-file-size`, `max-chars` | nicht geprüft |

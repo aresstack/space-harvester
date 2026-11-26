@@ -58,12 +58,12 @@ class ExplorerCacheFirstTest {
 
         Explorer.SpaceItem space = (Explorer.SpaceItem) Explorer.children(context.runtime(),
                 new Explorer.SourceItem("handbuch", "Handbuch"), null).nodes().get(0).item();
-        assertThat(Explorer.cachedChildren(context.runtime(), space).nodes()).as("vor dem Abgleich leer").isEmpty();
+        assertThat(Explorer.cachedChildren(context.runtime(), space, null).nodes()).as("vor dem Abgleich leer").isEmpty();
 
         Workspace workspace = context.runtime().workspace();
         JobStatus sync = await(workspace, workspace.startSync("handbuch", space.spaceKey()));
         assertThat(sync.state().terminal()).isTrue();
-        List<String> cached = Explorer.cachedChildren(context.runtime(), space).nodes().stream()
+        List<String> cached = Explorer.cachedChildren(context.runtime(), space, null).nodes().stream()
                 .map(node -> ((Explorer.PageItem) node.item()).title()).toList();
         assertThat(cached).as("nach Titel geordnet, ohne die Quelle zu fragen").hasSize(2);
         assertThat(cached).isSortedAccordingTo(String.CASE_INSENSITIVE_ORDER);

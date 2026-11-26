@@ -163,7 +163,7 @@ public class Assets implements DocumentInventory {
     static final int MAX_BACKFILLED = 10_000;
     /**
      * Bis zu dieser Größe liest ein Download die Datei nach dem Ablegen auch in den Speicher, für Typerkennung am ganzen
-     * Inhalt und Text; so groß wie die Grenze der Textextraktion ({@code TikaDocumentText.DEFAULT_MAX_BYTES}).
+     * Inhalt und Text; so groß wie die Vorgabe der Speicherschranke der Textextraktion ({@link ExtractionLimits#DEFAULT_MEMORY_LIMITS}).
      */
     static final long IN_MEMORY_BYTES = 20L * 1024 * 1024;
     /**

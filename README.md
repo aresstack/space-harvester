@@ -608,7 +608,7 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages/metadata` | Metadaten aller Seiten eines Space ohne Inhalte, live und stapelweise (`cursor`, `limit` 1–100) mit `metadataHash` und `attributesHash` |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` | Metadaten einer einzelnen Seite ohne Inhalt, live; kanonische Route ohne Space-Key |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
-| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit, URL |
+| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit, URL; ebenenweise mit `root` und `levels` (höchstens 200 je Antwort), ein Knoten mit `more: true` hat tiefere Kinder, die `root=<id>` nachliefert |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/attachments` | Alle Anhänge einer Seite als Metadaten, live, auch nicht eingebettete, ohne Dateiinhalte; `complete=false` mit `warnings`, wenn die Quelle Einträge auslassen musste (#9) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/assets` | Anhänge einer Seite mit Art (`DIAGRAM` vor `VECTOR` vor `IMAGE` vor `OTHER`), Bezug Vorschaubild → draw.io-Diagramm (`previewOf`) und abgelegtem Stand; lädt nichts (#19) |
 | `POST /api/v1/sources/{sourceId}/pages/{pageId}/assets/harvest` | Alle Anhänge der Seite über die Anmeldung der Quelle herunterladen und versioniert ablegen; gleiche Versionen werden nicht erneut übertragen; verlangt `sync` (#19) |
