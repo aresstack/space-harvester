@@ -744,15 +744,38 @@ class PageQueriesTest {
     }
 
     @Test
-    void treeDeeperThanTheLimitIsRefused() {
+    void anyDepthIsDeliveredLevelByLevel() {
+        // ADR 0040, Punkt 12: Die Tiefe ist nicht begrenzt; ein Ausschnitt endet an Knoten mit more.
+        int depth = 3 * PageQueries.MAX_TREE_LEVELS + 7;
         List<PageSnapshot> chain = new ArrayList<>();
-        for (int i = 0; i <= PageQueries.MAX_TREE_DEPTH; i++) {
+        for (int i = 0; i < depth; i++) {
             chain.add(page("wiki", "DEV", String.format("c%04d", i), i == 0 ? null : String.format("c%04d", i - 1)));
         }
         cache.publish("wiki", "DEV", confirmed("g1"), chain);
 
-        assertThatThrownBy(() -> queries(ALLOW_ALL).tree(CALLER, "wiki", "DEV"))
-                .isInstanceOf(TreeTooLargeException.class);
+        com.aresstack.spaceharvester.application.tree.PageTree whole = queries(ALLOW_ALL).tree(CALLER, "wiki", "DEV")
+                .tree();
+        assertThat(whole.depth()).isEqualTo(depth);
+
+        int seen = 0;
+        String root = null;
+        while (true) {
+            com.aresstack.spaceharvester.application.tree.PageTree part =
+                    whole.levels(root, PageQueries.MAX_TREE_LEVELS).orElseThrow();
+            assertThat(part.depth()).isLessThanOrEqualTo(PageQueries.MAX_TREE_LEVELS);
+            com.aresstack.spaceharvester.application.tree.PageTree.Node node = part.roots().getFirst();
+            seen += root == null ? 1 : 0;
+            while (!node.children().isEmpty()) {
+                node = node.children().getFirst();
+                seen++;
+            }
+            if (!node.more()) {
+                break;
+            }
+            root = node.pageId();
+        }
+        assertThat(seen).isEqualTo(depth);
+        assertThat(whole.levels("unbekannt", 1)).isEmpty();
     }
 
     @Test

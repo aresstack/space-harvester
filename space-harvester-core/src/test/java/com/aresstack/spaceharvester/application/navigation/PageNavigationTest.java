@@ -66,8 +66,8 @@ class PageNavigationTest {
                         com.aresstack.spaceharvester.application.query.InMemoryPageCache.page("wiki", "DEV", "104", "101")));
         PageNavigation cached = new PageNavigation(catalog, cache, new AccessGuard(policy));
 
-        PageNavigation.Children roots = cached.cachedChildren(CLIENT, "wiki", "DEV", null);
-        PageNavigation.Children children = cached.cachedChildren(CLIENT, "wiki", "DEV", "100");
+        PageNavigation.Children roots = cached.cachedChildren(CLIENT, "wiki", "DEV", null, null, 100);
+        PageNavigation.Children children = cached.cachedChildren(CLIENT, "wiki", "DEV", "100", null, 100);
 
         assertThat(roots.pages()).extracting(PageNode::pageId).containsExactly("100");
         assertThat(roots.pages()).extracting(PageNode::hasChildren).containsExactly(true);
@@ -76,7 +76,38 @@ class PageNavigationTest {
         assertThat(children.nextCursor()).isNull();
         assertThat(children.spaceKey()).isEqualTo("DEV");
         assertThat(new PageNavigation(catalog, null, new AccessGuard(policy))
-                .cachedChildren(CLIENT, "wiki", "DEV", null).pages()).isEmpty();
+                .cachedChildren(CLIENT, "wiki", "DEV", null, null, 100).pages()).isEmpty();
+    }
+
+    @Test
+    void cachedChildrenArePagedWithoutAnOverallLimit() {
+        com.aresstack.spaceharvester.application.query.InMemoryPageCache cache =
+                new com.aresstack.spaceharvester.application.query.InMemoryPageCache();
+        List<com.aresstack.spaceharvester.application.snapshot.PageSnapshot> pages = new java.util.ArrayList<>();
+        pages.add(com.aresstack.spaceharvester.application.query.InMemoryPageCache.page("wiki", "DEV", "100", null));
+        for (int i = 0; i < 2500; i++) {
+            pages.add(com.aresstack.spaceharvester.application.query.InMemoryPageCache.page("wiki", "DEV",
+                    String.format("k%05d", i), "100"));
+        }
+        cache.publish("wiki", "DEV", com.aresstack.spaceharvester.application.query.InMemoryPageCache.confirmed("g1"),
+                pages);
+        PageNavigation cached = new PageNavigation(catalog, cache, new AccessGuard(policy));
+
+        List<String> seen = new java.util.ArrayList<>();
+        String cursor = null;
+        int batches = 0;
+        do {
+            PageNavigation.Children batch = cached.cachedChildren(CLIENT, "wiki", "DEV", "100", cursor, 700);
+            assertThat(batch.pages()).hasSizeLessThanOrEqualTo(700);
+            batch.pages().forEach(page -> seen.add(page.pageId()));
+            cursor = batch.nextCursor();
+            batches++;
+        } while (cursor != null);
+
+        assertThat(batches).isEqualTo(4);
+        assertThat(seen).hasSize(2500).doesNotHaveDuplicates();
+        assertThatThrownBy(() -> cached.cachedChildren(CLIENT, "wiki", "DEV", "100", "fremd", 700))
+                .isInstanceOf(com.aresstack.spaceharvester.application.sources.InvalidNavigationCursorException.class);
     }
 
     @Test
@@ -92,19 +123,19 @@ class PageNavigationTest {
         PageNavigation live = new PageNavigation(catalog, cache, new AccessGuard(policy));
 
         // Ohne bekannte Reihenfolge nach Titel („Seite 101“ …).
-        assertThat(live.cachedChildren(CLIENT, "wiki", null, "100").pages()).extracting(PageNode::pageId)
+        assertThat(live.cachedChildren(CLIENT, "wiki", null, "100", null, 100).pages()).extracting(PageNode::pageId)
                 .containsExactly("101", "102", "105", "106");
 
         // Erster Stapel der Quelle: 102, (103 gesperrt), 101; die übrigen nach Titel dahinter.
         PageNavigation.Children first = live.children(CLIENT, "wiki", null, "100", null);
-        assertThat(live.cachedChildren(CLIENT, "wiki", null, "100").pages()).extracting(PageNode::pageId)
+        assertThat(live.cachedChildren(CLIENT, "wiki", null, "100", null, 100).pages()).extracting(PageNode::pageId)
                 .containsExactly("102", "101", "105", "106");
         assertThat(cache.childOrder("wiki", null, "100")).containsExactly("102", "103", "101");
 
         // Zweiter und letzter Stapel hängt an; 106 kennt die Quelle nicht mehr und kommt nach Titel dahinter.
         live.children(CLIENT, "wiki", null, "100", first.nextCursor());
         assertThat(cache.childOrder("wiki", null, "100")).containsExactly("102", "103", "101", "105");
-        assertThat(live.cachedChildren(CLIENT, "wiki", null, "100").pages()).extracting(PageNode::pageId)
+        assertThat(live.cachedChildren(CLIENT, "wiki", null, "100", null, 100).pages()).extracting(PageNode::pageId)
                 .containsExactly("102", "101", "105", "106");
 
         // Advance the revision even for identical orders to invalidate older continuations.

@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.background;
 
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
@@ -24,7 +25,7 @@ import java.util.Optional;
  * und endet sofort. Anhalten lässt die übrigen Anhänge stehen, Fortsetzen lädt sie; Abbrechen oder Löschen verwirft die
  * Seiten, für die der Teil steht, auch bevor er läuft. Was nach dem Abbrechen kommt, lädt ein neuer Teil. Gescheiterte
  * Anhänge stehen rot mit Grund im Teil, der dann scheitert, auch über Anhalten und Fortsetzen hinweg. Je Space warten
- * höchstens {@link #MAX_WAITING} Anhänge.
+ * höchstens {@code jobs.max-waiting-prefetches} Anhänge ({@link JobLimits#maxWaitingPrefetches()}).
  */
 public final class AttachmentPrefetches implements AutoCloseable {
 
@@ -46,9 +47,6 @@ public final class AttachmentPrefetches implements AutoCloseable {
 
         void load(String sourceId, String pageId, String attachmentId) throws Exception;
     }
-
-    /** So viele Anhänge warten höchstens je Quelle und Space; darüber lädt der Aufrufer wie bisher selbst. */
-    public static final int MAX_WAITING = 5_000;
 
     private record Where(String sourceId, String spaceKey) {
     }
@@ -87,12 +85,17 @@ public final class AttachmentPrefetches implements AutoCloseable {
     /** Der Netzzustand; ohne ihn zählt ein Netzfehler wie jeder andere. */
     private volatile com.aresstack.spaceharvester.application.network.NetworkState network;
 
+    /** Mit dem Standard {@link JobLimits#DEFAULT_MAX_WAITING_PREFETCHES}. */
     public AttachmentPrefetches(BackgroundJobs background) {
-        this(background, MAX_WAITING);
+        this(background, JobLimits.DEFAULT_MAX_WAITING_PREFETCHES);
     }
 
-    AttachmentPrefetches(BackgroundJobs background, int maxWaiting) {
+    /** @param maxWaiting so viele Anhänge warten höchstens je Quelle und Space ({@code jobs.max-waiting-prefetches}) */
+    public AttachmentPrefetches(BackgroundJobs background, int maxWaiting) {
         this.background = Objects.requireNonNull(background, "background");
+        if (maxWaiting < 1) {
+            throw new IllegalArgumentException("maxWaiting muss mindestens 1 sein");
+        }
         this.maxWaiting = maxWaiting;
         background.register(new BackgroundKind(KIND, this::work, () -> false));
         // Die Seiten liegen nur im Speicher: Teile von vor dem Neustart abschließen, statt sie als unterbrochen stehen
@@ -146,7 +149,7 @@ public final class AttachmentPrefetches implements AutoCloseable {
      * Gibt die Anhänge einer Seite zum Vorladen ab; schon wartende Anhänge derselben Seite zählen nicht doppelt.
      *
      * @return der Teil, der sie lädt (neu, wartend, angehalten oder laufend); leer bei nur einem Platz unter
-     *         „Vorbereitung“, über {@link #MAX_WAITING} wartenden Anhängen im Space oder wenn kein Teil angelegt werden
+     *         „Vorbereitung“, über {@code jobs.max-waiting-prefetches} wartenden Anhängen im Space oder wenn kein Teil angelegt werden
      *         kann: dann wartet nichts davon, und der Aufrufer lädt wie bisher selbst
      */
     public Optional<JobStatus> request(String sourceId, String spaceKey, String pageId, List<String> attachmentIds,

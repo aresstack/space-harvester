@@ -55,6 +55,7 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -99,7 +100,7 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
     private final ExtractionRegistry extractors;
     private final long maxFileBytes;
     private final SourceScope configuredScope;
-    private final SharePointChangePages changePages = new SharePointChangePages();
+    private final SharePointChangeCursor changeCursors = new SharePointChangeCursor();
     private final SharePointNavigationPages navigationPages;
 
     SharePointKnowledgeSource(SourceAddress sourceId, URI siteUri, SharePointCredentialsProvider credentials,
@@ -167,6 +168,11 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         walk(configuredScope, checkpoint, found, true);
     }
 
+    /**
+     * Walk the configured folders. The strict inventory also reports every visited folder as its own resource
+     * ({@code resource.kind=folder}, same id as its navigation node) before its files, so consumers can rebuild the
+     * folder hierarchy from {@link KnowledgeResource#parentId()} like the navigation shows it.
+     */
     private void walk(SourceScope scope, Runnable checkpoint, Consumer<KnowledgeResource> found, boolean strict)
             throws KnowledgeSourceException {
         String authorization = authorization();
@@ -194,6 +200,7 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
             if (!seenFolders.add(folder.toLowerCase(Locale.ROOT))) {
                 continue;
             }
+            if (strict) found.accept(folderResource(folder));
             URI files = resourceApi("Folder", folder, "/Files?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel");
             try {
                 visitCollection(files, authorization, checkpoint, element -> {
@@ -221,11 +228,44 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         }
     }
 
+    /**
+     * Changes without a register in the process (ADR 0042, point 6): the cursor carries the window fixed by the first
+     * batch and the change token the server delivered, so any number of listings can run side by side. Without the
+     * native change log (limited scope, structural change, log not readable) the listing falls back to the inventory,
+     * which may report a resource twice but never loses one.
+     */
     @Override
     public PartitionResources changedResources(String partitionKey, java.time.Duration within, String cursor, int limit)
             throws KnowledgeSourceException {
         requirePartition(partitionKey);
-        return changePages.page(cursor, limit, () -> changedSnapshot(within));
+        if (limit < 1) throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: ungültiger Änderungscursor");
+        SharePointChangeCursor.State state;
+        if (cursor == null || cursor.isEmpty()) {
+            if (within == null || within.isNegative() || within.isZero()) {
+                throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: ungültiger Änderungszeitraum");
+            }
+            state = SharePointChangeCursor.State.inventory(partitionKey);
+            if (configuredScope.maxDepth() == Integer.MAX_VALUE && configuredScope.maxResources() == Integer.MAX_VALUE) {
+                try {
+                    state = nativeStart(partitionKey, within);
+                } catch (KnowledgeSourceException unavailable) {
+                    if (Thread.currentThread().isInterrupted()) throw unavailable;
+                    // Fall back to inventory instead of accepting an incomplete delta.
+                }
+            }
+        } else {
+            state = changeCursors.decode(partitionKey, cursor);
+        }
+        if (!state.inventory) {
+            try {
+                return nativeBatch(state, limit);
+            } catch (KnowledgeSourceException unavailable) {
+                if (Thread.currentThread().isInterrupted()) throw unavailable;
+                // Continue with the inventory; what this listing already reported may come again, which is harmless.
+                state = SharePointChangeCursor.State.inventory(partitionKey);
+            }
+        }
+        return inventoryBatch(state, limit);
     }
 
     @Override
@@ -245,28 +285,107 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         }
     }
 
-    private List<KnowledgeResource> changedSnapshot(java.time.Duration within) throws KnowledgeSourceException {
-        if (within == null || within.isNegative() || within.isZero()) {
-            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: ungültiger Änderungszeitraum");
-        }
-        try {
-            if (configuredScope.maxDepth() == Integer.MAX_VALUE && configuredScope.maxResources() == Integer.MAX_VALUE) {
-                return nativeChanges(within);
-            }
-        } catch (KnowledgeSourceException unavailable) {
-            if (Thread.currentThread().isInterrupted()) throw unavailable;
-            // Fall back to inventory instead of accepting an incomplete delta.
-        }
-        List<KnowledgeResource> all = new ArrayList<KnowledgeResource>();
-        walk(configuredScope, () -> {}, all::add, true);
-        return all;
-    }
-
-    private List<KnowledgeResource> nativeChanges(java.time.Duration within) throws KnowledgeSourceException {
+    /** Fix the window in server time and the libraries to read; nothing is read from the change log yet. */
+    private SharePointChangeCursor.State nativeStart(String partitionKey, java.time.Duration within)
+            throws KnowledgeSourceException {
         String auth = authorization();
         List<String> roots = searchRoots(auth);
-        if (roots.isEmpty()) return Collections.emptyList();
-        Map<String, String> lists = changeLibraries(roots, auth);
+        Map<String, String> lists = roots.isEmpty() ? Collections.<String, String>emptyMap()
+                : changeLibraries(roots, auth);
+        long end = contextInfo(auth).serverMillis;
+        long start = Instant.ofEpochMilli(end).minus(within).toEpochMilli();
+        return SharePointChangeCursor.State.nativeListing(partitionKey, start, end,
+                new ArrayList<String>(lists.keySet()), new ArrayList<String>(lists.values()), roots);
+    }
+
+    /**
+     * Read the change log from the position of {@code state} until {@code limit} resources are found or the window
+     * ends; the next cursor continues after the token of the last change processed.
+     */
+    private PartitionResources nativeBatch(SharePointChangeCursor.State state, int limit)
+            throws KnowledgeSourceException {
+        String auth = authorization();
+        String digest = state.list < state.lists.size() ? contextInfo(auth).digest : null;
+        Instant start = Instant.ofEpochMilli(state.startMillis);
+        Instant end = Instant.ofEpochMilli(state.endMillis);
+        Map<String, KnowledgeResource> found = new LinkedHashMap<String, KnowledgeResource>();
+        int list = state.list;
+        String token = state.token;
+        Set<String> visited = new HashSet<String>();
+        while (list < state.lists.size()) {
+            String id = state.lists.get(list);
+            String root = state.paths.get(list);
+            String endpoint = "lists(guid'" + id + "')";
+            URI changes = api(endpoint + "/GetChanges");
+            String prefix = SharePointChangeLog.prefix(id);
+            String from = token != null ? token : SharePointChangeLog.timeToken(prefix, start);
+            if (!visited.add(from)) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: Wiederholtes Änderungstoken");
+            }
+            SharePointChangeLog.Page page = SharePointChangeLog.page(id, from, SharePointChangeLog.timeToken(prefix, end),
+                    query -> json(post(changes, auth, digest, query)));
+            for (SharePointChangeLog.Change change : page.changes) {
+                KnowledgeResource resource = changedResource(change.event, endpoint, id, root, state.roots, auth);
+                if (resource != null) found.put(resource.id().value(), resource);
+                token = change.token;
+                if (found.size() >= limit) {
+                    return new PartitionResources(new ArrayList<KnowledgeResource>(found.values()),
+                            changeCursors.encode(state.at(list, token)));
+                }
+            }
+            if (!page.more) {
+                list++;
+                token = null;
+            }
+        }
+        return new PartitionResources(new ArrayList<KnowledgeResource>(found.values()), "");
+    }
+
+    private KnowledgeResource changedResource(JsonObject event, String endpoint, String list, String root,
+                                              List<String> roots, String auth) throws KnowledgeSourceException {
+        JsonObject metadata = changedFile(event, endpoint, list, auth);
+        String path = string(metadata, "ServerRelativeUrl");
+        if (path == null || !path.startsWith(root + "/")) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: geänderte Datei außerhalb der Bibliothek");
+        }
+        if (!withinRoots(path, roots) || path.startsWith(root + "/Forms/")) return null;
+        return resourceOf(metadata, true);
+    }
+
+    /**
+     * The inventory as a change listing: walks the configured scope and continues after the position of the cursor.
+     * If what came before that position changed, the listing starts again from the beginning; a resource reported
+     * twice is harmless, a skipped one would be lost.
+     */
+    private PartitionResources inventoryBatch(SharePointChangeCursor.State state, int limit)
+            throws KnowledgeSourceException {
+        List<KnowledgeResource> all = new ArrayList<KnowledgeResource>();
+        walk(configuredScope, () -> {}, all::add, true);
+        int offset = state.offset;
+        if (offset > all.size() || (offset > 0 && !fingerprint(all, offset).equals(state.fingerprint))) {
+            offset = 0;
+        }
+        int end = Math.min(all.size(), offset + limit);
+        String next = end == all.size() ? ""
+                : changeCursors.encode(state.inventoryAt(end, fingerprint(all, end)));
+        return new PartitionResources(new ArrayList<KnowledgeResource>(all.subList(offset, end)), next);
+    }
+
+    private static String fingerprint(List<KnowledgeResource> resources, int count) {
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            for (int i = 0; i < count; i++) {
+                digest.update(resources.get(i).id().value().getBytes(StandardCharsets.UTF_8));
+                digest.update((byte) '\n');
+            }
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest.digest());
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
+    }
+
+    /** Server time and form digest; the change log needs both, and a digest expires, so each batch asks again. */
+    private ContextInfo contextInfo(String auth) throws KnowledgeSourceException {
         URI context = URI.create(trimTrailingSlash(siteUri.toString()) + "/_api/contextinfo");
         SharePointTransport.Response info = post(context, auth, null, new byte[0]);
         JsonObject data = json(info).getAsJsonObject("GetContextWebInformation");
@@ -274,25 +393,17 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         if (digest == null || digest.isEmpty() || info.serverDateMillis() <= 0) {
             throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: Änderungsabfrage ohne Serverzeit oder Digest");
         }
-        Instant end = Instant.ofEpochMilli(info.serverDateMillis());
-        Map<String, KnowledgeResource> found = new LinkedHashMap<String, KnowledgeResource>();
-        for (Map.Entry<String, String> list : lists.entrySet()) {
-            String id = list.getKey();
-            String endpoint = "lists(guid'" + id + "')";
-            URI changes = api(endpoint + "/GetChanges");
-            SharePointChangeLog.visit(id, end.minus(within), end,
-                    query -> json(post(changes, auth, digest, query)), event -> {
-                JsonObject metadata = changedFile(event, endpoint, id, auth);
-                String path = string(metadata, "ServerRelativeUrl");
-                if (path == null || !path.startsWith(list.getValue() + "/")) {
-                    throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "SharePoint: geänderte Datei außerhalb der Bibliothek");
-                }
-                if (!withinRoots(path, roots) || path.startsWith(list.getValue() + "/Forms/")) return;
-                KnowledgeResource resource = resourceOf(metadata, true);
-                if (resource != null) found.put(resource.id().value(), resource);
-            });
+        return new ContextInfo(digest, info.serverDateMillis());
+    }
+
+    private static final class ContextInfo {
+        final String digest;
+        final long serverMillis;
+
+        ContextInfo(String digest, long serverMillis) {
+            this.digest = digest;
+            this.serverMillis = serverMillis;
         }
-        return new ArrayList<KnowledgeResource>(found.values());
     }
 
     private Map<String, String> changeLibraries(List<String> roots, String auth) throws KnowledgeSourceException {
@@ -453,6 +564,8 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
     }
 
     private static final String FOLDER_SCHEME = "sharepoint-folder";
+    /** {@link StoredContent#nativeFormat()} of a folder: no content of its own. */
+    static final String FOLDER_FORMAT = "sharepoint-folder";
 
     private KnowledgeResourceId folderId(String path) {
         return KnowledgeResourceId.of(FOLDER_SCHEME, locator + "/" + path.substring(sitePath.length() + 1));
@@ -473,9 +586,27 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
     }
 
     private KnowledgeResource folderResource(String path) {
-        return KnowledgeResource.builder(folderId(path), sourceId)
+        Map<String, String> metadata = new LinkedHashMap<String, String>();
+        metadata.put("sharepoint.path", path);
+        metadata.put("resource.kind", "folder");
+        KnowledgeResource.Builder builder = KnowledgeResource.builder(folderId(path), sourceId)
                 .title(path.substring(path.lastIndexOf('/') + 1))
-                .scope(sourceId.value()).revision(KnowledgeRevision.unknown()).build();
+                .scope(sourceId.value()).revision(KnowledgeRevision.unknown())
+                .metadata(KnowledgeMetadata.of(metadata));
+        String parent = parentFolder(path);
+        if (parent != null) builder.parentId(folderId(parent));
+        return builder.build();
+    }
+
+    /**
+     * The folder that contains {@code path} as the navigation shows it, {@code null} for a library root: its parent is
+     * the site itself, which the navigation shows as the root.
+     */
+    private String parentFolder(String path) {
+        int slash = path.lastIndexOf('/');
+        if (slash <= sitePath.length()) return null;
+        String parent = path.substring(0, slash);
+        return insideSite(parent) ? parent : null;
     }
 
     private NavigationNode folderNode(String path) {
@@ -643,7 +774,11 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
     @Override
     public StoredContent storedContent(String localId) throws KnowledgeSourceException {
         KnowledgeResourceId id = decodeLocalId(localId);
-        if (isFolderId(id)) throw new KnowledgeSourceException(Kind.UNSUPPORTED, "SharePoint: Ordner ist kein Dokument");
+        if (isFolderId(id)) {
+            // A folder has no content of its own, only children: an empty payload, like other folder sources.
+            return new StoredContent(folderResource(folderPath(id)), new byte[0], "text/plain", FOLDER_FORMAT,
+                    Instant.now());
+        }
         KnowledgeResource before = resourceMetadata(localId);
         long length = Long.parseLong(before.metadata().asMap().get("file.size"));
         if (length > maxFileBytes) throw new ResponseTooLargeException("SharePoint: Datei überschreitet das Limit", maxFileBytes);
@@ -660,6 +795,7 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
 
     @Override
     public KnowledgeDocument load(KnowledgeResourceId resourceId) throws KnowledgeSourceException {
+        if (isFolderId(resourceId)) return KnowledgeDocument.of(folderResource(folderPath(resourceId)), "");
         String path = serverRelativeOf(resourceId);
         String authorization = authorization();
         JsonObject metadata = get(resourceApi("File", path, "?$select=Name,ServerRelativeUrl,TimeLastModified,Length,UIVersionLabel"),
@@ -750,6 +886,10 @@ final class SharePointKnowledgeSource implements SearchableKnowledgeSource, Sour
         URI location = location(path);
         if (location != null) {
             builder.location(location);
+        }
+        String parent = parentFolder(path);
+        if (parent != null) {
+            builder.parentId(folderId(parent));
         }
         return builder.build();
     }

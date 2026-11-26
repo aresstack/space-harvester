@@ -61,16 +61,16 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Abschnitte je Dokument (`EmbeddingProcessor.MAX_CHUNKS`) | 200 | nur die ersten etwa 70.000 Token waren semantisch suchbar | **beseitigt**: alle Abschnitte; es gilt nur das einstellbare `enrichment.documents.embedding-max-chars` |
 | Wartende Funde (`FindingCataloging.CAPACITY`, `REMEMBERED`) | 1000 / 10.000 | weitere Funde fallen weg | beseitigen: zurückstellen statt verwerfen |
 | Webhook-Warteschlange (`ChangeEvents.MAX_QUEUED`, `MAX_BODY_BYTES`) | 10.000 Seiten / 1 MiB | Meldungen fallen weg, erst die Inventur holt sie nach | Warteschlange beseitigen (eine Zeile je Seite), Rumpfgröße einstellbar |
-| Hintergrundaufträge, Vorabladen (`Jobs.BACKGROUND_CAPACITY`, `AttachmentPrefetches.MAX_WAITING`) | 1000 / 5000 | weitere Aufträge werden abgewiesen; beim Vorabladen lädt der Aufrufer selbst | einstellbar unter `space-harvester.jobs` |
+| Hintergrundaufträge, Vorabladen (`JobLimits.DEFAULT_MAX_OPEN_BACKGROUND`, `DEFAULT_MAX_WAITING_PREFETCHES`) | 1000 / 5000 | weitere Aufträge werden abgewiesen; beim Vorabladen lädt der Aufrufer selbst | **einstellbar**: `space-harvester.jobs.max-open-background`, `.max-waiting-prefetches` (nur App) |
 | Absätze und Sätze (`PassageProcessor.MAX_PASSAGES`, `PassageSegmentation.MAX_EMBEDDED_SENTENCES`) | 5000 / 2000 | bei langen Dokumenten fehlen die übrigen Absätze | beseitigen |
 | Begriffe, Entitäten, Relationen, Akronyme je Dokument (`TermProcessor`, `EntityProcessor`, `RelationProcessor`, `PropertyProcessor`, `ActivityProcessor`, `AcronymProcessor`) | 500 bis 50.000 | die übrigen fehlen ohne Hinweis | beseitigen oder sichtbar markieren |
 | Fakten je Ergebnis und Seite (`EnrichmentFacts.MAX_PER_RESULT`, `LuceneEnrichmentStore.MAX_PER_PAGE`) | 2000 / 1000 | Fakten darüber werden nicht geliefert | beseitigen: paginieren |
 | Links und Tabellenzellen (`TikaDocumentStructure.MAX_LINKS`, `MAX_TABLE_CELLS`) | 1000 / 10.000 | die übrigen fehlen in der Struktur | beseitigen |
 | Confluence-Listen (`RestJson.MAX_LIST_PAGES` × `LIST_LIMIT`) | 200 × 100 | Listen mit mehr als 20.000 Einträgen scheitern | beseitigen: weiterblättern, bis die Quelle endet |
-| Baum und Listen in der REST-API (`PageQueries.MAX_TREE_DEPTH`, `MAX_PAGE_LIMIT`, `ContentListing.MAX_START`, `TermQueries.MAX_SCAN`) | 200 / 100 / 10.000 / 50.000 | tiefere Ebenen und spätere Einträge sind nicht erreichbar | beseitigen: Baum ebenenweise (F40-6), Seitengröße einstellbar |
-| Cache-Vorschau und Explorer (`Explorer.TREE_LIMIT`, `Payloads.MAX_DISPLAY_CHARS`) | 5000 Knoten / 2.000.000 Zeichen | große Bäume und lange Inhalte werden abgeschnitten | beseitigen: paginieren (F40-5) |
+| Baum und Listen in der REST-API (`PageQueries.MAX_TREE_LEVELS`, `MAX_PAGE_LIMIT`, `ContentListing.MAX_START`, `TermQueries.MAX_SCAN`) | 200 Ebenen je Antwort / 100 / 10.000 / 50.000 | spätere Einträge der Listen sind nicht erreichbar | beseitigen: Seitengröße einstellbar. **Baum erledigt (F40-6):** `GET …/tree` liefert ebenenweise (`root`, `levels`); ein Knoten mit `more` hat tiefere Kinder, die `root=<id>` nachliefert; die Gesamttiefe ist nicht begrenzt. 200 Ebenen je Antwort sind eine Invariante des JSON-Formats (Jackson schachtelt höchstens 500) |
+| Cache-Vorschau und Explorer (`Payloads.MAX_DISPLAY_CHARS`) | 2.000.000 Zeichen | lange Inhalte werden sichtbar gekürzt angezeigt („Speichern unter …“ speichert vollständig) | beseitigen: paginieren (F40-5). **Erledigt:** Die Vorschau aus dem Cache (`PageNavigation.cachedChildren`, früher höchstens 1000 Kinder) ist paginiert, „Weitere laden“ blättert im Cache, auch ohne Quelle; der Seitenbaum ohne Live-Baum (`Explorer.wholeSpace`, früher 5000 Knoten) und die Kinder für Bereichspodcasts (früher 200) lesen alle Einträge. Die Stapelgröße ist `Explorer.BATCH` |
 | Diagrammtexte (`DiagramLabels`, Zahl ohne Konstante) | 4000 Zeichen Code | der Code wurde vor dem Modellaufruf abgeschnitten (F41-7) | **beseitigt**: zu langer Code wird nach dem Tokenbudget des Modells (`ModelBudget`) an Zeilengrenzen in Teile zerlegt und teilweise beschriftet |
-| Laufende progressive Suchen (`ProgressiveSearches.DEFAULT_MAX_RUNNING`, `DEFAULT_RETENTION`) | 256 / 5 min | laufen schon `max-running` Suchen, wird eine neue mit 429 abgewiesen; eine neue verdrängt keine andere mehr | **einstellbar**: `space-harvester.search.progressive.max-running`, `.retention` (F38-4). Das Register bleibt (F38-4 erlaubt es); Wartende gibt es nicht, darum kein eigenes Wartebudget |
+| Progressive Suchen (`ProgressiveSearches.DEFAULT_MAX_RUNNING`, `DEFAULT_MAX_WAITING`, `DEFAULT_RETENTION`, `DEFAULT_MAX_TIME_BUDGET`) | 256 laufend / 256 wartend / 5 min / 2 min | laufen schon `max-running` Suchen, wartet eine neue (`waiting`) und startet, sobald ein Platz frei wird; erst wenn auch `max-waiting` voll ist, wird sie mit 429 abgewiesen; eine neue verdrängt nie eine andere; ein größeres Zeitbudget wird gekürzt | **einstellbar**: `space-harvester.search.progressive.max-running`, `.max-waiting`, `.retention`, `.max-time-budget` (F38-4, ADR 0038 Punkt 10) |
 | Speicher und Pakete (Desktop-`FileSystemAssetStore.DEFAULT_MAX_TOTAL_BYTES`, `ZipExportPackageReader`, `ImportController.MAX_PACKAGE_BYTES`, `LocalFilesSourceAdapter.MAX_FILE_MEGABYTES`, `BscwSourceAdapter`) | 20 GiB, 256 MiB, 4 GiB, 64 MB, Tiefe 50 | größere Dateien und tiefere Ordner werden nicht geerntet oder importiert | Speicherbudget einstellbar, Bestandsgrenzen beseitigen |
 | KI-Textbudgets (Chat 24.000 Zeichen / 8 Quellen, Podcast, Zusammenfassungen, Fristen 12.000 Zeichen) | fest | Material wird vor dem Modellaufruf gekürzt | aus der Tokenlänge des Modells ableiten |
 | Modellname in der MVS-Diagnose (`MvsDiagnosisTools`) | `gpt-oss-120b` | die Diagnose läuft nur mit diesem Modell | eingestelltes Modell verwenden |
@@ -151,7 +151,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `Assets.MAX_CONCURRENT_DOWNLOADS` | `4` | fest | Parallelität | einstellbar |
 | `Assets.MAX_IN_MEMORY_BYTES` | `100L * 1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `Assets.UNLIMITED` | `Long.MAX_VALUE` | fest | Invariante/Darstellung | im Code belassen |
-| `AttachmentPrefetches.MAX_WAITING` | `5_000` | fest | Timeout | einstellbar |
 | `BackgroundFill.DEFAULT_PARALLELISM` | `2` | Vorgabe | Parallelität | einstellbar |
 | `BackgroundFill.MAX_PARALLELISM` | `16` | fest | Parallelität | einstellbar |
 | `BackgroundFill.SETTLE` | `Duration.ofSeconds(1)` | fest | Cache-Aufbewahrung | einstellbar |
@@ -236,13 +235,17 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `Holdings.MAX_PAGES_PER_MESSAGE` | `1000` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `ImageSettings.DEFAULT_MAX_PER_RUN` | `500` | Vorgabe | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `JobEvent.MAX_DETAIL_CHARS` | `16_000` | fest | Invariante/Darstellung | im Code belassen |
+| `JobLimits.DEFAULT_MAX_OPEN_BACKGROUND` | `1000` | Vorgabe | Warteschlange | einstellbar: `space-harvester.jobs.max-open-background` |
+| `JobLimits.DEFAULT_MAX_OPEN_PER_OWNER` | `4` | Vorgabe | Warteschlange | einstellbar: `space-harvester.jobs.max-open-per-owner` |
+| `JobLimits.DEFAULT_MAX_QUEUED` | `20` | Vorgabe | Warteschlange | einstellbar: `space-harvester.jobs.max-queued` |
+| `JobLimits.DEFAULT_MAX_RUN_TIME` | `Duration.ofHours(6)` | Vorgabe | Timeout | einstellbar: `space-harvester.jobs.max-run-time` |
+| `JobLimits.DEFAULT_MAX_WAITING_PREFETCHES` | `5_000` | Vorgabe | Warteschlange | einstellbar: `space-harvester.jobs.max-waiting-prefetches` (nur App) |
 | `JobLimits.DEFAULT_PARALLEL_DOWNLOADS` | `4` | Vorgabe | Parallelität | einstellbar |
 | `JobLimits.DEFAULT_PARALLEL_PREPARATIONS` | `2` | Vorgabe | Parallelität | einstellbar |
 | `JobLimits.DEFAULT_RETENTION` | `Duration.ofDays(7)` | Vorgabe | Cache-Aufbewahrung | einstellbar |
 | `JobLimits.MAX_DOWNLOAD_CONNECTIONS` | `64` | fest | Obergrenze einer Einstellung | prüfen: entfallen oder einstellbar |
 | `JobLimits.MAX_PARALLEL_DOWNLOADS` | `64` | fest | Parallelität | einstellbar |
 | `JobLimits.MAX_PARALLEL_PREPARATIONS` | `16` | fest | Parallelität | einstellbar |
-| `Jobs.BACKGROUND_CAPACITY` | `1000` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `Jobs.RETRY_AFTER_PASS_ATTEMPTS` | `48` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `KeywordSearch.DEFAULT_MAX_QUERIES` | `4` | Vorgabe | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `KeywordSearch.MARK_BYTES` | `6` | fest | Invariante/Darstellung | im Code belassen |
@@ -311,7 +314,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `PageLinks.BATCH` | `500` | fest | Stapel-/Seitengröße | einstellbar |
 | `PageLinks.MAX_PAGES_PER_MESSAGE` | `1_000` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `PageMarks.MAX_DEPTH` | `64` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
-| `PageNavigation.MAX_CACHED_CHILDREN` | `1000` | fest | Cache-Aufbewahrung | einstellbar |
 | `PageNavigation.MAX_TITLE_DEPTH` | `1000` | fest | Bestandsgrenze | beseitigen |
 | `PageNavigation.MAX_TITLE_LIMIT` | `100` | fest | Stapel-/Seitengröße | einstellbar |
 | `PagePassages.TITLE_CHARS` | `80` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
@@ -323,7 +325,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `PagePodcasts.SUBPAGE_CHARS` | `1500` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `PageQueries.MAX_CHECKED` | `10_000` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `PageQueries.MAX_PAGE_LIMIT` | `100` | fest | Stapel-/Seitengröße | einstellbar |
-| `PageQueries.MAX_TREE_DEPTH` | `200` | fest | Bestandsgrenze | beseitigen |
+| `PageQueries.MAX_TREE_LEVELS` | `200` | fest | Stapel-/Seitengröße | Invariante: Ebenen je JSON-Antwort, Fortsetzung über `root` (F40-6) |
 | `PageQueries.TREE_BATCH` | `1000` | fest | Stapel-/Seitengröße | einstellbar |
 | `PageSearch.MAX_LIMIT` | `100` | fest | Stapel-/Seitengröße | einstellbar |
 | `PageSearchQuery.MAX_SOURCE_IDS` | `50` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
@@ -582,7 +584,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `Explorer.BATCH` | `100` | fest | Stapel-/Seitengröße | einstellbar |
 | `Explorer.MATCH_LIMIT` | `50` | fest | Stapel-/Seitengröße | einstellbar |
 | `Explorer.PREFETCH_LIMIT` | `25` | fest | Stapel-/Seitengröße | einstellbar |
-| `Explorer.TREE_LIMIT` | `5_000` | fest | Bestandsgrenze | beseitigen |
 | `Feedback.MAX_LINES` | `4` | fest | Invariante/Darstellung | im Code belassen |
 | `Feedback.MAX_LINES_OPEN` | `9` | fest | Invariante/Darstellung | im Code belassen |
 | `FilesChatTools.MAX_ENTRIES` | `300` | fest | Cache-Aufbewahrung | einstellbar |
@@ -654,8 +655,9 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 |---|---|---|---|---|
 | `ConfluenceCompatController.DEFAULT_LIMIT` | `25` | Vorgabe | Stapel-/Seitengröße | einstellbar |
 | `ImportController.MAX_PACKAGE_BYTES` | `4L * 1024 * 1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
-| `ProgressiveSearchController.MAX_TIME_BUDGET` | `Duration.ofMinutes(2)` | fest | Timeout | einstellbar |
 | `ProgressiveSearches.DEFAULT_MAX_RUNNING` | `256` | Vorgabe | Parallelität | einstellbar: `space-harvester.search.progressive.max-running` |
+| `ProgressiveSearches.DEFAULT_MAX_WAITING` | `256` | Vorgabe | Warteschlange | einstellbar: `space-harvester.search.progressive.max-waiting` |
+| `ProgressiveSearches.DEFAULT_MAX_TIME_BUDGET` | `Duration.ofMinutes(2)` | Vorgabe | Timeout | einstellbar: `space-harvester.search.progressive.max-time-budget` |
 | `ProgressiveSearches.DEFAULT_RETENTION` | `Duration.ofMinutes(5)` | Vorgabe | Cache-Aufbewahrung | einstellbar: `space-harvester.search.progressive.retention` |
 
 ### `command-deck`

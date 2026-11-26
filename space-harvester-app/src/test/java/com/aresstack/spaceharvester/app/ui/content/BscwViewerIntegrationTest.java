@@ -147,7 +147,7 @@ final class BscwViewerIntegrationTest {
                 .isEqualTo(com.aresstack.spaceharvester.application.sources.PageMetadata.LINK_KIND);
         String parent = stored.snapshot().metadata().parentPageId();
         assertThat(parent).isNotNull();
-        assertThat(context.runtime().workspace().cachedChildren("bscw-test", "bscw-test", parent).pages())
+        assertThat(context.runtime().workspace().cachedChildren("bscw-test", "bscw-test", parent, null, 100).pages())
                 .filteredOn(node -> linkId.equals(node.pageId()))
                 .singleElement().satisfies(node -> {
                     assertThat(node.kind()).isEqualTo(HarvestSource.PageNode.Kind.FILE);

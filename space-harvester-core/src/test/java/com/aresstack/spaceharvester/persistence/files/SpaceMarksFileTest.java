@@ -54,4 +54,19 @@ class SpaceMarksFileTest {
         assertThat(dir.resolve(FileIndexMarks.FILE)).exists();
         assertThat(dir.resolve(FileExclusionMarks.FILE)).exists();
     }
+
+    @Test
+    void navigationMarksAreAddedInOneWriteKeepTheirOwnFileAndSurviveARestart() {
+        new FileIndexMarks(dir).mark("ftp", "ftp", "A");
+        FileNavigationMarks marks = new FileNavigationMarks(dir);
+        marks.mark("ftp", "ftp", java.util.List.of("A", "B"));
+        marks.mark("ftp", "ftp", java.util.List.of("B", "C"));
+
+        assertThat(new FileNavigationMarks(dir).pages("ftp", "ftp")).containsExactlyInAnyOrder("A", "B", "C");
+        assertThat(new FileIndexMarks(dir).roots("ftp", "ftp")).containsExactly("A");
+        assertThat(dir.resolve(FileNavigationMarks.FILE)).exists();
+        assertThatThrownBy(() -> marks.mark("ftp", "ftp", java.util.Arrays.asList("D", null)))
+                .isInstanceOf(NullPointerException.class);
+        assertThat(new FileNavigationMarks(dir).pages("ftp", "ftp")).doesNotContain("D");
+    }
 }

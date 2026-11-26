@@ -145,7 +145,7 @@ Wissensquellen, und ihre Analysen liegen im gemeinsamen Bestand. **Maßgeblich i
 | Ablaufdiagramm aus dem statischen Kontrollfluss statt aus der Absatzfolge (#1473) | PR #1488 offen |
 | Fachliche KI-Analyse als Hypothese (`CobolBusinessEnrichment`, ausdrücklich ausgelöst) | PR #1488 offen |
 | Zustand „fachlich bestätigt“ mit Prüfung durch Menschen, Quellstellenbeleg im Fachlogik-Bestand | nicht umgesetzt |
-| KI-Beschriftung von Diagrammen ohne feste Zeichengrenze | **weicht ab:** `DiagramLabels` kürzt nach 4000 Zeichen |
+| KI-Beschriftung von Diagrammen ohne feste Zeichengrenze | umgesetzt (#1500): zu langer Code wird nach dem Tokenbudget des Modells (`ModelBudget`) an Zeilengrenzen geteilt, nichts abgeschnitten |
 | Vollständiger Kontroll- und Datenfluss (`GO TO`, Fall-through, programmübergreifend), SQL/CICS-Semantik | offen |
 | Abnahme gegen echtes z/OS-FTP, NDV und KI-Dienst | offen |
 
@@ -198,7 +198,7 @@ Nach ADR 0036, Punkt 12. Stand develop vom 26.11.2026; was nur in PR #1488 steht
 | Zeichen je Token zur Aufteilung des Programms | 3 | **fest im Code** (`CobolBusinessAnalysis.CHARACTERS_PER_TOKEN`, PR #1488) | nein |
 | Tiefe der Abhängigkeiten: Natural, DDM | 5, 3 | **fest im Code** (`SourceRelations.NATURAL_DEPTH`, `DDM_DEPTH`) | nein |
 | Diagramm: Zusammenfalten ab Knotenzahl, Häufigkeitsschwelle | 30, 3 | **fest im Code** (`OutlineToMermaidConverter.COLLAPSE_THRESHOLD`, `FREQ_THRESHOLD`) | nein |
-| KI-Beschriftung von Diagrammen: Code je Anfrage (**Größenlimit**) | 4000 Zeichen, danach abgeschnitten | **fest im Code** (`DiagramLabels`) | nein |
+| KI-Beschriftung von Diagrammen: Code je Anfrage | Tokenbudget des Modells, Rest in weiteren Teilen | Tokenlänge je Modell (`ModelBudget`) | ja, Einstellungen › KI-Dienst › Modelle |
 | KI-Beschriftung von Diagrammen: Wartezeit je Anfrage | 30 s | **fest im Code** (`DiagramLabels.TIMEOUT_SECONDS`) | nein |
 
 Die Programmanalyse selbst hat kein Größenlimit für Programme: Die KI-Stufe teilt nach dem Tokenbudget des

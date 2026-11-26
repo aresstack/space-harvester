@@ -85,11 +85,13 @@ public final class LucenePageCacheReader implements PageCacheReader {
     }
 
     @Override
-    public List<PageHeader> children(String sourceId, String spaceKey, String parentPageId, int limit) {
-        int capped = Math.min(Math.max(limit, 1), LucenePageCache.MAX_PAGE_SIZE);
+    public List<PageHeader> children(String sourceId, String spaceKey, String parentPageId, String afterPageId,
+                                     int limit) {
+        // Die Lucene-Abfrage liefert höchstens MAX_PAGE_SIZE je Stapel; der Aufrufer setzt mit der letzten ID fort.
+        int batch = Math.min(Math.max(limit, 1), LucenePageCache.MAX_PAGE_SIZE);
         return guarded(() -> (parentPageId == null
-                ? cache.rootPages(sourceId, Objects.requireNonNull(spaceKey, "spaceKey"), capped)
-                : cache.children(new PageKey(sourceId, parentPageId), capped)).stream()
+                ? cache.rootPages(sourceId, Objects.requireNonNull(spaceKey, "spaceKey"), afterPageId, batch)
+                : cache.children(new PageKey(sourceId, parentPageId), afterPageId, batch)).stream()
                 .map(CachedPageHeader::header).toList());
     }
 

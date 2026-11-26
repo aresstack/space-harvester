@@ -184,6 +184,7 @@ import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileReadStates;
 import com.aresstack.spaceharvester.persistence.files.FileExclusionMarks;
 import com.aresstack.spaceharvester.persistence.files.FileIndexMarks;
+import com.aresstack.spaceharvester.persistence.files.FileNavigationMarks;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore;
 import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
@@ -371,6 +372,7 @@ public final class Harvester implements AutoCloseable {
     private final SpaceSyncJobs syncs;
     private final Indexing indexing;
     private final Exclusions exclusions;
+    private final com.aresstack.spaceharvester.application.sync.NavigationMarks navigationMarks;
     private final ChangeEvents changeEvents;
     private final Reconciliation reconciliation;
     /** Bestandsinventur nach {@code sync.inventory-interval}, nur aus der Konfiguration (ADR 0014/0015). */
@@ -537,8 +539,9 @@ public final class Harvester implements AutoCloseable {
             // Angelo 22.11.2026: ohne Netz warten statt scheitern; ein Netzzustand für alle Netz-Aufträge.
             this.network = new com.aresstack.spaceharvester.application.network.NetworkState();
             opened.add(network);
+            // jobs.max-waiting-prefetches, wirkt beim Start.
             this.attachmentPrefetches = new com.aresstack.spaceharvester.application.background.AttachmentPrefetches(
-                    backgroundJobs);
+                    backgroundJobs, builder.jobLimits.maxWaitingPrefetches());
             opened.add(attachmentPrefetches);
             attachmentPrefetches.network(network);
 
@@ -1152,8 +1155,11 @@ public final class Harvester implements AutoCloseable {
                     (sourceId, pageId) -> reader.header(new PageKey(sourceId, pageId))
                             .map(header -> header.metadata().title()).orElse(null));
             navigation.exclusions(exclusions);
+            // Erwerbsgrund „Navigation“ (ADR 0037, Punkt 3): nur dieser Grund wird gespeichert.
+            this.navigationMarks = new FileNavigationMarks(builder.dataDirectory);
             keywordSearch.exclusions(exclusions);
             findings.exclusions(exclusions);
+            syncs.exclusions(exclusions);
             // Automatische Auslöser laden Ausgeschlossenes nie; ausdrückliches Öffnen, Lesen und Export bleiben möglich.
             Exclusions excluded = this.exclusions;
             acquisition.withhold((key, trigger) -> automatic(trigger)
@@ -1242,7 +1248,7 @@ public final class Harvester implements AutoCloseable {
 
                         @Override
                         public List<String> children(AccessContext who, String sourceId, String pageId) {
-                            return podcastCache.children(new PageKey(sourceId, pageId), 200).stream()
+                            return podcastCache.allChildren(new PageKey(sourceId, pageId)).stream()
                                     .map(com.aresstack.spaceharvester.persistence.lucene.CachedPageHeader::header)
                                     .sorted(java.util.Comparator.comparing(header -> header.metadata().title(),
                                             String.CASE_INSENSITIVE_ORDER))
@@ -2863,6 +2869,11 @@ public final class Harvester implements AutoCloseable {
         return exclusions;
     }
 
+    /** Die über die Navigationsbefüllung erworbenen Ressourcen (ADR 0037, Punkt 3). */
+    public com.aresstack.spaceharvester.application.sync.NavigationMarks navigationMarks() {
+        return navigationMarks;
+    }
+
     /** Bilder und Anhänge einer markierten Wurzel beschaffen; vor dem Aufbau der Beschaffung nichts. */
     private void collectIndexedAssets(String sourceId, String spaceKey, String pageId) {
         ExportAssetCollection collection = assetCollection;
@@ -3542,7 +3553,7 @@ public final class Harvester implements AutoCloseable {
         private TrustSettings trust = TrustSettings.jvm();
         private ConfiguredSourceCatalog.AsyncTransport asyncTransport = ConfiguredSourceCatalog.AsyncTransport.WEB_CLIENT;
         private AccessPolicy accessPolicy = new TrustedCaller();
-        private JobLimits jobLimits = new JobLimits(2, 20, Duration.ofHours(6));
+        private JobLimits jobLimits = JobLimits.DEFAULTS;
         private Duration searchTimeout = Duration.ofSeconds(5);
         private Duration checkTimeout = PageFreshness.DEFAULT_TIMEOUT;
         private Duration largeFileTimeout = PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT;

@@ -455,13 +455,9 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
      * @param limit       höchstens so viele Einträge, 1 bis {@link #MAX_PAGE_SIZE}
      */
     public List<CachedPageHeader> spacePages(String sourceId, String spaceKey, String afterPageId, int limit) {
-        BooleanQuery.Builder query = pages(sourceId)
-                .add(exact(PageCacheSchema.SPACE_KEY, spaceKey), BooleanClause.Occur.FILTER);
-        if (afterPageId != null) {
-            query.add(TermRangeQuery.newStringRange(PageCacheSchema.PAGE_ID, afterPageId, null, false, false),
-                    BooleanClause.Occur.FILTER);
-        }
-        return headers(query.build(), limit);
+        return headers(after(pages(sourceId)
+                .add(exact(PageCacheSchema.SPACE_KEY, spaceKey), BooleanClause.Occur.FILTER), afterPageId)
+                .build(), limit);
     }
 
     /**
@@ -472,12 +468,16 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
      * @param limit       höchstens so viele Einträge, 1 bis {@link #MAX_PAGE_SIZE}
      */
     public List<CachedPageHeader> sourcePages(String sourceId, String afterPageId, int limit) {
-        BooleanQuery.Builder query = pages(sourceId);
+        return headers(after(pages(sourceId), afterPageId).build(), limit);
+    }
+
+    /** Schränkt eine Liste nach Seiten-ID auf die Fortsetzung nach {@code afterPageId} ein; {@code null} = von vorn. */
+    private static BooleanQuery.Builder after(BooleanQuery.Builder query, String afterPageId) {
         if (afterPageId != null) {
             query.add(TermRangeQuery.newStringRange(PageCacheSchema.PAGE_ID, afterPageId, null, false, false),
                     BooleanClause.Occur.FILTER);
         }
-        return headers(query.build(), limit);
+        return query;
     }
 
     /**
@@ -545,12 +545,29 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
         });
     }
 
-    /** Direkte Kinder einer Seite nach aktuellen Kopfdaten, über alle Spaces der Quelle, nach Seiten-ID. */
-    public List<CachedPageHeader> children(PageKey parent, int limit) {
+    /**
+     * Direkte Kinder einer Seite nach aktuellen Kopfdaten, über alle Spaces der Quelle, nach Seiten-ID.
+     *
+     * @param afterPageId nur Seiten mit größerer Seiten-ID (Fortsetzung einer vorigen Liste) oder {@code null}
+     * @param limit       höchstens so viele Einträge, 1 bis {@link #MAX_PAGE_SIZE}
+     */
+    public List<CachedPageHeader> children(PageKey parent, String afterPageId, int limit) {
         Objects.requireNonNull(parent, "parent");
-        return headers(pages(parent.sourceId())
-                .add(exact(PageCacheSchema.PARENT_ID, parent.pageId()), BooleanClause.Occur.FILTER)
+        return headers(after(pages(parent.sourceId())
+                .add(exact(PageCacheSchema.PARENT_ID, parent.pageId()), BooleanClause.Occur.FILTER), afterPageId)
                 .build(), limit);
+    }
+
+    /** Alle direkten Kinder einer Seite, je {@link #MAX_PAGE_SIZE} gelesen, ohne Gesamtgrenze; nach Seiten-ID. */
+    public List<CachedPageHeader> allChildren(PageKey parent) {
+        List<CachedPageHeader> all = new ArrayList<>();
+        List<CachedPageHeader> batch = children(parent, null, MAX_PAGE_SIZE);
+        while (!batch.isEmpty()) {
+            all.addAll(batch);
+            batch = batch.size() < MAX_PAGE_SIZE ? List.of()
+                    : children(parent, batch.getLast().header().metadata().pageId(), MAX_PAGE_SIZE);
+        }
+        return all;
     }
 
     /** Ob der Cache direkte Kinder der Seite kennt, über alle Spaces der Quelle. */
@@ -622,11 +639,16 @@ public final class LucenePageCache implements SnapshotRepository, ChangeLogStore
     }
 
 
-    /** Seiten eines Space ohne Elternseite nach aktuellen Kopfdaten, nach Seiten-ID; ohne Payload. */
-    public List<CachedPageHeader> rootPages(String sourceId, String spaceKey, int limit) {
-        return headers(pages(sourceId)
+    /**
+     * Seiten eines Space ohne Elternseite nach aktuellen Kopfdaten, nach Seiten-ID; ohne Payload.
+     *
+     * @param afterPageId nur Seiten mit größerer Seiten-ID (Fortsetzung einer vorigen Liste) oder {@code null}
+     * @param limit       höchstens so viele Einträge, 1 bis {@link #MAX_PAGE_SIZE}
+     */
+    public List<CachedPageHeader> rootPages(String sourceId, String spaceKey, String afterPageId, int limit) {
+        return headers(after(pages(sourceId)
                 .add(exact(PageCacheSchema.SPACE_KEY, spaceKey), BooleanClause.Occur.FILTER)
-                .add(new FieldExistsQuery(PageCacheSchema.PARENT_ID), BooleanClause.Occur.MUST_NOT)
+                .add(new FieldExistsQuery(PageCacheSchema.PARENT_ID), BooleanClause.Occur.MUST_NOT), afterPageId)
                 .build(), limit);
     }
 

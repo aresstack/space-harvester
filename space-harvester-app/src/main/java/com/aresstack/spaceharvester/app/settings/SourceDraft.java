@@ -56,6 +56,13 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                 trustBundle, options, baseUrlType, showInExplorer, includeInGlobalSearch);
     }
 
+    /** Derselbe Entwurf mit anderem Anzeigenamen; ID, Typ und Ziel bleiben. */
+    public SourceDraft withTitle(String title) {
+        return new SourceDraft(id, type, title, baseUrl, directory, include, authType, username, secretVariable,
+                certificateType, certificatePath, certificatePasswordVariable, certificateAlias, thumbprint,
+                trustBundle, extraOptions, baseUrlType, showInExplorer, includeInGlobalSearch);
+    }
+
     public SourceDraft withUsage(boolean explorer, boolean globalSearch) {
         return new SourceDraft(id, type, title, baseUrl, directory, include, authType, username, secretVariable,
                 certificateType, certificatePath, certificatePasswordVariable, certificateAlias, thumbprint,
