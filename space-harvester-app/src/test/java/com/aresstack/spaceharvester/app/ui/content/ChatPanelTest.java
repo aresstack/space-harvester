@@ -137,30 +137,50 @@ class ChatPanelTest {
                 assertThat(labelsWithTooltip(panel[0],
                         com.aresstack.enterpriseai.ui.comic.bubble.BubbleTimestamps.tooltip(at))).isNotZero();
             }
-            java.util.List<com.aresstack.enterpriseai.ui.comic.bubble.MessageCopyButton> copies =
+            java.util.List<com.aresstack.spaceharvester.app.ui.controls.CopyButton> copies =
                     new java.util.ArrayList<>();
-            collect(panel[0], com.aresstack.enterpriseai.ui.comic.bubble.MessageCopyButton.class, copies);
+            collect(panel[0], com.aresstack.spaceharvester.app.ui.controls.CopyButton.class, copies);
             assertThat(copies).hasSize(5);
             java.util.List<String> copied = new java.util.ArrayList<>();
             panel[0].setClipboard(copied::add);
             copies.get(0).doClick();
             copies.get(1).doClick();
             assertThat(copied).containsExactly("Frühere Frage", "Frühere Antwort");
-            assertThat(copies.get(1).isConfirming()).isTrue();
-            // Keep the QR action to the right of the timestamp on both message types.
+            assertThat(copies.get(1).copiedShown()).isTrue();
+            // Angelo, 26.11.2026: Uhrzeit vor dem QR-Knopf; Kopieren liegt nie neben dem QR-Knopf. Bei der Frage
+            // steht es direkt hinter dem Namen, bei der Antwort abgesetzt ganz links, der Export hinter dem QR-Knopf.
             java.util.List<com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton> qrs = new java.util.ArrayList<>();
             collect(panel[0], com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton.class, qrs);
             assertThat(qrs).hasSize(5);
-            assertThat(qrs.get(0).getParent()).isSameAs(copies.get(0).getParent());
-            assertThat(qrs.get(0).getParent().getComponentZOrder(qrs.get(0)))
-                    .isGreaterThan(qrs.get(0).getParent().getComponentZOrder(copies.get(0)));
-            for (com.aresstack.enterpriseai.ui.comic.bubble.MessageQrButton qr : qrs) {
-                java.awt.Container controls = qr.getParent();
-                int index = controls.getComponentZOrder(qr);
+            for (int i = 0; i < qrs.size(); i++) {
+                java.awt.Container controls = qrs.get(i).getParent();
+                int index = controls.getComponentZOrder(qrs.get(i));
                 assertThat(index).isPositive();
                 assertThat(controls.getComponent(index - 1))
                         .isInstanceOf(com.aresstack.spaceharvester.app.ui.markdown.MessageTimestamp.class);
+                boolean question = javax.swing.SwingUtilities.getAncestorOfClass(
+                        com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel.class, controls) != null;
+                if (question) {
+                    assertThat(index).isEqualTo(controls.getComponentCount() - 1);
+                    java.awt.Container header = copies.get(i).getParent();
+                    assertThat(header).isNotSameAs(controls);
+                    int copyIndex = header.getComponentZOrder(copies.get(i));
+                    // Name, Lücke, Kopieren.
+                    assertThat(header.getComponent(copyIndex - 2)).isInstanceOf(javax.swing.JLabel.class);
+                    assertThat(((javax.swing.JLabel) header.getComponent(copyIndex - 2)).getText()).isEqualTo("Du");
+                } else {
+                    assertThat(copies.get(i).getParent()).isSameAs(controls);
+                    assertThat(controls.getComponentZOrder(copies.get(i))).isZero();
+                    assertThat(controls.getComponent(1)).isInstanceOf(javax.swing.Box.Filler.class);
+                    // Hinter dem QR-Knopf nur noch der Export.
+                    assertThat(index).isEqualTo(controls.getComponentCount() - 2);
+                }
             }
+            // Ein Export-Menü; die Quellen allein sind sein letzter Eintrag, kein eigenes Menü daneben.
+            java.util.List<javax.swing.JMenuItem> menus = panel[0].exportMenus();
+            assertThat(menus).hasSize(2);
+            javax.swing.JMenu export = (javax.swing.JMenu) menus.get(0);
+            assertThat(export.getItem(export.getItemCount() - 1).getText()).isEqualTo(ChatPanel.SOURCES_ONLY);
             java.util.List<String> shown = new java.util.ArrayList<>();
             panel[0].setQrCodes((name, text) -> shown.add(text));
             qrs.get(0).doClick();
