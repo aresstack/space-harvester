@@ -46,7 +46,7 @@ public final class SourceDataPurge {
     public static final String MOVED = "moved";
 
     /** So lange wartet die Bereinigung auf laufende Aufträge der Quelle. */
-    public static final Duration JOB_STOP_TIMEOUT = Duration.ofSeconds(30);
+    public static final Duration JOB_STOP_TIMEOUT = Jobs.STOP_TIMEOUT;
 
     private static final System.Logger LOG = System.getLogger(SourceDataPurge.class.getName());
 

@@ -1726,11 +1726,34 @@ public class Jobs implements AutoCloseable {
         }
     }
 
+    /**
+     * So lange wartet, wer laufende Aufträge beendet, bis sie an ihrem nächsten {@link JobContext#checkpoint()}
+     * aufgehört haben: das Schließen ({@link #close}), das Entfernen einer Quelle und das Löschen ihrer Daten.
+     */
+    public static final Duration STOP_TIMEOUT = Duration.ofSeconds(30);
+
+    private volatile Duration stopTimeout = STOP_TIMEOUT;
+
+    /** Für Tests: kürzere Wartezeit beim Schließen ({@link #STOP_TIMEOUT}). */
+    void stopTimeout(Duration timeout) {
+        this.stopTimeout = Objects.requireNonNull(timeout, "timeout");
+    }
+
+    /**
+     * Nimmt keine Aufträge mehr an, bricht wartende ab, fordert den Abbruch der laufenden an und wartet höchstens
+     * {@link #STOP_TIMEOUT}, bis sie aufgehört haben. Erst danach dürfen die Ablagen schließen, auf denen sie arbeiten
+     * (Angelo 26.11.2026: Entfernen einer Quelle, sofort danach Neuladen, während ihre Daten noch gelöscht werden;
+     * das Schließen der Lucene-Ablagen unter dem laufenden Löschen ließ das Neuladen scheitern). Mehrfaches Schließen
+     * tut nichts mehr.
+     */
     @Override
     public void close() {
         interruptBackground();
         lock.lock();
         try {
+            if (closed) {
+                return;
+            }
             closed = true;
             Instant now = clock.instant();
             for (Job job : queued) {
@@ -1771,21 +1794,42 @@ public class Jobs implements AutoCloseable {
         } finally {
             lock.unlock();
         }
+        awaitStopped(stopTimeout);
         notifier.close();
+    }
+
+    /** Wartet, bis kein Auftrag mehr läuft, höchstens {@code timeout}; danach protokolliert es, wer noch läuft. */
+    private void awaitStopped(Duration timeout) {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        lock.lock();
+        try {
+            while (!open.isEmpty()) {
+                long left = deadline - System.nanoTime();
+                if (left <= 0) {
+                    LOG.log(System.Logger.Level.WARNING, "Beim Schließen laufen noch {0} Aufträge ({1}) nach {2} s",
+                            open.size(), String.join(", ", open.keySet()), timeout.toSeconds());
+                    return;
+                }
+                changed.awaitNanos(left);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            lock.unlock();
+        }
     }
 
     /**
      * Legt den Stand eines Auftrags beim Beenden ab. Scheitert die Ablage (etwa weil ein unterbrochener Thread ihren
      * Lucene-Writer geschlossen hat), beendet {@link #close()} trotzdem alle übrigen Aufträge, Zeitgeber und Meldungen:
      * Sonst blieben deren Threads stehen und das Schließen der übrigen Bausteine scheiterte mit. Der Auftrag gilt beim
-     * nächsten Start als unterbrochen ({@link #markInterrupted}); im Protokoll steht nur die Ausnahmeklasse.
+     * nächsten Start als unterbrochen ({@link #markInterrupted}); im Protokoll stehen Meldung und Stacktrace.
      */
     private void saveOnClose(Job job) {
         try {
             store.save(job.snapshot());
         } catch (RuntimeException e) {
-            LOG.log(System.Logger.Level.WARNING, "Auftragsstand beim Beenden nicht abgelegt ({0})",
-                    e.getClass().getName());
+            LOG.log(System.Logger.Level.WARNING, "Auftragsstand beim Beenden nicht abgelegt: " + e, e);
         }
     }
 
@@ -1915,7 +1959,8 @@ public class Jobs implements AutoCloseable {
             events.append(event);
         } catch (RuntimeException e) {
             // Diagnose darf keinen Auftrag scheitern lassen.
-            LOG.log(System.Logger.Level.WARNING, "Diagnoseereignis nicht abgelegt ({0})", e.getClass().getName());
+            // Mit Meldung und Stacktrace (Angelo 26.11.2026): Nur die Klasse verriet nicht, welche Ablage schon zu war.
+            LOG.log(System.Logger.Level.WARNING, "Diagnoseereignis nicht abgelegt: " + e, e);
         }
     }
 
