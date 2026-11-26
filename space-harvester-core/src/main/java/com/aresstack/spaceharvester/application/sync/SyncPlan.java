@@ -130,6 +130,20 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
         return new SyncPlan(inventory, baseline, changes, removals, due);
     }
 
+    /**
+     * „Bereinigen“ (ADR 0037, Punkt 3): entfernt zusätzlich diese Seiten aus Katalog und Generation. Welche Seiten das
+     * sein dürfen, entscheidet der Aufrufer ({@link SpaceSync#withoutReason}); Originale in der Quelle bleiben unberührt.
+     */
+    public SyncPlan withCleanup(Set<String> pageIds) {
+        Objects.requireNonNull(pageIds, "pageIds");
+        if (pageIds.isEmpty()) {
+            return this;
+        }
+        Set<String> all = new TreeSet<>(purges);
+        all.addAll(pageIds);
+        return new SyncPlan(inventory, baseline, changes, removals, all);
+    }
+
     public List<PageChange> changes(PageChange.Kind first, PageChange.Kind... more) {
         Set<PageChange.Kind> kinds = EnumSet.of(first, more);
         return changes.stream().filter(change -> kinds.contains(change.kind())).toList();
@@ -232,6 +246,10 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
         if (!failed.isEmpty()) {
             throw new IllegalArgumentException("Seiten nicht im Plan: " + new TreeSet<>(failed));
         }
+        // Endgültig Entferntes führt die Generation nicht weiter.
+        purges.forEach(pages::remove);
+        stale.removeAll(purges);
+        missing.removeAll(purges);
         SortedMap<String, Instant> withheld = new TreeMap<>();
         if (baseline != null) {
             Map<String, PageMetadataListing.Entry> listed = inventory.byPageId();

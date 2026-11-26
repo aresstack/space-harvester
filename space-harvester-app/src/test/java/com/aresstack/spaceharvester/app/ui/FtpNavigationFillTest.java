@@ -27,6 +27,20 @@ class FtpNavigationFillTest {
     }
 
     @Test
+    void usesTheProviderDefaultPortsIncludingImplicitTls() {
+        SourceSettingsConfig implicit = source(Map.of("host", "mvs", "tls", "implicit", "navigationFill", "true",
+                "credentialRef", "keepass:Account"));
+        assertThat(FtpNavigationFill.matches(implicit, FtpProfile.of("mvs", 990), "Account", "USER", true)).isTrue();
+        assertThat(FtpNavigationFill.matches(implicit, FtpProfile.of("mvs", 21), "Account", "USER", true)).isFalse();
+        SourceSettingsConfig explicitPort = source(Map.of("host", "mvs", "port", "2121", "navigationFill", "true",
+                "credentialRef", "keepass:Account"));
+        assertThat(FtpNavigationFill.matches(explicitPort, FtpProfile.of("mvs", 2121), "Account", "USER", true))
+                .isTrue();
+        assertThat(FtpNavigationFill.matches(source(Map.of("host", "", "navigationFill", "true",
+                "credentialRef", "keepass:Account")), FtpProfile.of("mvs", 21), "Account", "USER", true)).isFalse();
+    }
+
+    @Test
     void selectsOnlyDirectFilesMembersAndConfirmedSequentialDatasets() {
         RemoteEntry sequential = RemoteEntry.directory("SEQ", "'HLQ.SEQ'").withDetails(
                 new RemoteEntry.Details("FB", 80, 3200, "PS", "", 0, ""), -1, Optional.empty());

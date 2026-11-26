@@ -218,6 +218,22 @@ public class FtpInventoryTest {
         assertTrue("genau am Limit, aber vollständig", source.inventoryCovers(id(source, "SMALL.SRC(B)")));
     }
 
+    /** Im Umfang heißt: unter einem Startpunkt, auch wenn er abgeschnitten wurde; ohne Inventur unbekannt, also ja. */
+    @Test
+    public void withinTheScopeMeansUnderAStartPointEvenIfItWasCutOff() throws Exception {
+        FakeSession session = new FakeSession();
+        session.children.put("DEEP", Collections.singletonList(directory("DEEP.LIB")));
+        session.children.put("DEEP.LIB", Collections.singletonList(directory("DEEP.LIB.MORE")));
+        FtpKnowledgeSource source = source(session);
+        assertTrue("ohne Inventur unbekannt", source.withinInventoryScope(id(source, "OTHER.SRC(X)")));
+
+        source.discover(SourceScope.builder().startPoints("DEEP").maxDepth(1).build());
+
+        assertTrue(source.withinInventoryScope(id(source, "DEEP.LIB(X)")));
+        assertFalse(source.inventoryCovers(id(source, "DEEP.LIB(X)")));
+        assertFalse(source.withinInventoryScope(id(source, "OTHER.SRC(X)")));
+    }
+
     @Test
     public void aFailedInventoryCoversNothing() throws Exception {
         FakeSession session = new FakeSession();

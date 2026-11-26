@@ -85,7 +85,7 @@ final class FtpInventory {
         }
         List<String> complete = new ArrayList<String>(starts);
         complete.removeAll(truncated);
-        coverage = new FtpInventoryCoverage(complete);
+        coverage = new FtpInventoryCoverage(complete, starts);
         return new ArrayList<KnowledgeResource>(found.values());
     }
 
