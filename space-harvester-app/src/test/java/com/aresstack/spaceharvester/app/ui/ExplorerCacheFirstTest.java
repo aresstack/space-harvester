@@ -168,7 +168,7 @@ class ExplorerCacheFirstTest {
     }
 
     private static Explorer.Node page(String id, String title, boolean children) {
-        Explorer.Node node = new Explorer.Node(new Explorer.PageItem("handbuch", "X", id, title, children));
+        Explorer.Node node = new Explorer.Node(Explorer.PageItem.of("handbuch", "X", id, title, children));
         if (children) {
             node.add(new Explorer.Node(new Explorer.Note(Explorer.LOADING)));
         } else {

@@ -69,6 +69,13 @@ class ParitySharePointTest {
             assertThat(children.spaceKey()).isEqualTo("parity");
             assertThat(children.pages()).extracting(node -> node.title())
                     .containsExactlyInAnyOrder("Betrieb", "Lies mich.txt", "Notizen.md", "bild.png");
+            // Bibliothek und Ordner sind echte Ordner wie bei Ordner-Quelle und BSCW, keine bloße Gruppierung der
+            // Navigation: Favorit, Ausschließen, Indexieren und Bestandszeichen in jeder Tiefe (Angelo 26.11.2026).
+            assertThat(library.kind()).isEqualTo(com.aresstack.spaceharvester.application.sources.HarvestSource
+                    .PageNode.Kind.FOLDER);
+            assertThat(children.pages()).filteredOn(node -> node.title().equals("Betrieb"))
+                    .extracting(node -> node.kind()).containsExactly(com.aresstack.spaceharvester.application
+                            .sources.HarvestSource.PageNode.Kind.FOLDER);
             // Die vollständige Inventur bringt die Ordner mit (leer, Ordner-ID wie im Baum), damit jeder Ordner seinen
             // Teilbaum kennt (Angelo 26.11.2026: Zusammenfassen und Änderungen auf jedem Ordner).
             Map<String, String> synced = sync(harvester);

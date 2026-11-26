@@ -1517,7 +1517,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             case NO -> Boolean.FALSE;
             case UNKNOWN -> null;
         };
-        PageNode.Kind kind = node.isFolder() ? PageNode.Kind.GROUP
+        PageNode.Kind kind = node.isFolder() ? folderKind(node.resource())
                 : "sharepoint".equals(type) ? PageNode.Kind.FILE : PageNode.Kind.PAGE;
         if (!node.isFolder() && port instanceof ResourceNodeKindSource presentation) {
             try {
@@ -1527,6 +1527,28 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             }
         }
         return new PageNode(nativeId(node.resource()), node.title(), partitionKey, children, kind);
+    }
+
+    /**
+     * Was ein Ordnerknoten der Navigation ist (Angelo 26.11.2026: Ordner in jeder Tiefe gleich). Führt die Quelle ihn als
+     * eigene Ressource ({@code resource.kind=folder}, etwa SharePoint-Bibliotheken und -Ordner, die auch die Inventur
+     * meldet), ist er ein echter {@link PageNode.Kind#FOLDER} wie bei Ordner-Quelle und BSCW: Favorit, Ausschließen,
+     * Indexieren und Bestandszeichen wie jeder andere Knoten. Sonst ist er nur eine Gruppierung der Navigation
+     * ({@link PageNode.Kind#GROUP}, etwa MediaWiki „Alle Seiten“ und Kategorien) ohne Ressource im Bestand. Die Quellen
+     * lösen Ordnerknoten ohne Abruf auf (SharePoint aus dem Pfad, MediaWiki aus der Gruppenkennung).
+     */
+    private PageNode.Kind folderKind(KnowledgeResourceId folder) {
+        String local = port instanceof ResourceMetadataSource single ? single.localId(folder) : null;
+        if (local == null || local.isEmpty()) {
+            return PageNode.Kind.GROUP;
+        }
+        try {
+            String kind = ((ResourceMetadataSource) port).resourceMetadata(local).metadata().asMap()
+                    .get(PageMetadata.RESOURCE_KIND);
+            return PageMetadata.FOLDER_KIND.equals(kind) ? PageNode.Kind.FOLDER : PageNode.Kind.GROUP;
+        } catch (KnowledgeSourceException failure) {
+            throw accessFailure(failure);
+        }
     }
 
     private List<PageNode> links(List<SourceLink> links) {
