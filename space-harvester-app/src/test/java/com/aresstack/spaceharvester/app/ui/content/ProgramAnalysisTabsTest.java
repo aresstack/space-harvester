@@ -60,6 +60,9 @@ class ProgramAnalysisTabsTest {
             assertThat(views).singleElement().satisfies(view -> {
                 assertThat(view.freshness()).isEqualTo(Enrichment.Freshness.CURRENT);
                 var artifact = CobolProgramEnrichment.read(view.enrichment().payloadJson());
+                assertThat(artifact.analysis().controlFlow().procedures()).hasSize(1);
+                assertThat(artifact.analysis().controlFlow().procedures().getFirst().edges())
+                        .anyMatch(edge -> edge.kind() == com.aresstack.spaceharvester.mainframe.cobol.CobolControlFlow.EdgeKind.CALL_RETURN);
                 assertThat(artifact.analysis().calls()).singleElement().satisfies(call -> {
                     assertThat(call.target()).isEqualTo("BOOKING");
                     assertThat(call.span().start().line()).isEqualTo(7);
@@ -73,7 +76,10 @@ class ProgramAnalysisTabsTest {
                 ProgramAnalysisTabs analysis = new ProgramAnalysisTabs(tabs);
                 assertThat(tabs.names()).containsExactly("Absätze", "Aussagen");
                 assertThat(analysis.show(program, views)).isTrue();
-                assertThat(tabs.names()).containsExactly("Programmstruktur", "Datenstrukturen", "Copybooks", "Aufrufe", "Diagnosen");
+                assertThat(tabs.names()).containsExactly("Programmstruktur", "Datenstrukturen", "Copybooks", "Aufrufe", "Diagnosen", "Kontrollfluss");
+                tabs.select("Kontrollfluss");
+                assertThat(cells(tabs)).anyMatch(value -> value.toString().contains("CALL BOOKING")
+                        || value.toString().contains("CALL 'BOOKING'"));
                 tabs.select("Aufrufe");
                 assertThat(cells(tabs)).contains("BOOKING");
                 assertThat(analysis.show(changed, enrichments.view(changed))).isTrue();
@@ -85,6 +91,21 @@ class ProgramAnalysisTabsTest {
                 tabs.select("Aufrufe");
                 assertThat(tabs.selected()).isEqualTo("Absätze");
             });
+        }
+    }
+
+    @Test
+    void rendersActualStoredControlFlowWithMermaid() throws Exception {
+        try (var store = LuceneEnrichmentStore.open(home)) {
+            var program = snapshot("ftp", CODE, CODE);
+            var enrichments = enrichments(store);
+            assertThat(enrichments.refresh(program).computed()).isEqualTo(1);
+            var analysis = CobolProgramEnrichment.read(enrichments.view(program).getFirst()
+                    .enrichment().payloadJson()).analysis();
+            var graph = analysis.controlFlow().procedures().getFirst();
+            String diagram = com.aresstack.spaceharvester.mainframe.diagram.CobolControlFlowDiagram.render(graph);
+            String svg = com.aresstack.spaceharvester.mermaid.MermaidRenderer.getInstance().renderToSvg(diagram);
+            assertThat(svg).contains("<svg", "CALL_RETURN", "BOOKING");
         }
     }
 

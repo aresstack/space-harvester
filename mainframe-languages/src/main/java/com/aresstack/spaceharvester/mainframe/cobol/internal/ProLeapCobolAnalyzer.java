@@ -55,8 +55,27 @@ final class ProLeapCobolAnalyzer implements CobolAnalyzer {
         }
         List<Element> elements = new ArrayList<>(visitor.elements());
         elements.addAll(copyReferences);
+        var controlFlow = controlFlow(prepared, tokens, tree, diagnostics);
         return new CobolAnalysis(elements, visitor.calls(), visitor.references(), diagnostics,
-                program != null && diagnostics.isEmpty());
+                program != null && diagnostics.isEmpty(), controlFlow);
+    }
+
+    private com.aresstack.spaceharvester.mainframe.cobol.CobolControlFlow controlFlow(
+            MappedCobolText prepared, CommonTokenStream tokens, CobolParser.StartRuleContext tree,
+            List<Diagnostic> diagnostics) {
+        if (diagnostics.stream().anyMatch(d -> d.kind() == CobolAnalysis.DiagnosticKind.SYNTAX_ERROR
+                || d.kind() == CobolAnalysis.DiagnosticKind.COPYBOOK)) {
+            return new com.aresstack.spaceharvester.mainframe.cobol.CobolControlFlow(List.of(),
+                    List.of(new com.aresstack.spaceharvester.mainframe.cobol.CobolControlFlow.Limitation(
+                            "Control flow withheld: incomplete syntax or COPY expansion", Position.UNKNOWN)));
+        }
+        try {
+            return new CobolControlFlowBuilder(prepared, tokens).build(tree);
+        } catch (RuntimeException error) {
+            return new com.aresstack.spaceharvester.mainframe.cobol.CobolControlFlow(List.of(),
+                    List.of(new com.aresstack.spaceharvester.mainframe.cobol.CobolControlFlow.Limitation(
+                            "Control flow incomplete: " + error.getMessage(), Position.UNKNOWN)));
+        }
     }
 
     private Program buildSemanticModel(CobolSource source, MappedCobolText prepared, CommonTokenStream tokens,
