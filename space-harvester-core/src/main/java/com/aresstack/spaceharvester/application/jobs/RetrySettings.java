@@ -81,6 +81,18 @@ public record RetrySettings(int maxAttempts, Duration initialDelay, Duration max
         return delay.compareTo(resumeMaxDelay) > 0 ? resumeMaxDelay : delay;
     }
 
+    /**
+     * Die Wartezeit vor dem weiteren Versuch Nummer {@code attempt} (ab 0) einer einzelnen Anfrage oder eines
+     * Download-Stücks: {@link #initialDelay()} verdoppelt je Versuch, höchstens {@link #maxDelay()}.
+     */
+    public Duration delay(int attempt) {
+        Duration delay = initialDelay;
+        for (int i = 0; i < attempt && delay.compareTo(maxDelay) < 0 && !delay.isZero(); i++) {
+            delay = delay.multipliedBy(2);
+        }
+        return delay.compareTo(maxDelay) > 0 ? maxDelay : delay;
+    }
+
     public RetrySettings {
         Objects.requireNonNull(initialDelay, "initialDelay");
         Objects.requireNonNull(maxDelay, "maxDelay");

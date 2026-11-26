@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.source;
 
+import com.aresstack.spaceharvester.application.jobs.RetrySettings;
+
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeDocument;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeMetadata;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
@@ -106,6 +108,16 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     /** @param chunkBytes so viele Bytes holt ein Download auf die Platte je Abruf ({@code options.chunkMegabytes}) */
     BscwWebDavKnowledgeSource(SourceAddress sourceId, URI root, BscwWebDavTransport transport, int maxDepth,
                               DocumentText extractor, int chunkBytes) {
+        this(sourceId, root, transport, maxDepth, extractor, chunkBytes, RetrySettings.DEFAULT);
+    }
+
+    /**
+     * @param retry wie oft und nach welcher Wartezeit ein abgerissenes Download-Stück neu angefordert wird
+     *              ({@code jobs.retry}); die schon geschriebenen Stücke bleiben
+     */
+    BscwWebDavKnowledgeSource(SourceAddress sourceId, URI root, BscwWebDavTransport transport, int maxDepth,
+                              DocumentText extractor, int chunkBytes, RetrySettings retry) {
+        this.retry = java.util.Objects.requireNonNull(retry, "retry");
         this.sourceId = sourceId;
         this.root = normalize(root);
         this.transport = transport;
@@ -117,6 +129,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
     /** Vorgabe für {@code options.chunkMegabytes}: 8 MiB je Abruf. */
     static final int DEFAULT_CHUNK_BYTES = 8 * 1024 * 1024;
     private final int chunkBytes;
+    private final RetrySettings retry;
 
     /**
      * Das Original in Stücken per HTTP-Range auf die Platte (Angelo, 20.11.2026), damit auch eine Datei über der Grenze
@@ -146,7 +159,7 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
             long offset = 0;
             while (size < 0 || offset < size) {
                 int count = (int) (size < 0 ? chunkBytes : Math.min(chunkBytes, size - offset));
-                BscwWebDavTransport.Chunk answer = transport.downloadChunk(uri, offset, count);
+                BscwWebDavTransport.Chunk answer = chunk(uri, offset, count);
                 byte[] chunk = answer.bytes();
                 out.write(chunk);
                 if (answer.whole()) {
@@ -167,6 +180,29 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
                     + e.getClass().getSimpleName() + ")", e);
         }
         return Optional.of(resource.contentType());
+    }
+
+    /**
+     * Ein Stück des Originals; reißt es ab (Netz, 5xx, 429), wird genau dieses Stück neu angefordert, bis zu
+     * {@link RetrySettings#maxAttempts()} Mal mit {@link RetrySettings#delay(int)} dazwischen. Die schon geschriebenen
+     * Stücke bleiben (Angelo 26.11.2026, WLAN: „einzelne Pakete neu anfordern und fortsetzen“).
+     */
+    private BscwWebDavTransport.Chunk chunk(URI uri, long offset, int count) throws KnowledgeSourceException {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return transport.downloadChunk(uri, offset, count);
+            } catch (KnowledgeSourceException e) {
+                if (e.kind() != Kind.UNAVAILABLE || attempt >= retry.maxAttempts()) {
+                    throw e;
+                }
+                try {
+                    Thread.sleep(retry.delay(attempt).toMillis());
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
     }
 
     @Override
