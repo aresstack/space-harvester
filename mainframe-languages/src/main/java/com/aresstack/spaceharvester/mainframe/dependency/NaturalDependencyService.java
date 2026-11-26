@@ -38,23 +38,23 @@ public class NaturalDependencyService {
      */
     public enum DependencyKind {
         /** CALLNAT → external subprogram call */
-        CALLNAT("📞 CALLNAT", "CALLNAT"),
+        CALLNAT("CALLNAT", "CALLNAT"),
         /** FETCH / FETCH RETURN → program invocation */
-        FETCH("📞 FETCH", "FETCH"),
+        FETCH("FETCH", "FETCH"),
         /** CALL → 3GL call */
-        CALL("📞 CALL (3GL)", "CALL"),
+        CALL("CALL (3GL)", "CALL"),
         /** PERFORM → inline or external subroutine call */
-        PERFORM("🔄 PERFORM", "PERFORM"),
+        PERFORM("PERFORM", "PERFORM"),
         /** INCLUDE → copycode inclusion */
-        INCLUDE("📎 INCLUDE (Copycode)", "INCLUDE"),
+        INCLUDE("INCLUDE (Copycode)", "INCLUDE"),
         /** LOCAL USING / PARAMETER USING / GLOBAL USING → data area reference */
-        USING("📦 USING (Data Area)", "USING"),
+        USING("USING (Data Area)", "USING"),
         /** INPUT MAP / WRITE MAP → map reference */
-        INPUT_MAP("🖥 MAP (Input/Write)", "INPUT_MAP"),
+        INPUT_MAP("MAP (Input/Write)", "INPUT_MAP"),
         /** VIEW OF → DDM reference */
-        VIEW("📊 VIEW (DDM)", "VIEW"),
+        VIEW("VIEW (DDM)", "VIEW"),
         /** READ / FIND / HISTOGRAM / STORE / UPDATE / DELETE / GET → database access */
-        DB_ACCESS("🗄 DB-Zugriff", "DB_ACCESS");
+        DB_ACCESS("DB-Zugriff", "DB_ACCESS");
 
         private final String displayLabel;
         private final String code;
@@ -231,19 +231,13 @@ public class NaturalDependencyService {
 
         switch (type) {
             case NAT_CALLNAT:
-                return new Dependency(DependencyKind.CALLNAT,
-                        param(elem, "TARGET", elem.getName()),
-                        elem.getLineNumber(), elem.getRawText(), null);
+                return call(DependencyKind.CALLNAT, elem);
 
             case NAT_FETCH:
-                return new Dependency(DependencyKind.FETCH,
-                        param(elem, "TARGET", elem.getName()),
-                        elem.getLineNumber(), elem.getRawText(), null);
+                return call(DependencyKind.FETCH, elem);
 
             case NAT_CALL:
-                return new Dependency(DependencyKind.CALL,
-                        param(elem, "TARGET", elem.getName()),
-                        elem.getLineNumber(), elem.getRawText(), null);
+                return call(DependencyKind.CALL, elem);
 
             case NAT_PERFORM:
                 return new Dependency(DependencyKind.PERFORM,
@@ -307,6 +301,19 @@ public class NaturalDependencyService {
             default:
                 return null;
         }
+    }
+
+    /**
+     * A call with a literal or plain name target. A target held in a variable ({@code #VAR}, {@code @VAR},
+     * {@code $VAR}, {@code *SYS}) names no object to navigate to; such dynamic calls are only reported by the
+     * structural analysis ({@code NaturalAnalyzer}) as dynamic, never resolved by name.
+     */
+    private static Dependency call(DependencyKind kind, JclElement elem) {
+        String target = param(elem, "TARGET", elem.getName());
+        if (target.isEmpty() || "#@$*".indexOf(target.charAt(0)) >= 0) {
+            return null;
+        }
+        return new Dependency(kind, target, elem.getLineNumber(), elem.getRawText(), null);
     }
 
     private static String param(JclElement elem, String key, String fallback) {

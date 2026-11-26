@@ -259,6 +259,24 @@ public class PageQueries {
         return Optional.of(DeliveredPage.cached(cached.get()));
     }
 
+    /** Visit readable local headers in batches without fetching any source content. */
+    public void visitCachedHeaders(AccessContext caller, String sourceId,
+            java.util.function.Consumer<PageHeader> visitor, java.util.function.BooleanSupplier cancelled) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
+        requireSource(sourceId);
+        String after = null;
+        while (true) {
+            if (cancelled.getAsBoolean()) throw new java.util.concurrent.CancellationException();
+            var batch = cache.sourceHeaders(sourceId, after, 256);
+            if (batch.isEmpty()) return;
+            for (PageHeader header : batch) {
+                if (cancelled.getAsBoolean()) throw new java.util.concurrent.CancellationException();
+                if (readable(caller, header)) visitor.accept(header);
+            }
+            after = batch.getLast().key().pageId();
+        }
+    }
+
     public DeliveredPage page(AccessContext caller, String sourceId, String pageId, boolean refresh) {
         return page(caller, sourceId, pageId, refresh, false);
     }

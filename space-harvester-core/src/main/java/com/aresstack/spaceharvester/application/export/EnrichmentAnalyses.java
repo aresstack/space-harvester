@@ -69,11 +69,13 @@ public final class EnrichmentAnalyses implements PageAnalyses {
         List<Section> sections = new ArrayList<>();
         inspection.applicable().forEach((id, version) -> {
             Enrichments.View view = stored.remove(id);
-            sections.add(view == null ? Section.missing(new Processor(id, version)) : section(view, version));
+            sections.add(view == null ? Section.missing(new Processor(id, version)) : section(view, version,
+                    enrichments.evidence(view.enrichment())));
         });
         // Gespeichert, aber nicht (mehr) zuständig: ein Prozessor, den es nicht mehr gibt oder der die Seite auslässt.
         stored.values().stream().sorted(Comparator.comparing(view -> view.enrichment().processorId()))
-                .forEach(view -> sections.add(section(view, versions.get(view.enrichment().processorId()))));
+                .forEach(view -> sections.add(section(view, versions.get(view.enrichment().processorId()),
+                        enrichments.evidence(view.enrichment()))));
         List<MetadataFact> pageFacts = facts == null ? List.of() : facts.factsOf(snapshot.key());
         return new PageAnalysis(inspection.inputSha256(), sections, pageFacts);
     }
@@ -97,13 +99,27 @@ public final class EnrichmentAnalyses implements PageAnalyses {
                 description.createdAt()));
     }
 
-    private static Section section(Enrichments.View view, String currentVersion) {
+    /**
+     * The export knows only the exported page, not whether its reader may read the other documents a result was
+     * derived from (for example COBOL copybooks). Such results are therefore exported without their content and with
+     * {@value #EVIDENCE_WITHHELD} (#1486); their state still tells whether a current result exists.
+     */
+    static final String EVIDENCE_WITHHELD = "evidence-withheld";
+
+    private static Section section(Enrichments.View view, String currentVersion,
+                                   List<com.aresstack.spaceharvester.application.snapshot.PageKey> evidence) {
         Enrichment enrichment = view.enrichment();
         State state = enrichment.status() == Enrichment.Status.FAILED ? State.FAILED
                 : view.freshness() == Enrichment.Freshness.CURRENT ? State.CURRENT : State.STALE;
         boolean failed = enrichment.status() == Enrichment.Status.FAILED;
+        boolean withheld = !failed && !evidence.isEmpty();
+        List<String> warnings = enrichment.warnings();
+        if (withheld) {
+            warnings = new ArrayList<>(warnings);
+            warnings.add(EVIDENCE_WITHHELD);
+        }
         return new Section(enrichment.processorId(), currentVersion, state, enrichment.processorVersion(),
                 enrichment.inputSha256(), enrichment.revision(), enrichment.computedAt(),
-                failed ? null : enrichment.payloadJson(), enrichment.warnings(), enrichment.errorCode());
+                failed ? null : withheld ? "{}" : enrichment.payloadJson(), warnings, enrichment.errorCode());
     }
 }

@@ -258,6 +258,20 @@ public final class AppRuntime implements AutoCloseable {
                     : ai.chunkTokens(), ai.chunkOverlapSentences() == null
                     ? KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES : ai.chunkOverlapSentences());
         }
+        var ftpSources = sources.stream().filter(source -> "ftp".equalsIgnoreCase(source.type()))
+                .collect(java.util.stream.Collectors.toMap(SourceSettingsConfig::id,
+                        source -> com.aresstack.spaceharvester.app.runtime.program.StoredCopybooks.libraries(
+                                source.options().get("syslib"))));
+        if (!ftpSources.isEmpty()) {
+            builder.snapshotEnrichmentProcessor(lookup -> new com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment(ftpSources, lookup));
+            builder.snapshotEnrichmentProcessor(lookup -> new com.aresstack.spaceharvester.app.runtime.program.CobolBusinessEnrichment(ftpSources, lookup));
+            builder.enrichmentProcessor(new com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment(ftpSources.keySet()));
+        }
+        var ndvSources = sources.stream().filter(source -> "ndv".equalsIgnoreCase(source.type()))
+                .map(source -> source.id()).collect(java.util.stream.Collectors.toSet());
+        if (!ndvSources.isEmpty()) {
+            builder.enrichmentProcessor(new com.aresstack.spaceharvester.app.runtime.program.NaturalProgramEnrichment(ndvSources));
+        }
         builder.accessPolicy(policy);
         // #499: MaltParser nur auf Knopfdruck; das Modell lädt erst der erste Klick, ohne Modell startet die App normal.
         MaltStatementAnalyzer.pinned(MaltStatementAnalyzer.defaultDirectory(storage.dataDirectory()))

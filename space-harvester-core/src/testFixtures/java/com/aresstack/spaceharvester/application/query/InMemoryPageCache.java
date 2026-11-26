@@ -77,6 +77,15 @@ public final class InMemoryPageCache implements PageCacheReader {
     }
 
     @Override
+    public List<PageHeader> sourceHeaders(String sourceId, String afterPageId, int limit) {
+        return spaces.entrySet().stream().filter(entry -> entry.getKey().startsWith(sourceId + "\n"))
+                .flatMap(entry -> entry.getValue().headers().values().stream())
+                .filter(header -> afterPageId == null || header.key().pageId().compareTo(afterPageId) > 0)
+                .sorted(java.util.Comparator.comparing(header -> header.key().pageId()))
+                .limit(limit).toList();
+    }
+
+    @Override
     public Optional<CachedPage> page(PageKey key) {
         return spaces.entrySet().stream()
                 .filter(entry -> entry.getKey().startsWith(key.sourceId() + "\n"))

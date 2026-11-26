@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.deck.ndv.analysis;
 
+import com.aresstack.spaceharvester.mainframe.dependency.NaturalDependencyService;
+
 import com.aresstack.spaceharvester.deck.ndv.NdvObject;
 import java.util.List;
 import java.util.Locale;

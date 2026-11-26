@@ -30,6 +30,8 @@ dependencies {
     // NDV (#1142): PAL-Protokoll (NATSPOD) aus MainframeMate, in derselben Kopie, die auch die NDV-Quelle nutzt;
     // nur der Adapter deck.ndv.pal spricht damit
     implementation project(':enterprise-ai-sources')
+    // Natural-Parser und Abhängigkeitsanalyse nur einmal: im Sprachmodul (#1486); Typen stehen in der NDV-Analyse-API
+    api project(':mainframe-languages')
 
     // Erfundene Outlook-Nachricht der Schein-E-Akte (FakeOutlookMessage): OLE2 über das POIFS von Apache POI
     testFixturesImplementation "org.apache.poi:poi:${libs.versions.poi.get()}"

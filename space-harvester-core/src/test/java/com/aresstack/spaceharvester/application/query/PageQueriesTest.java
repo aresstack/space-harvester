@@ -83,6 +83,26 @@ class PageQueriesTest {
     }
 
     @Test
+    void localSourceHeaderVisitHasNoTotalLimitAndConcealsDeniedPages() {
+        var all = new ArrayList<PageSnapshot>();
+        for (int i = 0; i < 530; i++) {
+            all.add(page("wiki", "DEV", String.format("p%04d", i), null));
+        }
+        cache.publish("wiki", "DEV", confirmed("g1"), all);
+        cache.publish("other", "DEV", confirmed("g1"), List.of(page("other", "DEV", "foreign", null)));
+        var visible = new ArrayList<String>();
+        PageQueries queries = queries((context, scope, kind) ->
+                "p0256".equals(scope.pageId()) ? AccessDecision.DENY : AccessDecision.ALLOW);
+        queries.visitCachedHeaders(CALLER, "wiki", header -> visible.add(header.key().pageId()), () -> false);
+        assertThat(visible).hasSize(529).doesNotHaveDuplicates().isSorted()
+                .doesNotContain("p0256", "foreign").contains("p0529");
+        var cancelled = new AtomicBoolean();
+        assertThatThrownBy(() -> queries.visitCachedHeaders(CALLER, "wiki",
+                header -> cancelled.set(true), cancelled::get))
+                .isInstanceOf(java.util.concurrent.CancellationException.class);
+    }
+
+    @Test
     void pagingReturnsEveryPageExactlyOnceAndTheSamePagesAsTheTree() {
         cache.publish("wiki", "DEV", confirmed("g1"), devPages());
         PageQueries queries = queries(ALLOW_ALL);

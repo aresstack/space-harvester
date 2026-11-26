@@ -1,8 +1,10 @@
 package com.aresstack.spaceharvester.deck.ndv.analysis;
 
-import com.aresstack.spaceharvester.deck.ndv.analysis.NaturalDependencyService.Dependency;
-import com.aresstack.spaceharvester.deck.ndv.analysis.NaturalDependencyService.DependencyKind;
-import com.aresstack.spaceharvester.deck.ndv.analysis.NaturalDependencyService.DependencyResult;
+import com.aresstack.spaceharvester.mainframe.dependency.NaturalDependencyService;
+
+import com.aresstack.spaceharvester.mainframe.dependency.NaturalDependencyService.Dependency;
+import com.aresstack.spaceharvester.mainframe.dependency.NaturalDependencyService.DependencyKind;
+import com.aresstack.spaceharvester.mainframe.dependency.NaturalDependencyService.DependencyResult;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;

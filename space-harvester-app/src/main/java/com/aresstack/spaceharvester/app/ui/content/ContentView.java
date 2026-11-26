@@ -194,6 +194,15 @@ public final class ContentView implements View {
      * Öffnet einen Absatz über seine stabile Passage-ID (#452): seine Seite im zuletzt gewählten Reiter, der Absatz markiert.
      * {@code sourceId} ist die Quelle des Aufrufers (z. B. eines Suchtreffers); maßgeblich ist die ID selbst.
      */
+    public void openProgram(String sourceId, String pageId, String rawSha256, int line) {
+        if (!Objects.equals(sourceId, this.sourceId)) {
+            this.spaceKey = null;
+        }
+        this.sourceId = sourceId;
+        renderCrumbs();
+        detail.openProgram(sourceId, pageId, rawSha256, line);
+    }
+
     public void openPassage(String sourceId, String passageId) {
         String source = PassageId.looksLike(passageId) ? PassageId.parse(passageId).sourceId() : sourceId;
         if (!Objects.equals(source, this.sourceId)) {

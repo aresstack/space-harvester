@@ -30,6 +30,14 @@ public final class KnowledgeDocumentTextProjector implements PageTextProjector {
             return text.isBlank() ? Optional.empty() : Optional.of(new PageText(
                     "portable-local-document/v1", text, List.of()));
         }
+        if (com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider.SOURCE_TEXT_FORMAT.equals(snapshot.payload().nativeFormat())) {
+            String code = new String(snapshot.payload().bytes(), StandardCharsets.UTF_8);
+            return code.isBlank() ? Optional.empty() : Optional.of(new PageText("ftp-source-text/v1", code, List.of()));
+        }
+        if (com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.NdvSourceProvider.SOURCE_TEXT_FORMAT.equals(snapshot.payload().nativeFormat())) {
+            String code = new String(snapshot.payload().bytes(), StandardCharsets.UTF_8);
+            return code.isBlank() ? Optional.empty() : Optional.of(new PageText("ndv-source-text/v1", code, List.of()));
+        }
         // Auch der Textauszug einer Datei über der Größengrenze des Caches (LargeFiles): derselbe Lesetext.
         if (!NATIVE_FORMAT.equals(snapshot.payload().nativeFormat())
                 && !com.aresstack.spaceharvester.application.snapshot.LargeFiles.TEXT_FORMAT

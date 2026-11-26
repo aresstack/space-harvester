@@ -64,17 +64,24 @@ public final class PageRecomputation {
      */
     public Enrichments.Run recompute(String owner, PageSnapshot snapshot, String processorId,
                                      Consumer<JobState> state) {
+        return execute(owner, snapshot, TASK, state, context -> recompute(snapshot, processorId, context));
+    }
+
+    /** Execute an explicitly requested page analysis in the same interactive job lifecycle. */
+    public Enrichments.Run execute(String owner, PageSnapshot snapshot, String task, Consumer<JobState> state,
+                                    java.util.function.Function<JobContext, Enrichments.Run> operation) {
         Objects.requireNonNull(snapshot, "snapshot");
         Objects.requireNonNull(state, "state");
+        Objects.requireNonNull(operation, "operation");
         AtomicReference<JobState> reported = new AtomicReference<>();
         CompletableFuture<Enrichments.Run> done = new CompletableFuture<>();
         JobStatus status = jobs.submitInteractive(JobType.ENRICHMENT, snapshot.key().sourceId(), snapshot.spaceKey(),
-                null, owner, Map.of(EnrichmentsAfterSync.TASK_PARAMETER, TASK, ROOT, snapshot.key().pageId()),
+                null, owner, Map.of(EnrichmentsAfterSync.TASK_PARAMETER, task, ROOT, snapshot.key().pageId()),
                 JobTask.blocking(context -> {
                     try {
                         report(reported, state, JobState.RUNNING);
                         context.discovered(1);
-                        Enrichments.Run run = recompute(snapshot, processorId, context);
+                        Enrichments.Run run = operation.apply(context);
                         enrichments.flush();
                         // Abgebrochen während des letzten Prozessors: Der Wartende erfährt den Abbruch, nicht Erfolg.
                         context.checkpoint();

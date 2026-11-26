@@ -106,6 +106,15 @@ public final class SourceDiagrams {
             }
         }
 
+        // COBOL: a flowchart shows only the static control flow of the parser, never paragraph order as execution
+        // order (#1473). Without a complete graph (e.g. unresolved COPY) the structure diagram is shown instead.
+        if (lang == SourceLanguage.COBOL && type == DiagramType.FLOWCHART) {
+            String flow = cobolControlFlow(content, sourceName);
+            if (flow != null) {
+                return new Result(Optional.of(flow), DiagramType.FLOWCHART, collapsed);
+            }
+        }
+
         JclOutlineModel model = preparedOutline != null && preparedOutline.language() == lang
                 ? preparedOutline.model() : Outline.parse(lang, content, sourceName).model();
         if (model == null || model.isEmpty()) {
@@ -142,6 +151,19 @@ public final class SourceDiagrams {
             produced = DiagramType.STRUCTURE;
         }
         return new Result(Optional.ofNullable(result).filter(s -> !s.trim().isEmpty()), produced, compact);
+    }
+
+    private static String cobolControlFlow(String content, String sourceName) {
+        try {
+            var analysis = com.aresstack.spaceharvester.mainframe.cobol.CobolAnalyzer.proLeap().analyze(
+                    com.aresstack.spaceharvester.mainframe.cobol.CobolSource.fixed(sourceName, content),
+                    com.aresstack.spaceharvester.mainframe.cobol.CopybookResolver.NONE);
+            var procedures = analysis.controlFlow().procedures();
+            return procedures.isEmpty() ? null : CobolControlFlowDiagram.render(procedures.getFirst());
+        } catch (RuntimeException e) {
+            LOG.log(Level.FINE, "COBOL-Kontrollfluss gescheitert", e);
+            return null;
+        }
     }
 
     private static List<com.aresstack.spaceharvester.mainframe.calltree.ExternalCall> cobolCalls(JclOutlineModel model) {

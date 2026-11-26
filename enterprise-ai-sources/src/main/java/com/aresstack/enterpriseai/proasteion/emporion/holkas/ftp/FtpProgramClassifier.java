@@ -5,9 +5,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Recognize mainframe program sources by content instead of dataset naming conventions. */
-final class FtpProgramClassifier {
+public final class FtpProgramClassifier {
 
-    enum Kind {
+    public enum Kind {
         COBOL, COPYBOOK, JCL, UNKNOWN
     }
 
@@ -25,7 +25,7 @@ final class FtpProgramClassifier {
     private FtpProgramClassifier() {
     }
 
-    static Kind classify(String text) {
+    public static Kind classify(String text) {
         if (text == null || text.trim().isEmpty()) {
             return Kind.UNKNOWN;
         }
