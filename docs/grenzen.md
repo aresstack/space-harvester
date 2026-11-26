@@ -271,6 +271,9 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `LargeFileGate.DEFAULT_MAX_CONCURRENT` | `2` | Vorgabe | Parallelität | einstellbar |
 | `LargeFileGate.DEFAULT_THRESHOLD_BYTES` | `20L * 1024 * 1024` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
 | `LargeFileGate.DEFAULT_WAIT` | `Duration.ofSeconds(30)` | Vorgabe | Timeout | einstellbar |
+| `LiveDictationSettings.MAX_FIRST_MILLIS` | `5_000` | fest | Obergrenze einer Einstellung | im Code belassen: Anlauf der Live-Spracheingabe, einstellbar bis hierher |
+| `LiveDictationSettings.MAX_STEP_MILLIS` | `10_000` | fest | Obergrenze einer Einstellung | im Code belassen: Takt der Live-Spracheingabe, einstellbar bis hierher |
+| `LiveDictationSettings.MAX_WINDOW_SECONDS` | `29` | fest | Externe Protokollgrenze | dokumentieren: Whisper sieht genau 30 s, das Live-Fenster bleibt darunter |
 | `LocalFilesSourceAdapter.DEFAULT_MAX_FILE_MEGABYTES` | `20` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
 | `LocalFilesSourceAdapter.MAX_FILE_MEGABYTES` | `64` | fest | Bestandsgrenze | beseitigen |
 | `LocalFolderHierarchy.NAVIGATION_BATCH` | `200` | fest | Stapel-/Seitengröße | einstellbar |
@@ -553,6 +556,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ChatKnowledge.MAX_SOURCES` | `8` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatPanel.MAX_NORMAL_EDITOR_HEIGHT` | `400` | fest | Invariante/Darstellung | im Code belassen |
 | `ChatPanel.PARALLEL_MAX` | `com.aresstack.spaceharvester.app.ui.ParallelChoice.CUSTOM_MAX` | fest | Parallelität | einstellbar |
+| `ChatPanel.QUIET_ROUNDS_DEFAULT` | `3` | Vorgabe | Stillstand der Werkzeugrunden (askai `stagnationRounds`) | einstellbar (Menü am Dreieck des Chats) |
 | `ChatPanel.WEB_BUDGET_DEFAULT` | `20` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatPanel.WEB_BUDGET_MAX` | `999` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatPanel.WEB_BUDGET_MIN` | `1` | fest | Invariante/Darstellung | im Code belassen |
@@ -563,14 +567,12 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ChatRoom.UNLIMITED` | `Integer.MAX_VALUE` | fest | Invariante/Darstellung | im Code belassen: Kennwert „keine Grenze“ (Kontextlänge unbekannt oder außerhalb eines Turns) |
 | `ChatTools.MAX_TERM_CHARS` | `200` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatTurn.MAX_QUERY_CHARS` | `KeywordSearch.MAX_TEXT_LENGTH` | fest | Invariante/Darstellung | im Code belassen: die Grenze der Suche selbst (früher fest 500; die Suche lehnte über 200 Zeichen ab) |
-| `ChatTurn.MAX_TOOL_ROUNDS` | `8` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatTurn.SUB_AGENT_CHARS` | `ChatKnowledge.MAX_PAGE_CHARS` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `ChatWebBrowser.FIREFOX_START_TIMEOUT_MILLIS` | `30000L` | fest | Timeout | einstellbar |
 | `ComicDivider.GRIP_MAX` | `36` | fest | Invariante/Darstellung | im Code belassen |
 | `DeckHome.MAX_COLUMNS` | `3` | fest | Invariante/Darstellung | im Code belassen |
 | `DiagramLabels.CACHE_SIZE` | `1000` | fest | Cache-Aufbewahrung | einstellbar |
 | `DiagramLabels.TIMEOUT_SECONDS` | `30` | fest | Timeout | einstellbar |
-| `DictationPreviewWindow.MAXIMUM` | `12 * RATE` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `DocumentPane.MAX_PILL` | `28` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_INTERVAL_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_PRESS_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
@@ -594,7 +596,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `InfoPopup.MAX_WIDTH` | `480` | fest | Invariante/Darstellung | im Code belassen |
 | `MailMessage.MAX_DEPTH` | `8` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `MarkdownMessageView.MAX_STREAM_RENDER_DELAY_MILLIS` | `2000` | fest | Timeout | einstellbar |
-| `MarkdownTablePanel.MAX_COLUMN_WIDTH` | `420` | fest | Invariante/Darstellung | im Code belassen |
 | `MediaStreamBridge.CHUNK_BYTES` | `256 * 1024` | fest | Stapel-/Seitengröße | einstellbar |
 | `MermaidDiagramPanel.MAX_RENDER_WIDTH` | `2400` | fest | Invariante/Darstellung | im Code belassen |
 | `ModelRetry.MAX` | `Duration.ofSeconds(60)` | fest | Timeout | einstellbar |
@@ -635,6 +636,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `TermGraphView.PARALLEL_GAP` | `22` | fest | Parallelität | einstellbar |
 | `TermGraphView.WORK_BUDGET` | `24_000_000L` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `TermsTab.REMEMBERED` | `200` | fest | Cache-Aufbewahrung | einstellbar |
+| `TextToolCalls.ANNOUNCE_MAX_CHARS` | `300` | fest | Invariante/Darstellung (Erkennung eines Werkzeugaufrufs als Text) | im Code belassen |
 | `TextWithPicture.MAX_PICTURE_WIDTH` | `280` | fest | Invariante/Darstellung | im Code belassen |
 | `TiledDiagramRenderer.MAX_TILE_SVG_SIZE` | `800.0` | fest | Invariante/Darstellung | im Code belassen |
 | `VlcPcmAudioDecoder.NO_AUDIO_TIMEOUT_NANOS` | `TimeUnit.SECONDS.toNanos(60)` | fest | Timeout | einstellbar |

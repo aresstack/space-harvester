@@ -40,7 +40,13 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
 4. **Quellen**: Jede gelesene Seite bekommt beim ersten Lesen die nächste Nummer, die offene Seite ist [1]. Der Turn
    meldet die nummerierte Liste nach jedem neuen Eintrag (`Listener.context`) und was das Modell gerade tut
    (`Listener.using`, ohne Argumente).
-5. **Schleife**: höchstens 8 Werkzeugrunden; die letzte Anfrage geht ohne Werkzeuge, damit eine Antwort kommt.
+5. **Schleife**: ~~höchstens 8 Werkzeugrunden; die letzte Anfrage geht ohne Werkzeuge, damit eine Antwort kommt.~~
+   Nachtrag 26.11.2026 (Angelo): keine feste Rundengrenze; die Werkzeuge gehen in jeder Runde mit, das Modell sucht,
+   bis es fertig ist, Abbrechen hält an. Ohne Werkzeuge schrieb das Modell seinen nächsten Aufruf als Text in die
+   Antwort („We will call the search. {"cmd":[…]}“). Stillstand wie in askai (`ResearchLead.endRule`): Nach den
+   eingestellten „Runden ohne Neues“ (Menü am Dreieck, vorbelegt 3) bittet ein offener Hinweis des Clients um die
+   Antwort, ohne Werkzeuge zu entziehen. Schreibt ein Modell einen Aufruf dennoch als Text, führt der Chat ihn aus
+   (`TextToolCalls`); solcher Text erscheint nie in der Blase und geht nicht in den Verlauf zurück.
    Abbrechen wirkt vor jeder Runde, zwischen Aufrufen und in einer laufenden Suche.
 6. **Rückfall ohne Schalter**: Lehnt der Dienst die erste Anfrage mit Werkzeugen ab (ungültige Anfrage, noch kein
    Text), fällt der Chat für diese Frage still auf die Suche mit Auszügen zurück und merkt sich das Modell bis zum
@@ -99,7 +105,7 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
     Websuche) und die Anhänge in der Frage; ohne jedes Werkzeug antwortet das Modell aus eigenem Wissen. Seine Chats
     liegen bei denen zu allen Wissensquellen. In der Suche, und ohne Auswahl, arbeitet der Chat als Suchagent: eigene
     Rolle (gründlich über mehrere Runden recherchieren, umformulieren, Treffer im Volltext lesen, Anhänge gründlich
-    auswerten) und so viele Werkzeugrunden wie das Budget am Pfeil der Websuche. Anderswo bleibt der Chat, wie er ist.
+    auswerten), bis es fertig ist (Nachtrag 26.11.2026: kein Rundenbudget mehr). Anderswo bleibt der Chat, wie er ist.
 13. **Hintergrund-Agenten, Parallelität im Menü** (Nachtrag, Angelo 24.11.2026): Die Grenzen stehen nicht in den
     Einstellungen, sondern im Dreieck-Menü der Chat-Leiste, mit dem Code der Aufträge (`ParallelChoice`: 1 bis 64 oder
     „Benutzerdefiniert …“ ohne praktische Obergrenze): „Parallele Tabs“ (Websuche, Vorgabe 16), „Parallele Agenten

@@ -23,6 +23,7 @@ import com.aresstack.spaceharvester.app.chat.ChatStore;
 import com.aresstack.spaceharvester.app.chat.ChatTurn;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.speech.Dictation;
+import com.aresstack.spaceharvester.app.speech.LiveDictationSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.ui.Background;
@@ -140,6 +141,9 @@ public final class ChatPanel extends JPanel {
     static final String DICTATE = "Spracheingabe mit Whisper";
     /** Wie im Enterprise AI Client: die Erkennung nach dem Stopp ist orange in der Statuszeile zu sehen. */
     static final String RECOGNIZING_STATUS = "Erkenne Sprache …";
+    /** Die beiden Arten der Spracheingabe, umgeschaltet per Klick auf die Wellen (Angelo 26.11.2026). */
+    static final String LIVE_MODE = "live mitschreiben";
+    static final String COMPLETE_MODE = "erst komplett";
     static final String SEND_AFTER_DICTATION_STATUS = "Erkenne Sprache … danach wird gesendet";
     private static final int MIN_EDITOR_HEIGHT = 64;
     private static final int MAX_NORMAL_EDITOR_HEIGHT = 400;
@@ -179,6 +183,13 @@ public final class ChatPanel extends JPanel {
     static final int WEB_TABS_DEFAULT = 16;
     static final int AGENTS_DEFAULT = 32;
     static final int FILES_DEFAULT = 8;
+    /**
+     * Stillstand (Angelo 26.11.2026, Verfahren aus askai {@code ResearchLead.endRule}): Nach so vielen Werkzeugrunden
+     * ohne neues Ergebnis bittet der Chat das Modell, mit dem Gefundenen zu antworten; eine feste Rundengrenze gibt es
+     * nicht. Vorbelegt wie askai ({@code stagnationRounds} 3), im Menü am Dreieck einstellbar.
+     */
+    static final String QUIET_ROUNDS = "Runden ohne Neues";
+    static final int QUIET_ROUNDS_DEFAULT = 3;
     /** Die Stufen im Menü; darunter „Benutzerdefiniert …“. */
     static final List<Integer> PARALLEL_STEPS = com.aresstack.spaceharvester.app.ui.ParallelChoice.STEPS;
     /** Größte freie Eingabe unter „Benutzerdefiniert …“ (das Feld nimmt vier Ziffern). */
@@ -331,7 +342,8 @@ public final class ChatPanel extends JPanel {
     private final ComposerWaveformOverlay waveform = new ComposerWaveformOverlay();
     private final Timer levelTimer = new Timer(100, event -> sampleDictationLevel());
     private final Dictation dictation = new Dictation();
-    private final javax.swing.JTextArea dictationPreview = new javax.swing.JTextArea(2, 20);
+    /** Der Live-Text der laufenden Aufnahme im Eingabefeld („live mitschreiben“); {@code null} ohne. */
+    private LiveDictationRegion dictationLive;
     private DictationPhase dictationPhase = DictationPhase.IDLE;
     /**
      * Senden wurde während der Spracheingabe gedrückt (Angelo 26.11.2026, wie ChatGPT): Aufnahme stoppen, fertig
@@ -517,17 +529,6 @@ public final class ChatPanel extends JPanel {
         above.setOpaque(false);
         above.add(feedback, BorderLayout.NORTH);
         above.add(quickActions, BorderLayout.CENTER);
-        dictationPreview.setEditable(false);
-        dictationPreview.setFocusable(false);
-        dictationPreview.setOpaque(false);
-        dictationPreview.setLineWrap(true);
-        dictationPreview.setWrapStyleWord(true);
-        dictationPreview.setFont(Comic.regular(12f));
-        dictationPreview.setForeground(Comic.MUTED);
-        dictationPreview.setBorder(BorderFactory.createEmptyBorder(4, 12, 4, 12));
-        dictationPreview.setVisible(false);
-        dictationPreview.getAccessibleContext().setAccessibleName("Experimentelle Diktatvorschau");
-        above.add(dictationPreview, BorderLayout.SOUTH);
         JPanel south = new JPanel(new BorderLayout(0, 4));
         south.setOpaque(false);
         south.add(above, BorderLayout.NORTH);
@@ -730,6 +731,17 @@ public final class ChatPanel extends JPanel {
         editorLayers.add(editorScroll, JLayeredPane.DEFAULT_LAYER);
         editorArea = editorLayers;
         editorLayers.add(waveform, JLayeredPane.PALETTE_LAYER);
+        // Klick auf die Wellen: zwischen „erst komplett“ und „live mitschreiben“ umschalten, auch während der Aufnahme.
+        waveform.setLive(LiveDictationSettings.live(), LIVE_MODE, COMPLETE_MODE);
+        waveform.onToggle(() -> LiveDictationSettings.live(!LiveDictationSettings.live()));
+        LiveDictationSettings.listen(() -> SwingUtilities.invokeLater(() -> {
+            boolean live = LiveDictationSettings.live();
+            dictation.setLive(live);
+            waveform.setLive(live, LIVE_MODE, COMPLETE_MODE);
+            if (dictationPhase == DictationPhase.RECORDING) {
+                showRecordingStatus();
+            }
+        }));
         body.add(editorLayers, BorderLayout.CENTER);
         body.add(footer, BorderLayout.SOUTH);
         status.setBorder(BorderFactory.createEmptyBorder(0, 12, 2, 0));
@@ -851,6 +863,10 @@ public final class ChatPanel extends JPanel {
         boolean wasRecording = dictationPhase == DictationPhase.RECORDING;
         sendAfterDictation = false;
         dictation.cancel();
+        if (dictationLive != null) {
+            dictationLive.remove();
+            dictationLive = null;
+        }
         dictationPhase = DictationPhase.IDLE;
         stopDictationLevelMeter();
         status.setText(wasRecording ? "Aufnahme verworfen" : "Spracherkennung abgebrochen");
@@ -882,19 +898,42 @@ public final class ChatPanel extends JPanel {
             }
 
             @Override
-            public void preview(String text) {
-                if (dictationPhase == DictationPhase.RECORDING) {
-                    String value = text == null ? "" : text.strip();
-                    dictationPreview.setText(value.isEmpty() ? "" : "Live-Ausschnitt: " + value);
-                    dictationPreview.setVisible(!value.isEmpty());
-                    dictationPreview.setCaretPosition(dictationPreview.getDocument().getLength());
-                    dictationPreview.getParent().revalidate();
-                    dictationPreview.getParent().repaint();
+            public void live(String committed, String provisional) {
+                if (dictationPhase == DictationPhase.IDLE) {
+                    return;
+                }
+                if (dictationLive == null) {
+                    dictationLive = LiveDictationRegion.open(editor,
+                            streamCaret < 0 ? editor.getSelectionStart() : streamCaret,
+                            streamCaret < 0 ? editor.getSelectionEnd() : streamCaret);
+                }
+                dictationLive.show(committed, provisional);
+            }
+
+            @Override
+            public void liveDone(String text) {
+                if (dictationPhase == DictationPhase.IDLE) {
+                    return;
+                }
+                if (dictationLive == null) {
+                    if (text != null && !text.isBlank()) {
+                        insertDictated(text);
+                    }
+                    return;
+                }
+                int caret = dictationLive.done(text);
+                dictationLive = null;
+                if (caret >= 0) {
+                    editor.setCaretPosition(caret);
+                    streamCaret = caret;
                 }
             }
 
             @Override
             public void recognized(String text) {
+                if (dictationLive != null) {
+                    liveDone(text);
+                }
                 dictationPhase = DictationPhase.IDLE;
                 stopDictationLevelMeter();
                 if (streamCaret < 0 && text != null && !text.trim().isEmpty()) {
@@ -923,6 +962,13 @@ public final class ChatPanel extends JPanel {
 
             @Override
             public void failed(String message) {
+                if (dictationLive != null) {
+                    int caret = dictationLive.keepCommitted();
+                    dictationLive = null;
+                    if (caret >= 0) {
+                        editor.setCaretPosition(caret);
+                    }
+                }
                 dictationPhase = DictationPhase.IDLE;
                 sendAfterDictation = false;
                 stopDictationLevelMeter();
@@ -973,8 +1019,6 @@ public final class ChatPanel extends JPanel {
 
     private void stopDictationLevelMeter() {
         levelTimer.stop();
-        dictationPreview.setText("");
-        dictationPreview.setVisible(false);
         waveform.setActive(false);
         levelBar.setValue(0);
     }
@@ -987,9 +1031,15 @@ public final class ChatPanel extends JPanel {
         int level = dictation.level();
         levelBar.setValue(level);
         waveform.pushLevel(level);
+        showRecordingStatus();
+    }
+
+    /** Statuszeile während der Aufnahme: Dauer, Art der Spracheingabe, Übersteuerung. */
+    private void showRecordingStatus() {
         long seconds = Math.max(0, (System.currentTimeMillis() - recordingStartedMillis) / 1000L);
-        status.setText(String.format(java.util.Locale.ROOT, "● Aufnahme %d:%02d%s",
-                seconds / 60, seconds % 60, dictation.clipping() ? " – übersteuert" : ""));
+        status.setText(String.format(java.util.Locale.ROOT, "● Aufnahme %d:%02d – %s%s",
+                seconds / 60, seconds % 60, LiveDictationSettings.live() ? LIVE_MODE : COMPLETE_MODE,
+                dictation.clipping() ? " – übersteuert" : ""));
     }
 
     // ------------------------------------------------------------------ Auswahl und Wissen
@@ -1750,7 +1800,10 @@ public final class ChatPanel extends JPanel {
                 parallelChoice("Parallele Agenten (intern): wie viele Agenten Treffer der internen "
                         + "Suche gleichzeitig lesen und auswerten", "agents", AGENTS_DEFAULT).menu(PARALLEL_AGENTS),
                 parallelChoice("Parallele Dateien: wie viele lokale Dateien und Anhänge (auch PDF) "
-                        + "gleichzeitig gelesen werden", "files", FILES_DEFAULT).menu(PARALLEL_FILES));
+                        + "gleichzeitig gelesen werden", "files", FILES_DEFAULT).menu(PARALLEL_FILES),
+                parallelChoice("Runden ohne Neues: nach so vielen Werkzeugrunden ohne neues Ergebnis bittet der "
+                        + "Chat die KI, mit dem Gefundenen zu antworten; sonst sucht sie, bis sie fertig ist",
+                        "quiet", QUIET_ROUNDS_DEFAULT).menu(QUIET_ROUNDS));
     }
 
     private com.aresstack.spaceharvester.app.ui.ParallelChoice parallelChoice(String tip, String key, int fallback) {
@@ -2262,13 +2315,14 @@ public final class ChatPanel extends JPanel {
             // K5a: ebenso der Suchmethode „Synonyme der Fachbegriffe“.
             turn.searchingGlossarySynonyms(
                     com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms());
-            // Angelo 24.11.2026: In der Suche, und ohne Auswahl überhaupt, recherchiert der Chat als Suchagent über
-            // mehrere Runden mit dem Budget aus dem Menü am Pfeil; anderswo bleibt er, wie er ist.
+            // Angelo 24.11.2026: In der Suche, und ohne Auswahl überhaupt, recherchiert der Chat als Suchagent, bis er
+            // fertig ist; anderswo bleibt er, wie er ist.
             if (searchFront || open == null) {
-                turn.searchAgent(researchBudget());
+                turn.searchAgent();
             }
             turn.parallelAgents(parallel("agents", AGENTS_DEFAULT));
         }
+        turn.quietRounds(parallel("quiet", QUIET_ROUNDS_DEFAULT));
         // Websuche (Composer-Knopf): die Browser-Werkzeuge des Chats dazu, mit Karte „Browserrecherche“.
         WebSearchCard card = new WebSearchCard(body -> addActivity(WebSearchCard.TITLE, body));
         ChatTurn.WebSearch web = webSearchFor(chat.id(), card, listener);
@@ -2681,6 +2735,19 @@ public final class ChatPanel extends JPanel {
             text.append(delta);
             if (!detached) {
                 scrollDown();
+            }
+        }
+
+        @Override
+        public void replaced(String now) {
+            // Ein Werkzeugaufruf als Text fällt aus der Blase (ChatTurn, TextToolCalls); weitere Deltas hängen sich an.
+            text.setLength(0);
+            text.append(now);
+            MarkdownMessageView view = bubble.view();
+            view.setMarkdown(now);
+            if (!now.isEmpty()) {
+                view.startStreaming();
+                view.appendMarkdownDelta(now);
             }
         }
 

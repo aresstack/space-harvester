@@ -92,8 +92,6 @@ public final class ChatTurn {
      * folgt, wie viel der offenen Seite und jedes Werkzeugergebnisses mitgeht ({@link ChatRoom}).
      */
     private ModelBudget budget;
-    /** Höchstens so viele Werkzeugrunden je Frage; die letzte Runde geht ohne Werkzeuge, damit eine Antwort kommt. */
-    static final int MAX_TOOL_ROUNDS = 8;
     /**
      * Modelle, deren Dienst eine Anfrage mit Werkzeugen abgelehnt hat: Für sie fällt der Chat bis zum Neustart still
      * auf die Suche mit Auszügen zurück (ADR 0033, kein Schalter).
@@ -107,6 +105,13 @@ public final class ChatTurn {
         void context(ChatKnowledge.Context context);
 
         void delta(String text);
+
+        /**
+         * Die Antwort ist ab jetzt {@code text}: Bisher Gezeigtes war ein Werkzeugaufruf als Text oder seine Ankündigung
+         * und fällt weg ({@link TextToolCalls}); weitere Deltas hängen sich an {@code text} an.
+         */
+        default void replaced(String text) {
+        }
 
         void completed(String text);
 
@@ -417,16 +422,16 @@ public final class ChatTurn {
 
     /**
      * Suchagent (Angelo 24.11.2026): In der Suche, und ohne gewählten Bereich, recherchiert das Modell mit den
-     * zugeschalteten Werkzeugen (Bereich als Filter, interne Suche, Websuche) gründlich über bis zu {@code rounds}
-     * Werkzeugrunden, statt nach einer Suche aufzugeben; ohne jedes Werkzeug antwortet es aus eigenem Wissen.
+     * zugeschalteten Werkzeugen (Bereich als Filter, interne Suche, Websuche) gründlich, bis es fertig ist, statt nach
+     * einer Suche aufzugeben; ohne jedes Werkzeug antwortet es aus eigenem Wissen.
      */
-    public ChatTurn searchAgent(int rounds) {
-        this.agentRounds = rounds;
+    public ChatTurn searchAgent() {
+        this.searchAgent = true;
         return this;
     }
 
-    /** Werkzeugrunden des Suchagenten; 0, wenn der Turn kein Suchagent ist. */
-    private int agentRounds;
+    /** Ob der Turn ein Suchagent ist. */
+    private boolean searchAgent;
 
     /**
      * Wie viele Unteragenten gleichzeitig Treffer der internen Suche auswerten und wie viele Werkzeugaufrufe einer
@@ -611,7 +616,9 @@ public final class ChatTurn {
             }
             if (message.user()) {
                 messages.add(AiChat.Message.user(message.text()));
-            } else if (message.assistant() && !message.cancelled()) {
+            } else if (message.assistant() && !message.cancelled() && !TextToolCalls.leaked(message.text())) {
+                // Eine Antwort, die nur ein Werkzeugaufruf als Text war, geht nicht zurück: Sonst ahmt das Modell sie
+                // in jeder folgenden Frage nach (Angelo 26.11.2026, „We need to call the tool correctly.“).
                 messages.add(AiChat.Message.assistant(message.text()));
             }
         }
@@ -721,7 +728,7 @@ public final class ChatTurn {
             sourcesAnnounced = true;
         }
         reportSources();
-        String system = agentRounds > 0
+        String system = searchAgent
                 ? ChatKnowledge.agentSystemMessage(area, scope != null, appSources != null,
                         !toolset.definitions().isEmpty(), open, shown, total, openRef)
                 : ChatKnowledge.toolSystemMessage(area, open, shown, total, openRef, appSources != null);
@@ -729,7 +736,17 @@ public final class ChatTurn {
         round(messages, 0);
     }
 
-    /** Eine Anfrage; Werkzeugaufrufe führen zur nächsten Runde, alles andere beendet den Turn. */
+    /**
+     * Eine Anfrage; Werkzeugaufrufe führen zur nächsten Runde, alles andere beendet den Turn. Die Werkzeuge gehen in
+     * jeder Runde mit, ohne feste Rundengrenze: Das Modell sucht, bis es fertig ist; anhalten kann der Benutzer mit
+     * Abbrechen (Angelo 26.11.2026). Früher ging nach 8 Runden eine letzte Anfrage still ohne Werkzeuge hinaus, und das
+     * Modell schrieb seinen nächsten Aufruf dann als Text in die Antwort.
+     * <p>
+     * Schreibt das Modell einen Aufruf trotzdem als Text statt im Feld {@code tool_calls} ({@link TextToolCalls}),
+     * führt der Turn ihn als Aufruf aus; kündigt es einen Aufruf nur an, erinnert er es einmal an die
+     * Werkzeugschnittstelle. Solcher Text erscheint nie in der Blase: Bis klar ist, dass er keiner ist, hält die Runde
+     * ihn zurück, und was schon zu sehen war, nimmt {@link Listener#replaced} wieder heraus.
+     */
     private void round(List<AiChat.Message> messages, int round) {
         if (cancelRequested) {
             String partial;
@@ -739,47 +756,108 @@ public final class ChatTurn {
             finish(() -> listener.cancelled(partial));
             return;
         }
-        List<AiChat.Tool> offered = round < maxToolRounds() ? toolset.definitions() : List.of();
+        List<AiChat.Tool> offered = toolset.definitions();
         int roundStart;
         synchronized (received) {
             roundStart = received.length();
         }
+        // Noch nicht gezeigter Text dieser Runde und ob die Runde schon in die Blase schreibt; beides unter received.
+        StringBuilder held = new StringBuilder();
+        boolean[] flowing = {false};
         task = port.stream(new AiChat.Request(messages, model, effort, offered), new AiChat.Listener() {
             @Override
             public void delta(String text) {
+                String release = null;
                 synchronized (received) {
                     received.append(text);
+                    if (flowing[0]) {
+                        release = text;
+                    } else {
+                        held.append(text);
+                        if (held.length() > TextToolCalls.ANNOUNCE_MAX_CHARS
+                                && !TextToolCalls.suspicious(held.toString(), offered)) {
+                            flowing[0] = true;
+                            release = held.toString();
+                            held.setLength(0);
+                        }
+                    }
                 }
-                onUi(() -> listener.delta(text));
+                if (release != null) {
+                    String shown = release;
+                    onUi(() -> listener.delta(shown));
+                }
             }
 
             @Override
             public void completed(String text) {
                 // Kam diese Runde ohne Deltas (nur Abschlusstext), gehört der Text noch an die Antwort, auch wenn
                 // frühere Runden schon Text gestreamt haben (Codex-Befund zu #1003).
-                String late;
+                String roundText;
+                boolean shownBefore;
+                synchronized (received) {
+                    if (received.length() == roundStart && text != null && !text.isEmpty()) {
+                        received.append(text);
+                        held.append(text);
+                    }
+                    roundText = received.substring(roundStart);
+                    shownBefore = flowing[0];
+                }
+                List<AiChat.ToolCall> textCalls = TextToolCalls.parse(roundText, offered);
+                if (!textCalls.isEmpty() || TextToolCalls.announces(roundText)) {
+                    retract(roundStart, held, shownBefore);
+                    ChatTools.diagnosis.accept("Chat: Werkzeugaufruf als Antworttext statt tool_calls (Runde "
+                            + (round + 1) + ", " + (textCalls.isEmpty() ? "nur angekündigt" : textCalls.stream()
+                            .map(AiChat.ToolCall::name).collect(java.util.stream.Collectors.joining(", "))) + ")");
+                    if (!textCalls.isEmpty()) {
+                        startTools(messages, "", textCalls, round);
+                        return;
+                    }
+                    if (!channelReminded) {
+                        channelReminded = true;
+                        List<AiChat.Message> next = new ArrayList<>(messages);
+                        next.add(AiChat.Message.user(TOOL_CHANNEL_REMINDER));
+                        Thread again = new Thread(() -> round(next, round + 1), "chat-turn-round");
+                        again.setDaemon(true);
+                        again.start();
+                        return;
+                    }
+                    finish(() -> listener.failed(TOOL_TEXT_FAILED));
+                    return;
+                }
+                String unshown;
                 String full;
                 synchronized (received) {
-                    late = received.length() == roundStart && text != null && !text.isEmpty() ? text : null;
-                    if (late != null) {
-                        received.append(late);
-                    }
+                    unshown = held.toString();
+                    held.setLength(0);
+                    flowing[0] = true;
                     full = received.toString();
                 }
-                if (late != null) {
-                    onUi(() -> listener.delta(late));
+                if (!unshown.isEmpty()) {
+                    onUi(() -> listener.delta(unshown));
                 }
                 finish(() -> listener.completed(full));
             }
 
             @Override
             public void toolCalls(String text, List<AiChat.ToolCall> calls) {
-                // Nie auf dem Strom-Thread des Adapters (und nie auf dem EDT): Suche und Lesen können dauern.
-                Thread worker = new Thread(() -> runTools(messages, text, calls, round), "chat-turn-tools");
-                worker.setDaemon(true);
-                worker.start();
+                // Vorspann vor echten Aufrufen („We will call the search.“) bleibt aus der Blase, sonst erscheint
+                // zurückgehaltener Text wie bisher.
+                String unshown;
+                synchronized (received) {
+                    unshown = held.toString();
+                    held.setLength(0);
+                    if (!flowing[0] && TextToolCalls.announces(unshown)) {
+                        received.setLength(roundStart);
+                        unshown = "";
+                    }
+                    flowing[0] = true;
+                }
+                if (!unshown.isEmpty()) {
+                    String shown = unshown;
+                    onUi(() -> listener.delta(shown));
+                }
+                startTools(messages, unshown.isEmpty() ? "" : text, calls, round);
             }
-
 
             @Override
             public void failed(AiChatException error) {
@@ -811,6 +889,10 @@ public final class ChatTurn {
             public void cancelled() {
                 String partial;
                 synchronized (received) {
+                    // Zurückgehaltener Text, der ein Werkzeugaufruf sein könnte, bleibt auch beim Abbruch draußen.
+                    if (!flowing[0] && TextToolCalls.suspicious(held.toString(), offered)) {
+                        received.setLength(roundStart);
+                    }
                     partial = received.toString();
                 }
                 finish(() -> listener.cancelled(partial));
@@ -819,6 +901,42 @@ public final class ChatTurn {
         if (cancelRequested) {
             task.cancel();
         }
+    }
+
+    /** Ob der Turn das Modell schon einmal an die Werkzeugschnittstelle erinnert hat. */
+    private volatile boolean channelReminded;
+
+    /**
+     * Erinnerung, wenn das Modell einen Aufruf nur ankündigt („We will perform a silent tool call.“): Als Text wird
+     * nichts ausgeführt. Geht einmal je Turn als Hinweis des Clients an das Modell, nie in die Blase oder den Verlauf.
+     */
+    static final String TOOL_CHANNEL_REMINDER = "[Hinweis des Clients] Deine letzte Nachricht hat einen "
+            + "Werkzeugaufruf nur als Text angekündigt; als Text wird nichts ausgeführt. Rufe Werkzeuge ausschließlich "
+            + "über die Werkzeugschnittstelle auf und schreibe nichts über Werkzeuge in die Antwort, oder antworte "
+            + "direkt auf Deutsch.";
+
+    /** Meldung, wenn das Modell auch nach der Erinnerung nur Werkzeugaufrufe ankündigt. */
+    static final String TOOL_TEXT_FAILED = "Die KI hat einen Werkzeugaufruf nur angekündigt, statt ihn auszuführen. "
+            + "Bitte die Frage noch einmal stellen.";
+
+    /** Nimmt den Text der Runde ab {@code roundStart} heraus; war schon etwas zu sehen, erfährt es die Oberfläche. */
+    private void retract(int roundStart, StringBuilder held, boolean shown) {
+        String now;
+        synchronized (received) {
+            received.setLength(roundStart);
+            held.setLength(0);
+            now = received.toString();
+        }
+        if (shown) {
+            onUi(() -> listener.replaced(now));
+        }
+    }
+
+    /** Führt die Aufrufe auf eigenem Thread aus: nie auf dem Strom-Thread des Adapters und nie auf dem EDT. */
+    private void startTools(List<AiChat.Message> messages, String text, List<AiChat.ToolCall> calls, int round) {
+        Thread worker = new Thread(() -> runTools(messages, text, calls, round), "chat-turn-tools");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     /** Führt die Aufrufe einer Runde aus (auf eigenem Thread) und stellt die nächste Anfrage. */
@@ -879,12 +997,46 @@ public final class ChatTurn {
                 pool.shutdownNow();
             }
         }
+        boolean anythingNew = false;
         for (int i = 0; i < calls.size(); i++) {
-            next.add(AiChat.Message.tool(calls.get(i).id(), results[i] != null ? results[i]
-                    : cancelRequested ? "Abgebrochen." : "Das Werkzeug ist gescheitert."));
+            String result = results[i] != null ? results[i]
+                    : cancelRequested ? "Abgebrochen." : "Das Werkzeug ist gescheitert.";
+            next.add(AiChat.Message.tool(calls.get(i).id(), result));
+            anythingNew |= seenResults.add(result);
+        }
+        quiet = anythingNew ? 0 : quiet + 1;
+        if (quiet > 0 && quiet % quietRounds == 0) {
+            // Stillstand wie in askai (ResearchLead.endRule): offen sagen, nie still Werkzeuge entziehen.
+            next.add(AiChat.Message.user(String.format(STANDSTILL_INSTRUCTION, quiet)));
         }
         round(next, round + 1);
     }
+
+    /**
+     * Stillstand (Angelo 26.11.2026, Verfahren aus askai {@code ResearchLead.endRule}): Nach {@code rounds}
+     * Werkzeugrunden, deren Ergebnisse in dieser Frage alle schon da waren, bittet der Turn das Modell offen, mit dem
+     * Gefundenen zu antworten. Eine feste Rundengrenze gibt es nicht; die Werkzeuge bleiben angeboten.
+     */
+    public ChatTurn quietRounds(int rounds) {
+        this.quietRounds = Math.max(1, rounds);
+        return this;
+    }
+
+    /** Runden ohne Neues bis zum Hinweis; im Menü am Dreieck des Chats einstellbar. */
+    private int quietRounds = 3;
+    /** Runden ohne neues Ergebnis in Folge; nur auf dem Werkzeug-Thread des Turns. */
+    private int quiet;
+    /** Alle Werkzeugergebnisse dieses Turns: Ein Ergebnis, das schon da war, ist nichts Neues. */
+    private final Set<String> seenResults = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Hinweis bei Stillstand, nach {@code FINAL_ROUND_INSTRUCTION} des EAC ({@code ChatCompletionsToolLoop}), aber ohne
+     * die Werkzeuge zu entziehen; {@code %d} ist die Zahl der Runden ohne Neues.
+     */
+    static final String STANDSTILL_INSTRUCTION = "[Hinweis des Clients] Die letzten %d Werkzeugrunden brachten kein "
+            + "neues Ergebnis. Verwende die bereits vorliegenden Werkzeugergebnisse und gib jetzt die bestmögliche "
+            + "abschließende Antwort auf die ursprüngliche Benutzerfrage. Weise auf fehlende Informationen hin; suche "
+            + "nur weiter, wenn ein ganz anderer Weg Neues verspricht.";
 
     /**
      * Trägt eine Seite ein, bevor ihr Inhalt an das Modell geht, je Turn einmal. Scheitert der Eintrag, wirft es nach
@@ -1275,12 +1427,6 @@ public final class ChatTurn {
     }
 
     // ------------------------------------------------------------------ Zustellung
-
-    /** Werkzeugrunden dieses Turns: als Suchagent oder mit Websuche das Budget, nie weniger als ohne. */
-    int maxToolRounds() {
-        int rounds = Math.max(MAX_TOOL_ROUNDS, agentRounds);
-        return webSearch == null ? rounds : Math.max(rounds, webSearch.rounds());
-    }
 
     /** Die Werkzeuge {@code base} samt den Browser-Werkzeugen, wenn die Websuche an ist. */
     private ChatToolset withWebSearch(ChatToolset base) {
