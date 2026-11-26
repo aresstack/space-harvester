@@ -29,6 +29,14 @@ public final class FlatIconButton extends JButton {
 
     /** Der flache Stil für einen beliebigen Knopf: wie {@code createSmallIconButton}, Zeile für Zeile. */
     public static void style(JButton button) {
+        style(button, SIZE);
+    }
+
+    /**
+     * Wie {@link #style(JButton)}, aber nur {@code height} hoch: für die Kopfzeile einer Sprechblase, die nichts
+     * Höheres als ihre Beschriftung zulässt und einen 20 Pixel hohen Knopf unten abschnitte.
+     */
+    public static void style(JButton button, int height) {
         button.setFocusable(false);
         button.setBorderPainted(false);
         button.setContentAreaFilled(false);
@@ -37,12 +45,15 @@ public final class FlatIconButton extends JButton {
         button.setOpaque(false);
         button.setMargin(new Insets(0, 0, 0, 0));
         button.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
-        Dimension size = new Dimension(SIZE, SIZE);
+        Dimension size = new Dimension(SIZE, height);
         button.setPreferredSize(size);
         button.setMinimumSize(size);
         button.setMaximumSize(size);
         Cursors.set(button, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
     }
+
+    /** Höhe für Knöpfe in der Kopfzeile einer Sprechblase: so hoch wie das Symbol. */
+    public static final int HEADER_HEIGHT = 16;
 
     @Override
     public Dimension getPreferredSize() {

@@ -34,9 +34,10 @@ final class AssistantMessageFooter extends JPanel implements WidthAwareHeight {
         actions.setOpaque(false);
         timestamp = new MessageTimestamp(foreground);
         failure.setVisible(false);
+        // Reihenfolge (Angelo, 26.11.2026): Kopieren abgesetzt links, dann Uhrzeit, QR-Knopf und zuletzt der Export.
         controls.add(failure);
-        controls.add(actions);
         controls.add(timestamp);
+        controls.add(actions);
         add(controls);
     }
 
@@ -80,7 +81,7 @@ final class AssistantMessageFooter extends JPanel implements WidthAwareHeight {
 
     private void order() {
         if (qr != null) {
-            controls.add(qr);
+            controls.add(qr, controls.getComponentZOrder(actions));
         }
         refresh();
     }

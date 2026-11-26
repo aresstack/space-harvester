@@ -2779,6 +2779,8 @@ public final class ChatPanel extends JPanel {
                                         String text, long at) {
         SpeechBubblePanel bubble = new SpeechBubblePanel(side, background, foreground, header, text);
         bubble.setMaximumBubbleWidth(640);
+        bubble.setHeaderAccessory(copyAction(foreground, () -> text,
+                com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.HEADER_HEIGHT));
         bubble.setHeaderTrailingAccessory(userMessageActions(foreground, header, () -> text, at));
         BubbleMessageRow row = new BubbleMessageRow(bubble, side);
         row.setAlignmentX(LEFT_ALIGNMENT);
@@ -2804,8 +2806,10 @@ public final class ChatPanel extends JPanel {
         AssistantMarkdownMessage bubble = new AssistantMarkdownMessage(view, theme.getMutedForeground());
         bubble.setTimestamp(at);
         // Read the current Markdown when an action is invoked, including a streamed response.
-        bubble.setCopyAction(copyAction(theme.getMutedForeground(), view::getMarkdown));
-        bubble.setQrAction(qrAction(theme.getMutedForeground(), ASSISTANT, view::getMarkdown));
+        bubble.setCopyAction(copyAction(theme.getMutedForeground(), view::getMarkdown,
+                com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.SIZE));
+        bubble.setQrAction(qrAction(theme.getMutedForeground(), ASSISTANT, view::getMarkdown,
+                com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.SIZE));
         emptyNote.setVisible(false);
         transcript.add(bubble);
         answeringRow = bubble;
@@ -2819,8 +2823,9 @@ public final class ChatPanel extends JPanel {
     }
 
     /**
-     * Uhrzeit, QR-Knopf und, mit Abstand für sich an der äußeren Kante, der Kopierknopf (Angelo, 26.11.2026): bei
-     * der Frage rechts außen, bei der Antwort links außen am Textanfang. So liegt er nie direkt neben dem QR-Knopf.
+     * Uhrzeit und QR-Knopf rechts in der Kopfzeile einer Frage. Der Kopierknopf steht nicht hier, sondern direkt
+     * hinter dem Namen (Angelo, 26.11.2026), damit er nie neben dem QR-Knopf liegt; bei der Antwort steht er dafür
+     * abgesetzt links am Textanfang.
      */
     private JComponent userMessageActions(Color foreground, String name, java.util.function.Supplier<String> text, long at) {
         JPanel controls = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 3, 0));
@@ -2829,29 +2834,30 @@ public final class ChatPanel extends JPanel {
                 new com.aresstack.spaceharvester.app.ui.markdown.MessageTimestamp(messageInk(foreground));
         timestamp.setTime(at);
         controls.add(timestamp);
-        controls.add(qrAction(foreground, name, text));
-        controls.add(javax.swing.Box.createHorizontalStrut(COPY_GAP));
-        controls.add(copyAction(foreground, text));
+        controls.add(qrAction(foreground, name, text,
+                com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.HEADER_HEIGHT));
         return controls;
     }
 
-    /** Abstand zwischen dem allein stehenden Kopierknopf und den übrigen Knöpfen einer Nachricht. */
-    static final int COPY_GAP = 8;
-
-    /** Der Kopierknopf einer Nachricht: das Kopieren-Symbol der App (zwei Blätter), klein und in der Tinte der Zeile. */
+    /**
+     * Der Kopierknopf einer Nachricht: das Kopieren-Symbol der App (zwei Blätter), flach und in der Tinte der Zeile.
+     *
+     * @param height Höhe des Knopfs; die Kopfzeile einer Blase lässt nichts Höheres als ihre Beschriftung zu
+     */
     private com.aresstack.spaceharvester.app.ui.controls.CopyButton copyAction(Color foreground,
-            java.util.function.Supplier<String> text) {
+            java.util.function.Supplier<String> text, int height) {
         com.aresstack.spaceharvester.app.ui.controls.CopyButton copy =
                 new com.aresstack.spaceharvester.app.ui.controls.CopyButton(text, value -> clipboard.accept(value))
-                        .flat(messageInk(foreground));
+                        .flat(messageInk(foreground), height);
         copy.setName("transcript.copyMessage");
         return copy;
     }
 
-    private MessageQrButton qrAction(Color foreground, String name, java.util.function.Supplier<String> text) {
+    private MessageQrButton qrAction(Color foreground, String name, java.util.function.Supplier<String> text,
+            int height) {
         MessageQrButton qr = new MessageQrButton(messageInk(foreground), () -> qrCodes.accept(name, text.get()));
         // Derselbe flache Stil wie Kopieren und Export daneben (Angelos Proxy-Programm).
-        com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.style(qr);
+        com.aresstack.spaceharvester.app.ui.controls.FlatIconButton.style(qr, height);
         return qr;
     }
 

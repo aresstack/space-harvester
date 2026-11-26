@@ -54,6 +54,7 @@ public final class CopyButton extends JButton {
     private final KeyboardFocusRing focusRing = KeyboardFocusRing.install(this);
     /** Kantenlänge; {@link #flat} verkleinert sie. */
     private int size = RoundHover.SIZE;
+    private int height = RoundHover.SIZE;
     /** Flacher Stil ({@link #flat}): kein Kreis, Haken in der Schriftfarbe statt Grün. */
     private boolean flat;
 
@@ -111,10 +112,16 @@ public final class CopyButton extends JButton {
      * und Haken stehen in {@code ink}, damit sie auch auf der farbigen Blase zu sehen sind.
      */
     public CopyButton flat(Color ink) {
+        return flat(ink, FlatIconButton.SIZE);
+    }
+
+    /** Wie {@link #flat(Color)}, aber nur {@code height} hoch, für die Kopfzeile einer Sprechblase. */
+    public CopyButton flat(Color ink, int height) {
         setForeground(Objects.requireNonNull(ink, "ink"));
         flat = true;
         size = FlatIconButton.SIZE;
-        FlatIconButton.style(this);
+        this.height = height;
+        FlatIconButton.style(this, height);
         return this;
     }
 
@@ -199,7 +206,7 @@ public final class CopyButton extends JButton {
 
     @Override
     public Dimension getPreferredSize() {
-        return new Dimension(size, size);
+        return new Dimension(size, height);
     }
 
     @Override
