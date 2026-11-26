@@ -626,11 +626,13 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param checkTimeout    Frist einer Prüfung gegen die Quelle beim Öffnen und Beschaffen ({@code cache.check-timeout})
      * @param largeFileTimeout dieselbe Frist für eine Datei, deren Textauszug das ganze Original braucht
      *                        ({@code cache.large-file-timeout})
+     * @param queryLimits     Stapelgrößen der Abfragen ({@code query.max-page-limit}, {@code query.max-term-scan})
      */
     public record Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
                           long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
                           Path pdfFont, ExtractionLimits extraction, long maxPageBytes, long maxTextFileBytes,
-                          Duration checkTimeout, Duration largeFileTimeout) {
+                          Duration checkTimeout, Duration largeFileTimeout,
+                          com.aresstack.spaceharvester.application.query.QueryLimits queryLimits) {
 
         /** Vorgabe für {@link #checkTimeout}, wie im Core. */
         public static final Duration DEFAULT_CHECK_TIMEOUT =
@@ -661,6 +663,18 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                     ? DEFAULT_CHECK_TIMEOUT : checkTimeout;
             largeFileTimeout = largeFileTimeout == null || largeFileTimeout.isNegative() || largeFileTimeout.isZero()
                     ? DEFAULT_LARGE_FILE_TIMEOUT : largeFileTimeout;
+            queryLimits = queryLimits == null
+                    ? com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULTS : queryLimits;
+        }
+
+        /** Mit den Vorgaben der Stapelgrößen ({@code query.max-page-limit}, {@code max-term-scan}). */
+        public Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
+                       long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
+                       Path pdfFont, ExtractionLimits extraction, long maxPageBytes, long maxTextFileBytes,
+                       Duration checkTimeout, Duration largeFileTimeout) {
+            this(dataDirectory, exportDirectory, assetDirectory, maxAssetBytes, largeAssetBytes, maxLargeAssets,
+                    searchTimeout, maxTreeNodes, pdfFont, extraction, maxPageBytes, maxTextFileBytes, checkTimeout,
+                    largeFileTimeout, null);
         }
 
         /** Mit den Vorgaben für die größte Datei im Cache und den Textauszug. */
@@ -730,6 +744,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param deadline      Zeile „Fristen“ ({@code deadline-*}, ADR 0035); {@code null}: Standards des Core
      * @param speech        Sprachausgabe für Podcast und Vorlesen ({@code podcast-speech-model},
      *                      {@code podcast-voice-*}, {@code read-aloud-*}); {@code null}: automatisch
+     * @param diagnosis     Zeile „Diagnose“: Schalter „Diagnose per KI“ und Modell ({@code diagnosis-*});
+     *                      {@code null}: eingeschaltet, Vorbelegung des Core
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
@@ -740,7 +756,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                              Integer imageMaxTokens, String visionThinking, String imageThinking,
                              AiServiceSettings.ModelUse summary, AiServiceSettings.ModelUse summaryPlan,
                              AiServiceSettings.ModelUse podcast, AiServiceSettings.ModelUse imagePlan,
-                             AiServiceSettings.ModelUse deadline, AiServiceSettings.Speech speech) {
+                             AiServiceSettings.ModelUse deadline, AiServiceSettings.Speech speech,
+                             AiServiceSettings.Diagnosis diagnosis) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
@@ -753,6 +770,25 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
             imagePlan = imagePlan == null ? AiServiceSettings.ModelUse.DEFAULT : imagePlan;
             deadline = deadline == null ? AiServiceSettings.ModelUse.DEFAULT : deadline;
             speech = speech == null ? AiServiceSettings.Speech.AUTOMATIC : speech;
+            diagnosis = diagnosis == null ? AiServiceSettings.Diagnosis.DEFAULT : diagnosis;
+        }
+
+        /** Ohne eigene Zeile der Diagnose. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
+                          Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                          Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking,
+                          Integer parallel, Integer visionMaxTokens, String imageModel, Integer imageMaxTokens,
+                          String visionThinking, String imageThinking, AiServiceSettings.ModelUse summary,
+                          AiServiceSettings.ModelUse summaryPlan, AiServiceSettings.ModelUse podcast,
+                          AiServiceSettings.ModelUse imagePlan, AiServiceSettings.ModelUse deadline,
+                          AiServiceSettings.Speech speech) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider,
+                    contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel, visionMaxTokens,
+                    imageModel, imageMaxTokens, visionThinking, imageThinking, summary, summaryPlan, podcast,
+                    imagePlan, deadline, speech, null);
         }
 
         /** Ohne eigene Sprachausgabe. */

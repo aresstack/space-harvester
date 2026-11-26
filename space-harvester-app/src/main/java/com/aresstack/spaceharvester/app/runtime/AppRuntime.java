@@ -149,7 +149,8 @@ public final class AppRuntime implements AutoCloseable {
                 settings.storage().maxLargeAssets(), settings.storage().searchTimeout(),
                 settings.storage().maxTreeNodes(), null, settings.storage().extraction(),
                 settings.storage().maxPageBytes(), settings.storage().maxTextFileBytes(),
-                settings.storage().checkTimeout(), settings.storage().largeFileTimeout());
+                settings.storage().checkTimeout(), settings.storage().largeFileTimeout(),
+                settings.storage().queryLimits());
         AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
         try (Harvester harvester = builder(settings, storage, List.of(), policy, version, sessionSecrets, false)
                 .build()) {
@@ -167,7 +168,8 @@ public final class AppRuntime implements AutoCloseable {
                 settings.storage().maxLargeAssets(), settings.storage().searchTimeout(),
                 settings.storage().maxTreeNodes(), null, settings.storage().extraction(),
                 settings.storage().maxPageBytes(), settings.storage().maxTextFileBytes(),
-                settings.storage().checkTimeout(), settings.storage().largeFileTimeout());
+                settings.storage().checkTimeout(), settings.storage().largeFileTimeout(),
+                settings.storage().queryLimits());
         AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
         try (Harvester harvester = builder(settings, storage, List.of(), policy, version, sessionSecrets, false)
                 .build()) {
@@ -261,6 +263,7 @@ public final class AppRuntime implements AutoCloseable {
                 .jobLimits(settings.jobLimits())
                 .searchTimeout(storage.searchTimeout())
                 .maxTreeNodes(storage.maxTreeNodes())
+                .queryLimits(storage.queryLimits())
                 .pdfFont(storage.pdfFont())
                 .cacheFreshness(new CacheFreshness(settings.cache().maxAge(), settings.cache().versionCheck()))
                 .withheldRetention(settings.cache().withheldRetention())
@@ -462,7 +465,9 @@ public final class AppRuntime implements AutoCloseable {
                 .withUses(ai.summary(), ai.podcast()).withSummaryPlan(ai.summaryPlan())
                 .withImagePlan(ai.imagePlan()).withDeadline(ai.deadline())
                 // Eigene Sprachausgabe für Podcast und Vorlesen (Angelo 24.11.2026); leer: automatisch.
-                .withSpeech(ai.speech());
+                .withSpeech(ai.speech())
+                // Diagnose per KI (Angelo 26.11.2026): Schalter und Modell, vorbelegt mit gpt-oss-120b.
+                .withDiagnosis(ai.diagnosis());
         if (ai.visionModel() != null) {
             // Bildbeschreibungen nur auf Abruf im Reiter „Bilder“ (ADR 0021); ohne Modell nennt er den Grund.
             service = service.withVisionModel(ai.visionModel());

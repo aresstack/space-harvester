@@ -87,6 +87,10 @@ class ConfigurationParityTest {
                 deadline-model: fristen-modell
                 deadline-max-tokens: 4096
                 deadline-thinking: low
+                diagnosis-enabled: false
+                diagnosis-model: diagnose-modell
+                diagnosis-max-tokens: 2048
+                diagnosis-thinking: high
                 podcast-speech-model: tts-podcast
                 podcast-voice-host: Jana
                 podcast-voice-cohost: Thomas
@@ -107,6 +111,9 @@ class ConfigurationParityTest {
                   - confluence/DOC
                 mode: sync-cache
                 catch-up-on-start: true
+              query:
+                max-page-limit: 250
+                max-term-scan: 70000
               jobs:
                 parallel-preparations: 3
                 parallel-downloads: 0
@@ -236,6 +243,8 @@ class ConfigurationParityTest {
                 .isEqualTo(new AiServiceSettings.ModelUse("schaubild-plan", 8192, "medium"));
         assertThat(appAi.deadline()).isEqualTo(ai.deadlineUse())
                 .isEqualTo(new AiServiceSettings.ModelUse("fristen-modell", 4096, "low"));
+        assertThat(appAi.diagnosis()).isEqualTo(ai.diagnosis()).isEqualTo(new AiServiceSettings.Diagnosis(false,
+                new AiServiceSettings.ModelUse("diagnose-modell", 2048, "high")));
         assertThat(appAi.speech()).isEqualTo(ai.speech())
                 .isEqualTo(new AiServiceSettings.Speech("tts-podcast", "Jana", "Thomas", "tts-vorlesen", "Max", 500, 4,
                         3));
@@ -332,6 +341,13 @@ class ConfigurationParityTest {
         assertThat(extraction.memoryLimit("application/msword")).isEqualTo(40L * 1024 * 1024);
         assertThat(extraction.memoryLimit("message/rfc822")).isZero();
         assertThat(extraction.memoryLimit("application/pdf")).as("Nachweis bleibt").isZero();
+
+        // Stapelgrößen der Abfragen (Angelo 26.11.2026): beim Dienst @Value in QueryConfiguration.
+        assertThat(app.storage().queryLimits())
+                .isEqualTo(new com.aresstack.spaceharvester.application.query.QueryLimits(
+                        environment.getProperty("space-harvester.query.max-page-limit", Integer.class),
+                        environment.getProperty("space-harvester.query.max-term-scan", Integer.class)))
+                .isEqualTo(new com.aresstack.spaceharvester.application.query.QueryLimits(250, 70_000));
 
         // Terminal-Ausgabe (Angelo 12.11.2026): dieselbe Stufe wie die Konsolen-Schwelle, die Spring Boot setzt.
         assertThat(app.consoleOutput()).isEqualTo(ConsoleOutput.WARN);

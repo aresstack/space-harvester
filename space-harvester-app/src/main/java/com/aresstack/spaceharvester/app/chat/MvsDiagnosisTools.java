@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.chat;
 
 import com.aresstack.spaceharvester.ai.AiChat;
+import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.app.ui.deck.MvsDiagnosisSettings;
 import com.aresstack.spaceharvester.deck.ftp.BinarySample;
 import com.aresstack.spaceharvester.deck.ftp.FtpSession;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /** Bind binary diagnostics to a single explicitly approved resource. */
 public final class MvsDiagnosisTools implements ChatToolset {
@@ -82,10 +84,18 @@ public final class MvsDiagnosisTools implements ChatToolset {
     private final Grant grant;
     private final MvsDiagnosisSettings settings;
     private final BooleanSupplier shown;
+    private final Supplier<AiServiceSettings.Diagnosis> diagnosis;
     private volatile boolean approvedModel;
     private volatile boolean cancelled;
 
     public MvsDiagnosisTools(ChatToolset base, Grant grant, BooleanSupplier shown) {
+        this(base, grant, shown, AiDiagnosis::settings);
+    }
+
+    /** Mit der Zeile „Diagnose“ aus {@code diagnosis}: Schalter und Modell, dem die Werkzeuge angeboten werden. */
+    MvsDiagnosisTools(ChatToolset base, Grant grant, BooleanSupplier shown,
+                      Supplier<AiServiceSettings.Diagnosis> diagnosis) {
+        this.diagnosis = diagnosis;
         this.base = base;
         this.grant = grant;
         this.shown = shown;
@@ -95,12 +105,12 @@ public final class MvsDiagnosisTools implements ChatToolset {
     @Override
     public void modelSelected(String model) {
         base.modelSelected(model);
-        approvedModel = "gpt-oss-120b".equalsIgnoreCase(model)
-                || "openai/gpt-oss-120b".equalsIgnoreCase(model);
+        // Nur das Modell der Diagnose bekommt die Werkzeuge (Angelo 26.11.2026: einstellbar, vorbelegt gpt-oss-120b).
+        approvedModel = diagnosis.get().isModel(model);
     }
 
     private boolean available() {
-        return approvedModel && !cancelled && grant.active() && shown.getAsBoolean();
+        return approvedModel && diagnosis.get().on() && !cancelled && grant.active() && shown.getAsBoolean();
     }
 
     @Override

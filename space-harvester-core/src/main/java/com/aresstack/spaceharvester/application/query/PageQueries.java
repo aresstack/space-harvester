@@ -50,8 +50,6 @@ public class PageQueries {
 
     private static final System.Logger LOG = System.getLogger(PageQueries.class.getName());
 
-    /** Größte Stapelgröße der Seitenliste je Anfrage; zugleich der Standardwert. */
-    public static final int MAX_PAGE_LIMIT = 100;
 
     /**
      * Höchstens so viele Ebenen enthält eine Antwort der REST-API (ADR 0040, Punkt 12); tiefere fragt der Client ab
@@ -69,6 +67,7 @@ public class PageQueries {
     private final PageFreshness freshness;
     private final PageCacheFill fill;
     private final int maxTreeNodes;
+    private final QueryLimits limits;
     private final Function<String, CacheFreshness> cacheFreshness;
     private final Clock clock;
     /** Letzte Versionsprüfung ohne neuen Inhalt; die gespeicherten Kopfdaten tragen nur ihren eigenen Stand. */
@@ -106,6 +105,14 @@ public class PageQueries {
     public PageQueries(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, PageFreshness freshness,
                        PageCacheFill fill, int maxTreeNodes, Function<String, CacheFreshness> cacheFreshness,
                        Clock clock) {
+        this(catalog, cache, access, freshness, fill, maxTreeNodes, cacheFreshness, clock, QueryLimits.DEFAULTS);
+    }
+
+    /** Wie oben, mit den eingestellten Stapelgrößen ({@code space-harvester.query.*}). */
+    public PageQueries(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, PageFreshness freshness,
+                       PageCacheFill fill, int maxTreeNodes, Function<String, CacheFreshness> cacheFreshness,
+                       Clock clock, QueryLimits limits) {
+        this.limits = Objects.requireNonNull(limits, "limits");
         this.cacheFreshness = Objects.requireNonNull(cacheFreshness, "cacheFreshness");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.fill = Objects.requireNonNull(fill, "fill");
@@ -117,6 +124,11 @@ public class PageQueries {
             throw new IllegalArgumentException("maxTreeNodes muss positiv sein");
         }
         this.maxTreeNodes = maxTreeNodes;
+    }
+
+    /** Die eingestellte größte Stapelgröße der Seitenliste ({@code space-harvester.query.max-page-limit}). */
+    public int maxPageLimit() {
+        return limits.maxPageLimit();
     }
 
     private static Function<String, CacheFreshness> fixed(CacheFreshness cacheFreshness) {
@@ -133,7 +145,7 @@ public class PageQueries {
      * Ein Stapel der flachen Seitenliste eines Space.
      *
      * @param cursor {@code null} oder leer für den ersten Stapel
-     * @param limit  1 bis {@value #MAX_PAGE_LIMIT}
+     * @param limit  1 bis {@link QueryLimits#maxPageLimit()}
      * @param caller Aufrufer aus der geprüften Anmeldung
      * @throws AccessDeniedException           wenn der Space nicht für {@code metadata} freigegeben ist
      * @throws InvalidQueryException           bei ungültigem Limit oder Cursor
@@ -143,8 +155,9 @@ public class PageQueries {
      */
     public PageListing pages(AccessContext caller, String sourceId, String spaceKey, String cursor, int limit) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA);
-        if (limit < 1 || limit > MAX_PAGE_LIMIT) {
-            throw new InvalidQueryException("limit muss zwischen 1 und " + MAX_PAGE_LIMIT + " liegen");
+        if (limit < 1 || limit > limits.maxPageLimit()) {
+            throw new InvalidQueryException("limit muss zwischen 1 und " + limits.maxPageLimit()
+                    + " liegen (space-harvester.query.max-page-limit)");
         }
         requireSource(sourceId);
         PageCursor position = cursor == null || cursor.isEmpty() ? null

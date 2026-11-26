@@ -222,6 +222,16 @@ final class AiSettingsPanel {
     final ThinkingBox deadlineThinking = new ThinkingBox();
     final ComposerButton pickDeadline = Comic.button("▾", "Modell für die Fristen aus der Liste des Dienstes wählen");
     /**
+     * Diagnose per KI (Angelo 26.11.2026): Schalter für alle KI-Erweiterungen der Fehler- und Datenanalyse (etwa
+     * „Binärdiagnose …“ im FTP-Kontextmenü und ihre Werkzeuge im Chat) und das Modell dafür, in einer Zeile.
+     */
+    final javax.swing.JCheckBox diagnosisEnabled = Comic.checkBox(DIAGNOSIS_TEXT);
+    final JTextField diagnosisModel = Comic.field(24);
+    final TokenLengthBox diagnosisMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
+            AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS, TOKENS_LIKE_CHAT);
+    final ThinkingBox diagnosisThinking = new ThinkingBox();
+    final ComposerButton pickDiagnosis = Comic.button("▾", "Modell der Diagnose aus der Liste des Dienstes wählen");
+    /**
      * Sprachausgabe (Angelo 24.11.2026: „für jeden eine eigene Einstellung“): Podcast und Vorlesen (Chat, Leseansicht)
      * mit je eigenem TTS-Modell und eigenen Stimmen; leer heißt automatisch.
      */
@@ -573,6 +583,9 @@ final class AiSettingsPanel {
                 visionThinking, "Vision-Modell", VISION_MAX_TOKENS_HELP), null);
         modelRows.add(DEADLINE_LABEL, modelRow(Comic.fieldWithButton(deadlineModel, pickDeadline),
                 deadlineMaxTokens, deadlineThinking, DEADLINE_LABEL, DEADLINE_HELP), null);
+        diagnosisEnabled.setToolTipText(DIAGNOSIS_TIP);
+        modelRows.add(DIAGNOSIS_LABEL, leading(diagnosisEnabled, modelRow(Comic.fieldWithButton(diagnosisModel,
+                pickDiagnosis), diagnosisMaxTokens, diagnosisThinking, DIAGNOSIS_LABEL, DIAGNOSIS_HELP)), null);
         modelRows.add(IMAGE_PLAN_LABEL, modelRow(Comic.fieldWithButton(imagePlanModel, pickImagePlan),
                 imagePlanMaxTokens, imagePlanThinking, IMAGE_PLAN_LABEL, IMAGE_PLAN_HELP), null);
         modelRows.add(IMAGE_LABEL, modelRow(Comic.fieldWithButton(imageModel, pickImage), imageMaxTokens,
@@ -691,6 +704,7 @@ final class AiSettingsPanel {
         pickPodcast.setEnabled(false);
         pickImagePlan.setEnabled(false);
         pickDeadline.setEnabled(false);
+        pickDiagnosis.setEnabled(false);
         pickPodcastSpeech.setEnabled(false);
         pickReadAloud.setEnabled(false);
         loadModels.addActionListener(e -> loadModels());
@@ -707,6 +721,7 @@ final class AiSettingsPanel {
         pickPodcast.addActionListener(e -> pick(pickPodcast, podcastModel, AiModel.CHAT));
         pickImagePlan.addActionListener(e -> pick(pickImagePlan, imagePlanModel, AiModel.CHAT));
         pickDeadline.addActionListener(e -> pick(pickDeadline, deadlineModel, AiModel.CHAT));
+        pickDiagnosis.addActionListener(e -> pick(pickDiagnosis, diagnosisModel, AiModel.CHAT));
         pickPodcastSpeech.addActionListener(e -> pick(pickPodcastSpeech, podcastSpeechModel, AiModel.TTS));
         pickReadAloud.addActionListener(e -> pick(pickReadAloud, readAloudModel, AiModel.TTS));
         released.setOpaque(false);
@@ -768,6 +783,10 @@ final class AiSettingsPanel {
         showUse(current.podcast(), podcastModel, podcastMaxTokens, podcastThinking);
         showUse(current.imagePlan(), imagePlanModel, imagePlanMaxTokens, imagePlanThinking);
         showUse(current.deadline(), deadlineModel, deadlineMaxTokens, deadlineThinking);
+        showUse(current.diagnosis(), diagnosisModel, diagnosisMaxTokens, diagnosisThinking);
+        // Die Vorbelegung steht sichtbar im Feld (Angelo 26.11.2026: „vorbelegen, GPT OSS“).
+        diagnosisModel.setText(current.diagnosisSettings().model());
+        diagnosisEnabled.setSelected(current.diagnosisSettings().on());
         podcastSpeechModel.setText(text(current.speech().podcastModel()));
         podcastHost.setSelectedItem(text(current.speech().podcastHost()));
         podcastCohost.setSelectedItem(text(current.speech().podcastCohost()));
@@ -1097,7 +1116,30 @@ final class AiSettingsPanel {
                         readAloudModel.getText(), voice(readAloudVoice)).withPodcastTiming(
                         own(podcastPause, AiServiceSettings.Speech.DEFAULT_PODCAST_PAUSE_MILLIS),
                         own(podcastAttempts, AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS),
-                        own(podcastWorkers, AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS)));
+                        own(podcastWorkers, AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS)),
+                new AiDraft.Use(ownDiagnosisModel(), diagnosisMaxTokens.text(), diagnosisThinking.level()),
+                diagnosisEnabled.isSelected());
+    }
+
+    /** Das Modell der Diagnose; die Vorbelegung heißt nichts eingestellt, dann gilt die des Core. */
+    private String ownDiagnosisModel() {
+        String model = diagnosisModel.getText();
+        return model == null || model.isBlank()
+                || model.strip().equalsIgnoreCase(AiServiceSettings.DEFAULT_DIAGNOSIS_MODEL) ? null : model;
+    }
+
+    /** {@code lead} (etwa ein Schalter) vor einer Modellzeile, die den Rest der Breite füllt. */
+    private static JComponent leading(JComponent lead, JComponent rest) {
+        JPanel row = new JPanel(new java.awt.GridBagLayout());
+        row.setOpaque(false);
+        java.awt.GridBagConstraints c = new java.awt.GridBagConstraints();
+        c.gridy = 0;
+        c.fill = java.awt.GridBagConstraints.HORIZONTAL;
+        row.add(lead, c);
+        c.weightx = 1;
+        c.insets = new java.awt.Insets(0, 6, 0, 0);
+        row.add(rest, c);
+        return row;
     }
 
     /** Der Wert eines Zählers; die Vorgabe heißt nichts eingestellt ({@code null}), dann gilt die des Core. */
@@ -1857,6 +1899,16 @@ final class AiSettingsPanel {
             + "\n\n" + TOKENS_HELP_TAIL + "\n\nStandard " + AiServiceSettings.DEFAULT_DEADLINE_MAX_TOKENS
             + " Tokens, denkt nicht. Schlüssel in der Konfigurationsdatei: space-harvester.ai.deadline-model, "
             + ".deadline-max-tokens und .deadline-thinking.";
+    static final String DIAGNOSIS_LABEL = "Diagnose";
+    static final String DIAGNOSIS_TEXT = "Diagnose per KI";
+    static final String DIAGNOSIS_TIP = "Ohne Häkchen verschwinden alle KI-Erweiterungen der Diagnose, etwa "
+            + "„Binärdiagnose …“ im Kontextmenü und die Diagnosewerkzeuge im Chat";
+    static final String DIAGNOSIS_HELP = "Diagnose per KI: Mit Häkchen kann die KI Fehler und Daten analysieren, "
+            + "etwa die Binärdiagnose eines MVS-Datasets („Binärdiagnose …“ im Kontextmenü), und im Chat zu Problemen "
+            + "helfen. Die Werkzeuge der Diagnose bekommt der Chat nur, wenn dort dieses Modell gewählt ist. Ohne Häkchen verschwinden Kontextmenü-Eintrag und Werkzeuge.\n\nVorbelegt mit "
+            + AiServiceSettings.DEFAULT_DIAGNOSIS_MODEL + ", je nach Aufgabe änderbar. " + TOKENS_HELP_TAIL
+            + "\n\nSchlüssel in der Konfigurationsdatei: space-harvester.ai.diagnosis-enabled, .diagnosis-model, "
+            + ".diagnosis-max-tokens und .diagnosis-thinking.";
     static final String SUMMARY_PLAN_LABEL = "Zusammenfassung – Plan";
     static final String SUMMARY_PLAN_HELP = "Dieses Modell plant die Update-Zusammenfassung: welche Themen es gibt und "
             + "welche Seiten dazugehören. Dafür passt ein großes Modell (etwa gpt-oss 120b). Leer: das Text-Modell.\n\n"
@@ -2099,6 +2151,7 @@ final class AiSettingsPanel {
         pickPodcast.setEnabled(false);
         pickImagePlan.setEnabled(false);
         pickDeadline.setEnabled(false);
+        pickDiagnosis.setEnabled(false);
         pickPodcastSpeech.setEnabled(false);
         pickReadAloud.setEnabled(false);
     }
@@ -2226,6 +2279,7 @@ final class AiSettingsPanel {
         pickPodcast.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickImagePlan.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickDeadline.setEnabled(!choices(AiModel.CHAT).isEmpty());
+        pickDiagnosis.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickPodcastSpeech.setEnabled(!choices(AiModel.TTS).isEmpty());
         pickReadAloud.setEnabled(!choices(AiModel.TTS).isEmpty());
         long embeddings = this.loaded.stream().filter(m -> m.categories().contains(AiModel.EMBEDDING)).count();
