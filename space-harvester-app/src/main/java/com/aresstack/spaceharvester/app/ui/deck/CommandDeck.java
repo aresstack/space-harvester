@@ -360,8 +360,12 @@ public final class CommandDeck {
 
                 } else {
                     shown = active.datasets();
-                    extra = new com.aresstack.spaceharvester.app.chat.FtpChatTools(ftp.selected(), ftp::selected);
-                    rules = com.aresstack.spaceharvester.app.chat.FtpChatTools.rules();
+                    extra = new com.aresstack.spaceharvester.app.chat.CobolSearchTools(
+                            new com.aresstack.spaceharvester.app.chat.FtpChatTools(ftp.selected(), ftp::selected),
+                            active.datasets()::cobolSearchSnapshot, stillShown);
+                    rules = new java.util.ArrayList<>(com.aresstack.spaceharvester.app.chat.FtpChatTools.rules());
+                    rules.add("Mit cobol_suchen fragst du die ausdrücklich freigegebene COBOL-Analyse-Momentaufnahme ab; "
+                            + "benenne deren Abdeckung und Teilanalysen.");
                     var diagnosis = active.datasets().diagnosis();
                     if (diagnosis != null) {
                         extra = new com.aresstack.spaceharvester.app.chat.MvsDiagnosisTools(extra, diagnosis, stillShown);

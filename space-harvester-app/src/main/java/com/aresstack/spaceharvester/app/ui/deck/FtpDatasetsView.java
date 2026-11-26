@@ -6,6 +6,7 @@ import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor;
 import com.aresstack.spaceharvester.deck.editor.EditorSession;
 import com.aresstack.spaceharvester.deck.editor.EditorSessions;
+import com.aresstack.spaceharvester.deck.editor.DocumentStore;
 import com.aresstack.spaceharvester.deck.ftp.FtpDocumentStore;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
@@ -119,6 +120,10 @@ final class FtpDatasetsView extends JPanel {
     private final IconButton groupButton = new IconButton(new DrawnIcon(false), "Nach Endung gruppieren");
     private final CobolAnalysisAreaSettings analysisSettings = new CobolAnalysisAreaSettings();
     private final CobolInventoryAction inventory = new CobolInventoryAction(this);
+    private final CobolSearchAction cobolSearch = new CobolSearchAction(this);
+    private final DoubleShiftShortcut cobolShortcut = new DoubleShiftShortcut(this, cobolSearch::showSearch);
+    private final Map<EditorSession, com.aresstack.spaceharvester.mainframe.cobol.CobolSearch.Fact> pendingAnalysisHits
+            = new LinkedHashMap<>();
     private final IconButton analysisHome = new IconButton(Glyph.GRAPH, "COBOL-Analysebereich konfigurieren");
     private final IconButton expandAll = new IconButton(Glyph.EXPAND_ALL, "Alle Gruppen aufklappen");
     private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alle Gruppen zuklappen");
@@ -332,7 +337,8 @@ final class FtpDatasetsView extends JPanel {
         sideBar = new EditorSideBar(new EditorSideBar.Home(SIDE_DATASETS, FilesIcons.folder(), "Datasets",
                 new com.aresstack.spaceharvester.app.ui.controls.SideHead(SIDE_DATASETS, filter)
                         .actions(sortButton, detailsButton, groupButton),
-                listArea, com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, expandAll, analysisHome, inventory.button())),
+                listArea, com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, expandAll, analysisHome, inventory.button(),
+                        cobolSearch.buildButton(), cobolSearch.searchButton())),
                 List.of(), AppState.shared().get(SIDE_TAB_KEY),
                 name -> AppState.shared().put(SIDE_TAB_KEY, name));
         javax.swing.JComponent side = sideBar;
@@ -388,6 +394,8 @@ final class FtpDatasetsView extends JPanel {
         if (!value) {
             revokeDiagnosis();
             inventory.invalidate();
+            cobolSearch.invalidate();
+            pendingAnalysisHits.clear();
         }
         connected = value;
         enableActions();
@@ -853,6 +861,7 @@ final class FtpDatasetsView extends JPanel {
             documentStatus();
             enableActions();
         }
+        navigateAnalysisHit(session);
     }
 
     /** Der Stand des gezeigten Dokuments unten links; rot nur bei Fehler oder Konflikt. */
@@ -882,6 +891,7 @@ final class FtpDatasetsView extends JPanel {
     }
 
     private void removed(EditorSession session) {
+        pendingAnalysisHits.remove(session);
         ComposerToggleButton pill = pillOf.remove(session);
         DocumentEditor editor = editorOf.remove(session);
         if (pill != null) {
@@ -967,11 +977,62 @@ final class FtpDatasetsView extends JPanel {
     void setAnalysisHome(String home) {
         analysisSettings.save(owner.session(), home);
         inventory.invalidate();
+        cobolSearch.invalidate();
+        pendingAnalysisHits.clear();
         refreshAnalysisHome();
     }
 
     CobolInventoryAction inventoryAction() {
         return inventory;
+    }
+
+    DocumentStore analysisStore() {
+        return store;
+    }
+
+    java.util.Optional<com.aresstack.spaceharvester.app.chat.CobolSearchTools.Snapshot> cobolSearchSnapshot() {
+        return cobolSearch.toolSnapshot();
+    }
+
+    @Override
+    public void addNotify() {
+        super.addNotify();
+        cobolShortcut.attach();
+    }
+
+    @Override
+    public void removeNotify() {
+        cobolShortcut.detach();
+        super.removeNotify();
+    }
+
+    void openAnalysisHit(com.aresstack.spaceharvester.mainframe.cobol.CobolSearch.Fact fact) {
+        if (!MvsPath.isMember(fact.source())) {
+            inventoryStatus("Fundstelle hat keine eindeutige Member-Adresse.", true);
+            return;
+        }
+        openDocument(fact.source());
+        if (fact.line() > 0 && document != null) {
+            pendingAnalysisHits.put(document, fact);
+            navigateAnalysisHit(document);
+        }
+    }
+
+    private void navigateAnalysisHit(EditorSession session) {
+        var hit = pendingAnalysisHits.get(session);
+        if (hit == null || session.state() == EditorSession.State.LOADING) return;
+        pendingAnalysisHits.remove(session);
+        if (session != document || session.state() != EditorSession.State.READY) return;
+        String expected = hit.attributes().getOrDefault("SOURCE_REVISION", "");
+        if (expected.isEmpty() || session.dirty()
+                || session.document().filter(loaded -> loaded.hash().equals(expected)).isEmpty()) {
+            inventoryStatus("Fundstelle stammt aus einem anderen Quellstand. Bitte Bestand neu analysieren.", true);
+            return;
+        }
+        DocumentEditor editor = editorOf.get(session);
+        if (editor != null) SwingUtilities.invokeLater(() -> {
+            if (document == session && !session.dirty()) editor.goToLine(hit.line());
+        });
     }
 
     FtpSession inventorySession() {
@@ -984,6 +1045,7 @@ final class FtpDatasetsView extends JPanel {
 
     private void refreshAnalysisHome() {
         inventory.refresh();
+        cobolSearch.refresh();
         boolean available = connected && CobolAnalysisAreaSettings.available(owner.session());
         analysisHome.setEnabled(available);
         analysisHome.setVisible(owner.session().mvs());
