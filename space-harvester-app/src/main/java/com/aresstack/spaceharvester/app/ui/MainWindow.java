@@ -399,11 +399,28 @@ public final class MainWindow implements AppContext.Navigator {
         frame.setMinimumSize(new Dimension(960, 600));
         // Lage, Größe und maximiert wie beim letzten Beenden, passend zu den jetzt angeschlossenen Bildschirmen.
         WindowPlacement.restore(frame, new Dimension(1280, 820));
+        var programSearch = new com.aresstack.spaceharvester.app.ui.deck.StoredProgramSearchAction(
+                context, frame, frame::isDisplayable, busy -> {
+                    String message = "Programmsuche wird vorbereitet … (zweimal Umschalt zum Abbrechen)";
+                    context.events().publish(busy
+                            ? new StatusMessageEvent(message, Integer.MAX_VALUE, Severity.INFO)
+                            : StatusMessageEvent.clear(message));
+                });
+        var programShortcut = new DoubleShiftShortcut(frame, programSearch::open);
+        programShortcut.install();
         frame.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent event) {
+                programShortcut.close();
+                programSearch.cancel();
+            }
+
             @Override
             public void windowClosing(WindowEvent event) {
                 if (confirmUnsaved(frame) && confirmClose(frame)) {
                     WindowPlacement.remember(frame);
+                    programShortcut.close();
+                    programSearch.cancel();
                     frame.dispose();
                     // Aufräumen nicht auf dem Swing-Faden und mit Frist; danach enden Kindprozesse und die JVM sicher.
                     com.aresstack.spaceharvester.app.AppExit.exit(0,

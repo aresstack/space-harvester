@@ -18,6 +18,7 @@ public final class StoredProgramSearchAction {
     private final java.util.function.Consumer<Boolean> busy;
     private Future<?> task;
     private long generation;
+    private boolean dialogOpen;
 
     public StoredProgramSearchAction(AppContext context, Component parent,
                                    java.util.function.BooleanSupplier active,
@@ -32,12 +33,19 @@ public final class StoredProgramSearchAction {
         open(null);
     }
 
-    public void open(String initialSource) {
+    public void cancel() {
+        generation++;
         if (task != null) {
-            generation++;
             task.cancel(true);
             task = null;
             busy.accept(false);
+        }
+    }
+
+    public void open(String initialSource) {
+        if (dialogOpen) return;
+        if (task != null) {
+            cancel();
             return;
         }
         AppRuntime runtime = context.runtime();
@@ -56,7 +64,14 @@ public final class StoredProgramSearchAction {
             task = null;
             busy.accept(false);
             if (context.runtime() != runtime || !active.getAsBoolean()) return;
-            new StoredProgramSearchDialog(snapshot, sources, initialSource).show(parent).ifPresent(fact -> {
+            java.util.Optional<com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch.Fact> selected;
+            dialogOpen = true;
+            try {
+                selected = new StoredProgramSearchDialog(snapshot, sources, initialSource).show(parent);
+            } finally {
+                dialogOpen = false;
+            }
+            selected.ifPresent(fact -> {
                 if (context.runtime() != runtime || request != generation || !active.getAsBoolean()) return;
                 Background.run(() -> runtime.workspace().programFactCurrent(fact), valid -> {
                     if (context.runtime() != runtime || request != generation || !active.getAsBoolean()) return;

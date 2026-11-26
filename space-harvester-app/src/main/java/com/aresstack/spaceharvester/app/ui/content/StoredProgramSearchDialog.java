@@ -95,6 +95,11 @@ public final class StoredProgramSearchDialog {
         body.add(footer, BorderLayout.SOUTH);
         bind();
         refresh();
+        query.addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && query.isShowing()) {
+                SwingUtilities.invokeLater(query::requestFocusInWindow);
+            }
+        });
         boolean confirmed = Dialogs.formOverlay(parent, "Programmsuche im Wissensbestand", body, "Fundstelle öffnen");
         generation++;
         if (running != null) running.cancel(true);
