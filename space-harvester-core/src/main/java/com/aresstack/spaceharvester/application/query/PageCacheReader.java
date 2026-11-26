@@ -59,10 +59,13 @@ public interface PageCacheReader {
      * Seite, sonst die Wurzelseiten des Space. Für den Baum, der zuerst den gecachten Stand zeigt und die Quelle
      * danach im Hintergrund fragt.
      *
-     * @return höchstens {@code limit} Kopfdaten in beliebiger Reihenfolge; leer, wenn der Cache keine kennt
+     * @param afterPageId nur Kinder mit größerer Seiten-ID (Fortsetzung eines vorigen Stapels) oder {@code null}
+     * @param limit       Stapelgröße; der Cache darf weniger liefern, dann folgt mit der letzten Seiten-ID der nächste
+     * @return Kopfdaten nach Seiten-ID aufsteigend ({@link String#compareTo}); leer, wenn der Cache keine (weiteren)
+     *         kennt
      */
     default List<com.aresstack.spaceharvester.application.snapshot.PageHeader> children(String sourceId,
-            String spaceKey, String parentPageId, int limit) {
+            String spaceKey, String parentPageId, String afterPageId, int limit) {
         return List.of();
     }
 
