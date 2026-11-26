@@ -268,6 +268,9 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `LargeFileGate.DEFAULT_MAX_CONCURRENT` | `2` | Vorgabe | Parallelität | einstellbar |
 | `LargeFileGate.DEFAULT_THRESHOLD_BYTES` | `20L * 1024 * 1024` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
 | `LargeFileGate.DEFAULT_WAIT` | `Duration.ofSeconds(30)` | Vorgabe | Timeout | einstellbar |
+| `LiveDictationSettings.MAX_FIRST_MILLIS` | `5_000` | fest | Obergrenze einer Einstellung | im Code belassen: Anlauf der Live-Spracheingabe, einstellbar bis hierher |
+| `LiveDictationSettings.MAX_STEP_MILLIS` | `10_000` | fest | Obergrenze einer Einstellung | im Code belassen: Takt der Live-Spracheingabe, einstellbar bis hierher |
+| `LiveDictationSettings.MAX_WINDOW_SECONDS` | `29` | fest | Externe Protokollgrenze | dokumentieren: Whisper sieht genau 30 s, das Live-Fenster bleibt darunter |
 | `LocalFilesSourceAdapter.DEFAULT_MAX_FILE_MEGABYTES` | `20` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
 | `LocalFilesSourceAdapter.MAX_FILE_MEGABYTES` | `64` | fest | Bestandsgrenze | beseitigen |
 | `LocalFolderHierarchy.NAVIGATION_BATCH` | `200` | fest | Stapel-/Seitengröße | einstellbar |
@@ -578,7 +581,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `DeckHome.MAX_COLUMNS` | `3` | fest | Invariante/Darstellung | im Code belassen |
 | `DiagramLabels.CACHE_SIZE` | `1000` | fest | Cache-Aufbewahrung | einstellbar |
 | `DiagramLabels.TIMEOUT_SECONDS` | `30` | fest | Timeout | einstellbar |
-| `DictationPreviewWindow.MAXIMUM` | `12 * RATE` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `DocumentPane.MAX_PILL` | `28` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_INTERVAL_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
 | `DoubleShiftShortcut.MAX_PRESS_MS` | `500` | fest | Invariante/Darstellung | im Code belassen |
