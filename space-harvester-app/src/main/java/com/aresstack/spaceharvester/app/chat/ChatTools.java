@@ -528,7 +528,7 @@ final class ChatTools {
             }
         }
         Listing listing = entries(parent, null);
-        if (!live.isEmpty() && (parent == null || listing.entries().isEmpty() && live.contains(parent))) {
+        if (!live.isEmpty() && (parent == null || live.contains(parent))) {
             listing = withLive(listing, parent);
         }
         return sheet(listing, parent == null ? "Startseiten des Bereichs" : "Unterseiten",
@@ -968,7 +968,7 @@ final class ChatTools {
             return "Bitte Suchbegriffe angeben.";
         }
         query = clampQuery(query);
-        KeywordSearch.Query search = areaQuery(query, scope, live.roots()).withGlossarySynonyms(glossarySynonyms);
+        KeywordSearch.Query search = areaQuery(query, scope, live).withGlossarySynonyms(glossarySynonyms);
         List<KeywordSearch.Hit> bar = barHits(search);
         List<KeywordSearch.Hit> hits = listed(bar, ranked(search, neighbors, false));
         int most = bar.size() + SEARCH_HITS;
@@ -1036,16 +1036,17 @@ final class ChatTools {
      * Space einer ihrer Quellen nicht, bleibt es ohne Space-Filter, damit keine Seite verloren geht.
      */
     static KeywordSearch.Query areaQuery(String text, PageSelection scope) {
-        return areaQuery(text, scope, List.of());
+        return areaQuery(text, scope, LiveArea.NONE);
     }
 
     /**
-     * Wie oben, mit Wurzeln außerhalb des Katalogs ({@link LiveArea}): Ihre Seiten kennt keine Seitenmenge, also sucht
-     * die Anfrage in ihren Quellen und Spaces ohne Seitengrenze; was nicht im Bereich liegt, fällt danach über
-     * {@link #allows} heraus (Lage laut Quelle).
+     * Wie oben, wo der Katalog den Bereich nicht vollständig kennt ({@link LiveArea}): Die Anfrage sucht in den Quellen
+     * und Spaces der Wurzeln über die bekannten Seiten und die Teilbaum-Grenze ({@code KeywordSearch.Query#bounded}).
+     * Die Grenze greift im Core vor Katalogisieren, Laden, Volltextindex und Nachbarn, nicht erst an der Liste.
      */
-    static KeywordSearch.Query areaQuery(String text, PageSelection scope, List<Selection.Root> live) {
-        if (!live.isEmpty()) {
+    static KeywordSearch.Query areaQuery(String text, PageSelection scope, LiveArea area) {
+        if (!area.isEmpty()) {
+            List<Selection.Root> live = area.roots();
             Set<String> sources = new java.util.TreeSet<>(scope.pages().sourceIds());
             Set<String> spaces = new java.util.TreeSet<>();
             boolean wholeSource = false;
@@ -1066,7 +1067,8 @@ final class ChatTools {
                 spaces.clear();
             }
             String single = sources.size() == 1 ? sources.iterator().next() : null;
-            return new KeywordSearch.Query(text, single, single == null ? sources : Set.of(), spaces);
+            return new KeywordSearch.Query(text, single, single == null ? sources : Set.of(), spaces)
+                    .bounded(scope.pages(), area);
         }
         Set<String> sources = scope.pages().sourceIds();
         Set<String> spaces = new java.util.TreeSet<>();

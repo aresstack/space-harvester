@@ -117,6 +117,46 @@ class KeywordSearchDiscoveryTest {
     }
 
     @Test
+    void aSubtreeBoundaryKeepsFindsOutsideFromCataloguingLoadingAndTheIndexList() {
+        // Angelo 26.11.2026 (#1506): Die Teilbaum-Grenze greift vor Katalogisieren und Laden, nicht erst an der Liste.
+        wiki.results("Wolkenpegel", "1", "2", "3");
+        cached.add("9");
+        List<List<String>> offered = Collections.synchronizedList(new ArrayList<>());
+        FindingCatalog recording = (finder, sourceId, findings) -> offered.add(findings.stream()
+                .map(FindingCatalog.Finding::pageId).toList());
+        KeywordSearch search = new KeywordSearch(catalog, access, texts, prefetch, 1, ExcerptPriority.off(),
+                CandidateSelectionStrategy.topN(KeywordSearch.MAX_LIMIT), SearchRunLog.NONE, recording);
+        // Bekannt ist Seite 1 (Katalog), die Grenze lässt dazu Seite 2 zu (etwa ein Dokument nur in der Quelle).
+        SearchBoundary boundary = new SearchBoundary() {
+            @Override
+            public boolean admits(com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                return key.sourceId().equals("wiki") && key.pageId().equals("2");
+            }
+
+            @Override
+            public boolean reaches(String sourceId) {
+                return sourceId.equals("wiki");
+            }
+
+            @Override
+            public String fingerprint() {
+                return "teilbaum";
+            }
+        };
+        KeywordSearch.Query query = new KeywordSearch.Query("Wolkenpegel", "wiki", Set.of(), Set.of())
+                .bounded(PageSet.of(Map.of("wiki", List.of("1"))), boundary);
+
+        KeywordSearch.Results results = search.search(APP, query, null, 50, null, null, "suche-1");
+
+        assertThat(offered).containsExactly(List.of("1", "2"));
+        assertThat(loads).containsExactly(List.of("1", "2"));
+        assertThat(results.ranked()).extracting(KeywordSearch.Hit::pageId).containsExactly("1", "2");
+        assertThat(query.within(PageSet.of(Map.of("wiki", List.of("1")))).admits("wiki", "2"))
+                .as("Eingrenzen auf Kandidaten hebt die Grenze auf").isFalse();
+        assertThat(query.withText("anders").admits("wiki", "2")).isTrue();
+    }
+
+    @Test
     void whatTheCatalogDidNotAcceptIsOfferedAgainOnReSorting() {
         // Abnahme #1082, Punkt 1: Nur Angenommenes gilt als angeboten; Neusortieren holt den Rest nach.
         wiki.results("Wolkenpegel", "1", "2");

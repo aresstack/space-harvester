@@ -3,7 +3,6 @@ package com.aresstack.spaceharvester.app.chat;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.application.holdings.PageSelection;
 import com.aresstack.spaceharvester.application.holdings.Selection;
-import com.aresstack.spaceharvester.application.holdings.SpaceSummary;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
@@ -18,7 +17,7 @@ import java.util.function.BooleanSupplier;
 
 /**
  * Der gewählte Bereich über die gemeinsame Navigation aller Quellen ({@link PageNavigation}, dieselbe wie der Baum
- * links), für die Wurzeln, die der Katalog im Cache nicht kennt.
+ * links), wo der Katalog im Cache die Auswahl nicht vollständig kennt.
  *
  * <p>Bis 26.11.2026 kannte der Chat seinen Bereich nur aus dem Katalog ({@code Holdings.resolve}, ADR 0029). Ein Knoten,
  * den der Katalog nicht führt, ergab einen leeren Bereich: Ein SharePoint-Ordner etwa kommt nur über die Navigation in
@@ -29,9 +28,11 @@ import java.util.function.BooleanSupplier;
  * einer Seite über ihre Vorfahren ({@link Navigation#position}). Beides ist für jede Quelle mit Navigation gleich;
  * nichts hier kennt eine Quellenart.
  *
- * <p>Wurzeln, die der Katalog abdeckt, bleiben beim Katalog wie bisher; diese Klasse fragt für sie nichts.
+ * <p>Sie ergänzt den Katalog, statt ihn zu ersetzen: Was lokal liegt, bleibt lokal; was nur die Quelle kennt, kommt
+ * über die Navigation dazu. Als {@link com.aresstack.spaceharvester.application.query.SearchBoundary} grenzt sie die
+ * Suche schon vor Katalogisieren, Laden und Bewerten auf den Teilbaum ein.
  */
-final class LiveArea {
+final class LiveArea implements com.aresstack.spaceharvester.application.query.SearchBoundary {
 
     /** Die Navigation der App ({@link Workspace#children}, {@link Workspace#position}); für Tests austauschbar. */
     interface Navigation {
@@ -69,7 +70,7 @@ final class LiveArea {
     private final Set<PageKey> folders = ConcurrentHashMap.newKeySet();
 
     /**
-     * @param roots nur die Wurzeln, die der Katalog nicht abdeckt ({@link #uncovered})
+     * @param roots die Wurzeln, die die Navigation ergänzt ({@link #complementing})
      */
     LiveArea(Navigation navigation, List<Selection.Root> roots) {
         this.roots = List.copyOf(roots);
@@ -82,35 +83,17 @@ final class LiveArea {
     }
 
     /**
-     * Die Wurzeln der Auswahl, die der Katalog nicht abdeckt: eine Seite, die er nicht führt, ein Space oder eine
-     * Quelle, von der er keine Seite kennt. Ohne aufgelösten Bereich ({@code scope} {@code null}) alle.
+     * Die Wurzeln, für die die Navigation den Katalog ergänzt: alle, solange der Katalog die Auswahl nicht vollständig
+     * kennt (Angelo 26.11.2026: ein bekannter Bereich ist nicht zwangsläufig ganz erschlossen; lokaler Bestand und
+     * Live-Zugriff ergänzen sich). Nur eine vollständige Auflösung ({@link PageSelection#complete()}: jeder Space mit
+     * bestätigter Inventur, jede gewählte Seite im Katalog) kennt jede Seite, auch nicht geladene; dann genügt der
+     * Katalog. Ohne aufgelösten Bereich ({@code scope} {@code null}) alle.
      */
-    static List<Selection.Root> uncovered(PageSelection scope, List<Selection.Root> roots) {
-        if (roots == null || roots.isEmpty()) {
+    static List<Selection.Root> complementing(PageSelection scope, List<Selection.Root> roots) {
+        if (roots == null || roots.isEmpty() || scope != null && scope.complete()) {
             return List.of();
         }
-        List<Selection.Root> uncovered = new ArrayList<>();
-        for (Selection.Root root : roots) {
-            if (scope == null) {
-                uncovered.add(root);
-            } else if (root.pageId() != null) {
-                if (!scope.contains(root.sourceId(), root.pageId())) {
-                    uncovered.add(root);
-                }
-            } else if (root.spaceKey() != null) {
-                boolean known = false;
-                for (SpaceSummary space : scope.spaces()) {
-                    known |= space.sourceId().equals(root.sourceId()) && space.spaceKey().equals(root.spaceKey())
-                            && space.counts().pages() > 0;
-                }
-                if (!known) {
-                    uncovered.add(root);
-                }
-            } else if (scope.pagesOf(root.sourceId()).isEmpty()) {
-                uncovered.add(root);
-            }
-        }
-        return List.copyOf(uncovered);
+        return List.copyOf(roots);
     }
 
     boolean isEmpty() {
@@ -171,6 +154,27 @@ final class LiveArea {
         }
         outside.add(key);
         return false;
+    }
+
+    // ------------------------------------------------------------------ Grenze der Suche
+
+    /** Die Grenze der Suche: dieselbe Zugehörigkeit wie {@link #contains}, vor Katalogisieren, Laden und Bewerten. */
+    @Override
+    public boolean admits(PageKey key) {
+        return contains(key);
+    }
+
+    @Override
+    public boolean reaches(String sourceId) {
+        return roots.stream().anyMatch(root -> root.sourceId().equals(sourceId));
+    }
+
+    @Override
+    public String fingerprint() {
+        StringBuilder b = new StringBuilder();
+        roots.stream().map(root -> root.sourceId() + '\u0001' + root.spaceKey() + '\u0001' + root.pageId())
+                .sorted().forEach(root -> b.append(root).append('\u0002'));
+        return Integer.toHexString(b.toString().hashCode()) + ":" + roots.size();
     }
 
     /** Der Space einer Seite, die {@link #contains} schon bestätigt hat; sonst {@code null}. */

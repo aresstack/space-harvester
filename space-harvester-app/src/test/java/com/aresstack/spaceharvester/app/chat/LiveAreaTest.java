@@ -68,7 +68,7 @@ class LiveAreaTest {
     void aSelectedNodeOutsideTheCatalogIsAnAreaWithItsDescendants(Shape shape) {
         FakeNavigation navigation = new FakeNavigation(shape);
         Selection.Root root = Selection.Root.subtree(shape.sourceId(), shape.partition(), shape.root());
-        LiveArea area = new LiveArea(navigation, LiveArea.uncovered(emptyCatalog(), List.of(root)));
+        LiveArea area = new LiveArea(navigation, LiveArea.complementing(emptyCatalog(), List.of(root)));
 
         assertThat(area.isEmpty()).isFalse();
         // Die oberste Liste sind die Kinder der gewählten Seite, gefolgt über alle Fortsetzungen der Quelle.
@@ -108,7 +108,7 @@ class LiveAreaTest {
     @MethodSource("shapes")
     void aSelectedSpaceOutsideTheCatalogListsItsStartPagesAndTakesItsPages(Shape shape) {
         FakeNavigation navigation = new FakeNavigation(shape);
-        LiveArea area = new LiveArea(navigation, LiveArea.uncovered(emptyCatalog(),
+        LiveArea area = new LiveArea(navigation, LiveArea.complementing(emptyCatalog(),
                 List.of(Selection.Root.space(shape.sourceId(), shape.partition()))));
 
         assertThat(area.children(null, () -> false)).extracting(node -> node.key().pageId())
@@ -118,21 +118,36 @@ class LiveAreaTest {
     }
 
     @Test
-    void rootsTheCatalogCoversStayWithTheCatalog() {
-        PageSelection catalog = new PageSelection(PageSet.of(Map.of("wiki", List.of("1001", "1002"))),
-                HoldingCounts.ZERO, List.of(new SpaceSummary("wiki", "TEAM", null, HoldingCounts.ZERO)), true);
-        Selection.Root covered = Selection.Root.subtree("wiki", "TEAM", "1001");
+    void theNavigationComplementsTheCatalogUntilItKnowsTheWholeSelection() {
+        Selection.Root known = Selection.Root.subtree("wiki", "TEAM", "1001");
         Selection.Root folder = Selection.Root.subtree("sp", "sp", "folder:/sites/team/Dokumente");
-        Selection.Root emptySpace = Selection.Root.space("wiki", "LEER");
-        Selection.Root wholeSource = Selection.Root.source("bscw");
-
-        assertThat(LiveArea.uncovered(catalog, List.of(covered, folder, emptySpace, wholeSource)))
-                .containsExactly(folder, emptySpace, wholeSource);
+        // Teilweise geladen (Angelo 26.11.2026: Konzept lokal, Ausnahmen nur in der Quelle): auch die bekannte Wurzel
+        // bekommt die Navigation dazu.
+        PageSelection partial = new PageSelection(PageSet.of(Map.of("wiki", List.of("1001", "1002"))),
+                HoldingCounts.ZERO, List.of(new SpaceSummary("wiki", "TEAM", null, HoldingCounts.ZERO)), false);
+        assertThat(LiveArea.complementing(partial, List.of(known, folder))).containsExactly(known, folder);
+        // Vollständig aufgelöst (bestätigte Inventur, jede Wurzel im Katalog): Der Katalog kennt jede Seite.
+        PageSelection complete = new PageSelection(partial.pages(), partial.counts(), partial.spaces(), true);
+        assertThat(LiveArea.complementing(complete, List.of(known))).isEmpty();
         // Ohne aufgelösten Bereich (die Auflösung scheiterte) gilt jede Wurzel über die Navigation.
-        assertThat(LiveArea.uncovered(null, List.of(covered))).containsExactly(covered);
-        assertThat(LiveArea.uncovered(catalog, List.of())).isEmpty();
+        assertThat(LiveArea.complementing(null, List.of(known))).containsExactly(known);
+        assertThat(LiveArea.complementing(partial, List.of())).isEmpty();
         assertThat(LiveArea.NONE.isEmpty()).isTrue();
         assertThat(LiveArea.NONE.contains(new PageKey("wiki", "1001"))).isFalse();
+    }
+
+    @Test
+    void asSearchBoundaryItAdmitsWhatItContainsAndReachesOnlyItsSources() {
+        Shape sharePoint = shapes().filter(shape -> shape.name().equals("SharePoint")).findFirst().orElseThrow();
+        LiveArea area = new LiveArea(new FakeNavigation(sharePoint), List.of(Selection.Root.subtree("sp", "sp",
+                sharePoint.root())));
+
+        assertThat(area.admits(new PageKey("sp", sharePoint.grandchild()))).isTrue();
+        assertThat(area.admits(new PageKey("sp", sharePoint.sibling()))).isFalse();
+        assertThat(area.reaches("sp")).isTrue();
+        assertThat(area.reaches("wiki")).isFalse();
+        assertThat(area.fingerprint()).isEqualTo(new LiveArea(new FakeNavigation(sharePoint),
+                List.of(Selection.Root.subtree("sp", "sp", sharePoint.root()))).fingerprint());
     }
 
     @Test

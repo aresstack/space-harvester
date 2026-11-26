@@ -59,7 +59,8 @@ public record SearchScope(String sourceId, Set<String> sourceIds) {
         boolean implicit = query.sourceIds().isEmpty() && query.pages() == null;
         for (HarvestSource source : implicit ? catalog.globalSearchSources() : catalog.all()) {
             String id = source.id();
-            if (query.pages() != null && !query.pages().sourceIds().contains(id)) {
+            if (query.pages() != null && !query.pages().sourceIds().contains(id)
+                    && (query.boundary() == null || !query.boundary().reaches(id))) {
                 continue;
             }
             if (!query.sourceIds().isEmpty() && !query.sourceIds().contains(id)) {

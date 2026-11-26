@@ -95,7 +95,7 @@ class ChatLiveAreaTest {
             public void delivered(String space, PageKey key) {
                 delivered.add(ChatTools.ref(key));
             }
-        }).liveArea(new LiveArea(LiveArea.of(workspace), LiveArea.uncovered(scope, List.of(root))));
+        }).liveArea(new LiveArea(LiveArea.of(workspace), LiveArea.complementing(scope, List.of(root))));
 
         String listed = tools.run(new AiChat.ToolCall("l", ChatTools.LIST, "{}"));
         assertThat(listed).contains("protokoll").doesNotContain("sonstiges").doesNotContain("keine Seiten");
@@ -114,6 +114,39 @@ class ChatLiveAreaTest {
         // Die Suche meldet nie „kein Bereich gewählt“, wenn einer gewählt ist.
         assertThat(tools.run(new AiChat.ToolCall("s", ChatTools.SEARCH, "{\"text\":\"Rufbereitschaft\"}")))
                 .doesNotContain("kein Bereich gewählt");
+    }
+
+    @Test
+    void localAndLiveComplementEachOtherInAPartlyLoadedArea() {
+        // Angelo 26.11.2026: Ein bekannter Bereich ist nicht zwangsläufig ganz erschlossen. Eine Datei liegt lokal
+        // (geöffnet), die übrigen kennt nur die Quelle; der Chat erreicht alle.
+        PageNode outside = workspace.children("ablage", spaceKey, null, null).pages().stream()
+                .filter(node -> node.title().contains("sonstiges")).findFirst().orElseThrow();
+        workspace.page("ablage", outside.pageId(), false);
+        Selection.Root root = Selection.Root.space("ablage", spaceKey);
+        PageSelection scope = workspace.resolveSelection(Selection.of(root));
+        assertThat(scope.pages().contains("ablage", outside.pageId())).as("lokal und im Katalog").isTrue();
+        assertThat(scope.complete()).as("ohne Inventur unvollständig").isFalse();
+        List<Selection.Root> live = LiveArea.complementing(scope, List.of(root));
+        assertThat(live).containsExactly(root);
+        ChatTools tools = new ChatTools(workspace, scope, java.util.Set.of(), new ChatTools.Sources() {
+            @Override
+            public int cite(ChatKnowledge.Excerpt excerpt, PageKey key) {
+                return 3;
+            }
+
+            @Override
+            public void delivered(String space, PageKey key) {
+            }
+        }).liveArea(new LiveArea(LiveArea.of(workspace), live));
+
+        String listed = tools.run(new AiChat.ToolCall("l", ChatTools.LIST, "{}"));
+        assertThat(listed).contains("sonstiges").contains("team");
+        String folder = ChatTools.ref(new PageKey("ablage", team.pageId()));
+        assertThat(tools.run(new AiChat.ToolCall("u", ChatTools.LIST, "{\"knoten\":\"" + folder + "\"}")))
+                .contains("protokoll");
+        assertThat(tools.run(new AiChat.ToolCall("f", ChatTools.READ, "{\"kennung\":\"" + folder + "\"}")))
+                .isEqualTo(ChatTools.FOLDER_ONLY);
     }
 
     @Test
