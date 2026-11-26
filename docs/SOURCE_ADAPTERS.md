@@ -298,9 +298,9 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
 
 | Grenze | Wert | Folge |
 |---|---|---|
-| Größe je Datei | 20 MiB (`TikaDocumentText.DEFAULT_MAX_BYTES`, wie ADR 0002 und `maxFileMegabytes`) | kein Text, `document-text-too-large` |
-| Laufzeit je Datei | 30 s, eigener Thread, danach unterbrochen | `document-text-timeout`, später erneut |
-| gleichzeitige Läufe | 2; ein hängender Lauf hält seinen Platz | `document-text-busy`, später erneut |
+| Größe je Datei | `assets.extraction.memory-limits` für `*` (Standard 20 MiB, wie ADR 0002), mit `max-file-size` die kleinere | kein Text, `document-text-too-large` |
+| Laufzeit je Datei | `assets.extraction.idle-timeout` (Standard 30 s), eigener Thread, danach unterbrochen | `document-text-timeout`, später erneut |
+| gleichzeitige Läufe | `assets.extraction.parallel` (Standard 2); ein hängender Lauf hält seinen Platz | `document-text-busy`, später erneut |
 | Textlänge | keine (F39-10, `docs/grenzen.md`) | ganzer Text |
 
 - **Lokale Dateien** (`type: files`): `LocalFilesSourceAdapter` übergibt Erkennung und Extraktoren an den Provider.

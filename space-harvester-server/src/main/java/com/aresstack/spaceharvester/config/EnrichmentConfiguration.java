@@ -43,11 +43,8 @@ import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
 import com.aresstack.spaceharvester.application.terms.SynonymDiscovery;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
-import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
-import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
-import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -72,6 +69,16 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration(proxyBeanMethods = false)
 class EnrichmentConfiguration {
+
+    /**
+     * Lesetext der Seiten (Bean aus {@link AssetConfiguration}); auch lokale Dateien und Quellen über discover/load
+     * (#187) bekommen Anreicherungen und Embeddings, wie im Volltextindex.
+     */
+    private final PageTextProjector projector;
+
+    EnrichmentConfiguration(PageTextProjector projector) {
+        this.projector = projector;
+    }
 
     @Bean
     Enrichments enrichments(ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingProcessor> embedding,
@@ -98,7 +105,7 @@ class EnrichmentConfiguration {
         processors.add(new ImageProcessor(describer::getIfAvailable));
         // #108: Satzanalyse über das Chat-Modell, nur eingeschaltet (AiConfiguration), im Hintergrund
         statements.ifAvailable(processors::add);
-        return new Enrichments(projector(), processors,
+        return new Enrichments(projector, processors,
                 enrichmentStore, Clock.systemUTC(), background.getIfAvailable());
     }
 
@@ -182,7 +189,7 @@ class EnrichmentConfiguration {
     /** Dokumentnavigation einer Seite für {@code GET …/navigation} (ADR 0020). */
     @Bean
     NavigationQueries navigationQueries(PageQueries pages, Enrichments enrichments) {
-        return new NavigationQueries(pages, enrichments, projector(), new DocumentNavigationBuilder());
+        return new NavigationQueries(pages, enrichments, projector, new DocumentNavigationBuilder());
     }
 
     /** Semantische Absätze einer Seite für {@code GET …/passages} (ADR 0020). */
@@ -190,21 +197,13 @@ class EnrichmentConfiguration {
     PassageQueries passageQueries(PageQueries pages, Enrichments enrichments,
                                   ObjectProvider<DocumentEnrichments> documents) {
         // ADR 0026, AP9a: Absätze aus Anhängen lesen den Text nur ihres Abschnitts aus der Extraktion.
-        return new PassageQueries(pages, enrichments, projector(), (document, section, inputSha256, extraction) -> {
+        return new PassageQueries(pages, enrichments, projector, (document, section, inputSha256, extraction) -> {
             DocumentEnrichments found = documents.getIfAvailable();
             return found == null ? java.util.Optional.empty()
                     : found.sectionText(document, section, inputSha256, extraction);
         });
     }
 
-    /**
-     * Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
-     * Volltextindex.
-     */
-    private static PageTextProjector projector() {
-        return PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
-                new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
-    }
 
     @Bean
     EnrichmentsAfterSync enrichmentsAfterSync(Enrichments enrichments, ObjectProvider<SnapshotRepository> snapshots,
