@@ -131,6 +131,43 @@ public record SourceLocationEvidence(DocumentKey program, String revision, List<
                 throw new IllegalArgumentException("Zeilen " + firstLine + ".." + lastLine + " ungültig");
             }
         }
+
+        /**
+         * Die Zeichen dieser Zeilen im Text desselben Dokuments, damit „im Text zeigen“ die Codestelle markiert; leer,
+         * wenn der Text weniger Zeilen hat.
+         *
+         * @return Beginn der ersten Zeile und Ende der letzten (exklusiv, ohne Zeilenumbruch)
+         */
+        public Optional<Characters> characters(String text) {
+            int start = 0;
+            for (int line = 1; line < firstLine; line++) {
+                int next = text.indexOf('\n', start);
+                if (next < 0) {
+                    return Optional.empty();
+                }
+                start = next + 1;
+            }
+            int end = start;
+            for (int line = firstLine; line <= lastLine; line++) {
+                int next = text.indexOf('\n', end);
+                if (next < 0) {
+                    if (line < lastLine || start >= text.length()) {
+                        return Optional.empty();
+                    }
+                    end = text.length();
+                    break;
+                }
+                end = line == lastLine ? next : next + 1;
+            }
+            if (end > start && text.charAt(end - 1) == '\r') {
+                end--;
+            }
+            return Optional.of(new Characters(start, end));
+        }
+    }
+
+    /** Ein Zeichenbereich im Text, Ende exklusiv. */
+    public record Characters(int start, int end) {
     }
 
     /**
