@@ -51,8 +51,26 @@ Programmanalyse wird nur über dieses Tor gelesen (ADR 0041, Punkt 11).
 
 Teil 1 führt keine Grenze ein: keine Höchstzahl an Codestellen, Parserfakten oder Abhängigkeiten.
 
-## Teil 2 (offen)
+## Teil 2: Hypothesen der Programmanalyse als Aussagen im Bestand
 
-KI-Hypothesen der Programmanalyse (`CobolBusinessAnalysis.Hypothesis` mit `Evidence(id, kind, fact, Span)`) als
-Aussagen mit Quellstellenbeleg in den Fachlogik-Bestand, Bestätigung über W3, Anzeige der Erkenntnisebene, Umsetzung
-von `CurrentSources` über `ProgramAnalysisAccess`.
+- Herkunft `ParsedStatements.Origin.PROGRAMM`: Die Aussage stammt aus einer KI-Hypothese; `Derivation#source()` trägt
+  den Quellstellenbeleg, `simplifiedSentence` den Hypothesensatz zur Anzeige. Der Hypothesensatz ist nie Beleg.
+  `Evidence.of(PageRef, Statement)` liefert den Beleg jeder gespeicherten Aussage.
+- `StatementAnalysis#analyzeProgram`: zerlegt jede Hypothese wie eine Zeile der Vorstufe mit dem Satzanalysator und
+  speichert die Aussagen in der Analyse des Programms (derselbe Bestand, dieselbe W3-Prüfung). Nur Hypothesen, deren
+  Beleg zu diesem Programm gehört und technisch aktuell ist; die übrigen werden gezählt. Die Fassung in den
+  Aussagen-IDs fasst Programmtext und Fingerabdrücke aller Belege zusammen, eine Bestätigung wandert also nie auf einen
+  neuen Stand. Veraltet ist die Analyse, sobald sich Programmtext oder Satzanalysator ändern.
+- Programmcode ist kein Satztext: Die Satzanalyse überschreibt Programmaussagen nie, der Prüfschritt nimmt sie nicht
+  auf (`CheckScope`).
+- Ablage: `FileKnowledgeGraphStore` schreibt den Beleg unter `source`; ohne lesbaren Beleg wird die Aussage übergangen.
+  Ältere Fassungen der App übergehen die unbekannte Herkunft.
+- App: Nach „Fachliche KI-Analyse“ eines COBOL-Programms baut `ProgramHypothesisEvidence` die Belege aus den
+  gespeicherten Analysen (Programm- und Copybook-Stellen, alle Proben, Identität des Parserergebnisses als
+  Analyseversion), gelesen nur über `ProgramAnalysisAccess`; `ProgramCurrentSources` liefert den jetzigen Stand. Das
+  Auftragsereignis nennt übernommene und ausgelassene Hypothesen.
+
+## Teil 3 (offen)
+
+Anzeige von Erkenntnisebene (Hypothese, bestätigt, Bestätigung veraltet) und Quellstelle in Aussagen-Reiter und Belege-
+Overlay; Zählung der Programmaussagen in Fachsicht, Glossar und Stand als Ist.
