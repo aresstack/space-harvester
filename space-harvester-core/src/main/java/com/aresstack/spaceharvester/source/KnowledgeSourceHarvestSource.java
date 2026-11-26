@@ -552,8 +552,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         try {
             resolved = addressable.resolveAddress(value);
         } catch (KnowledgeSourceException e) {
-            if (e.kind() == KnowledgeSourceException.Kind.NOT_FOUND
-                    || e.kind() == KnowledgeSourceException.Kind.ACCESS_DENIED) {
+            // Only a missing object is "no page". A refused login must surface: callers stop instead of logging in
+            // again for every listed member (repeated failed logons can revoke a mainframe user id).
+            if (e.kind() == KnowledgeSourceException.Kind.NOT_FOUND) {
                 return Optional.empty();
             }
             throw accessFailure(e);
@@ -622,8 +623,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         try {
             return Optional.ofNullable(navigation.navigationResource(nativePath)).map(this::nativeId);
         } catch (KnowledgeSourceException e) {
-            if (e.kind() == KnowledgeSourceException.Kind.NOT_FOUND
-                    || e.kind() == KnowledgeSourceException.Kind.ACCESS_DENIED) {
+            // Only a missing object is "no page". A refused login must surface: callers stop instead of logging in
+            // again for every listed member (repeated failed logons can revoke a mainframe user id).
+            if (e.kind() == KnowledgeSourceException.Kind.NOT_FOUND) {
                 return Optional.empty();
             }
             throw accessFailure(e);

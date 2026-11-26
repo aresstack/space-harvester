@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app;
 import com.aresstack.spaceharvester.app.logging.ConsoleLogging;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
+import com.aresstack.spaceharvester.app.settings.WindowsLogin;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.ui.MainWindow;
 import com.aresstack.spaceharvester.app.ui.Screenshots;
@@ -53,7 +54,11 @@ public final class SpaceHarvesterApp {
             String fromEnv = System.getenv("SPACE_HARVESTER_APP_CONFIG");
             config = fromEnv == null || fromEnv.isBlank() ? AppSettingsLoader.defaultFile(home) : Path.of(fromEnv);
         }
-        AppContext context = new AppContext(new AppSettingsLoader(Placeholders.system(), home), config, version());
+        AppSettingsLoader loader = new AppSettingsLoader(Placeholders.system(), home);
+        if (WindowsLogin.available()) {
+            WindowsLogin.configureAtStartup(loader.load(config));
+        }
+        AppContext context = new AppContext(loader, config, version());
         // Auch beim Beenden von außen (Abmelden, Strg+C) mit Frist; nach AppExit#exit kehrt der Hook sofort zurück.
         Runtime.getRuntime().addShutdownHook(new Thread(
                 () -> AppExit.cleanUp(java.util.List.of(context::shutdown), AppExit.timeout()),

@@ -4,7 +4,7 @@ Die Quelle mit Typ sharepoint greift direkt über die SharePoint-REST-API auf ei
 
 ## Integrierte Windows-Anmeldung
 
-Bei einer Site mit integrierter Windows-Anmeldung keine Zugangsdaten für die Quelle hinterlegen. Die bestehende HttpURLConnection-Strategie nutzt die JDK-Authentifizierung. Ein separater Kerberos- oder NTLM-Modus ist nicht erforderlich.
+Im Desktop-Quellenformular bei SharePoint unter „Zugangsdaten beziehen über“ die **Windows-Anmeldung** auswählen, die Site-URL eintragen und die Quelle speichern. Kein Benutzername, Passwort oder KeePass-Verweis ist erforderlich. Die Auswahl speichert `options.windowsLogin: "true"` ohne `auth`-Zugangsdaten oder `credentialRef`. Danach die Anwendung beim ersten Einrichten vollständig neu starten und „Verbindung testen“ verwenden. Ein bloßes Neuladen der Konfiguration genügt nicht. Die bestehende HttpURLConnection-Strategie nutzt die JDK-Authentifizierung. Ein separater Kerberos- oder NTLM-Modus ist nicht erforderlich.
 
 Die folgenden JVM-Optionen wurden mit Red Hat OpenJDK 21 unter Windows erfolgreich an der REST-API getestet:
 
@@ -13,7 +13,7 @@ Die folgenden JVM-Optionen wurden mit Red Hat OpenJDK 21 unter Windows erfolgrei
     -Djdk.http.ntlm.transparentAuth=trustedHosts
     -Djava.net.useSystemProxies=true
 
-Diese Optionen beim Java-Start vor -jar angeben. Sie gelten für die gesamte JVM und werden deshalb nicht automatisch durch den Adapter gesetzt. Die Windows-Vertrauenszonen und die bestehenden Netzwerk- und Sicherheitsrichtlinien bleiben maßgeblich. Verwende keinen allHosts-Modus. Die JDK-Dateien sspi_bridge.dll und j2gss.dll sind bei der getesteten Installation bereits enthalten. JNA ist nicht erforderlich.
+Die Desktop-App setzt nach expliziter Auswahl der Windows-Anmeldung beim nächsten vollständigen Start unter Windows die ersten drei Optionen, sofern keine Startvorgabe existiert. Sie gelten prozessweit, auch für andere JDK-HTTP-Verbindungen; das Quellenformular weist darauf hin. Administratorvorgaben bleiben unverändert. Die vorhandene Proxy-Konfiguration des Space Harvesters bleibt maßgeblich; `java.net.useSystemProxies` wird nicht automatisch gesetzt. Für eingebettete Nutzung oder den Server gelten weiterhin die expliziten JVM-Startparameter vor `-jar`; der Quelladapter ändert sie nicht. Windows-Vertrauenszonen und Netzwerk- und Sicherheitsrichtlinien bleiben maßgeblich. Verwende keinen `allHosts`-Modus. Die JDK-Dateien `sspi_bridge.dll` und `j2gss.dll` sind bei der getesteten Installation bereits enthalten. JNA ist nicht erforderlich. Die vollständige Desktop-Verbindungsprüfung mit der echten SharePoint-Instanz steht noch aus.
 
 ## Umfang der ersten Implementierung
 

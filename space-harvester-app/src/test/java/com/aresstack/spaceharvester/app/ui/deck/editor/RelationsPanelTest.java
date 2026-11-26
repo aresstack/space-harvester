@@ -60,6 +60,11 @@ class RelationsPanelTest {
         assertThat(on(p::resourceLabels)).anyMatch(l -> l.contains("USING"));
         assertThat(on(() -> p.sideTitle(RelationsPanel.CALLEES))).isEqualTo("Callees (3)");
         assertThat(on(() -> p.sideTitle(RelationsPanel.CALLERS))).isEqualTo("Caller (1)");
+        SwingUtilities.invokeAndWait(() -> {
+            assertRenderedIcons(p.resourceTree());
+            assertRenderedIcons(p.callTree(RelationsPanel.CALLEES));
+            assertRenderedIcons(p.callTree(RelationsPanel.CALLERS));
+        });
 
         SwingUtilities.invokeAndWait(() -> p.hideKind(RelationsPanel.CALLEES, "PERFORM", true));
         assertThat(on(() -> p.sideTitle(RelationsPanel.CALLEES))).isEqualTo("Callees (2/3)");
@@ -69,8 +74,8 @@ class RelationsPanelTest {
             p.hideKind(RelationsPanel.CALLEES, "PERFORM", false);
             p.group(RelationsPanel.CALLEES, true);
         });
-        assertThat(on(() -> p.labels(RelationsPanel.CALLEES))).containsExactly("📞 CALLNAT (1)", "UNTERPRG",
-                "HILFE", "🔄 PERFORM (1)", "AUSGABE");
+        assertThat(on(() -> p.labels(RelationsPanel.CALLEES))).containsExactly("CALLNAT (1)", "UNTERPRG",
+                "HILFE", "PERFORM (1)", "AUSGABE");
 
         SwingUtilities.invokeAndWait(() -> {
             p.group(RelationsPanel.CALLEES, false);
@@ -82,7 +87,7 @@ class RelationsPanelTest {
         SwingUtilities.invokeAndWait(() -> p.nameFilter(RelationsPanel.CALLEES, "^UNTERPRG$"));
         assertThat(on(() -> p.labels(RelationsPanel.CALLEES))).containsExactly("UNTERPRG", "HILFE");
         SwingUtilities.invokeAndWait(() -> p.group(RelationsPanel.CALLEES, true));
-        assertThat(on(() -> p.labels(RelationsPanel.CALLEES))).containsExactly("📞 CALLNAT (1)", "UNTERPRG",
+        assertThat(on(() -> p.labels(RelationsPanel.CALLEES))).containsExactly("CALLNAT (1)", "UNTERPRG",
                 "HILFE");
         SwingUtilities.invokeAndWait(() -> {
             p.group(RelationsPanel.CALLEES, false);
@@ -115,6 +120,16 @@ class RelationsPanelTest {
         assertThat(analysis.callees().root()).isPresent();
         assertThat(analysis.callees().root().get().children()).extracting(CallNode::label)
                 .anyMatch(label -> label.contains("UNTERPRG"));
+    }
+
+    private static void assertRenderedIcons(javax.swing.JTree tree) {
+        for (int row = 0; row < tree.getRowCount(); row++) {
+            Object node = tree.getPathForRow(row).getLastPathComponent();
+            var label = (javax.swing.JLabel) tree.getCellRenderer().getTreeCellRendererComponent(
+                    tree, node, false, true, tree.getModel().isLeaf(node), row, false);
+            assertThat(label.getIcon()).isNotNull();
+            assertThat(label.getText()).doesNotContain("📞", "📦", "🔄", "🌿", "📎");
+        }
     }
 
     private static <T> T on(java.util.function.Supplier<T> read) throws Exception {

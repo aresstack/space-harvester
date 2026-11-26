@@ -836,7 +836,19 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
             relationsPanel.loading();
         }
         Thread.ofVirtual().name("deck-cobol-analysis").start(() -> {
-            CobolEditorAnalysis.Result result = worker.analyze(text, DocumentEditors.relations());
+            CobolEditorAnalysis.Result analyzed;
+            try {
+                analyzed = worker.analyze(text, DocumentEditors.relations());
+            } catch (RuntimeException | StackOverflowError e) {
+                // Never leave the relations panel on "loading": show the failure like the other analyses do.
+                SwingUtilities.invokeLater(() -> {
+                    if (relationTicket == relationsTicket) {
+                        relationsPanel.show(failedRelations(e));
+                    }
+                });
+                return;
+            }
+            CobolEditorAnalysis.Result result = analyzed;
             SwingUtilities.invokeLater(() -> {
                 if (outlineTicket == parseTicket) {
                     outline = result.outline();
@@ -848,6 +860,15 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
                 }
             });
         });
+    }
+
+    private static com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis failedRelations(Throwable e) {
+        return new com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis(
+                new com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Resources("",
+                        java.util.Map.of(), 0, "Fehler bei der Abhängigkeitsanalyse ("
+                        + e.getClass().getSimpleName() + ")"),
+                com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis.NONE.callees(),
+                com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis.NONE.callers());
     }
 
     private CobolEditorAnalysis cobolWorker() {
@@ -988,12 +1009,7 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
             try {
                 analysis = DocumentEditors.relations().analyze(parser, text, name, library);
             } catch (RuntimeException e) {
-                analysis = new com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis(
-                        new com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Resources("",
-                                java.util.Map.of(), 0, "Fehler bei der Abhängigkeitsanalyse ("
-                                + e.getClass().getSimpleName() + ")"),
-                        com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis.NONE.callees(),
-                        com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis.NONE.callers());
+                analysis = failedRelations(e);
             }
             com.aresstack.spaceharvester.mainframe.dependency.SourceRelations.Analysis result = analysis;
             SwingUtilities.invokeLater(() -> {
