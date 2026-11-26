@@ -520,7 +520,9 @@ final class SourceUpdatesView extends JPanel {
         if (level != null && (level.initial() || level.pages() == 0)) {
             return false;
         }
-        if (!autoStarted.add(autoKey(sourceId, spaceKey, selected))) {
+        // Ein Ordner im Baum (Teilbaum-Ebene): nur per Klick auf „Zusammenfassen“ (Angelo 26.11.2026).
+        if (com.aresstack.spaceharvester.application.changelog.ChangeLevel.of(spaceKey).subtree()
+                || !autoStarted.add(autoKey(sourceId, spaceKey, selected))) {
             return false;
         }
         summarize(true);

@@ -200,8 +200,9 @@ public final class ChangeLog implements AutoCloseable {
         Objects.requireNonNull(caller, "caller");
         requireReadable(caller, sourceId);
         List<UpdateMark> marks = marks(sourceId);
+        String space = ChangeLevel.of(spaceKey).spaceKey();
         for (int i = marks.size() - 1; i >= 0; i--) {
-            if (spaceKey == null || marks.get(i).spaces().contains(spaceKey)) {
+            if (space == null || marks.get(i).spaces().contains(space)) {
                 return Optional.of(marks.get(i));
             }
         }
@@ -231,7 +232,7 @@ public final class ChangeLog implements AutoCloseable {
         requireReadable(caller, sourceId);
         Visibility visible = new Visibility(caller);
         ChangeQuery query = rows(sourceId, spaceKey, null, null);
-        List<ChangeEntry> entries = store.changeEntries(query, entry -> visible.within(entry, query), 0,
+        List<ChangeEntry> entries = store.changeEntries(query, rows(visible, query, sourceId, spaceKey), 0,
                 Integer.MAX_VALUE).entries();
         List<ChangeUpdate> updates = new ArrayList<>();
         Set<String> summarized = store.summarizedUpdates(sourceId, spaceKey);
@@ -298,7 +299,7 @@ public final class ChangeLog implements AutoCloseable {
         Span span = span(sourceId, update);
         Visibility visible = new Visibility(caller);
         ChangeQuery query = rows(sourceId, spaceKey, span.from(), span.to());
-        List<ChangeEntry> rows = store.changeEntries(query, entry -> visible.within(entry, query), 0,
+        List<ChangeEntry> rows = store.changeEntries(query, rows(visible, query, sourceId, spaceKey), 0,
                 Integer.MAX_VALUE).entries();
         Consolidated consolidated = consolidate(span, rows);
         if (consolidated.update().initial()) {
@@ -357,7 +358,7 @@ public final class ChangeLog implements AutoCloseable {
         Span span = span(sourceId, update);
         Visibility visible = new Visibility(caller);
         ChangeQuery query = rows(sourceId, spaceKey, span.from(), span.to());
-        List<ChangeEntry> rows = store.changeEntries(query, entry -> visible.within(entry, query), 0,
+        List<ChangeEntry> rows = store.changeEntries(query, rows(visible, query, sourceId, spaceKey), 0,
                 Integer.MAX_VALUE).entries();
         Consolidated consolidated = consolidate(span, rows);
         List<ReportedPage> level = new ArrayList<>();
@@ -376,7 +377,7 @@ public final class ChangeLog implements AutoCloseable {
                     : page.withDirectory(releasedPath(page, visible, released), null);
             window.add(withDiff(caller, located, span.from(), span.to()));
         }
-        UpdateTextRenderer.Rendered rendered = UpdateTextRenderer.render(consolidated.update(), spaceKey,
+        UpdateTextRenderer.Rendered rendered = UpdateTextRenderer.render(consolidated.update(), ChangeLevel.of(spaceKey).spaceKey(),
                 UpdateTextRenderer.counts(level), total, offset, window, zone);
         if (released != null) {
             // Namen von Personen gehen nie in Material für ein Modell, auch nicht im Bericht (ADR 0031).
@@ -601,7 +602,8 @@ public final class ChangeLog implements AutoCloseable {
             // läuft der Auftrag für dieses Update in dieser Ebene schon, ist er die Antwort.
             for (JobStatus open : runtime.jobs().listAll(JobType.UPDATE_SUMMARY)) {
                 if (!open.state().terminal() && !open.cancelRequested() && sourceId.equals(open.sourceId())
-                        && Objects.equals(spaceKey, open.partitionKey()) && parameters.equals(open.parameters())) {
+                        && Objects.equals(ChangeLevel.of(spaceKey).spaceKey(), open.partitionKey())
+                        && parameters.equals(open.parameters())) {
                     return open;
                 }
             }
@@ -611,7 +613,9 @@ public final class ChangeLog implements AutoCloseable {
 
     private JobStatus submitSummary(AccessContext caller, String sourceId, String update, String spaceKey, Span span,
                                     Summaries runtime, Map<String, String> parameters) {
-        return runtime.jobs().submit(JobType.UPDATE_SUMMARY, sourceId, spaceKey, null, caller.jobOwner(),
+        // Der Auftrag trägt den Space als Partition; die Ebene samt Teilbaum steht in den Parametern.
+        String partition = ChangeLevel.of(spaceKey).spaceKey();
+        return runtime.jobs().submit(JobType.UPDATE_SUMMARY, sourceId, partition, null, caller.jobOwner(),
                 parameters, JobTask.blocking(context -> {
                     // Mit Unterschieden (CL5); withDiff prüft das Leserecht am Inhalt je Seite.
                     ChangeReport report = report(caller, sourceId, update, spaceKey, true);
@@ -633,7 +637,7 @@ public final class ChangeLog implements AutoCloseable {
                     Map<String, String> names = spaceNames(sourceId, reportSpaces);
                     ThematicSummarizer.Result result = new UpdateSummarizer(runtime.model(), runtime.released(),
                             new SummaryChildJobs(runtime.jobs(), runtime.model(), runtime.clock(),
-                                    JobType.UPDATE_SUMMARY, context.jobId(), sourceId, spaceKey, caller.jobOwner()))
+                                    JobType.UPDATE_SUMMARY, context.jobId(), sourceId, partition, caller.jobOwner()))
                             .withPlanner(runtime.planner())
                             .summarize(report, page -> releasedPath(page, visible, runtime.released()), text, names,
                                     context);
@@ -942,7 +946,8 @@ public final class ChangeLog implements AutoCloseable {
 
     /** Die Zeilen einer Quelle oder eines ihrer Spaces, nach {@code after} bis {@code until} einschließlich. */
     private static ChangeQuery rows(String sourceId, String spaceKey, Instant after, Instant until) {
-        return new ChangeQuery(Set.of(sourceId), Set.of(), Set.of(), spaceKey, null, after, false, until, true,
+        return new ChangeQuery(Set.of(sourceId), Set.of(), Set.of(), ChangeLevel.of(spaceKey).spaceKey(), null, after,
+                false, until, true,
                 false);
     }
 
@@ -1224,6 +1229,49 @@ public final class ChangeLog implements AutoCloseable {
     // --- Rechte --------------------------------------------------------------------------------------------------
 
     /** Leserechte je Seite, je Aufruf zwischengespeichert. */
+    /**
+     * Die Zeilen einer Ebene, wie der Aufrufer sie sehen darf: Space wie bisher über die Abfrage, ein Teilbaum zusätzlich
+     * über die Elternkette der Seite ({@link ChangeLevel}). Eine verschobene Seite gehört dazu, wenn ihr alter oder neuer
+     * Platz im Teilbaum liegt, wie eine verschobene Seite in beiden Spaces steht.
+     */
+    private java.util.function.UnaryOperator<ChangeEntry> rows(Visibility visible, ChangeQuery query, String sourceId,
+                                                               String level) {
+        String root = ChangeLevel.of(level).rootPageId();
+        if (root == null) {
+            return entry -> visible.within(entry, query);
+        }
+        Map<String, Boolean> below = new HashMap<>();
+        below.put(root, Boolean.TRUE);
+        return entry -> {
+            boolean inside = within(sourceId, entry.pageId(), root, below)
+                    || within(sourceId, entry.oldParentId(), root, below)
+                    || within(sourceId, entry.newParentId(), root, below);
+            return inside ? visible.within(entry, query) : null;
+        };
+    }
+
+    /**
+     * Ob {@code pageId} die Wurzel ist oder unter ihr liegt, über die Elternkette im Cache; bekannte Antworten merkt
+     * {@code below} für alle Seiten auf dem Weg.
+     */
+    private boolean within(String sourceId, String pageId, String root, Map<String, Boolean> below) {
+        List<String> path = new ArrayList<>();
+        String current = pageId;
+        Boolean found = null;
+        while (current != null && !current.isEmpty() && path.size() < MAX_PATH_DEPTH) {
+            found = below.get(current);
+            if (found != null) {
+                break;
+            }
+            path.add(current);
+            current = headers.apply(new PageKey(sourceId, current)).map(header -> header.metadata().parentPageId())
+                    .orElse(null);
+        }
+        boolean inside = Boolean.TRUE.equals(found);
+        path.forEach(step -> below.put(step, inside));
+        return inside;
+    }
+
     private final class Visibility {
         private final AccessContext caller;
         private final Map<String, Boolean> decided = new HashMap<>();

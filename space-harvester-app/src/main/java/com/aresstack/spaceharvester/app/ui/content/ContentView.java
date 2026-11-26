@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.SignInSlot;
 import com.aresstack.spaceharvester.app.ui.PillTabs;
 import com.aresstack.spaceharvester.app.ui.View;
+import com.aresstack.spaceharvester.application.changelog.ChangeLevel;
 import com.aresstack.spaceharvester.application.passages.PassageId;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 
@@ -77,10 +78,14 @@ public final class ContentView implements View {
         detail.onNavigated(place -> {
             allSources = false;
             sourceId = place.sourceId();
-            spaceKey = place.page() ? null : place.spaceKey();
+            // Ein Ordner steht als Ebene im Verlauf: Space und Wurzel des Teilbaums (ChangeLevel).
+            ChangeLevel level = ChangeLevel.of(place.page() ? null : place.spaceKey());
+            spaceKey = level.spaceKey();
             renderCrumbs();
             if (place.page()) {
                 locatePage.accept(place.sourceId(), place.pageId());
+            } else if (level.subtree()) {
+                locatePage.accept(place.sourceId(), level.rootPageId());
             } else {
                 locate.accept(place.sourceId(), place.spaceKey());
             }
@@ -191,14 +196,17 @@ public final class ContentView implements View {
     }
 
     /**
-     * Öffnet einen Knoten ohne eigenen Inhalt (einen Ordner) aus dem Explorer: die Mitte leer mit seinem Namen, nie die
-     * vorher gezeigte Seite (Angelo 26.11.2026).
+     * Öffnet einen Knoten ohne eigenen Inhalt (einen Ordner) aus dem Explorer: „Änderungen | Bereich“ für den Teilbaum
+     * unter ihm, nie die vorher gezeigte Seite (Angelo 26.11.2026); schon gezeigt, bleibt er.
      */
     public void openContainer(String sourceId, String spaceKey, String pageId, String title) {
         allSources = false;
-        detail.showContainer(title == null || title.isBlank() ? pageId : title);
+        String space = spaceKey == null || spaceKey.isBlank() ? null : spaceKey;
+        if (!detail.showsLevel(sourceId, ChangeLevel.key(space, pageId))) {
+            detail.showContainer(sourceId, space, pageId, title == null || title.isBlank() ? pageId : title);
+        }
         this.sourceId = sourceId;
-        this.spaceKey = spaceKey == null || spaceKey.isBlank() ? null : spaceKey;
+        this.spaceKey = space;
         renderCrumbs();
     }
 

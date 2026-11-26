@@ -90,26 +90,41 @@ final class AreaSummaryView extends JPanel {
     enum Mode { READ, LISTEN }
 
     /**
-     * Was zusammengefasst wird: eine Quelle ({@code spaceKey == null}), ein Space oder ein Favoriten-Ordner
-     * ({@code folder}, ADR 0034 §7 Paket 5c); dieselbe Ansicht für alle.
+     * Was zusammengefasst wird: eine Quelle ({@code spaceKey == null}), ein Space, der Teilbaum unter einem Knoten ohne
+     * eigenen Inhalt ({@code rootPageId}, etwa ein Ordner in SharePoint, BSCW oder lokalen Dateien, Angelo 26.11.2026)
+     * oder ein Favoriten-Ordner ({@code folder}, ADR 0034 §7 Paket 5c); dieselbe Ansicht für alle.
      */
-    record Target(String sourceId, String spaceKey, ExportPanel.Selection.Collection folder) {
+    record Target(String sourceId, String spaceKey, String rootPageId, ExportPanel.Selection.Collection folder) {
 
         static Target area(String sourceId, String spaceKey) {
+            return subtree(sourceId, spaceKey, null);
+        }
+
+        /** Der Teilbaum unter {@code rootPageId}; ohne Wurzel Quelle bzw. Space. */
+        static Target subtree(String sourceId, String spaceKey, String rootPageId) {
             return new Target(Objects.requireNonNull(sourceId, "sourceId"),
-                    spaceKey == null || spaceKey.isBlank() ? null : spaceKey, null);
+                    spaceKey == null || spaceKey.isBlank() ? null : spaceKey,
+                    rootPageId == null || rootPageId.isBlank() ? null : rootPageId, null);
         }
 
         static Target folder(ExportPanel.Selection.Collection folder) {
-            return new Target(null, null, Objects.requireNonNull(folder, "folder"));
+            return new Target(null, null, null, Objects.requireNonNull(folder, "folder"));
         }
 
-        /** Die Auswahl für den Core: die aufgelösten Wurzeln des Ordners, sonst Quelle oder Space. */
+        /** Die Auswahl für den Core: die aufgelösten Wurzeln des Ordners, sonst Quelle, Space oder Teilbaum. */
         com.aresstack.spaceharvester.application.holdings.Selection core() {
             return folder != null ? new com.aresstack.spaceharvester.application.holdings.Selection(folder.roots())
-                    : com.aresstack.spaceharvester.application.holdings.Selection.of(spaceKey == null
-                    ? com.aresstack.spaceharvester.application.holdings.Selection.Root.source(sourceId)
-                    : com.aresstack.spaceharvester.application.holdings.Selection.Root.space(sourceId, spaceKey));
+                    : com.aresstack.spaceharvester.application.holdings.Selection.of(
+                    new com.aresstack.spaceharvester.application.holdings.Selection.Root(sourceId, spaceKey,
+                            rootPageId));
+        }
+
+        /**
+         * Ob ein fehlender Überblick beim ersten Öffnen von selbst entsteht. Für einen Ordner im Baum nie: Man klickt
+         * sich durch viele davon, der Lauf startet nur per Klick auf „Zusammenfassen“ (Angelo 26.11.2026).
+         */
+        boolean automatic() {
+            return rootPageId == null;
         }
 
         /** Die Quellen, deren Meldungen die Ansicht hört (der Core meldet nach dem Ablegen jede Quelle der Auswahl). */
@@ -126,7 +141,7 @@ final class AreaSummaryView extends JPanel {
         /** Woran „schon einmal geöffnet“ hängt: der Ordner nach ID und Unterordner-Stellung, sonst der Bereich. */
         String identity() {
             return folder != null ? "ordner\u0000" + folder.folderId() + '\u0000' + folder.withSubfolders()
-                    : sourceId + '\u0000' + spaceKey;
+                    : sourceId + '\u0000' + spaceKey + '\u0000' + rootPageId;
         }
 
         boolean empty() {
@@ -341,7 +356,12 @@ final class AreaSummaryView extends JPanel {
 
     /** Zeigt den Bereich einer Quelle ({@code space == null}) oder eines Space; {@code id == null} leert die Ansicht. */
     void area(String id, String space) {
-        target(id == null ? null : Target.area(id, space));
+        area(id, space, null);
+    }
+
+    /** Wie {@link #area(String, String)}, mit {@code rootPageId} der Teilbaum unter diesem Knoten. */
+    void area(String id, String space, String rootPageId) {
+        target(id == null ? null : Target.subtree(id, space, rootPageId));
     }
 
     /** Zeigt den Überblick über einen Favoriten-Ordner (ADR 0034 §7, Paket 5c); {@code null} leert die Ansicht. */
@@ -460,8 +480,8 @@ final class AreaSummaryView extends JPanel {
      * bei einer Änderung nur „veraltet“, nie einen KI-Lauf von selbst. {@code true}, wenn gestartet.
      */
     private boolean autoSummarize() {
-        if (!loaded || !available || runningJob != null || target == null || !showing.getAsBoolean()
-                || !AUTO_CONSIDERED.add(target.identity()) || summary != null || empty) {
+        if (!loaded || !available || runningJob != null || target == null || !target.automatic()
+                || !showing.getAsBoolean() || !AUTO_CONSIDERED.add(target.identity()) || summary != null || empty) {
             return false;
         }
         summarize(false);
