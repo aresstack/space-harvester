@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
@@ -76,6 +77,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     private final FailedPageRetry retry;
     private final SyncBaselineStore store;
     private final PlanApplier applier;
+    private volatile NavigationMarks navigationMarks = NavigationMarks.NONE;
     private final List<SyncCommitted> afterCommit;
     private final Map<String, String> activeBySpace = new ConcurrentHashMap<>();
     private final Map<String, SyncSummary> summaries = new ConcurrentHashMap<>();
@@ -155,6 +157,92 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         if (changeSync != null) {
             changeSync.exclusions(exclusions);
         }
+    }
+
+    /** Erwerbsgrund „Navigation“ (ADR 0037, Punkt 3), für „Bereinigen“; ohne Cache-Speicher wirkungslos. */
+    public void navigationMarks(NavigationMarks marks) {
+        this.navigationMarks = Objects.requireNonNull(marks, "marks");
+        if (sync != null) {
+            sync.navigationMarks(marks);
+        }
+    }
+
+    /**
+     * Vorschau für „Bereinigen“ (ADR 0037, Punkt 3): eine Inventur des Space ohne zu schreiben, dann die Seiten ohne
+     * Erwerbsgrund, getrennt nach bekannt ohne Grund und „Grund unbekannt“ (vor dem Merken der Gründe erworben). Fragt
+     * die Quelle, also nie auf dem EDT. Ohne bestätigte Inventur gibt es keine Kandidaten und einen Grund dafür.
+     *
+     * @throws UnknownSourceException   wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws SyncUnavailableException wenn Cache oder Inhaltsabruf nicht angebunden sind
+     */
+    public CleanupPreview cleanupPreview(String sourceId, String spaceKey) {
+        if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
+            throw new UnknownSourceException(sourceId);
+        }
+        if (!available()) {
+            throw new SyncUnavailableException("Cache-Speicher oder Inhaltsabruf sind nicht angebunden");
+        }
+        SyncPlan plan = sync.cleanupPlan(sourceId, spaceKey, SyncListener.NONE);
+        Optional<String> unconfirmable = plan.unconfirmable();
+        if (unconfirmable.isPresent()) {
+            return new CleanupPreview(sourceId, spaceKey, Set.of(), Set.of(), unconfirmable.get());
+        }
+        Set<String> without = sync.withoutReason(plan);
+        Set<String> unknown = navigationMarks.unknown(sourceId, spaceKey, without);
+        Set<String> known = new java.util.TreeSet<>(without);
+        known.removeAll(unknown);
+        return new CleanupPreview(sourceId, spaceKey, Set.copyOf(known), unknown, null);
+    }
+
+    /**
+     * Ergebnis von {@link #cleanupPreview}.
+     *
+     * @param withoutReason Seiten, die nachweislich keinen Erwerbsgrund mehr haben
+     * @param unknown       Seiten, deren Grund unbekannt ist; nur auf ausdrückliche Wahl bereinigen
+     * @param problem       warum es keine Kandidaten gibt (Inventur nicht bestätigt), sonst {@code null}
+     */
+    public record CleanupPreview(String sourceId, String spaceKey, Set<String> withoutReason, Set<String> unknown,
+                                 String problem) {
+        public CleanupPreview {
+            withoutReason = Set.copyOf(withoutReason);
+            unknown = Set.copyOf(unknown);
+        }
+    }
+
+    /**
+     * „Bereinigen“ als Abgleichsauftrag: inventarisiert wie {@link SyncMode#CATALOG_ONLY} neu und entfernt von
+     * {@code pageIds} genau die Seiten, die danach noch keinen Erwerbsgrund haben, über dieselbe Generation wie jeder
+     * Abgleich. Originale in der Quelle bleiben unberührt.
+     *
+     * @throws UnknownSourceException      wie {@link #start(String, String, String)}
+     * @throws SyncUnavailableException    wie {@link #start(String, String, String)}
+     * @throws SyncAlreadyRunningException wie {@link #start(String, String, String)}
+     */
+    public synchronized JobStatus startCleanup(String sourceId, String spaceKey, String owner, Set<String> pageIds) {
+        Objects.requireNonNull(pageIds, "pageIds");
+        if (pageIds.stream().anyMatch(id -> id == null || id.isEmpty() || id.indexOf('\n') >= 0)) {
+            throw new IllegalArgumentException("Ungültige Seiten-ID");
+        }
+        Set<String> ids = Set.copyOf(new java.util.TreeSet<>(pageIds));
+        return submit(sourceId, spaceKey, owner, Map.of(MODE, SyncMode.CATALOG_ONLY.name(), RERUN, CLEANUP,
+                CLEANUP_PAGES, String.join("\n", new java.util.TreeSet<>(ids)), ChangeTrigger.PARAMETER,
+                ChangeTrigger.MANUAL.name()), cleanup(sourceId, spaceKey, ids));
+    }
+
+    private Run cleanup(String sourceId, String spaceKey, Set<String> pageIds) {
+        return context -> {
+            context.phase(COMPONENT, "Bereinigen");
+            SpaceSync.SyncRun run = sync.cleanUp(sourceId, spaceKey, applier, listener(context), pageIds);
+            if (run.confirmed() != null) {
+                navigationMarks.forgetUnknown(sourceId, spaceKey, run.plan().purges());
+            }
+            return run;
+        };
+    }
+
+    private static Set<String> cleanupPages(JobStatus status) {
+        String pages = status.parameter(CLEANUP_PAGES);
+        return pages == null || pages.isEmpty() ? Set.of() : Set.of(pages.split("\n"));
     }
 
     /**
@@ -342,6 +430,9 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     static final String RERUN = "rerun";
     static final String RETRY_FAILED = "retry-failed";
     static final String FORCE_REFRESH = "force-refresh";
+    /** „Bereinigen“ ({@link #startCleanup}); die Seiten stehen in {@link #CLEANUP_PAGES}, je Zeile eine. */
+    static final String CLEANUP = "cleanup";
+    static final String CLEANUP_PAGES = "cleanup-pages";
     /** Wiederanlauf-Angabe: Nachholen ab diesem Zeitpunkt (ISO-8601), fehlt für den Stand der letzten Generation. */
     static final String SINCE = "since";
 
@@ -704,6 +795,10 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         }
         if (FORCE_REFRESH.equals(rerun)) {
             return forceWork(status);
+        }
+        if (CLEANUP.equals(rerun)) {
+            Run cleanup = cleanup(status.sourceId(), status.partitionKey(), cleanupPages(status));
+            return context -> run(context, status.sourceId(), status.partitionKey(), cleanup);
         }
         Run work = work(status);
         return context -> run(context, status.sourceId(), status.partitionKey(), work);

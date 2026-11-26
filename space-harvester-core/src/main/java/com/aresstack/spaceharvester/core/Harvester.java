@@ -1157,6 +1157,7 @@ public final class Harvester implements AutoCloseable {
             navigation.exclusions(exclusions);
             // Erwerbsgrund „Navigation“ (ADR 0037, Punkt 3): nur dieser Grund wird gespeichert.
             this.navigationMarks = new FileNavigationMarks(builder.dataDirectory);
+            syncs.navigationMarks(navigationMarks);
             keywordSearch.exclusions(exclusions);
             findings.exclusions(exclusions);
             syncs.exclusions(exclusions);
@@ -3177,6 +3178,30 @@ public final class Harvester implements AutoCloseable {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
         requireActive(sourceId);
         return syncs.start(sourceId, spaceKey, OWNER);
+    }
+
+    /**
+     * Vorschau für „Bereinigen“ (ADR 0037, Punkt 3): Seiten des Space ohne Erwerbsgrund und mit unbekanntem Grund,
+     * nach einer frischen Inventur; schreibt nichts. Fragt die Quelle, also nie auf dem EDT.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne {@code SYNC} für den Space
+     */
+    public SpaceSyncJobs.CleanupPreview cleanupPreview(String sourceId, String spaceKey) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        requireActive(sourceId);
+        return syncs.cleanupPreview(sourceId, spaceKey);
+    }
+
+    /**
+     * „Bereinigen“: entfernt von {@code pageIds} die Seiten, die nach einer neuen Inventur noch keinen Erwerbsgrund
+     * haben, aus dem lokalen Bestand; Originale in der Quelle bleiben unberührt. Ein Abgleichsauftrag.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne {@code SYNC} für den Space
+     */
+    public JobStatus cleanUp(String sourceId, String spaceKey, java.util.Set<String> pageIds) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        requireActive(sourceId);
+        return syncs.startCleanup(sourceId, spaceKey, OWNER, pageIds);
     }
 
     /**
