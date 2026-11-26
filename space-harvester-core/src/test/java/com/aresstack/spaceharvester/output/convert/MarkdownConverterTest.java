@@ -19,6 +19,16 @@ class MarkdownConverterTest {
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
+    @Test
+    void nativeFtpTextBecomesOneCodeBlockWithoutParsingMarkdown() {
+        String code = "000100  IDENTIFICATION DIVISION.  \n\n```\n000200* e\u0301  \n";
+        var payload = new com.aresstack.spaceharvester.application.snapshot.NativePayload(
+                code.getBytes(StandardCharsets.UTF_8), "text/plain",
+                com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider.SOURCE_TEXT_FORMAT);
+        assertThat(DocumentTextBlocks.of(payload)).hasValueSatisfying(blocks ->
+                assertThat(blocks).containsExactly(new StorageDocument.CodeBlock("", code)));
+    }
+
     /** Seiten mit Tiefe in der gegebenen Reihenfolge. */
     private record Input(List<ConvertiblePage> pages) implements ConversionInput {
 

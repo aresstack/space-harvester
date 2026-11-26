@@ -300,9 +300,15 @@ class FtpWorkspaceTest {
             assertThat(host.commands()).contains("SITE " + DatasetAttributes.DEFAULT.siteCommand());
             waitFor(() -> onEdt(() -> datasets.shown().size() == 4), until);
 
-            // In das PDS wechseln und ein Member lesen.
-            SwingUtilities.invokeAndWait(() -> datasets.openRow(1));
+            // Expand the PDS in the navigation tree without losing its siblings and ancestors.
+            SwingUtilities.invokeAndWait(() -> {
+                var tree = datasets.navigationTree();
+                tree.expandPath(tree.pathFor("'KKR.JCL'"));
+            });
             waitFor(() -> onEdt(() -> datasets.current().equals("'KKR.JCL'") && datasets.shown().size() == 2), until);
+            assertThat(onEdt(() -> datasets.navigationTree().pathFor("'KKR'"))).isNotNull();
+            assertThat(onEdt(() -> datasets.navigationTree().pathFor("'KKR.SRC'"))).isNotNull();
+            assertThat(onEdt(() -> datasets.navigationTree().pathFor("'KKR.JCL(BUILD)'"))).isNotNull();
             SwingUtilities.invokeAndWait(() -> datasets.openRow(0));
             waitFor(() -> onEdt(() -> datasets.documentText().startsWith("//BUILD")), until);
             assertThat(onEdt(view::statusText)).contains("'KKR.JCL(BUILD)'");

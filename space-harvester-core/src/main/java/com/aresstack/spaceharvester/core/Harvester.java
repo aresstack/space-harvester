@@ -602,6 +602,8 @@ public final class Harvester implements AutoCloseable {
             List<EnrichmentProcessor> processors = new ArrayList<>(List.of(acronyms,
                     new OutlineProcessor(), new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(),
                     new RelationProcessor(), termProcessor));
+            processors.addAll(builder.additionalProcessors);
+            builder.snapshotProcessors.forEach(factory -> processors.add(factory.apply(cache::find)));
             if (embedding != null) {
                 processors.add(embedding);
             }
@@ -730,6 +732,9 @@ public final class Harvester implements AutoCloseable {
                     new com.aresstack.spaceharvester.application.query.LocalPageSections(structuredDocuments));
 
             this.access = new AccessGuard(builder.accessPolicy);
+            var dependentEnrichments = new com.aresstack.spaceharvester.application.enrichment.DependentEnrichments(
+                    enrichments, cache, backgroundJobs, sourceId -> catalog.find(sourceId).isPresent()
+                            && access.permitsSourceWide(AccessContext.technicalClient(OWNER), sourceId, AccessKind.CONTENT));
             // ADR 0027: Bestand je Space; jeder Commit des Cache meldet ihm seine Änderungen. Schließt vor dem Cache.
             LuceneHoldingsCatalog holdingsCatalog = new LuceneHoldingsCatalog(cache);
             this.holdings = new Holdings(catalog, holdingsCatalog, access, builder.maxTreeNodes);
@@ -786,6 +791,7 @@ public final class Harvester implements AutoCloseable {
             this.pages = new PageQueries(catalog, reader, access, freshness,
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave, cache::saveWaiting),
                             enrichments, texts, snapshot -> {
+                                dependentEnrichments.changed(snapshot.key().sourceId());
                                 DocumentEnrichments sections = sectionTexts.get();
                                 if (sections != null) {
                                     sections.indexedLocal(snapshot);
@@ -812,11 +818,8 @@ public final class Harvester implements AutoCloseable {
                         if (fill != null) {
                             fill.offer(gaps);
                         }
-                    }, clock, sourceId -> (manager != null && !builder.prefetchSearchHitsFixed
-                            ? this.settings.sync().override(sourceId).effectivePrefetch(this.settings.search().prefetchHits())
-                            : builder.prefetchSearchHits)
-                            && (manager != null && !builder.backgroundFillFixed
-                            ? this.settings.syncFor(sourceId).backgroundFill() : builder.backgroundFill));
+                    }, clock, sourceId -> manager != null && !builder.backgroundFillFixed
+                            ? this.settings.syncFor(sourceId).backgroundFill() : builder.backgroundFill);
             opened.add(findings);
             if (backgroundJobs != null) {
                 // Fundstelle 14: Funde katalogisieren als Hintergrundart „Funde katalogisieren“.
@@ -1116,7 +1119,8 @@ public final class Harvester implements AutoCloseable {
                     // SY1: danach der automatische Synonymlauf der Quelle als Hintergrundauftrag.
                     // B1: danach die automatische Bildbeschreibung der Quelle als eigener Auftrag (Standard aus).
                     // K4: danach die Fachbegriffe der Quelle als Hintergrundauftrag (Standard aus).
-                    List.of(acronymRelationRule::refresh, sourceId -> synonymDiscovery.automatic(sourceId),
+                    List.of(dependentEnrichments::changed, acronymRelationRule::refresh,
+                            sourceId -> synonymDiscovery.automatic(sourceId),
                             sourceId -> glossaryClassification.automatic(sourceId),
                             sourceId -> {
                                 var automatic = this.automaticImages;
@@ -1722,7 +1726,12 @@ public final class Harvester implements AutoCloseable {
                     .standing(statusQuo)
                     .inventoryLog(inventoryLog)
                     .build(), sourceId -> catalog.config(sourceId).isPresent(),
-                    sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
+                    // Die Füllung bleibt für die ganze Bereinigung gesperrt, nicht nur beim Leeren ihrer Schlange: Sonst
+                    // reihte sie die Seiten aus dem noch nicht geleerten Katalog wieder ein.
+                    ((SourceDataPurge.Quiesce) sourceId -> {
+                        BackgroundFill current = filling.get();
+                        return current == null ? () -> { } : current.holdSource(sourceId);
+                    }).andThen(sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT)));
             this.sourceManagement = new SourceManagement(catalog, jobs, purge);
             withdrawals.set(purge);
             jobActions.purge(purge);
@@ -3549,6 +3558,8 @@ public final class Harvester implements AutoCloseable {
         private int chunkTokens = KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS;
         private int chunkOverlapSentences = KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES;
         private final List<SourceAdapter> sourceAdapters = new ArrayList<>();
+        private final List<EnrichmentProcessor> additionalProcessors = new ArrayList<>();
+        private final List<java.util.function.Function<java.util.function.Function<PageKey, Optional<PageSnapshot>>, EnrichmentProcessor>> snapshotProcessors = new ArrayList<>();
         private SourceSecrets secretProvider;
         private EmbeddingProvider embeddingProvider;
         private Predicate<String> embeddingSources;
@@ -3665,6 +3676,18 @@ public final class Harvester implements AutoCloseable {
         public Builder statementAnalyzer(StatementAnalyzer analyzer) {
             this.statementAnalyzer = Objects.requireNonNull(analyzer, "analyzer");
             return this;
+        }
+
+        /**
+         * Die Quellentypen, die ein so gebauter Harvester mit {@link Harvester#sourceTypes()} meldet, ohne ihn zu
+         * starten: für Oberflächen, die die Liste auch ohne laufende Laufzeit brauchen (Quellenformular). Verlangt wie
+         * {@link #build()} ein {@link #dataDirectory}.
+         */
+        public List<SourceType> sourceTypes() {
+            if (dataDirectory == null) {
+                throw new IllegalStateException("dataDirectory fehlt");
+            }
+            return ConfiguredSourceCatalog.types(adapters());
         }
 
         /**
@@ -3901,6 +3924,17 @@ public final class Harvester implements AutoCloseable {
         /** Eine Quelle wie unter {@code space-harvester.sources}. */
         public Builder source(SourceSettingsConfig source) {
             sources.add(Objects.requireNonNull(source, "source"));
+            return this;
+        }
+
+        /** Supply processors with a read-only lookup of stored snapshots, never a live source. */
+        public Builder snapshotEnrichmentProcessor(java.util.function.Function<java.util.function.Function<PageKey, Optional<PageSnapshot>>, EnrichmentProcessor> factory) {
+            snapshotProcessors.add(java.util.Objects.requireNonNull(factory));
+            return this;
+        }
+
+        public Builder enrichmentProcessor(EnrichmentProcessor processor) {
+            additionalProcessors.add(java.util.Objects.requireNonNull(processor));
             return this;
         }
 

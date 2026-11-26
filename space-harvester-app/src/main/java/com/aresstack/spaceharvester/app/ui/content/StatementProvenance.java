@@ -80,12 +80,13 @@ public final class StatementProvenance {
         return PROPOSAL.equals(marker) || INVALID.equals(marker);
     }
 
-    /** Die Herkunft kurz: Originalsatz, Vorstufe oder Korrektur, mit Analysator, wenn bekannt. */
+    /** Die Herkunft kurz: Originalsatz, Vorstufe, Korrektur oder Programmanalyse, mit Analysator, wenn bekannt. */
     public static String origin(ParsedStatements.Statement statement, String analyzer) {
         String origin = switch (statement.derivation().origin()) {
             case ORIGINAL -> "Originalsatz";
             case VORSTUFE -> "Vorstufe „" + StatementsTab.SIMPLIFY + "“ (KI)";
             case MODELL -> CheckTexts.ORIGIN_MODEL + " (KI)";
+            case PROGRAMM -> "Programmanalyse (KI-Hypothese, Ist-Zustand)";
         };
         return analyzer == null ? origin : origin + ", " + analyzer;
     }

@@ -232,6 +232,7 @@ public final class MainWindow implements AppContext.Navigator {
         // NDV direkt wie MainframeMate; nur Verbindungen mit „Proxy der App verwenden“ nehmen den Proxy der App.
         commandDeck.ndvRoute(com.aresstack.spaceharvester.app.ui.deck.NdvNetwork.of(context));
         commandDeck.ftpNavigation(new FtpNavigationFill(context));
+        commandDeck.ftpStoredSearch(context);
         // E-Akte: Proxy und TLS-Vertrauen der App (Windows-ROOT), das Anmeldeprotokoll ohne Werte ins Log.
         org.slf4j.Logger eakteLog = org.slf4j.LoggerFactory.getLogger("command-deck.eakte");
         commandDeck.eakte(new com.aresstack.spaceharvester.deck.eakte.http.HttpEakteServer(
@@ -274,8 +275,16 @@ public final class MainWindow implements AppContext.Navigator {
             }
             var use = settings.ai().summary();
             String model = use != null && use.model() != null ? use.model() : settings.ai().chatModel();
+            // Tokenbudget aus Kontextlänge und Ausgabelimit (F41-7); fehlt eines, geht der Code in einer Anfrage.
+            com.aresstack.spaceharvester.app.runtime.ModelBudget budget;
+            try {
+                budget = com.aresstack.spaceharvester.app.runtime.ModelBudget.of(settings.ai().contextTokens(),
+                        settings.ai().chatMaxTokens());
+            } catch (IllegalStateException unknown) {
+                budget = null;
+            }
             return new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramLabels.Target(
-                    runtime.workspace().aiChat(), model, use == null ? null : use.thinking());
+                    runtime.workspace().aiChat(), model, use == null ? null : use.thinking(), budget);
         });
         statusView = new StatusView(context);
         sources = new SourcesView(context);
@@ -399,11 +408,28 @@ public final class MainWindow implements AppContext.Navigator {
         frame.setMinimumSize(new Dimension(960, 600));
         // Lage, Größe und maximiert wie beim letzten Beenden, passend zu den jetzt angeschlossenen Bildschirmen.
         WindowPlacement.restore(frame, new Dimension(1280, 820));
+        var programSearch = new com.aresstack.spaceharvester.app.ui.deck.StoredProgramSearchAction(
+                context, frame, frame::isDisplayable, busy -> {
+                    String message = "Programmsuche wird vorbereitet … (zweimal Umschalt zum Abbrechen)";
+                    context.events().publish(busy
+                            ? new StatusMessageEvent(message, Integer.MAX_VALUE, Severity.INFO)
+                            : StatusMessageEvent.clear(message));
+                });
+        var programShortcut = new DoubleShiftShortcut(frame, programSearch::open);
+        programShortcut.install();
         frame.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosed(WindowEvent event) {
+                programShortcut.close();
+                programSearch.cancel();
+            }
+
             @Override
             public void windowClosing(WindowEvent event) {
                 if (confirmUnsaved(frame) && confirmClose(frame)) {
                     WindowPlacement.remember(frame);
+                    programShortcut.close();
+                    programSearch.cancel();
                     frame.dispose();
                     // Aufräumen nicht auf dem Swing-Faden und mit Frist; danach enden Kindprozesse und die JVM sicher.
                     com.aresstack.spaceharvester.app.AppExit.exit(0,
@@ -1265,6 +1291,13 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     @Override
+    public void openProgram(String sourceId, String pageId, String rawSha256, int line) {
+        showSection(AppContext.Section.CONTENT);
+        revealOpened = true;
+        content.openProgram(sourceId, pageId, rawSha256, line);
+    }
+
+    @Override
     public void openPassage(String sourceId, String passageId) {
         hintOpened = current == AppContext.Section.SEARCH;
         showSection(AppContext.Section.CONTENT);
@@ -1301,6 +1334,16 @@ public final class MainWindow implements AppContext.Navigator {
             return;
         }
         openPage(sourceId, pageId);
+    }
+
+    @Override
+    public void openContainerFromTree(String sourceId, String spaceKey, String pageId, String title) {
+        // Wie eine Seite: In der Suche filtert die Auswahl links nur.
+        if (current == AppContext.Section.SEARCH) {
+            return;
+        }
+        showSection(AppContext.Section.CONTENT);
+        content.openContainer(sourceId, spaceKey, pageId, title);
     }
 
     @Override

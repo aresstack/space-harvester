@@ -168,14 +168,20 @@ public abstract class EnrichmentStoreContract {
         store.save(ok(PAGE, "outline", "1", "{}"));
         store.save(ok(OTHER, "outline", "1", "{}"));
         store.save(document(DocumentKey.attachment(OTHER, "a1"), 0, "check"));
+        var foreign = new PageKey("wiki-other", PAGE.pageId());
+        store.save(ok(foreign, "check", "1", "{}"));
         store.flush();
 
-        assertThat(store.pagesWith("check")).containsExactly(PAGE);
+        assertThat(store.pagesWith("wiki", "check")).containsExactly(PAGE);
+        assertThat(store.pagesWith("wiki-other", "check")).containsExactly(foreign);
+        assertThat(store.pagesWith("wiki-missing", "check")).isEmpty();
+        assertThat(store.pagesWith("check")).containsExactlyInAnyOrder(PAGE, foreign);
         assertThat(store.pagesWith("outline")).containsExactlyInAnyOrder(PAGE, OTHER);
 
         store.remove(PAGE, "check");
         store.flush();
-        assertThat(store.pagesWith("check")).isEmpty();
+        assertThat(store.pagesWith("wiki", "check")).isEmpty();
+        assertThat(store.pagesWith("check")).containsExactly(foreign);
     }
 
     private static Enrichment document(DocumentKey document, int section, String processor) {

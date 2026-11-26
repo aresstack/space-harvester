@@ -40,13 +40,20 @@ class MainWindowTest {
     Path home;
 
     private AppContext context;
+    /** Work this test starts; what an earlier test class left running in the same JVM is not this test's. */
+    private long started;
+
+    @org.junit.jupiter.api.BeforeEach
+    void mark() {
+        started = Background.mark();
+    }
 
     @AfterEach
     void shutdown() throws Exception {
         if (context != null) {
             try {
                 SwingUtilities.invokeAndWait(() -> { });
-                Background.awaitIdle(java.time.Duration.ofSeconds(30));
+                Background.awaitIdle(started, java.time.Duration.ofSeconds(30));
             } finally {
                 context.shutdown();
             }

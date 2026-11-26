@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui.deck.visual;
 
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiChatException;
+import com.aresstack.spaceharvester.app.runtime.ModelBudget;
 import com.aresstack.spaceharvester.app.ui.AppState;
 import com.aresstack.spaceharvester.mainframe.diagram.BlockLabelSummarizer;
 
@@ -20,6 +21,11 @@ import java.util.function.Supplier;
  * LRU-Cache mit 1000 Einträgen, Frist 30 s je Block (MainframeMate 15 s; das erste Laden eines Modells dauert länger). Anders als dort immer gestreamt (Proxy bricht lange Antworten
  * ohne Strom ab) und über den KI-Dienst der Einstellungen (Zeile „Zusammenfassung“: Modell und Nachdenken, sonst das
  * Chat-Modell). Eingeschaltet in Einstellungen › Diagramme › Diagramm-Ansicht; aus = keine Aufrufe.
+ *
+ * <p>Der Code eines Blocks wird nie abgeschnitten (F41-7, docs/grenzen.md; früher fehlte alles nach 4000 Zeichen):
+ * Passt er nicht in das Tokenbudget des Modells ({@link ModelBudget}: Kontextlänge abzüglich Antwortreserve), wird er
+ * an Zeilengrenzen in Teile zerlegt, jeder Teil beschriftet und aus den Teilbeschriftungen die Beschriftung des Blocks
+ * gebildet. Ohne bekannte Kontextlänge geht der ganze Code in eine Anfrage.
  */
 public final class DiagramLabels implements BlockLabelSummarizer {
 
@@ -41,8 +47,9 @@ public final class DiagramLabels implements BlockLabelSummarizer {
      * @param chat     streamender Chat-Port, {@code null} ohne KI-Dienst
      * @param model    Modellname, {@code null} ohne Modell
      * @param thinking Nachdenken ({@code none}, {@code low}, …) oder {@code null} = Einstellung des Dienstes
+     * @param budget   Tokenbudget je Anfrage, {@code null} ohne bekannte Kontextlänge (dann eine Anfrage)
      */
-    public record Target(AiChat chat, String model, String thinking) {
+    public record Target(AiChat chat, String model, String thinking, ModelBudget budget) {
     }
 
     private final Supplier<Target> target;
@@ -82,7 +89,38 @@ public final class DiagramLabels implements BlockLabelSummarizer {
         if (cached != null) {
             return cached;
         }
-        String prompt = prompt(code, maxLength, purpose);
+        List<String> parts;
+        try {
+            parts = parts(code, maxLength, purpose, current.budget());
+        } catch (IllegalStateException tooSmall) {
+            lastProblem = tooSmall.getMessage();
+            return null;
+        }
+        String result;
+        if (parts.size() == 1) {
+            result = ask(current, prompt(code, maxLength, purpose), maxLength);
+        } else {
+            // Erst jeden Teil beschriften, dann aus den Teilbeschriftungen den ganzen Block.
+            StringBuilder labels = new StringBuilder();
+            for (int i = 0; i < parts.size(); i++) {
+                String label = ask(current, prompt(parts.get(i), maxLength, part(purpose, i + 1, parts.size())),
+                        maxLength);
+                if (label == null) {
+                    return null;
+                }
+                labels.append("- ").append(label).append('\n');
+            }
+            result = summarize(labels.toString(), maxLength, combined(purpose));
+        }
+        if (result == null || result.isEmpty()) {
+            return null;
+        }
+        cache.put(key, result);
+        lastProblem = null;
+        return result;
+    }
+
+    private String ask(Target current, String prompt, int maxLength) {
         CountDownLatch done = new CountDownLatch(1);
         AtomicReference<String> answer = new AtomicReference<>();
         AiChat.Task task = current.chat().stream(new AiChat.Request(List.of(AiChat.Message.system(SYSTEM_PROMPT),
@@ -119,13 +157,66 @@ public final class DiagramLabels implements BlockLabelSummarizer {
             Thread.currentThread().interrupt();
             return null;
         }
-        String result = sanitize(answer.get(), maxLength);
-        if (result == null || result.isEmpty()) {
-            return null;
+        return sanitize(answer.get(), maxLength);
+    }
+
+    /**
+     * Der Code in Teilen, die mit Systemanweisung und Rahmen ins Budget passen, an Zeilengrenzen; eine einzelne zu
+     * lange Zeile wird an Zeichengrenzen geteilt. Ohne Budget oder wenn alles passt: ein Teil.
+     */
+    static List<String> parts(String code, int maxLength, String purpose, ModelBudget budget) {
+        if (budget == null) {
+            return List.of(code);
         }
-        cache.put(key, result);
-        lastProblem = null;
-        return result;
+        int fixed = ModelBudget.tokens(SYSTEM_PROMPT) + ModelBudget.tokens(prompt("", maxLength,
+                part(purpose, Integer.MAX_VALUE, Integer.MAX_VALUE)));
+        int room = budget.left(fixed);
+        if (room < 1) {
+            throw new IllegalStateException("Kontextlänge des Modells (" + budget.contextTokens()
+                    + " Tokens) reicht nicht für Systemanweisung und Antwortreserve (" + budget.answerTokens()
+                    + " Tokens)");
+        }
+        if (ModelBudget.tokens(code) <= room) {
+            return List.of(code);
+        }
+        List<String> parts = new java.util.ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (String line : code.split("(?<=\n)")) {
+            for (String piece : pieces(line, room)) {
+                if (current.length() > 0 && ModelBudget.tokens(current + piece) > room) {
+                    parts.add(current.toString());
+                    current.setLength(0);
+                }
+                current.append(piece);
+            }
+        }
+        if (current.length() > 0) {
+            parts.add(current.toString());
+        }
+        return parts;
+    }
+
+    /** Eine Zeile, die allein nicht ins Budget passt, in Stücke, die passen. */
+    private static List<String> pieces(String line, int room) {
+        if (ModelBudget.tokens(line) <= room) {
+            return List.of(line);
+        }
+        List<String> pieces = new java.util.ArrayList<>();
+        int chars = Math.max(1, room * ModelBudget.CHARACTERS_PER_TOKEN / 2);
+        for (int start = 0; start < line.length(); start += chars) {
+            pieces.add(line.substring(start, Math.min(line.length(), start + chars)));
+        }
+        return pieces;
+    }
+
+    private static String part(String purpose, int number, int count) {
+        String part = "Teil " + number + " von " + count + " eines Blocks";
+        return purpose == null || purpose.isEmpty() ? part : purpose + "; " + part;
+    }
+
+    private static String combined(String purpose) {
+        String combined = "Beschriftungen der Teile eines Blocks; eine Beschriftung für den ganzen Block";
+        return purpose == null || purpose.isEmpty() ? combined : purpose + "; " + combined;
     }
 
     /** Warum die letzte Beschriftung nicht kam (für den Status), sonst {@code null}. */
@@ -148,7 +239,7 @@ public final class DiagramLabels implements BlockLabelSummarizer {
             sb.append("KONTEXT: ").append(purpose).append('\n');
         }
         sb.append("\nTEXT:\n");
-        sb.append(code.length() > 4000 ? code.substring(0, 4000) + "\n…" : code);
+        sb.append(code);
         return sb.toString();
     }
 

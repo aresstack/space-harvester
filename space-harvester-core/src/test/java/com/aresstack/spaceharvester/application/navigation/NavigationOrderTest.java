@@ -53,6 +53,22 @@ class NavigationOrderTest {
     }
 
     @Test
+    void reopeningAFolderWithAnUnchangedOrderWritesNothing() {
+        String cursor = order.complete(order.prepare("source", "space", "parent", null, false), batch("next", "a"));
+        order.complete(order.prepare("source", "space", "parent", cursor, false), batch(null, "b"));
+        int writes = cache.childOrderWrites;
+        // Opening the folder again and loading more returns the same children in the same order.
+        String again = order.complete(order.prepare("source", "space", "parent", null, false), batch("next", "a"));
+        assertThat(order.complete(order.prepare("source", "space", "parent", again, false), batch(null, "b"))).isNull();
+        assertThat(cache.childOrderWrites).isEqualTo(writes);
+        assertThat(cache.childOrder("source", "space", "parent")).containsExactly("a", "b");
+        // A changed order is still stored.
+        order.complete(order.prepare("source", "space", "parent", null, false), batch(null, "b", "a"));
+        assertThat(cache.childOrderWrites).isEqualTo(writes + 1);
+        assertThat(cache.childOrder("source", "space", "parent")).containsExactly("b", "a");
+    }
+
+    @Test
     void rejectsManipulatedOrForeignCursor() {
         String cursor = start("parent", "a");
         assertThatThrownBy(() -> order.prepare("source", null, "different", cursor, false))

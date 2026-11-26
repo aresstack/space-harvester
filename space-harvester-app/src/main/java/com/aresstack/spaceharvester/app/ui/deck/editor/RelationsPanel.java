@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui.deck.editor;
 
 import com.aresstack.spaceharvester.app.ui.AppState;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.controls.NavigationTreeIcons;
 import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
 import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
@@ -201,6 +202,14 @@ final class RelationsPanel extends JPanel {
 
     // ---- für Tests --------------------------------------------------------------------------------------------------
 
+    JTree resourceTree() {
+        return resourcesTree;
+    }
+
+    JTree callTree(String side) {
+        return CALLERS.equals(side) ? callers.tree : callees.tree;
+    }
+
     List<String> resourceLabels() {
         return labels(resourcesRoot);
     }
@@ -372,7 +381,7 @@ final class RelationsPanel extends JPanel {
             tree.setRootVisible(false);
             tree.setShowsRootHandles(true);
             tree.setFont(Comic.regular(13f));
-            tree.setCellRenderer(new Renderer());
+            tree.setCellRenderer(new Renderer(CALLERS.equals(name)));
             tree.getAccessibleContext().setAccessibleName(name);
             ToolTipManager.sharedInstance().registerComponent(tree);
             tree.addMouseListener(clicks(tree));
@@ -548,7 +557,7 @@ final class RelationsPanel extends JPanel {
                 if (groupVisible == 0) {
                     continue;
                 }
-                group.setUserObject(kindIcon(entry.getKey()) + " " + entry.getKey() + " (" + groupVisible + ")");
+                group.setUserObject(entry.getKey() + " (" + groupVisible + ")");
                 parent.add(group);
             }
             return new int[] {total, visible};
@@ -583,7 +592,8 @@ final class RelationsPanel extends JPanel {
                 menu.add(none);
             }
             for (String kind : kinds) {
-                JCheckBoxMenuItem item = new JCheckBoxMenuItem(kindIcon(kind) + " " + kind, !hidden.contains(kind));
+                JCheckBoxMenuItem item = new JCheckBoxMenuItem(kind, !hidden.contains(kind));
+                item.setIcon(NavigationTreeIcons.relation(kind));
                 item.addActionListener(e -> {
                     if (item.isSelected()) {
                         hidden.remove(kind);
@@ -651,25 +661,6 @@ final class RelationsPanel extends JPanel {
         return tail.isEmpty() ? null : tail;
     }
 
-    /** Symbol je Art wie {@code kindIcon} in MainframeMate. */
-    static String kindIcon(String kind) {
-        if (kind == null) {
-            return "";
-        }
-        return switch (kind) {
-            case "CALLNAT" -> "📞";
-            case "FETCH" -> "🚀";
-            case "CALL" -> "⚙";
-            case "PERFORM" -> "🔄";
-            case "INCLUDE" -> "📎";
-            case "USING" -> "📦";
-            case "INPUT_MAP" -> "🖥";
-            case "VIEW" -> "📊";
-            case "DB_ACCESS" -> "🗄";
-            default -> "•";
-        };
-    }
-
     /** Kein waagerechter Balken: lange Einträge zeigen den vollen Text im Tooltip. */
     private static javax.swing.JScrollPane noHorizontal(javax.swing.JScrollPane scroll) {
         scroll.setHorizontalScrollBarPolicy(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
@@ -707,7 +698,14 @@ final class RelationsPanel extends JPanel {
         private static final Color NATURAL = new Color(34, 139, 34);
         private static final Color SYSTEM_FUNCTION = new Color(0, 100, 200);
 
+        private final boolean incoming;
+
         Renderer() {
+            this(false);
+        }
+
+        Renderer(boolean incoming) {
+            this.incoming = incoming;
             putClientProperty("html.disable", Boolean.TRUE);
         }
 
@@ -715,7 +713,7 @@ final class RelationsPanel extends JPanel {
         public Component getTreeCellRendererComponent(JTree tree, Object value, boolean selected, boolean expanded,
                                                       boolean leaf, int row, boolean focus) {
             super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, focus);
-            setIcon(null);
+            setIcon(leaf ? null : NavigationTreeIcons.FOLDER);
             setFont(tree.getFont());
             setToolTipText(null);
             Object item = ((DefaultMutableTreeNode) value).getUserObject();
@@ -734,6 +732,9 @@ final class RelationsPanel extends JPanel {
                 kind = node.kind();
                 type = node.recursive() ? "CALL_RECURSIVE" : "CALL_HIERARCHY";
             } else {
+                String text = String.valueOf(item);
+                setText(NavigationTreeIcons.plainLabel(text));
+                setIcon(NavigationTreeIcons.legacyIcon(text, leaf ? null : NavigationTreeIcons.FOLDER));
                 return this;
             }
             boolean natural = (type != null && type.startsWith("JCL_NAT_"))
@@ -744,18 +745,21 @@ final class RelationsPanel extends JPanel {
                 if (!selected) {
                     setForeground(NATURAL);
                 }
-                setText(label.startsWith("🌿") ? label : "🌿 " + label);
+                setText(NavigationTreeIcons.plainLabel(label));
+                setIcon(NavigationTreeIcons.PAGE);
                 setToolTipText("Natural-Programm — Doppelklick zum Öffnen über NDV");
             } else if (systemFunction) {
                 setFont(tree.getFont().deriveFont(Font.BOLD));
                 if (!selected) {
                     setForeground(SYSTEM_FUNCTION);
                 }
-                setText(label.startsWith("📖") ? label : "📖 " + label);
+                setText(NavigationTreeIcons.plainLabel(label));
+                setIcon(NavigationTreeIcons.PAGE);
                 setToolTipText("Systemfunktion — Doppelklick öffnet den Wikipedia-Artikel");
             } else {
-                String prefix = kindIcon(kind);
-                setText(!prefix.isEmpty() && !label.startsWith(prefix) ? prefix + " " + label : label);
+                setText(NavigationTreeIcons.plainLabel(label));
+                setIcon(NavigationTreeIcons.legacyIcon(label,
+                        incoming ? NavigationTreeIcons.INCOMING : NavigationTreeIcons.relation(kind == null ? type : kind)));
                 if (type != null && type.startsWith("DEPENDENCY_")) {
                     setToolTipText(target);
                 } else if (kind != null) {
@@ -763,7 +767,7 @@ final class RelationsPanel extends JPanel {
                 }
             }
             if (getToolTipText() == null) {
-                setToolTipText(label);
+                setToolTipText(NavigationTreeIcons.plainLabel(label));
             }
             if (type != null && type.equals("CALL_RECURSIVE") && !selected) {
                 setForeground(Comic.MUTED);

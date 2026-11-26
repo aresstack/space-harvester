@@ -360,6 +360,19 @@ class SynonymDiscoveryTest {
     }
 
     @Test
+    void aRestrictedGlobalRunStillReusesModelAnswers() {
+        siblings("wiki");
+        directOnly.add("intern");
+        run(SynonymScope.ALL);
+
+        SynonymDiscovery.Outcome second = run(SynonymScope.ALL);
+
+        assertThat(inputs).hasSize(1);
+        assertThat(second.asked()).isZero();
+        assertThat(second.reused()).isEqualTo(1);
+    }
+
+    @Test
     void aSecondRunReusesTheCacheAndCreatesNoDuplicates() {
         siblings("wiki");
         run(SynonymScope.source("wiki"));

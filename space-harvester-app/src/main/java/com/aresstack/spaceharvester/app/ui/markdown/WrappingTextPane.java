@@ -1,8 +1,14 @@
 package com.aresstack.spaceharvester.app.ui.markdown;
 
 import javax.swing.JTextPane;
+import javax.swing.text.AbstractDocument;
 import javax.swing.text.DefaultCaret;
+import javax.swing.text.EditorKit;
+import javax.swing.text.Element;
+import javax.swing.text.LabelView;
+import javax.swing.text.StyledEditorKit;
 import javax.swing.text.View;
+import javax.swing.text.ViewFactory;
 import java.awt.Dimension;
 import java.awt.Insets;
 
@@ -19,6 +25,17 @@ final class WrappingTextPane extends JTextPane {
         if (getCaret() instanceof DefaultCaret) {
             ((DefaultCaret) getCaret()).setUpdatePolicy(DefaultCaret.NEVER_UPDATE);
         }
+    }
+
+    /**
+     * Text bricht immer auf die zugewiesene Breite um (Angelo 26.11.2026: im Chat nichts rechts abschneiden). Swing
+     * legt einen Absatz sonst mindestens so breit wie sein längstes Stück ohne Leerzeichen aus (Mindestbreite der
+     * Text-View): eine lange URL, ein Pfad, ein Klassenname, Wortketten mit Bindestrich oder ein ganzer Satz mit
+     * geschützten Leerzeichen machten die Zeilen breiter als die Fläche, der Rest war abgeschnitten.
+     */
+    @Override
+    protected EditorKit createDefaultEditorKit() {
+        return new WrappingEditorKit();
     }
 
     @Override
@@ -62,5 +79,50 @@ final class WrappingTextPane extends JTextPane {
         root.setSize(textWidth, Integer.MAX_VALUE);
         int textHeight = (int) Math.ceil(root.getPreferredSpan(View.Y_AXIS));
         return textHeight + insets.top + insets.bottom;
+    }
+
+    /** Wie {@link StyledEditorKit}, aber Textstücke dürfen schmaler werden als ihr längstes Wort. */
+    private static final class WrappingEditorKit extends StyledEditorKit {
+
+        private final ViewFactory factory = new WrappingViewFactory(super.getViewFactory());
+
+        @Override
+        public ViewFactory getViewFactory() {
+            return factory;
+        }
+    }
+
+    private static final class WrappingViewFactory implements ViewFactory {
+
+        private final ViewFactory styled;
+
+        WrappingViewFactory(ViewFactory styled) {
+            this.styled = styled;
+        }
+
+        @Override
+        public View create(Element element) {
+            if (AbstractDocument.ContentElementName.equals(element.getName())) {
+                return new BreakableLabelView(element);
+            }
+            return styled.create(element);
+        }
+    }
+
+    /**
+     * Ohne Mindestbreite bekommt der Absatz genau die verfügbare Breite. Der Zeilenumbruch bevorzugt weiter
+     * Leerzeichen und die Umbruchstellen des Zeilen-{@code BreakIterator}s; nur ein Stück, das allein nicht in die
+     * Zeile passt, wird zwischen zwei Zeichen getrennt.
+     */
+    private static final class BreakableLabelView extends LabelView {
+
+        BreakableLabelView(Element element) {
+            super(element);
+        }
+
+        @Override
+        public float getMinimumSpan(int axis) {
+            return axis == View.X_AXIS ? 0 : super.getMinimumSpan(axis);
+        }
     }
 }

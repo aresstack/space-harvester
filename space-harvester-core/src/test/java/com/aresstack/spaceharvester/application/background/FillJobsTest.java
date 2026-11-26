@@ -468,12 +468,15 @@ class FillJobsTest {
         fill.start();
         eventually(() -> started.contains("1") && part(JobState.RUNNING).isPresent());
 
-        fill.removeSource("wiki");
-
-        eventually(() -> part(JobState.COMPLETED).isPresent());
-        assertThat(fill.waiting(DEV)).isZero();
+        // Wie „Daten bereinigen“: Die Füllung bleibt gesperrt, bis auch der Katalog geleert ist. Sonst fand eine Suche
+        // im Katalog die bereinigte Seite 2 noch und reihte sie wieder ein (CI, Offline-ZIP-Bau 26.11.2026).
+        try (AutoCloseable held = fill.holdSource("wiki")) {
+            fill.removeSource("wiki");
+            eventually(() -> part(JobState.COMPLETED).isPresent());
+            assertThat(fill.waiting(DEV)).isZero();
+            gaps.clear();
+        }
         gates.get("1").countDown();
-        gaps.clear();
         gaps.add("3");
         fill.wake();
         eventually(() -> loaded.contains("3"));
@@ -482,6 +485,31 @@ class FillJobsTest {
         eventually(() -> background.parts(FillJobs.KIND).size() == 2 && background.parts(FillJobs.KIND).stream()
                 .allMatch(part -> part.state() == JobState.COMPLETED));
         assertThat(fill.waiting(DEV)).isZero();
+    }
+
+    @Test
+    void aSearchInTheCatalogWhileCleaningUpBringsNoPageOfTheSourceBack() throws Exception {
+        // Zwischen dem Leeren der Füllschlange und dem des Katalogs findet eine Suche die Seiten der Quelle noch (CI,
+        // Offline-ZIP-Bau 26.11.2026): Solange die Bereinigung die Quelle sperrt, reiht sie nichts davon wieder ein.
+        gaps.addAll(List.of("1", "2"));
+        gate("1");
+        BackgroundFill fill = fill(1);
+        fillJobs(fill);
+        fill.start();
+        eventually(() -> started.contains("1") && part(JobState.RUNNING).isPresent());
+
+        try (AutoCloseable held = fill.holdSource("wiki")) {
+            fill.removeSource("wiki");
+            searchedAgain(fill);
+            assertThat(fill.waiting(DEV)).isZero();
+            gaps.clear();
+        }
+
+        gates.get("1").countDown();
+        gaps.add("3");
+        fill.wake();
+        eventually(() -> loaded.contains("3"));
+        assertThat(started).doesNotContain("2");
     }
 
     @Test

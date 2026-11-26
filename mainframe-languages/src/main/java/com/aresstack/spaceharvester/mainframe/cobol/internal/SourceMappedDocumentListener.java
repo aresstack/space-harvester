@@ -101,10 +101,13 @@ final class SourceMappedDocumentListener extends CobolDocumentParserListenerImpl
                 : target.filename() != null ? target.filename().getText() : "");
         String library = target.copyLibrary() == null ? "" : unquote(target.copyLibrary().getText());
         Span span = input.span(ctx.getStart(), ctx.getStop());
-        copyReferences.add(new Element(Kind.COPY_STMT, name, -1, span,
-                TokenUtils.getTextIncludingHiddenTokens(ctx, tokens).strip(),
-                Map.of("COPYBOOK", name, "LIBRARY", library)));
         Optional<CobolSource> copybook = resolve(name, library, span.start());
+        Map<String, String> attributes = new java.util.LinkedHashMap<>();
+        attributes.put("COPYBOOK", name);
+        attributes.put("LIBRARY", library);
+        copybook.ifPresent(resolved -> attributes.put("RESOLVED_SOURCE", resolved.name()));
+        copyReferences.add(new Element(Kind.COPY_STMT, name, -1, span,
+                TokenUtils.getTextIncludingHiddenTokens(ctx, tokens).strip(), attributes));
         if (copybook.isEmpty()) {
             // Keep the remaining program analyzable and report the missing dependency.
             context().append("\n", span.start());

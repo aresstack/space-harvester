@@ -111,6 +111,20 @@ final class CommonsNetFtpSession implements FtpClientSession {
     }
 
     @Override
+    public String readSourceText(String path) throws IOException {
+        List<String> candidates = mvs ? dialect.resolveCandidates(path) : Collections.singletonList(unixPath(path));
+        IOException last = null;
+        for (String candidate : candidates) {
+            try {
+                return RecordStructureText.decodeSource(retrieve(candidate), settings.encoding, recordStructure);
+            } catch (FtpNotFoundException e) {
+                last = e;
+            }
+        }
+        throw last != null ? last : new FtpNotFoundException("Not found: " + path);
+    }
+
+    @Override
     public void close() {
         if (closed) {
             return;

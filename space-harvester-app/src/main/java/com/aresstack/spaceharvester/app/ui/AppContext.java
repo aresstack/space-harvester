@@ -93,6 +93,10 @@ public final class AppContext {
 
         void openPage(String sourceId, String pageId);
 
+        default void openProgram(String sourceId, String pageId, String rawSha256, int line) {
+            openPage(sourceId, pageId);
+        }
+
         /**
          * Öffnet einen Absatz über seine stabile Passage-ID (#452) unter Inhalte im Reiter „Absätze“; ohne eigene
          * Umsetzung nur seine Seite.
@@ -109,6 +113,14 @@ public final class AppContext {
          */
         default void openFromTree(String sourceId, String pageId) {
             openPage(sourceId, pageId);
+        }
+
+        /**
+         * Klick auf einen Knoten ohne eigenen Inhalt im Explorer (ein Ordner, {@link
+         * com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode.Kind#hasOwnContent()}): Die Mitte
+         * zeigt ihn statt der vorher geöffneten Seite, außer in der Suche; ohne eigene Umsetzung nichts.
+         */
+        default void openContainerFromTree(String sourceId, String spaceKey, String pageId, String title) {
         }
 
         /** Zeigt die Quellenseite einer Wissensquelle mit ihren Updates (ADR 0030); ohne eigene Umsetzung nichts. */
@@ -305,6 +317,15 @@ public final class AppContext {
     /** Die laufende Laufzeit oder {@code null}, wenn der Start scheiterte ({@link #startProblem()}). */
     public AppRuntime runtime() {
         return runtime;
+    }
+
+    /**
+     * Die Quellentypen für das Quellenformular, immer vollständig: aus denselben Adaptern wie die Laufzeit
+     * ({@link AppRuntime#sourceTypes}), auch solange sie noch startet, neu startet oder nicht starten konnte.
+     */
+    public java.util.List<com.aresstack.spaceharvester.application.sources.SourceType> sourceTypes() {
+        AppSettings current = settings;
+        return AppRuntime.sourceTypes(current != null ? current : loader.load(configFile));
     }
 
     public Throwable startProblem() {

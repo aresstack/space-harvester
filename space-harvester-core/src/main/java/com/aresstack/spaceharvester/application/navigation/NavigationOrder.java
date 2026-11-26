@@ -63,6 +63,10 @@ final class NavigationOrder {
         if (next != null) {
             order.addAll(known);
         }
+        if (Objects.equals(batch.partitionKey(), request.spaceKey) && new ArrayList<>(order).equals(known)) {
+            // Unchanged order: keep the stored revision instead of committing the same hint again.
+            return new NavigationContinuation.State(next, confirmed, request.snapshot.revision());
+        }
         try {
             String revision = cache.compareAndSetChildOrder(request.sourceId, batch.partitionKey(), request.parentId,
                     request.snapshot.revision(), new ArrayList<>(order)).orElse(null);

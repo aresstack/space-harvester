@@ -541,7 +541,15 @@ public interface HarvestSource {
             PAGE,
             FOLDER,
             FILE,
-            GROUP
+            GROUP;
+
+            /**
+             * Ob der Knoten selbst etwas zum Lesen hat. Ordner und Gruppen haben keinen eigenen Inhalt, nur Kinder; die
+             * App zeigt für sie die Ebene statt einer Seite, für jede Quelle und in jeder Tiefe gleich.
+             */
+            public boolean hasOwnContent() {
+                return this == PAGE || this == FILE;
+            }
         }
 
         public PageNode(String pageId, String title, String partitionKey, Boolean hasChildren) {

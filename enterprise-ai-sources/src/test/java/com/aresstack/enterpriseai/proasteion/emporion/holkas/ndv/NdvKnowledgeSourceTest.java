@@ -59,6 +59,22 @@ public class NdvKnowledgeSourceTest {
     }
 
     @Test
+    public void nativeContentKeepsIdentityRevisionAndHash() throws Exception {
+        first.objects.add(object("BOOK", "NSP", "date", 20));
+        KnowledgeResource listed = source.discover(SourceScope.of("LIB")).get(0);
+        String id = source.localId(listed.id());
+        com.aresstack.enterpriseai.source.api.StoredContent content = source.storedContent(id);
+        assertEquals(java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                listed.id().value().getBytes(java.nio.charset.StandardCharsets.UTF_8)), id);
+        assertEquals(listed.id(), content.resource().id());
+        assertEquals(listed.revision(), content.resource().revision());
+        assertEquals(NdvSourceProvider.SOURCE_TEXT_FORMAT, content.nativeFormat());
+        assertEquals(content.sha256(), content.resource().metadata().asMap().get(NdvSourceProvider.SOURCE_HASH));
+        assertEquals(1, first.downloads);
+        assertEquals(1, first.listings);
+    }
+
+    @Test
     public void metadataIsConsumedOnceAndRefreshedOnDirectRead() throws Exception {
         first.objects.add(object("BOOK", "NSP", "date", 20));
         KnowledgeResource listed = source.discover(SourceScope.of("LIB")).get(0);

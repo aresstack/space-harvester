@@ -218,13 +218,17 @@ final class ChatTools {
     List<AiChat.Tool> toolDefinitions() {
         if (scope == null) {
             // Ohne Bereich (Angelo 24.11.2026): nur die interne Suche samt Lesen ihrer Treffer, wenn sie an ist.
-            return appSources == null ? List.of() : List.of(readDefinition(), appSearchDefinition());
+            if (appSources == null) return List.of();
+            List<AiChat.Tool> all = new ArrayList<>(List.of(readDefinition(), appSearchDefinition()));
+            if (explicitAppSources != null) all.addAll(storedProgramTools().definitions());
+            return List.copyOf(all);
         }
         if (appSources == null) {
             return definitions(nodes != null);
         }
         List<AiChat.Tool> all = new ArrayList<>(definitions(nodes != null));
         all.add(appSearchDefinition());
+        if (explicitAppSources != null) all.addAll(storedProgramTools().definitions());
         return List.copyOf(all);
     }
 
@@ -325,6 +329,8 @@ final class ChatTools {
             case READ -> "Liest eine Seite";
             case TERM -> "Schlägt einen Fachbegriff nach";
             case APP_SEARCH -> "Durchsucht die Wissensquellen";
+            case StoredProgramChatTools.SOURCES, StoredProgramChatTools.SEARCH, StoredProgramChatTools.ANALYSIS ->
+                    StoredProgramChatTools.describe(call.name());
             default -> "Werkzeug";
         };
     }
@@ -356,6 +362,9 @@ final class ChatTools {
                         .asInt(0)));
                 case TERM -> term(arguments.path("begriff").asString(""));
                 case APP_SEARCH -> appSearch(arguments);
+                case StoredProgramChatTools.SOURCES, StoredProgramChatTools.SEARCH, StoredProgramChatTools.ANALYSIS ->
+                        explicitAppSources == null || appSources == null ? "Unbekanntes Werkzeug."
+                                : storedProgramTools().run(call.name(), arguments);
                 default -> "Unbekanntes Werkzeug.";
             };
         } catch (CancellationException e) {
@@ -968,6 +977,14 @@ final class ChatTools {
         String cut = query.substring(0, KeywordSearch.MAX_TEXT_LENGTH);
         int space = cut.lastIndexOf(' ');
         return (space > KeywordSearch.MAX_TEXT_LENGTH / 2 ? cut.substring(0, space) : cut).strip();
+    }
+
+    private StoredProgramChatTools storedProgramTools() {
+        return new StoredProgramChatTools(workspace, explicitAppSources, () -> cancelled,
+                (spaceKey, key) -> {
+                    release(spaceKey, key);
+                    granted.add(key);
+                });
     }
 
     /**

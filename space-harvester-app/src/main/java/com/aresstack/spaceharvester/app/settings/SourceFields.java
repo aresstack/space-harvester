@@ -16,7 +16,14 @@ public final class SourceFields {
 
     /** Die Felder des Typs in seiner Reihenfolge; leer für Confluence und unbekannte Typen. */
     public static List<SourceFieldSpec> fields(SourceType type) {
-        return type == null ? List.of() : type.fields().stream().map(SourceFields::spec).toList();
+        if (type == null) return List.of();
+        List<SourceFieldSpec> fields = new java.util.ArrayList<>(type.fields().stream().map(SourceFields::spec).toList());
+        if ("ftp".equals(type.id()) && fields.stream().noneMatch(field -> "syslib".equals(field.key()))) {
+            fields.add(new SourceFieldSpec("syslib", "SYSLIB (Copybooks)",
+                    "Absolute MVS-Datasets in Suchreihenfolge, durch Komma getrennt. Nur gespeicherte Member werden verwendet.",
+                    SourceFieldSpec.Kind.TEXT, false, false, ""));
+        }
+        return List.copyOf(fields);
     }
 
     /** Die Anmeldearten des Typs; ohne Angabe nur „Ohne Anmeldung“. */

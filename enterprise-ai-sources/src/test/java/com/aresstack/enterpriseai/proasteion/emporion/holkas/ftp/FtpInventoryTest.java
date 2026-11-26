@@ -83,6 +83,54 @@ public class FtpInventoryTest {
     }
 
     @Test
+    public void nativeContentKeepsCanonicalIdentityAndSourceColumns() throws Exception {
+        FakeSession session = new FakeSession();
+        String path = "HLQ.DATA(ABC)";
+        String code = "000100 IDENTIFICATION DIVISION.  \n000200 PROGRAM-ID. ABC.   \n\n"
+                + "000300* ``` e\u0301 \n";
+        session.children.put("HLQ.DATA", Collections.singletonList(file(path)));
+        session.contents.put(path, code);
+        FtpKnowledgeSource source = source(session);
+        KnowledgeResource discovered = source.discover(SourceScope.of("HLQ.DATA")).get(0);
+        String id = source.localId(discovered.id());
+        assertEquals(java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                discovered.id().value().getBytes(java.nio.charset.StandardCharsets.UTF_8)), id);
+        com.aresstack.enterpriseai.source.api.StoredContent stored = source.storedContent(id);
+        assertEquals(discovered.id(), stored.resource().id());
+        assertEquals(FtpSourceProvider.SOURCE_TEXT_FORMAT, stored.nativeFormat());
+        assertEquals("text/plain", stored.mediaType());
+        assertArrayEquals(code.getBytes(java.nio.charset.StandardCharsets.UTF_8), stored.payload());
+        assertEquals(FtpKnowledgeSource.sha256(code), stored.sha256());
+        assertEquals(1, session.downloads);
+        assertEquals(stored.resource().revision(), source.load(discovered.id()).resource().revision());
+        assertEquals(2, session.downloads);
+        try {
+            source.storedContent(id + "=");
+            fail("Reject a noncanonical ID");
+        } catch (KnowledgeSourceException invalid) {
+            assertEquals(KnowledgeSourceException.Kind.UNSUPPORTED, invalid.kind());
+        }
+        assertEquals(2, session.downloads);
+    }
+
+    @Test
+    public void nativeRecordDecoderPreservesPaddingSpacesAndEmptyRecords() throws Exception {
+        byte[] bytes = {' ', 'A', ' ', ' ', (byte) 0xff, 1, (byte) 0xff, 1,
+                ' ', 'B', ' ', (byte) 0xff, 1, (byte) 0xff, 2};
+        assertEquals(" A  \n\n B \n", RecordStructureText.decodeSource(bytes,
+                java.nio.charset.StandardCharsets.ISO_8859_1, true));
+        assertEquals(" A  \n\n B ", RecordStructureText.decodeSource(" A  \r\n\r\n B "
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8), java.nio.charset.StandardCharsets.UTF_8, false));
+        try {
+            RecordStructureText.decodeSource(new byte[]{(byte) 0xc3, 0x28},
+                    java.nio.charset.StandardCharsets.UTF_8, false);
+            fail("Reject malformed source encoding");
+        } catch (java.nio.charset.CharacterCodingException expected) {
+            // Reject silent character replacement.
+        }
+    }
+
+    @Test
     public void directScanIncludesSequentialDatasetButDoesNotOpenChildDirectories() throws Exception {
         FakeSession session = new FakeSession();
         session.children.put("HLQ", Arrays.asList(directory("HLQ.SRC"), directory("HLQ.PDS")));
@@ -120,6 +168,8 @@ public class FtpInventoryTest {
         private final List<String> listed = new ArrayList<String>();
         private final List<String> sequential = new ArrayList<String>();
         private final Map<String, String> samples = new LinkedHashMap<String, String>();
+        private final Map<String, String> contents = new LinkedHashMap<String, String>();
+        private int downloads;
 
         @Override
         public boolean mvs() {
@@ -139,7 +189,9 @@ public class FtpInventoryTest {
 
         @Override
         public String readText(String path) {
-            throw new AssertionError("Do not download document content during inventory");
+            if (!contents.containsKey(path)) throw new AssertionError("Unexpected download: " + path);
+            downloads++;
+            return contents.get(path);
         }
 
         @Override

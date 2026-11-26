@@ -60,7 +60,9 @@ class KeywordSearchFoundTest {
     }
 
     @Test
-    void sourceSpecificPrefetchLeavesNativeHitsVisibleWithoutLoadingOrCataloguingThem() {
+    void sourceSpecificPrefetchOnlyDecidesLoadingWhileCataloguingFollowsTheBackgroundFill() {
+        // Angelo 26.11.: Suchtreffer nachladen (Laden des Inhalts) und Hintergrundfüllung (Erfassen im Katalog) sind
+        // getrennte Verantwortlichkeiten. „slow“ lädt nicht nach, ihre Funde werden trotzdem katalogisiert.
         fast.results("betrieb", "1");
         slow.results("betrieb", "9");
         List<String> loaded = new ArrayList<>();
@@ -77,8 +79,29 @@ class KeywordSearchFoundTest {
         assertThat(loaded).containsExactly("fast");
         assertThat(result.found()).extracting(KeywordSearch.Hit::sourceId)
                 .containsExactlyInAnyOrder("fast", "slow");
+        org.mockito.Mockito.verify(findings).accept(any(), org.mockito.ArgumentMatchers.eq("slow"), any());
+        org.mockito.Mockito.verify(findings).accept(any(), org.mockito.ArgumentMatchers.eq("fast"), any());
+    }
+
+    @Test
+    void withoutBackgroundFillNothingIsCataloguedEvenWhereHitsAreLoaded() {
+        fast.results("betrieb", "1");
+        slow.results("betrieb", "9");
+        List<String> loaded = new ArrayList<>();
+        var findings = mock(com.aresstack.spaceharvester.application.acquisition.FindingCatalog.class);
+        KeywordSearch search = new KeywordSearch(catalog, allowAll(), texts, (caller, hits) -> {
+            hits.forEach(hit -> loaded.add(hit.sourceId()));
+            return KeywordSearch.Prefetch.Fill.NONE;
+        }, 1, ExcerptPriority.off(), CandidateSelectionStrategy.topN(1), com.aresstack.spaceharvester.application.searchrun.SearchRunLog.NONE, findings,
+                sourceId -> true, KeywordSearch.BeforeSearch.NONE, SearchExpansion.NONE, SearchExpansion.NONE,
+                "slow"::equals);
+
+        search.search(APP, KeywordSearch.Query.of("betrieb"), null, 25);
+
+        assertThat(loaded).isNotEmpty();
         org.mockito.Mockito.verify(findings, org.mockito.Mockito.never()).accept(any(),
-                org.mockito.ArgumentMatchers.eq("slow"), any());
+                org.mockito.ArgumentMatchers.eq("fast"), any());
+        org.mockito.Mockito.verify(findings).accept(any(), org.mockito.ArgumentMatchers.eq("slow"), any());
     }
 
     @Test

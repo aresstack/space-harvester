@@ -396,3 +396,12 @@ wo die Umsetzung von der Entscheidung abweicht oder sie genauer fasst. Alles Üb
 - Eigene, einstellbare Filterung enthaltener Dateien nach Medientyp über `PartRules`.
 - Oberflächen: Herkunft anzeigen, nach Anhang filtern, Status sichtbar.
 - Stufe 6 (Tika-Modul im Enterprise AI Client, Tika 4).
+
+## Fortschreibung (26.11.2026): Lokale Originale ohne Kopie (ADR 0039)
+
+Punkt 6 („Das Original bleibt abrufbar, ohne zweite Kopie“) nennt für die Quelle `files` das im Core abgelegte
+Original. Seit [ADR 0039](0039-austauschbare-originalspeicherung-und-portable-wissensbestaende.md) liegt das Original
+einer lokalen Datei nicht mehr im Core: Der Core hält einen Verweis und liest das Original an Ort und Stelle, nach
+erneuter Pfad- und Zugriffsprüfung. Enthaltene Dateien werden weiterhin aus dem Original gelesen, ohne eigene Kopie.
+Das Prinzip der großen Dateien (Textauszug statt Original) ist verallgemeinert; lokale Dateien werden aber nie als
+`large-file-text` oder `large-file-metadata` geführt.

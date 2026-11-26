@@ -124,9 +124,6 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     /** Prozessor, dessen Ergebnisse Vektoren tragen ({@code EmbeddingProcessor#id()}). */
     static final String EMBEDDING = "embedding";
 
-    /** Höchste Dimension, die Lucenes HNSW-Format annimmt; größere Vektoren werden nicht indiziert. */
-    static final int MAX_VECTOR_DIMENSIONS = 1_024;
-
     static final int COMMIT_EVERY = 500;
 
     private static final String ID = "id";
@@ -267,6 +264,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             IndexWriterConfig config = new IndexWriterConfig(new StandardAnalyzer());
             config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
             config.setCommitOnClose(false);
+            // Vektoren jeder Dimension, die das Modell liefert (docs/grenzen.md), statt höchstens 1024.
+            config.setCodec(VectorCodec.create());
             writer = new IndexWriter(directory, config);
             String previous = exists ? SegmentInfos.readLatestCommit(directory).getUserData()
                     .get(PageCacheSchema.SCHEMA_KEY) : VERSION;
@@ -344,13 +343,21 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
 
     @Override
     public List<PageKey> pagesWith(String processorId) {
+        return pagesWith(null, processorId);
+    }
+
+    @Override
+    public List<PageKey> pagesWith(String sourceId, String processorId) {
         Objects.requireNonNull(processorId, "processorId");
         requireOpen();
         try {
             IndexSearcher searcher = searchers.acquire();
             try {
                 // Alle Ergebnisse von Seiten (nur sie tragen PAGE), dann nach Prozessor gefiltert.
-                org.apache.lucene.search.Query pages = TermRangeQuery.newStringRange(PAGE, null, null, true, true);
+                org.apache.lucene.search.Query pages = sourceId == null
+                        ? TermRangeQuery.newStringRange(PAGE, null, null, true, true)
+                        : new org.apache.lucene.search.PrefixQuery(new org.apache.lucene.index.Term(PAGE,
+                                sourceId + SEPARATOR));
                 int count = searcher.count(pages);
                 if (count == 0) {
                     return List.of();
@@ -574,7 +581,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         }
         requireOpen();
         float[] normalized = EmbeddingIndex.normalized(query);
-        if (query.length > MAX_VECTOR_DIMENSIONS || isZero(normalized) || sourceIds.isEmpty()
+        if (isZero(normalized) || sourceIds.isEmpty()
                 || within != null && within.isEmpty()) {
             return List.of();
         }
@@ -945,7 +952,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         } catch (IllegalArgumentException e) {
             return List.of();
         }
-        if (payload.dimensions() < 1 || payload.dimensions() > MAX_VECTOR_DIMENSIONS) {
+        if (payload.dimensions() < 1) {
             return List.of();
         }
         String id = id(enrichment);

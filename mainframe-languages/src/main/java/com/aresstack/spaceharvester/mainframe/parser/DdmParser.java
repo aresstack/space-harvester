@@ -123,6 +123,9 @@ public class DdmParser {
         private final boolean descriptor; // is a descriptor?
         private final boolean superdescriptor;
         private final String remark;
+        private int sourceLine;
+
+        public int getSourceLine() { return sourceLine; }
 
         public DdmField(String shortName, String longName, int level,
                         char typeIndicator, String format, int length, int decimals,
@@ -281,15 +284,17 @@ public class DdmParser {
 
             DdmField field = parseFieldLine(line);
             if (field != null) {
+                field.sourceLine = i + 1;
                 fields.add(field);
             }
         }
 
         if (fields.isEmpty()) {
             // Fallback: try to parse the whole thing as field lines
-            for (String line : lines) {
-                DdmField field = parseFieldLine(line);
+            for (int i = 0; i < lines.length; i++) {
+                DdmField field = parseFieldLine(lines[i]);
                 if (field != null) {
+                    field.sourceLine = i + 1;
                     fields.add(field);
                 }
             }

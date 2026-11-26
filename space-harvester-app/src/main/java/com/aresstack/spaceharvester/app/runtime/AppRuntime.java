@@ -213,17 +213,32 @@ public final class AppRuntime implements AutoCloseable {
         }
     }
 
+    /**
+     * Die Quellentypen, die eine mit diesen Einstellungen gestartete Laufzeit kennt ({@code Workspace#sourceTypes}),
+     * ohne sie zu starten: dieselben Adapter wie {@link #start}, daher auch ohne laufende oder nach einer gescheiterten
+     * Laufzeit vollständig (Quellenformular).
+     */
+    public static List<com.aresstack.spaceharvester.application.sources.SourceType> sourceTypes(AppSettings settings) {
+        return Harvester.builder().sourceAdapter(confluence(settings))
+                .dataDirectory(settings.storage().dataDirectory()).sourceTypes();
+    }
+
+    /**
+     * Confluence wie im Enterprise AI Client (#571): Weiterleitungen wie dort, kein asynchroner Transport,
+     * HTML-Antworten statt Dateien neben dem Protokoll. Wiederholungen bei Netzfehlern, 429 und 5xx aus jobs.retry
+     * (ADR 0025); Datei-Downloads und Einmalcodes wiederholt der Client nie (keine neue Mail).
+     */
+    private static ConfluenceSourceAdapter confluence(AppSettings settings) {
+        return ConfluenceSourceAdapter.desktop(com.aresstack.spaceharvester.app.ui.SettingsView.logDirectory())
+                .withRetry(settings.jobLimits().retry());
+    }
+
     private static Harvester.Builder builder(AppSettings settings, AppSettings.Storage storage,
                                              List<SourceSettingsConfig> sources, AccessPolicy policy, String version,
                                              SessionSecrets secrets, boolean withAi) {
         Harvester.Builder builder = Harvester.builder()
                 .sources(sources)
-                // Confluence wie im Enterprise AI Client (#571): Weiterleitungen wie dort, kein asynchroner Transport,
-                // HTML-Antworten statt Dateien neben dem Protokoll. Wiederholungen bei Netzfehlern, 429 und 5xx aus
-                // jobs.retry (ADR 0025); Datei-Downloads und Einmalcodes wiederholt der Client nie (keine neue Mail).
-                .sourceAdapter(ConfluenceSourceAdapter.desktop(
-                        com.aresstack.spaceharvester.app.ui.SettingsView.logDirectory())
-                        .withRetry(settings.jobLimits().retry()))
+                .sourceAdapter(confluence(settings))
                 // Die App bedient Einmalcodes (SignInSlot); ohne Wartezeit fehlten solche Dateien sofort.
                 .signInWait(SignInRequests.DEFAULT_WAIT)
                 .dataDirectory(storage.dataDirectory())
@@ -257,6 +272,20 @@ public final class AppRuntime implements AutoCloseable {
             builder.embeddingChunking(ai.chunkTokens() == null ? KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS
                     : ai.chunkTokens(), ai.chunkOverlapSentences() == null
                     ? KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES : ai.chunkOverlapSentences());
+        }
+        var ftpSources = sources.stream().filter(source -> "ftp".equalsIgnoreCase(source.type()))
+                .collect(java.util.stream.Collectors.toMap(SourceSettingsConfig::id,
+                        source -> com.aresstack.spaceharvester.app.runtime.program.StoredCopybooks.libraries(
+                                source.options().get("syslib"))));
+        if (!ftpSources.isEmpty()) {
+            builder.snapshotEnrichmentProcessor(lookup -> new com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment(ftpSources, lookup));
+            builder.snapshotEnrichmentProcessor(lookup -> new com.aresstack.spaceharvester.app.runtime.program.CobolBusinessEnrichment(ftpSources, lookup));
+            builder.enrichmentProcessor(new com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment(ftpSources.keySet()));
+        }
+        var ndvSources = sources.stream().filter(source -> "ndv".equalsIgnoreCase(source.type()))
+                .map(source -> source.id()).collect(java.util.stream.Collectors.toSet());
+        if (!ndvSources.isEmpty()) {
+            builder.enrichmentProcessor(new com.aresstack.spaceharvester.app.runtime.program.NaturalProgramEnrichment(ndvSources));
         }
         builder.accessPolicy(policy);
         // #499: MaltParser nur auf Knopfdruck; das Modell lädt erst der erste Klick, ohne Modell startet die App normal.

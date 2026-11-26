@@ -96,9 +96,15 @@ class SourceDataConfiguration {
             stores.inventoryLog(log);
         }
         AcquisitionScheduler scheduler = acquisition.getIfAvailable();
+        // Die Füllung bleibt für die ganze Bereinigung gesperrt, nicht nur beim Leeren ihrer Schlange: Sonst reihte sie
+        // die Seiten aus dem noch nicht geleerten Katalog wieder ein. Auch sie erst beim Bereinigen nachgesehen.
+        SourceDataPurge.Quiesce fillHold = sourceId -> {
+            BackgroundFill current = backgroundFill.getIfAvailable();
+            return current == null ? () -> { } : current.holdSource(sourceId);
+        };
         return new SourceDataPurge(jobs, stores.build(), sourceId -> catalog.config(sourceId).isPresent(),
-                scheduler == null ? SourceDataPurge.Quiesce.NONE
-                        : sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT));
+                scheduler == null ? fillHold
+                        : fillHold.andThen(sourceId -> scheduler.quiesce(sourceId, SourceDataPurge.JOB_STOP_TIMEOUT)));
     }
 
     /**

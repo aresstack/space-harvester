@@ -21,6 +21,11 @@ interface FtpClientSession extends FtpSessionPool.Session {
     /** Inhalt als Text (Satzstruktur, Füllbytes und Zeichensatz aufgelöst). */
     String readText(String path) throws IOException;
 
+    /** Read decoded source text without trimming record columns. */
+    default String readSourceText(String path) throws IOException {
+        return readText(path);
+    }
+
     /** Read a bounded prefix for program recognition. */
     String sampleText(String path) throws IOException;
 

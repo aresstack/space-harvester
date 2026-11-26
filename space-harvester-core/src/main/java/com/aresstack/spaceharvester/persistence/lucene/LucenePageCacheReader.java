@@ -57,6 +57,12 @@ public final class LucenePageCacheReader implements PageCacheReader {
     }
 
     @Override
+    public List<PageHeader> sourceHeaders(String sourceId, String afterPageId, int limit) {
+        return guarded(() -> cache.sourcePages(sourceId, afterPageId, limit).stream()
+                .map(CachedPageHeader::header).toList());
+    }
+
+    @Override
     public Optional<CachedPage> page(PageKey key) {
         Objects.requireNonNull(key, "key");
         return guarded(() -> {
