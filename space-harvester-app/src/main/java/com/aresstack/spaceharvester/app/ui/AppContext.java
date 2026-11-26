@@ -1035,7 +1035,14 @@ public final class AppContext {
                 return new Started(previous.settings().withConsoleOutput(loaded.consoleOutput()), previous, null);
             }
             if (previous != null) {
-                previous.close();
+                try {
+                    previous.close();
+                } catch (RuntimeException e) {
+                    // Scheitert das Schließen (etwa während der Core die Daten einer entfernten Quelle löscht), darf das
+                    // Neuladen nicht ohne Laufzeit und mit der alten Quellenliste enden: Die Oberfläche zeigte sonst
+                    // die entfernte Quelle weiter, und der Hinzufügen-Dialog kennte nur noch zwei Arten.
+                    LOG.warn("Die bisherigen Verbindungen ließen sich nicht vollständig schließen; sie starten neu", e);
+                }
             }
             try {
                 return new Started(loaded, AppRuntime.start(loaded, secrets, version), null);
@@ -1068,6 +1075,7 @@ public final class AppContext {
             }
             done.run();
         }, error -> {
+            LOG.warn("Neu laden gescheitert", error);
             reloads.decrementAndGet();
             runtime = null;
             startProblem = error;

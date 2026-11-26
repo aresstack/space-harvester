@@ -121,11 +121,17 @@ public final class ConfigFileEditor {
         return new Draft(text, settings);
     }
 
-    /** Der Dateitext ohne den Eintrag {@code sourceId}; Kommentare um ihn herum bleiben stehen. */
+    /**
+     * Der Dateitext ohne den Eintrag {@code sourceId}; Kommentare um ihn herum bleiben stehen. Steht die Quelle schon
+     * nicht mehr in der Datei (etwa weil ein früheres Entfernen die Datei schrieb, das Neuladen aber scheiterte), ist
+     * der Text unverändert: Entfernen ist dann schon geschehen und darf nicht mit „nicht abgrenzen“ scheitern.
+     */
     public Draft remove(Path file, String sourceId) throws IOException {
         String current = Files.readString(file, StandardCharsets.UTF_8);
         List<String> expected = new ArrayList<>(configuredIds(current));
-        expected.remove(sourceId);
+        if (!expected.remove(sourceId)) {
+            return new Draft(current, loader.read(file, current));
+        }
         Edit edit = locate(current, sourceId);
         List<String> lines = edit.lines();
         lines.subList(edit.start(), edit.end()).clear();
@@ -1473,6 +1479,9 @@ public final class ConfigFileEditor {
     }
 
     private static Edit locate(String text, String sourceId) {
+        if (!configuredIds(text).contains(sourceId)) {
+            throw new IllegalArgumentException("Die Quelle " + sourceId + " steht nicht in der Konfigurationsdatei.");
+        }
         List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
         String newline = text.contains("\r\n") ? "\r\n" : "\n";
         if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
