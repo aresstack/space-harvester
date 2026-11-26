@@ -89,7 +89,6 @@ public class JclElement {
      */
     public String getDisplayText() {
         StringBuilder sb = new StringBuilder();
-        sb.append(type.getIcon()).append(" ");
 
         if (name != null && !name.isEmpty()) {
             sb.append(name);
