@@ -6,8 +6,8 @@
   worden; die Trennung selbst ist eine Empfehlung aus dem ursprünglichen Chat (F40-4) und wartet auf Angelos
   Bestätigung. Inhaltlich ist gegenüber ADR 0040 nur Punkt 5 neu.
 - Quellen: #1438 samt Kommentaren, PRs #1455, #1465, #1484, Enterprise AI Client #248 bis #250; Angelos
-  Zusammenfassung vom 26.11.2026 (Abschnitte 10 und 11), Klärung vom 26.11.2026, 13:12 (Punkte 5 und 6) und
-  Antworten vom 26.11.2026, 13:21.
+  Zusammenfassung vom 26.11.2026 (Abschnitte 10 und 11), Klärung vom 26.11.2026, 14:12 (Punkte 5 und 6) und
+  Antworten vom 26.11.2026, 14:21.
 - Bezüge: [ADR 0001](0001-ausgehender-http-transport.md) (HTTP-Transport),
   [ADR 0036](0036-gemeinsame-systemzugriffsarchitektur.md) (Fähigkeiten als Verträge, Grenzen als Einstellungen),
   [ADR 0037](0037-quellenumfang-nutzungssteuerung-beschaffung.md) (strikte Inventur),

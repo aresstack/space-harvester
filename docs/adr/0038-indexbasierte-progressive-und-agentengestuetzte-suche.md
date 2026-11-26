@@ -3,7 +3,7 @@
 - Status: **Angenommen** für die Punkte 1 bis 6 (Entscheidungen von Angelo, 25.11.2026, festgehalten in Epic #1461
   Abschnitt C.1 und #1460). Die Agenten-Spur (Punkt 7) ist als Zielbild beschlossen, auch für die Suchleiste, und
   **nicht umgesetzt**. Was im Text mit *vorgeschlagen* gekennzeichnet ist, stammt aus den Antworten des
-  ursprünglichen Chats vom 26.11.2026, 13:21, und gilt erst mit Angelos Bestätigung.
+  ursprünglichen Chats vom 26.11.2026, 14:21, und gilt erst mit Angelos Bestätigung.
 - Schreibt [ADR 0013](0013-suche-ueber-den-cache.md), [ADR 0016](0016-auswahl-beschaffung-hintergrund.md) und
   [ADR 0017](0017-progressive-suche.md) fort. Was dort steht und hier nicht ausdrücklich geändert wird, gilt weiter.
 - Quellen: Epic #1461 (C.1), #1460 (Abschnitt 3), PR #1462; Angelos Zusammenfassung vom 26.11.2026 (Abschnitt 6).

@@ -2,10 +2,10 @@
 
 - Status: **Angenommen, auf main umgesetzt** (Entscheidungen von Angelo, 25./26.11.2026, festgehalten in #1438 und
   #1468). Die Abnahme an einem echten SharePoint steht aus, #1438 und #1468 sind deshalb offen. Was im Text
-  mit *vorgeschlagen* gekennzeichnet ist, stammt aus den Antworten des ursprünglichen Chats vom 26.11.2026, 13:21,
+  mit *vorgeschlagen* gekennzeichnet ist, stammt aus den Antworten des ursprünglichen Chats vom 26.11.2026, 14:21,
   und gilt erst mit Angelos Bestätigung.
 - Quellen: #1438, #1468 samt Kommentaren, PRs #1455, #1464, #1465, #1469, #1484, Enterprise AI Client #248 bis
-  #250; Angelos Zusammenfassung vom 26.11.2026 (Abschnitte 10 und 11) und Klärung vom 26.11.2026, 13:12 (Punkte 5
+  #250; Angelos Zusammenfassung vom 26.11.2026 (Abschnitte 10 und 11) und Klärung vom 26.11.2026, 14:12 (Punkte 5
   und 6).
 - Bezüge: [ADR 0001](0001-ausgehender-http-transport.md) (HTTP-Transport), [ADR 0014](0014-abgleich-berechtigung-suche-getrennt.md)
   (Rechte), [ADR 0027](0027-beobachter-statt-abfragen.md) (kein Polling),

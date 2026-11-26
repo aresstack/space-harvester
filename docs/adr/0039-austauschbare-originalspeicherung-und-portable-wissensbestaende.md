@@ -2,10 +2,10 @@
 
 - Status: **Angenommen, auf main umgesetzt** (Entscheidungen von Angelo, 25./26.11.2026, festgehalten in #1437 samt
   Kommentaren). Die Abnahme mit echten Nutzerdateien und OneNote steht aus, #1437 ist deshalb offen. Was im Text mit
-  *vorgeschlagen* gekennzeichnet ist, stammt aus den Antworten des ursprünglichen Chats vom 26.11.2026, 13:21, und
+  *vorgeschlagen* gekennzeichnet ist, stammt aus den Antworten des ursprünglichen Chats vom 26.11.2026, 14:21, und
   gilt erst mit Angelos Bestätigung.
 - Quellen: #1437 (Zielarchitektur, Architekturleitplanken, sechs Fortschrittskommentare), PRs #1439, #1442, #1444,
-  #1445, #1450, #1452, #1453, #1463, #1472; Angelos Zusammenfassung vom 26.11.2026 (Abschnitte 7 bis 9) und Klärung vom 26.11.2026, 13:12 (Punkt 4).
+  #1445, #1450, #1452, #1453, #1463, #1472; Angelos Zusammenfassung vom 26.11.2026 (Abschnitte 7 bis 9) und Klärung vom 26.11.2026, 14:12 (Punkt 4).
 - Bezüge: [ADR 0003](0003-lucene-cache.md) (Cache), [ADR 0010](0010-export-ohne-vorbereiteten-bestand.md) (Export),
   [ADR 0026](0026-anhaenge-und-enthaltene-dateien-als-dokumente.md) (Dokumente und Abschnitte, große Dateien),
   [ADR 0029](0029-auswahl-und-ausgabe-aus-dem-bestand.md) (Ausgabe aus dem Bestand),

@@ -137,10 +137,14 @@ der Inventur entfernt (`DELETED`, `MOVED_OUT`) oder gesperrt (`INACCESSIBLE`). S
 - **Eine Inventur gilt nur für ihren Bereich.** Was `HarvestSource.inventoryCovers` verneint, gehört nicht zum
   Abgleich: Es wird durch ihn weder entfernt noch als fehlend geprüft. Das betrifft vor allem Ressourcen, die bei
   FTP und NDV durch Navigationsbefüllung außerhalb der konfigurierten Startpunkte erworben wurden.
-- **Eine unvollständige Inventur ist niemals ein Löschungsnachweis.** Fehler, erreichte Tiefen- oder Mengengrenzen
-  und Abbruch führen zu keiner Entfernung. Punkt 4 (`DELETED` nur bei autoritativer Bestätigung der Quelle) gilt
+- **Eine unvollständige Inventur ist niemals ein Löschungsnachweis.** Fehler, tatsächlich erreichte Tiefen- oder
+  Mengengrenzen und Abbruch führen zu keiner Entfernung. Punkt 4 (`DELETED` nur bei autoritativer Bestätigung der Quelle) gilt
   unverändert und für jede Quelle.
 - **Neu ist ein dritter Fall neben Löschung und fehlender Berechtigung:** Der Benutzer nimmt einen Bereich aus dem
-  Umfang. Dann zählen die Erwerbsgründe der Ressource (ADR 0037, Punkt 12). Diese Regel ist eine Konkretisierung
-  vom 26.11.2026 und noch nicht als Entscheidung bestätigt; bis dahin entfernt das Verkleinern des Umfangs nichts
-  ohne Rückfrage.
+  Umfang. Dann zählen die Erwerbsgründe der Ressource (ADR 0037, Punkt 12, freigegeben am 26.11.2026):
+  Ressourcen ohne verbleibenden Erwerbsgrund werden Kandidaten für die eigene Aktion „Bereinigen“ und nie
+  selbsttätig entfernt. Eine nachweisliche Löschung im Quellsystem behandelt weiterhin die reguläre
+  Synchronisierung nach Punkt 4.
+- **Vollständigkeit bemisst sich am tatsächlichen Ergebnis und je Inventurbereich.** Ein eingestelltes Tiefen-
+  oder Mengenlimit setzt Löschungen nur aus, wenn es tatsächlich erreicht wurde. Ein Fehler in einem Bereich
+  verhindert nicht den Abgleich eines anderen, vollständig inventarisierten Bereichs (ADR 0037, Punkt 13).

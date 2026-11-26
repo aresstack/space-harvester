@@ -2,10 +2,10 @@
 
 - Status: **Angenommen** (Entscheidungen von Angelo, 25./26.11.2026, festgehalten in #1460, Epic #1461 Abschnitt C
   und #1475). Nutzungsoptionen und quellenweise Beschaffung sind auf main. Was im Text mit
-  *vorgeschlagen* gekennzeichnet ist, stammt aus den Antworten des ursprünglichen Chats vom 26.11.2026, 13:21, und
+  *vorgeschlagen* gekennzeichnet ist, stammt aus den Antworten des ursprünglichen Chats vom 26.11.2026, 14:21, und
   gilt erst mit Angelos Bestätigung; die Übersicht steht unter „Geklärt am 26.11.2026“.
 - Quellen: #1460, Epic #1461 (Abschnitte C und C.1), #1475, PRs #1462, #1477, #1482; Angelos Zusammenfassung vom
-  26.11.2026 (Abschnitte 3, 5 und 12) und Klärung vom 26.11.2026, 13:12 (Punkte 1 bis 3).
+  26.11.2026 (Abschnitte 3, 5 und 12) und Klärung vom 26.11.2026, 14:12 (Punkte 1 bis 3).
 - Bezüge: [ADR 0014](0014-abgleich-berechtigung-suche-getrennt.md) (Rechte),
   [ADR 0015](0015-konfiguration-zur-laufzeit.md) (Konfiguration zur Laufzeit),
   [ADR 0016](0016-auswahl-beschaffung-hintergrund.md) (Beschaffung, Hintergrundfüllung),
@@ -126,44 +126,54 @@ die fachliche Suche und das Glossar überlagern und ungefragt vollständig herun
       ersten Kilobytes anzusehen. Das Ergebnis wird je Revision gespeichert.
     - `RECFM=U` wird für die automatische Quelltextbeschaffung vorsichtshalber ausgeschlossen. Das heißt nicht,
       dass jedes solche Dataset eine Ladebibliothek ist.
-12. **Erwerbsgründe statt Klassen** (Konkretisierung 26.11.2026; das Modell ist *vorgeschlagen*, siehe auch
-    „Prüfung der vorhandenen Mechanismen“). Eine Wissensressource gibt es genau einmal, ohne
-    mehrfache Kopien oder Indexeinträge. Sie kann aus mehreren Gründen im Bestand sein:
-    - sie liegt im konfigurierten Inventurbereich,
-    - sie wurde durch Navigationsbefüllung erworben,
-    - sie wurde ausdrücklich indexiert.
+12. **Erwerbsgründe statt Klassen** (freigegeben am 26.11.2026, 14:38). Eine Wissensressource gibt es genau einmal,
+    mit einem gemeinsamen Bestandseintrag, ohne mehrfache Kopien oder Indexeinträge. Sie kann aus mehreren Gründen
+    zugleich im Bestand sein:
 
-    Fällt ein Grund weg, wird geprüft, ob ein anderer besteht. Eine Ressource wird nicht pauschal als
-    „Inventurressource“ oder „Navigationsressource“ eingestuft, denn sie kann über beide Wege gekommen sein.
-
-    | Ereignis | Verhalten |
+    | Erwerbsgrund | Woher er kommt |
     | --- | --- |
-    | Die Ressource ist im Quellsystem nachweislich gelöscht | Bestand und Index bereinigen |
-    | Der Benutzer nimmt einen Bereich ausdrücklich aus dem Umfang | Rückfrage mit der Zahl der betroffenen Ressourcen, **bevor** die Konfigurationsänderung übernommen wird; danach werden Ressourcen ohne weiteren Erwerbsgrund aus diesem Wissensbestand entfernt (*vorgeschlagen*) |
-    | Die Navigationsbefüllung wird ausgeschaltet | Bereits erworbene Ressourcen bleiben (beschlossen); es kommt nur nichts mehr dazu |
-    | Die Inventur ist unvollständig (Fehler, Tiefen- oder Mengengrenze, Abbruch) | Keine Löschung aus bloß fehlenden Inventurergebnissen |
-
-    Ressourcen, die außerhalb des Inventurbereichs durch Navigation erworben wurden, löscht der Inventurabgleich nie.
-
-    **Woher ein Erwerbsgrund kommt** (*vorgeschlagen*):
-
-    | Erwerbsgrund | Herkunft |
-    | --- | --- |
-    | Inventurbereich | abgeleitet aus der aktuellen Quellenkonfiguration, nicht gespeichert |
+    | Inventur | abgeleitet aus dem aktuell konfigurierten Umfang der Quelle, nicht gespeichert |
     | Ausdrückliche Indexierung | vorhandene `IndexMarks`, einschließlich Teilbaummarkierungen |
-    | Navigationsbefüllung | neu: wird an der Ressource gespeichert |
+    | Navigationsbefüllung | wird an der Ressource gespeichert (neu) |
 
-    Eine Ressource bleibt im Bestand, solange mindestens ein gültiger Erwerbsgrund besteht. Das Modell beschreibt
-    nur den Erwerbsgrund. Es ersetzt weder die Berechtigungsprüfung noch den Nachweis, dass die Ressource im
-    Quellsystem noch existiert. Nur durch Navigation erworbene Ressourcen werden beim Öffnen und beim erneuten
-    Besuch ihres Ordners geprüft, dazu durch die vorhandenen Aktualitätsregeln der Quelle, soweit eingestellt
-    (*vorgeschlagen*).
+    Eine Ressource wird nicht pauschal als „Inventurressource“ oder „Navigationsressource“ eingestuft, denn sie
+    kann über mehrere Wege gekommen sein. Sie bleibt im Bestand, solange mindestens ein gültiger Erwerbsgrund
+    besteht. Das Modell beschreibt nur den Erwerbsgrund; es ersetzt weder die Berechtigungsprüfung noch den
+    Nachweis, dass die Ressource im Quellsystem noch existiert.
 
-    Mehrere Erwerbsgründe führen nie zu mehrfacher Ablage oder Indexierung. Vorhandene Indexierungsmarkierungen und
-    Bestandsmechanismen werden zuerst auf Wiederverwendbarkeit geprüft, bevor etwas Neues entsteht.
-13. **Inventur ist strikt.** Eine unvollständige Inventur ist niemals ein Löschungsnachweis. Fehler, unbekannte Revisionen, fehlende ISPF-Statistiken, erreichte Grenzen
-    (`maxResources`, `maxDepth`) und Abbruch gelten nie als vollständiger Bestand und nie als Löschung. Änderungszeit
-    und Version zählen nur, wo sie verlässlich sind, sonst der Inhalts-Hash.
+    **Synchronisierung und Bereinigung sind zwei verschiedene Anwendungsfälle:**
+
+    | Situation | Verhalten |
+    | --- | --- |
+    | Die Ressource ist im Quellsystem nachweislich gelöscht | Die reguläre Synchronisierung entfernt sie selbsttätig aus dem Bestand |
+    | Ein HLQ oder eine Bibliothek wird aus der Konfiguration genommen | Ressourcen ohne verbleibenden Erwerbsgrund werden **Kandidaten** für „Bereinigen“; entfernt wird dadurch nichts |
+    | Die Navigationsbefüllung wird ausgeschaltet | Bestand und Erwerbsgrund bleiben; es kommt nur nichts mehr dazu |
+    | Die Quelle ist vorübergehend nicht erreichbar | Bestand bleibt |
+    | Berechtigungsfehler | Bestand bleibt, der Zugriff wird entsprechend eingeschränkt |
+    | Die Inventur ist unvollständig | Keine Löschung aus fehlenden Inventurergebnissen (Punkt 13) |
+
+    - **„Bereinigen“ ist eine eigene, ausdrücklich ausgelöste Aktion.** Sie betrifft Ressourcen, die im
+      Quellsystem noch existieren können, aber keinen Erwerbsgrund mehr haben. Vor dem Ausführen zeigt sie die Zahl
+      der betroffenen Ressourcen und den Umfang und verlangt eine Bestätigung. Sie entfernt nur aus dem
+      Wissensbestand, nie das Original im Quellsystem.
+    - **Bestehende Ressourcen mit unbekanntem Erwerbsgrund werden nicht ungeprüft bereinigt.** Was vor der
+      Einführung des Modells erworben wurde und sich keinem Grund zuordnen lässt, gilt nicht als verwaist.
+    - **Ressourcen außerhalb des Inventurbereichs,** die noch einen Erwerbsgrund haben, bleiben. Sie werden beim
+      Öffnen und beim erneuten Besuch ihres Ordners auf Aktualität geprüft. Dafür werden die vorhandenen
+      Aktualitäts- und Beschaffungsmechanismen wiederverwendet.
+    - **Kein zweites System zur Bestandsverwaltung.** Die Erweiterung gehört in die vorhandene gemeinsame
+      Inventur-, Synchronisierungs- und Indexierungsarchitektur. Mehrere Erwerbsgründe führen nie zu mehrfacher
+      Ablage oder Indexierung.
+13. **Inventur ist strikt, und ihre Vollständigkeit bemisst sich am tatsächlichen Ergebnis.** Eine unvollständige
+    Inventur ist niemals ein Löschungsnachweis. Fehler, unbekannte Revisionen, fehlende ISPF-Statistiken und Abbruch
+    gelten nie als vollständiger Bestand und nie als Löschung. Änderungszeit und Version zählen nur, wo sie
+    verlässlich sind, sonst der Inhalts-Hash.
+    - **Ein eingestelltes Limit macht eine Inventur nicht unvollständig** (freigegeben am 26.11.2026, 14:38).
+      Unvollständig ist sie erst, wenn wegen `maxResources` oder `maxDepth` tatsächlich Ressourcen nicht erfasst
+      wurden.
+    - **Die Vollständigkeit wird je abgegrenztem Inventurbereich beurteilt,** etwa je HLQ oder je NDV-Bibliothek.
+      Ein Fehler in einer Bibliothek verhindert nicht den Abgleich einer anderen, die vollständig inventarisiert
+      wurde.
 14. **Operative Live-Dienste brauchen keinen Wissensquellen-Eintrag.** BetaView, JES und freie Recherche werden über
     Verbindungs- und Werkzeugfreigaben gesteuert (ADR 0036, Punkt 9), nicht über ein Live-only-Preset. Der frühere
     verpflichtende Live-only-Preset aus der ersten Fassung von #1460 ist verworfen.
@@ -182,7 +192,8 @@ die fachliche Suche und das Glossar überlagern und ungefragt vollständig herun
 | Neue FTP- und NDV-Quellen standardmäßig „Nur gezielte Suche“ | **nicht umgesetzt**, beschlossen (F37-1) |
 | Punkt 8: Fund erfassen unabhängig vom Prefetch | **weicht ab**, siehe unten; Korrektur beauftragt |
 | Punkt 11: gemeinsame Eignungsprüfung in der FTP-Navigationsbefüllung | **weicht ab**; Korrektur beauftragt |
-| Punkt 12: Erwerbsgründe je Ressource | nicht umgesetzt; siehe „Prüfung der vorhandenen Mechanismen“ |
+| Punkt 12: Erwerbsgründe je Ressource, Aktion „Bereinigen“, Aktualitätsprüfung beim Öffnen | **nicht umgesetzt**, zur Umsetzung freigegeben |
+| Punkt 13: Vollständigkeit nach tatsächlichem Ergebnis und je Inventurbereich | **weicht ab**, zur Umsetzung freigegeben |
 
 ## Prüfung der vorhandenen Mechanismen (zu Punkt 12)
 
@@ -199,7 +210,10 @@ weder gelöscht noch aktualisiert. Das schützt die durch Navigation erworbenen 
 **Nimmt der Benutzer einen HLQ aus den Startpunkten, fallen dessen Ressourcen ebenfalls aus der Abdeckung und
 bleiben liegen**, ohne dass sie jemand entfernt, aktualisiert oder als verwaist anzeigt. Sie sind von
 navigationserworbenen Ressourcen nicht zu unterscheiden. Genau dafür braucht Punkt 12 eine Kennzeichnung, und es
-genügt, den Grund „Navigationsbefüllung“ zu speichern (F37-10).
+genügt, den Grund „Navigationsbefüllung“ zu speichern. So ist es freigegeben.
+
+Außerhalb der Abdeckung prüft heute auch niemand die Aktualität: Solche Ressourcen bleiben ungeprüft im Bestand.
+Das schließt die Prüfung beim Öffnen und beim erneuten Besuch aus Punkt 12.
 
 ## Widersprüche und Auffälligkeiten
 
@@ -207,10 +221,11 @@ genügt, den Grund „Navigationsbefüllung“ zu speichern (F37-10).
   `allowsPrefetch` für die Quelle `false` liefert. Die Hintergrundfüllung erfährt dann nichts von neu gefundenen
   Ressourcen, obwohl sie an ist. Das widerspricht Punkt 8 und ist im ursprünglichen Chat als Implementierungsfehler
   bestätigt.
-- **Punkt 12 berührt ADR 0036, Punkt 5.** Dort (und in #1461, B.7) löscht das Entfernen einer Markierung nichts
-  still, und das Bereinigen ist eine eigene, bewusste Aktion. Punkt 12 entfernt beim Verkleinern des Umfangs
-  Ressourcen ohne weiteren Erwerbsgrund. Beides verträgt sich nur, wenn dieses Entfernen sichtbar und bestätigt
-  geschieht. Deshalb die Rückfrage vor der Übernahme der Änderung (Punkt 12).
+- **Punkt 12 und ADR 0036, Punkt 5, widersprechen sich nicht mehr.** Die erste Fassung ließ Ressourcen ohne
+  Erwerbsgrund beim Verkleinern des Umfangs entfernen. Nach der Freigabe vom 26.11.2026 werden sie nur Kandidaten
+  für „Bereinigen“; das passt zu „Bestand bereinigen ist eine eigene, bewusste Aktion“ (#1461, B.7).
+- **Löschungen werden heute schon ausgesetzt, wenn ein Tiefen- oder Mengenlimit nur gesetzt ist,** nicht erst, wenn
+  es erreicht wurde (Befund des Umsetzungsstrangs). Das widerspricht Punkt 13.
 - **#1460 ist durch PR #1462 geschlossen, dessen Titel nur die Schnitte A und B nennt.** Schnitt C (quellenweiser
   Prefetch, Beschaffungsregeln) ist dennoch im Code vorhanden. Die Presets „Vollständig“ und „Selektiv“ aus #1460
   Abschnitt 3 habe ich im Code nicht gefunden.
@@ -231,10 +246,10 @@ erst, wenn Angelo sie bestätigt.
 | F37-4: Farbe von „Nur gezielte Suche“ | Bernsteinfarbener Rand, dazu Symbol und Tooltip | *Vorgeschlagen*, in Punkt 5 |
 | F37-5: Hintergrundfüllung für Funde außerhalb des Umfangs | Nein, sie bleibt auf den konfigurierten Umfang beschränkt | *Vorgeschlagen*, in Punkt 8 |
 | F37-6: Begrenzte Leseprobe | Ja, wenn die Metadaten nicht genügen; auf der Transportebene begrenzt | *Vorgeschlagen*, in Punkt 11 |
-| F37-7: Bereich aus dem Umfang nehmen | Rückfrage mit Anzahl vor der Übernahme der Änderung | *Vorgeschlagen*, in Punkt 12 |
+| F37-7: Bereich aus dem Umfang nehmen | Ressourcen ohne Erwerbsgrund werden Kandidaten für die eigene Aktion „Bereinigen“ mit Anzahl und Bestätigung. Die Empfehlung von 14:21 (Rückfrage vor der Übernahme der Änderung, danach Entfernen) ist damit ersetzt. | **Beschlossen** (14:38), in Punkt 12 |
 | F37-8: Navigationsbefüllung ausschalten | Erworbene Ressourcen bleiben | **Beschlossen**, in Punkt 12 |
-| F37-9: Aktualität nur durch Navigation erworbener Ressourcen | Prüfung beim Öffnen und beim erneuten Besuch, dazu vorhandene Aktualitätsregeln | *Vorgeschlagen*, in Punkt 12 |
-| F37-10: Nur „Navigationsbefüllung“ speichern | Ja, sofern die vorhandenen Markierungen verlässlich wiederverwendbar sind | *Vorgeschlagen*, in Punkt 12 |
+| F37-9: Aktualität nur durch Navigation erworbener Ressourcen | Prüfung beim Öffnen und beim erneuten Besuch, mit den vorhandenen Mechanismen | **Beschlossen** (14:38), in Punkt 12 |
+| F37-10: Nur „Navigationsbefüllung“ speichern | Ja; Inventur abgeleitet, ausdrückliche Indexierung aus den `IndexMarks` | **Beschlossen** (14:38), in Punkt 12 |
 
 ## Grenzen und Limits
 
@@ -259,7 +274,7 @@ Quellenverwaltung einstellbar.
 | Sofort zu ladende Funde je Stapel | 100, 1 bis 100 | `space-harvester.search.loads` | nicht geprüft |
 | Adaptive Auswahl: kleiner Stapel, Wellen, Mindestzahl | 10, 3, 5 | **fest im Code** (`CandidateSelectionStrategy.Adaptive`) | nein |
 
-Die neue Leseprobe aus Punkt 11 und die Rückfrage aus Punkt 12 bringen keine neue feste Grenze mit: Die Größe der
+Die neue Leseprobe aus Punkt 11 und die Aktion „Bereinigen“ aus Punkt 12 bringen keine neue feste Grenze mit: Die Größe der
 Leseprobe wird eine Einstellung.
 
 ## Offene Fragen an Angelo

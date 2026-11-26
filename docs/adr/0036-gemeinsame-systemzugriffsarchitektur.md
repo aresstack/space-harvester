@@ -1,8 +1,8 @@
 # ADR 0036: Gemeinsame Systemzugriffsarchitektur von Space Harvester und Command Deck
 
 - Status: **Angenommen als Zielbild** (Entscheidungen von Angelo, 25./26.11.2026, festgehalten in Epic #1461;
-  Antworten auf die Rückfragen vom 26.11.2026, 13:21; Vorgabe zu Grenzen vom 26.11.2026, 13:20). Teilweise
-  umgesetzt, siehe „Stand“.
+  Antworten auf die Rückfragen vom 26.11.2026, 14:21; Vorgabe zu Grenzen vom 26.11.2026, 14:20). Teilweise
+  umgesetzt, siehe „Stand“. Uhrzeiten der Antworten vom 26.11.2026 in ADR 0036 bis 0042 sind MEZ.
 - Quellen: Epic #1461 (Abschnitte A, B, D, E, F), #1459, #1466, #1475, PRs #1467, #1471, #1477, #1482; Angelos
   Zusammenfassung vom 26.11.2026 (Abschnitte 2 bis 4 und 15).
 - Bezüge: [ADR 0012](0012-core-als-gemeinsame-bibliothek.md) (Core als gemeinsame Bibliothek),
@@ -70,9 +70,9 @@ Diese sechs Prinzipien tragen die ADRs 0036 bis 0042 (Zusammenfassung aus dem ur
      schon durch Anmelden oder Browsen (die navigationsgetriebene Befüllung aus ADR 0037 ist ein eigener,
      ausdrücklich eingeschalteter Weg).
    - Wiederholung ist idempotent: keine doppelten Quellen, Aufträge oder Originale. Das Entfernen einer Markierung
-     löscht nichts still. Quelle entfernen und Bestand bereinigen bleiben eigene, bewusste Aktionen. Was mit
-     Ressourcen geschieht, die nach dem Verkleinern des Umfangs keinen Erwerbsgrund mehr haben, regelt ADR 0037,
-     Punkt 12.
+     löscht nichts still. Quelle entfernen und Bestand bereinigen bleiben eigene, bewusste Aktionen. Ressourcen,
+     die nach dem Verkleinern des Umfangs keinen Erwerbsgrund mehr haben, werden Kandidaten für „Bereinigen“
+     (ADR 0037, Punkt 12).
    - Es gibt keine Schreiboperationen auf dem Mainframe.
    - Die Aktion gibt es für lokale Ordner, NDV-Bibliotheken **und FTP-Datasets** (beschlossen). Quellenverwaltung
      und direkte Aktion ergänzen einander.
@@ -104,7 +104,7 @@ Diese sechs Prinzipien tragen die ADRs 0036 bis 0042 (Zusammenfassung aus dem ur
     Spool, gilt sie nicht als gelöscht. Das Terminal bleibt rein interaktiv und ist keine Wissensquelle.
 11. **Schichtung.** Core und Server hängen nicht von Swing oder dem Modul `command-deck` ab. Die Upstream-Kopie
     `enterprise-ai-sources` wird nie direkt geändert, Änderungen gehen über den Enterprise AI Client.
-12. **Keine Magic Numbers** (Vorgabe von Angelo, 26.11.2026, 13:20). Jede Grenze, ob Größe, Anzahl, Tiefe, Zeit oder
+12. **Keine Magic Numbers** (Vorgabe von Angelo, 26.11.2026, 14:20). Jede Grenze, ob Größe, Anzahl, Tiefe, Zeit oder
     Parallelität, ist eine benannte Einstellung mit dokumentiertem Standardwert.
     - **Mindestmaß** ist eine dokumentierte Property (`space-harvester.*` in `docs/CONFIGURATION.md`), die sich ohne
       Neubau setzen lässt. **Ziel** ist die Einstellung in der Oberfläche; die Dokumentation sagt, ob sie dort schon

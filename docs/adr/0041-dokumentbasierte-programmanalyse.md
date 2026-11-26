@@ -4,7 +4,7 @@
   #1470 samt Kommentaren und Epic #1461 Abschnitt G). Der COBOL-Parser ist auf main. Die gespeicherten Analysen,
   die Programmsuche und die Analyse-Reiter liegen in **PR #1488 (offen, gegen develop)**; solange er nicht gemergt
   ist, beschreibt diese ADR dort den Entwurfsstand. Was im Text mit *vorgeschlagen* gekennzeichnet ist, stammt aus
-  den Antworten des ursprünglichen Chats vom 26.11.2026, 13:21, und gilt erst mit Angelos Bestätigung.
+  den Antworten des ursprünglichen Chats vom 26.11.2026, 14:21, und gilt erst mit Angelos Bestätigung.
 - Quellen: Epic #1447, #1470 (sechs Kommentare, darunter die Architekturentscheidungen vom 26.11., 02:05 und 02:08),
   Epic #1461 (G), #1486 (Review-Nacharbeiten) samt Kommentar, #1422, #1473, PRs #1423, #1471, #1479, #1481, #1488;
   Angelos Zusammenfassung vom 26.11.2026 (Abschnitte 13 bis 15).
