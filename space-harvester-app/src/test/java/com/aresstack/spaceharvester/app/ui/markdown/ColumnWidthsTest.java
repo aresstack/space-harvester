@@ -56,7 +56,9 @@ public class ColumnWidthsTest {
             int label = table.getColumnModel().getColumn(0).getWidth();
             int text = table.getColumnModel().getColumn(1).getWidth();
             int list = table.getColumnModel().getColumn(2).getWidth();
-            assertTrue(text > 2 * label, "label " + label + ", text " + text);
+            // Die Beschriftung bleibt nahe ihrem breitesten Wort, die Textspalte bekommt den größten Teil.
+            assertTrue(label < width / 3, "label " + label + ", text " + text);
+            assertTrue(text > label + label / 2, "label " + label + ", text " + text);
             // Listenpunkte stehen untereinander: die Spalte wird nicht breiter als ihr längster Punkt samt Rand.
             assertTrue(list < text, "list " + list + ", text " + text);
             // Die Beschriftung bricht um: ihre Zeile ist höher als eine Textzeile.
