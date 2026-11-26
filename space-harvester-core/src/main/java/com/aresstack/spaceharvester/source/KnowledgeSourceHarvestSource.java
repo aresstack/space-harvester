@@ -725,6 +725,24 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return restriction != null && current != null && !current.contains(pageId);
     }
 
+    @Override
+    public boolean inventoryCovers(String pageId) {
+        if (!"ftp".equals(type) || scope == null) {
+            return true;
+        }
+        try {
+            KnowledgeResourceId resourceId = resourceIdOf(pageId);
+            if (ownResource(resourceId.value()).isEmpty()) {
+                return false;
+            }
+            String specific = resourceId.schemeSpecificPart();
+            String path = specific.substring(port.sourceId().locator().length() + 1);
+            return FtpInventoryCoverage.covers(scope, path);
+        } catch (SourceAccessException e) {
+            return false;
+        }
+    }
+
     /**
      * Ein Stapel der Discovery wie {@code IndexKnowledgeUseCase.indexSource} im Enterprise AI Client: ein Aufruf von
      * {@link KnowledgeSourcePort#discover} im Umfang der Quelle, jede Ressource einmal, in der Reihenfolge der Quelle.

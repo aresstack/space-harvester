@@ -73,6 +73,11 @@ public interface HarvestSource {
         return false;
     }
 
+    /** Indicate whether absence from this inventory is evidence about the page. */
+    default boolean inventoryCovers(String pageId) {
+        return true;
+    }
+
     /**
      * Alle Partitionen der Quelle (bei Confluence: Spaces), die mit den konfigurierten Zugangsdaten sichtbar sind;
      * ungekürzt.
