@@ -26,8 +26,19 @@ interface FtpClientSession extends FtpSessionPool.Session {
         return readText(path);
     }
 
-    /** Read a bounded prefix for program recognition. */
-    String sampleText(String path) throws IOException;
+    /**
+     * Read at most {@code maxBytes} for classification; the transfer itself stops there, a large dataset is never
+     * downloaded completely for a sample.
+     */
+    String sampleText(String path, int maxBytes) throws IOException;
+
+    /**
+     * RECFM of the dataset that holds {@code path} (the dataset itself or the library of a member), from the dataset
+     * list; empty when the host does not report it or the path is not an MVS dataset.
+     */
+    default String recordFormat(String path) throws IOException {
+        return "";
+    }
 
     /** Confirm a physical sequential dataset without mistaking an empty PDS or qualifier for a file. */
     boolean isSequentialDataset(String path) throws IOException;

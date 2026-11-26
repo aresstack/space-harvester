@@ -61,6 +61,9 @@ public final class FtpSourceProvider implements KnowledgeSourceProvider {
             .field(SourceSettingField.of("programSourcesOnly", SourceSettingField.Kind.FLAG,
                     "Nur Programmquellen", "MVS: COBOL, Copybooks und JCL anhand einer Inhaltsprobe erkennen")
                     .withDefault("false"))
+            .field(SourceSettingField.of("sampleKilobytes", SourceSettingField.Kind.NUMBER, "Leseprobe in KB",
+                    "Höchstens so viel wird zur Erkennung übertragen, wenn die Metadaten nicht entscheiden; leer = "
+                            + FtpSourceEligibility.DEFAULT_SAMPLE_KILOBYTES).advanced())
             .field(SourceSettingField.text("encoding", "Zeichensatz", "Zeichensatz der Textübertragung")
                     .withDefault("ISO-8859-1").advanced())
             .build();
@@ -69,6 +72,8 @@ public final class FtpSourceProvider implements KnowledgeSourceProvider {
     private static final int DEFAULT_IMPLICIT_TLS_PORT = 990;
     private static final int DEFAULT_MAX_RESOURCES = Integer.MAX_VALUE;
     private static final int MAX_TIMEOUT = 600000;
+    /** Input bound for sampleKilobytes: keeps the int byte count valid. */
+    private static final int MAX_SAMPLE_KILOBYTES = Integer.MAX_VALUE / 1024;
 
     private final SecretProvider secrets;
 
@@ -95,7 +100,7 @@ public final class FtpSourceProvider implements KnowledgeSourceProvider {
         SourceSettingsReader reader = new SourceSettingsReader(TYPE, settings);
         connection(reader);
         scope(reader);
-        reader.bool("programSourcesOnly", false);
+        eligibility(reader);
         return reader.problems();
     }
 
@@ -108,12 +113,12 @@ public final class FtpSourceProvider implements KnowledgeSourceProvider {
     public KnowledgeSourcePort open(SourceAddress sourceId, SourceSettings settings) {
         SourceSettingsReader reader = new SourceSettingsReader(TYPE, settings);
         FtpConnectionSettings connection = connection(reader);
-        boolean programSourcesOnly = reader.bool("programSourcesOnly", false);
+        FtpSourceEligibility eligibility = eligibility(reader);
         if (reader.hasProblems() || connection == null) {
             throw new IllegalArgumentException("FTP-Quelle " + sourceId + " ist fehlerhaft: " + reader.problems());
         }
         return new FtpKnowledgeSource(sourceId, connection,
-                new FtpSessionPool<FtpClientSession>(sourceId, connection, secrets, CommonsNetFtpSession::open), programSourcesOnly);
+                new FtpSessionPool<FtpClientSession>(sourceId, connection, secrets, CommonsNetFtpSession::open), eligibility);
     }
 
     /** {@code host:port} des FTP-Servers, klein ({@code ftp:host:21/HLQ.DATASET(MEMBER)}). */
@@ -121,6 +126,13 @@ public final class FtpSourceProvider implements KnowledgeSourceProvider {
     public String locator(SourceSettings settings) {
         FtpConnectionSettings connection = connection(new SourceSettingsReader(TYPE, settings));
         return connection == null ? "" : SourceLocators.hostPort(connection.host, connection.port);
+    }
+
+    private static FtpSourceEligibility eligibility(SourceSettingsReader r) {
+        boolean programSourcesOnly = r.bool("programSourcesOnly", false);
+        int kilobytes = r.integer("sampleKilobytes", FtpSourceEligibility.DEFAULT_SAMPLE_KILOBYTES, 1,
+                MAX_SAMPLE_KILOBYTES);
+        return new FtpSourceEligibility(programSourcesOnly, kilobytes * 1024);
     }
 
     /** Verbindungsteil; auch für weitere Quelltypen über FTP (JES). */
