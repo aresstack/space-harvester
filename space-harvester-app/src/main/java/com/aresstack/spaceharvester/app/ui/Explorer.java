@@ -185,16 +185,7 @@ public final class Explorer {
         TreePath[] paths = tree.getSelectionPaths();
         for (TreePath path : paths == null ? new TreePath[0] : paths) {
             if (path.getLastPathComponent() instanceof Node node) {
-                var selection = switch (node.item()) {
-                    case SourceItem source -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(
-                            source.sourceId(), null, null, source.title());
-                    case SpaceItem space -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(
-                            space.sourceId(), space.spaceKey(), null, space.name());
-                    case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP -> null;
-                    case PageItem page -> new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(
-                            page.sourceId(), page.spaceKey(), page.pageId(), page.title());
-                    default -> null;
-                };
+                var selection = node.item() instanceof KnowledgeNode known ? known.selection() : null;
                 if (selection != null) {
                     return selection;
                 }
@@ -203,28 +194,282 @@ public final class Explorer {
         return null;
     }
 
-    sealed interface Item permits SourceItem, SpaceItem, PageItem, MoreItem, Note {
+    sealed interface Item permits KnowledgeNode, MoreItem, Note {
     }
 
-    record SourceItem(String sourceId, String title) implements Item {
+    /**
+     * Ein Knoten der Wissensquellen, gleich welcher Quelle und welcher Tiefe (Angelo 26.11.2026: Polymorphie statt
+     * Sonderfälle nach Ebene oder Quellart): Quelle, Space bzw. Site, Seite, Datei, Ordner oder bloße Gruppierung der
+     * Navigation. Was eine Zeile kann (Bestandszeichen, Favorit, Nachholen, Indexieren, Ausschließen, Analysieren) und
+     * welchen Bereich sie meint, sagt der Knoten selbst; Baum, Kontextmenü und Zeichnung fragen nur diese Schnittstelle.
+     */
+    sealed interface KnowledgeNode extends Item permits SourceItem, SpaceItem, PageItem {
+        String sourceId();
+
+        /** Der Space des Knotens; {@code null} an der Quelle. */
+        String spaceKey();
+
+        /** Seite bzw. Ordner des Knotens; {@code null} an Quelle und Space. */
+        String pageId();
+
+        /** Das Bestandszeichen der Zeile (Quelle über die Spaces, die der Baum von ihr kennt). */
+        TreeStates.Badge badge(TreeStates states, Map<String, Set<String>> treeSpaces);
+
+        /** Bereich für Chat, Suche und Graph; {@code null}, wenn der Knoten keinen eigenen meint. */
+        Scope scope();
+
+        /** Auswahl für den Reiter „Export“; {@code null}, wenn der Knoten nichts Exportierbares meint. */
+        com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node selection();
+
+        /**
+         * Umfang von „Analysieren“: Blatt bzw. {@code pageOnly} → nur der Knoten, sonst samt allen Nachfahren;
+         * {@code null}, wenn es nichts zu analysieren gibt.
+         */
+        StatementAnalysisJobs.Scope analysisScope(boolean pageOnly);
+
+        /** Favorit werden (Stern rechts in der Zeile). */
+        default boolean starrable() {
+            return true;
+        }
+
+        /** Samt Teilbaum von der Quelle nachholen (Kreispfeile auf dem Bestandszeichen, Kontextmenü). */
+        default boolean refreshable() {
+            return true;
+        }
+
+        /** Zum Indexieren markieren (Knoten samt allem darunter). */
+        default boolean indexable() {
+            return true;
+        }
+
+        /** Aus Baum, Suche und Index ausschließen; eine ganze Quelle blendet man unter „Im Wissensbaum anzeigen“ aus. */
+        default boolean excludable() {
+            return true;
+        }
+
+        /** Zeigt der Titelfilter den Knoten als Treffer. */
+        default boolean findable() {
+            return false;
+        }
+    }
+
+    record SourceItem(String sourceId, String title) implements KnowledgeNode {
+        @Override
+        public String spaceKey() {
+            return null;
+        }
+
+        @Override
+        public String pageId() {
+            return null;
+        }
+
+        @Override
+        public TreeStates.Badge badge(TreeStates states, Map<String, Set<String>> treeSpaces) {
+            return states.all(List.of(sourceId), treeSpaces);
+        }
+
+        @Override
+        public Scope scope() {
+            return new Scope(sourceId, null);
+        }
+
+        @Override
+        public com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node selection() {
+            return new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(sourceId, null, null,
+                    title);
+        }
+
+        @Override
+        public StatementAnalysisJobs.Scope analysisScope(boolean pageOnly) {
+            return new StatementAnalysisJobs.Scope.Source(sourceId);
+        }
+
+        @Override
+        public boolean excludable() {
+            return false;
+        }
+
         @Override
         public String toString() {
             return title;
         }
     }
 
-    record SpaceItem(String sourceId, String spaceKey, String name) implements Item {
+    record SpaceItem(String sourceId, String spaceKey, String name) implements KnowledgeNode {
+        @Override
+        public String pageId() {
+            return null;
+        }
+
+        @Override
+        public TreeStates.Badge badge(TreeStates states, Map<String, Set<String>> treeSpaces) {
+            return states.space(sourceId, spaceKey);
+        }
+
+        @Override
+        public Scope scope() {
+            return new Scope(sourceId, spaceKey);
+        }
+
+        @Override
+        public com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node selection() {
+            return new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(sourceId, spaceKey, null,
+                    name);
+        }
+
+        @Override
+        public StatementAnalysisJobs.Scope analysisScope(boolean pageOnly) {
+            return new StatementAnalysisJobs.Scope.Space(sourceId, spaceKey);
+        }
+
         @Override
         public String toString() {
             return name.equals(spaceKey) ? spaceKey : name + " (" + spaceKey + ")";
         }
     }
 
-    record PageItem(String sourceId, String spaceKey, String pageId, String title, Boolean hasChildren,
-                    HarvestSource.PageNode.Kind kind) implements Item {
+    /**
+     * Ein Knoten unterhalb des Space: Seite bzw. Datei ({@link DocumentItem}), Ordner ({@link FolderItem}) oder bloße
+     * Gruppierung der Navigation ({@link GroupItem}). Welche Klasse, entscheidet {@link #of} allein aus der Art, die
+     * die Quelle meldet; in jeder Tiefe gleich.
+     */
+    sealed interface PageItem extends KnowledgeNode permits DocumentItem, FolderItem, GroupItem {
+        String title();
 
-        PageItem(String sourceId, String spaceKey, String pageId, String title, Boolean hasChildren) {
-            this(sourceId, spaceKey, pageId, title, hasChildren, HarvestSource.PageNode.Kind.PAGE);
+        /** Ob die Quelle Kinder meldet; {@code null}, wenn sie es nicht weiß. */
+        Boolean hasChildren();
+
+        HarvestSource.PageNode.Kind kind();
+
+        static PageItem of(String sourceId, String spaceKey, String pageId, String title, Boolean hasChildren,
+                           HarvestSource.PageNode.Kind kind) {
+            return switch (kind == null ? HarvestSource.PageNode.Kind.PAGE : kind) {
+                case FOLDER -> new FolderItem(sourceId, spaceKey, pageId, title, hasChildren);
+                case GROUP -> new GroupItem(sourceId, spaceKey, pageId, title, hasChildren);
+                case PAGE, FILE -> new DocumentItem(sourceId, spaceKey, pageId, title, hasChildren, kind == null
+                        ? HarvestSource.PageNode.Kind.PAGE : kind);
+            };
+        }
+
+        static PageItem of(String sourceId, String spaceKey, String pageId, String title, Boolean hasChildren) {
+            return of(sourceId, spaceKey, pageId, title, hasChildren, HarvestSource.PageNode.Kind.PAGE);
+        }
+
+        /** Blatt: die Quelle sagt ausdrücklich, dass der Knoten keine Kinder hat (wie die Darstellung im Baum). */
+        default boolean leaf() {
+            return Boolean.FALSE.equals(hasChildren());
+        }
+
+        @Override
+        default TreeStates.Badge badge(TreeStates states, Map<String, Set<String>> treeSpaces) {
+            return states.page(sourceId(), spaceKey(), pageId(), !leaf());
+        }
+
+        @Override
+        default Scope scope() {
+            return new Scope(sourceId(), spaceKey(), pageId(), title());
+        }
+
+        @Override
+        default com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node selection() {
+            return new com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node(sourceId(), spaceKey(),
+                    pageId(), title());
+        }
+
+        @Override
+        default StatementAnalysisJobs.Scope analysisScope(boolean pageOnly) {
+            return pageOnly || leaf()
+                    ? new StatementAnalysisJobs.Scope.SinglePage(sourceId(), spaceKey(), pageId())
+                    : new StatementAnalysisJobs.Scope.Subtree(sourceId(), spaceKey(), pageId());
+        }
+
+        @Override
+        default boolean findable() {
+            return true;
+        }
+    }
+
+    /** Seite (Confluence, Wiki …) oder Datei: hat eigenen Inhalt zum Lesen. */
+    record DocumentItem(String sourceId, String spaceKey, String pageId, String title, Boolean hasChildren,
+                        HarvestSource.PageNode.Kind kind) implements PageItem {
+        @Override
+        public String toString() {
+            return title;
+        }
+    }
+
+    /**
+     * Ordner, den die Quelle als eigene Ressource führt (Ordner-Quelle, BSCW, SharePoint-Bibliotheken und -Ordner):
+     * kein eigener Inhalt, aber im Bestand mit Teilbaum; darum alles wie an einer Seite.
+     */
+    record FolderItem(String sourceId, String spaceKey, String pageId, String title, Boolean hasChildren)
+            implements PageItem {
+        @Override
+        public HarvestSource.PageNode.Kind kind() {
+            return HarvestSource.PageNode.Kind.FOLDER;
+        }
+
+        @Override
+        public String toString() {
+            return title;
+        }
+    }
+
+    /**
+     * Bloße Gruppierung der Navigation (MediaWiki „Alle Seiten“, Kategorien): keine Ressource im Bestand, kein
+     * Teilbaum, den Ausschließen, Indexieren oder Favoriten treffen könnten. Ihr Bereich ist der Space.
+     */
+    record GroupItem(String sourceId, String spaceKey, String pageId, String title, Boolean hasChildren)
+            implements PageItem {
+        @Override
+        public HarvestSource.PageNode.Kind kind() {
+            return HarvestSource.PageNode.Kind.GROUP;
+        }
+
+        @Override
+        public TreeStates.Badge badge(TreeStates states, Map<String, Set<String>> treeSpaces) {
+            return states.folder(sourceId, spaceKey, pageId);
+        }
+
+        @Override
+        public Scope scope() {
+            return new Scope(sourceId, spaceKey);
+        }
+
+        @Override
+        public com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.Node selection() {
+            return null;
+        }
+
+        @Override
+        public StatementAnalysisJobs.Scope analysisScope(boolean pageOnly) {
+            return null;
+        }
+
+        @Override
+        public boolean starrable() {
+            return false;
+        }
+
+        @Override
+        public boolean refreshable() {
+            return false;
+        }
+
+        @Override
+        public boolean indexable() {
+            return false;
+        }
+
+        @Override
+        public boolean excludable() {
+            return false;
+        }
+
+        @Override
+        public boolean findable() {
+            return false;
         }
 
         @Override
@@ -542,7 +787,7 @@ public final class Explorer {
                     }
                 } else if (onBadge(path, point)) {
                     if (single) {
-                        refresh(((Node) path.getLastPathComponent()).item());
+                        refresh((KnowledgeNode) ((Node) path.getLastPathComponent()).item());
                     }
                 } else if (single) {
                     activate(path);
@@ -895,14 +1140,8 @@ public final class Explorer {
     }
 
     /** Holt den Knoten samt Teilbaum aus der Quelle nach ({@link AppContext.Navigator#refresh}). */
-    private void refresh(Item item) {
-        switch (item) {
-            case SourceItem source -> context.navigator().refresh(source.sourceId(), null, null);
-            case SpaceItem space -> context.navigator().refresh(space.sourceId(), space.spaceKey(), null);
-            case PageItem page -> context.navigator().refresh(page.sourceId(), page.spaceKey(), page.pageId());
-            default -> {
-            }
-        }
+    private void refresh(KnowledgeNode node) {
+        context.navigator().refresh(node.sourceId(), node.spaceKey(), node.pageId());
     }
 
     /**
@@ -1289,14 +1528,7 @@ public final class Explorer {
         List<Scope> scopes = new ArrayList<>();
         for (TreePath path : paths == null ? new TreePath[0] : paths) {
             if (path.getLastPathComponent() instanceof Node node) {
-                Scope scope = switch (node.item()) {
-                    case SourceItem source -> new Scope(source.sourceId(), null);
-                    case SpaceItem space -> new Scope(space.sourceId(), space.spaceKey());
-                    case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP ->
-                            new Scope(page.sourceId(), page.spaceKey());
-                    case PageItem page -> new Scope(page.sourceId(), page.spaceKey(), page.pageId(), page.title());
-                    default -> null;
-                };
+                Scope scope = node.item() instanceof KnowledgeNode known ? known.scope() : null;
                 if (scope != null && !scopes.contains(scope)) {
                     scopes.add(scope);
                 }
@@ -1513,22 +1745,24 @@ public final class Explorer {
             return;
         }
         switch (node.item()) {
-            case PageItem page -> {
-                if (page.kind().hasOwnContent()) {
-                    context.navigator().openFromTree(page.sourceId(), page.pageId());
-                } else {
-                    // Ein Ordner hat keinen eigenen Inhalt: Die Mitte zeigt ihn als leere Ebene statt der vorher
-                    // geöffneten Seite (Angelo 26.11.2026), für jede Quelle und in jeder Tiefe.
-                    if (page.kind() == HarvestSource.PageNode.Kind.GROUP) {
-                        tree.expandPath(path);
-                    }
-                    context.navigator().openContainerFromTree(page.sourceId(), page.spaceKey(), page.pageId(),
-                            page.title());
-                }
-            }
+            case PageItem page -> open(page);
             case MoreItem more -> loadMore((Node) node.getParent(), node, more, null);
             default -> {
             }
+        }
+    }
+
+    /**
+     * Öffnet einen Knoten unterhalb des Space (Klick und „Öffnen“ im Kontextmenü gleich): mit eigenem Inhalt als
+     * Seite; ein Ordner oder eine Gruppierung hat keinen eigenen Inhalt, die Mitte zeigt ihn als leere Ebene statt der
+     * vorher geöffneten Seite (Angelo 26.11.2026), für jede Quelle und in jeder Tiefe. Auf- und zuklappen bleibt beim
+     * Doppelklick (Angelo 17.11.2026).
+     */
+    private void open(PageItem page) {
+        if (page.kind().hasOwnContent()) {
+            context.navigator().openFromTree(page.sourceId(), page.pageId());
+        } else {
+            context.navigator().openContainerFromTree(page.sourceId(), page.spaceKey(), page.pageId(), page.title());
         }
     }
 
@@ -1853,7 +2087,7 @@ public final class Explorer {
     private static Batch nodes(String sourceId, PageNavigation.Children children) {
         List<Node> nodes = new ArrayList<>();
         for (HarvestSource.PageNode page : children.pages()) {
-            PageItem item = new PageItem(sourceId, page.partitionKey() == null ? children.spaceKey()
+            PageItem item = PageItem.of(sourceId, page.partitionKey() == null ? children.spaceKey()
                     : page.partitionKey(), page.pageId(), page.title(), page.hasChildren(), page.kind());
             nodes.add(Boolean.FALSE.equals(page.hasChildren()) ? leaf(item) : expandable(item));
         }
@@ -1925,7 +2159,7 @@ public final class Explorer {
     private static Node built(String sourceId, String spaceKey, PageTree.Node node, Map<String, String> titles,
                               Set<String> folders) {
         String title = titles.get(node.pageId());
-        Node built = leaf(new PageItem(sourceId, spaceKey, node.pageId(),
+        Node built = leaf(PageItem.of(sourceId, spaceKey, node.pageId(),
                 title == null || title.isBlank() ? node.pageId() : title, !node.children().isEmpty(),
                 folders.contains(node.pageId()) ? HarvestSource.PageNode.Kind.FOLDER
                         : HarvestSource.PageNode.Kind.PAGE));
@@ -1950,8 +2184,7 @@ public final class Explorer {
         Map<String, Match> found = new LinkedHashMap<>();
         Enumeration<?> all = top.breadthFirstEnumeration();
         while (all.hasMoreElements() && found.size() < MATCH_LIMIT) {
-            if (all.nextElement() instanceof Node node && node.item() instanceof PageItem page
-                    && page.kind() != HarvestSource.PageNode.Kind.GROUP
+            if (all.nextElement() instanceof Node node && node.item() instanceof PageItem page && page.findable()
                     && page.title().toLowerCase(Locale.ROOT).contains(needle)) {
                 found.putIfAbsent(page.sourceId() + "/" + page.pageId(), new Match(page.sourceId(), page.spaceKey(),
                         page.pageId(), page.title(), where(page.sourceId(), page.spaceKey())));
@@ -2079,6 +2312,7 @@ public final class Explorer {
         }
 
         /** Ob die Zeile einen Stern trägt (Space oder Seite): gefüllt als Favorit, sonst nur beim Darüberfahren. */
+        private boolean columned;
         private boolean starred;
         private TreeStates.Badge badge = TreeStates.Badge.NONE;
         /** Trägt die Farbe des Zeichens; {@link Glyph} malt in der Vordergrundfarbe seines Wirts. */
@@ -2118,7 +2352,10 @@ public final class Explorer {
                     setForeground(Comic.MUTED);
                 }
             }
-            starred = starrable(item);
+            // Bestandszeichen und Stern hängen am Knoten, nicht an Ebene oder Quellart (Angelo 26.11.2026): jeder
+            // Knoten der Wissensquellen hat die Spalten rechts; den Stern zeichnet nur, wer Favorit werden kann.
+            columned = item instanceof KnowledgeNode;
+            starred = item instanceof KnowledgeNode known && known.starrable();
             favorite = starred && isFavorite(item);
             badge = badge(item);
             this.row = row;
@@ -2126,7 +2363,7 @@ public final class Explorer {
             int depth = value instanceof Node node ? node.getLevel() : 1;
             // Die Spalten rechts liegen im rechten Rand des Labels: der Titel endet davor und wird nötigenfalls
             // mit „…“ gekürzt, statt die Symbole aus dem sichtbaren Bereich zu schieben.
-            int columns = starred ? ACTION_WIDTH + BADGE_WIDTH : 0;
+            int columns = columned ? ACTION_WIDTH + BADGE_WIDTH : 0;
             setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 0, columns));
             int visible = tree.getParent() == null ? 0 : tree.getParent().getWidth() - indent(depth) - 4;
             width = Math.max(visible, columns + MIN_TITLE_WIDTH);
@@ -2152,7 +2389,7 @@ public final class Explorer {
                 g.drawRoundRect(1, 1, textEnd - 2, getHeight() - 3, 8, 8);
                 g.dispose();
             }
-            if (!starred) {
+            if (!columned) {
                 return;
             }
             java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
@@ -2160,10 +2397,12 @@ public final class Explorer {
                 // Der Stern ganz rechts (Angelo, 16.11.2026): immer sichtbar, damit man weiß, wo man klickt – als
                 // Favorit gefüllt in Tinte, sonst als gedämpfter Umriss, beim Darüberfahren in Tinte.
                 int sx = getWidth() - ACTION_WIDTH;
-                Glyph star = favorite ? Glyph.STAR_FILLED : Glyph.STAR;
-                badgeHost.setForeground(favorite || row == hoverStarRow ? Comic.INK : Comic.MUTED);
-                star.paintIcon(badgeHost, g, sx + (ACTION_WIDTH - star.getIconWidth()) / 2,
-                        (getHeight() - star.getIconHeight()) / 2);
+                if (starred) {
+                    Glyph star = favorite ? Glyph.STAR_FILLED : Glyph.STAR;
+                    badgeHost.setForeground(favorite || row == hoverStarRow ? Comic.INK : Comic.MUTED);
+                    star.paintIcon(badgeHost, g, sx + (ACTION_WIDTH - star.getIconWidth()) / 2,
+                            (getHeight() - star.getIconHeight()) / 2);
+                }
                 // Das Bestandszeichen links vom Stern, in seiner Farbe (Haken grün, Wolke gedämpft, Pfeile blau …);
                 // unter der Maus stattdessen die Kreispfeile zum Nachholen (Angelo, 16.11.2026).
                 int bx = sx - BADGE_WIDTH;
@@ -2197,12 +2436,6 @@ public final class Explorer {
         return 20 * depth;
     }
 
-    /** Indexieren gibt es für Quellen, Spaces und Seiten (Seite samt Unterseiten). */
-    static boolean indexable(Item item) {
-        return item instanceof SourceItem || item instanceof SpaceItem
-                || item instanceof PageItem page && page.kind() != HarvestSource.PageNode.Kind.GROUP;
-    }
-
     /**
      * Ob genau dieser Knoten zum Indexieren markiert ist; eine Quelle, wenn jeder Space, den der Baum von ihr kennt,
      * ganz markiert ist. Ohne Laufzeit nichts.
@@ -2218,59 +2451,29 @@ public final class Explorer {
                 yield !spaces.isEmpty() && spaces.stream()
                         .allMatch(space -> runtime.workspace().indexed(source.sourceId(), space, null));
             }
-            case SpaceItem space -> runtime.workspace().indexed(space.sourceId(), space.spaceKey(), null);
-            case PageItem page -> runtime.workspace().indexed(page.sourceId(), page.spaceKey(), page.pageId());
+            case KnowledgeNode node -> runtime.workspace().indexed(node.sourceId(), node.spaceKey(), node.pageId());
             default -> false;
         };
     }
 
     /** Markiert den Knoten zum Indexieren und startet den Abgleich; der Auftrag erscheint unter Aufträge. */
-    private void index(Item item) {
-        switch (item) {
-            case SourceItem source -> context.navigator().index(source.sourceId(), null, null);
-            case SpaceItem space -> context.navigator().index(space.sourceId(), space.spaceKey(), null);
-            case PageItem page -> context.navigator().index(page.sourceId(), page.spaceKey(), page.pageId());
-            default -> {
-            }
-        }
-    }
-
-    /** Ausschließen gibt es für Spaces und Seiten bzw. Ordner; eine ganze Quelle blendet „Im Wissensbaum anzeigen“ aus. */
-    static boolean excludable(Item item) {
-        return item instanceof SpaceItem
-                || item instanceof PageItem page && page.kind() != HarvestSource.PageNode.Kind.GROUP;
+    private void index(KnowledgeNode node) {
+        context.navigator().index(node.sourceId(), node.spaceKey(), node.pageId());
     }
 
     /** Schließt den Knoten aus und nimmt ihn aus dem Baum; die Meldung nennt, wo man ihn wieder einblendet. */
-    private void exclude(Item item) {
+    private void exclude(KnowledgeNode item) {
         com.aresstack.spaceharvester.app.runtime.AppRuntime runtime = context.runtime();
         if (runtime == null) {
             notice("Ausschließen nicht möglich: Die Laufzeit ist nicht gestartet", Severity.ERROR);
             return;
         }
-        String sourceId;
-        String spaceKey;
-        String pageId;
-        String title;
-        switch (item) {
-            case SpaceItem space -> {
-                sourceId = space.sourceId();
-                spaceKey = space.spaceKey();
-                pageId = null;
-                title = space.toString();
-            }
-            case PageItem page -> {
-                sourceId = page.sourceId();
-                spaceKey = page.spaceKey();
-                pageId = page.pageId();
-                title = page.title();
-            }
-            default -> {
-                return;
-            }
+        if (!item.excludable()) {
+            return;
         }
+        String title = item.toString();
         Background.run(() -> {
-            runtime.workspace().exclude(sourceId, spaceKey, pageId);
+            runtime.workspace().exclude(item.sourceId(), item.spaceKey(), item.pageId());
             return Boolean.TRUE;
         }, done -> {
             removeShown(item);
@@ -2330,8 +2533,7 @@ public final class Explorer {
         switch (item) {
             case SourceItem source -> treeSpaces().getOrDefault(source.sourceId(), java.util.Set.of())
                     .forEach(space -> context.navigator().unindex(source.sourceId(), space, null));
-            case SpaceItem space -> context.navigator().unindex(space.sourceId(), space.spaceKey(), null);
-            case PageItem page -> context.navigator().unindex(page.sourceId(), page.spaceKey(), page.pageId());
+            case KnowledgeNode node -> context.navigator().unindex(node.sourceId(), node.spaceKey(), node.pageId());
             default -> {
             }
         }
@@ -2340,7 +2542,8 @@ public final class Explorer {
     /** Ob der Punkt auf dem Bestandszeichen der Zeile liegt (links vom Stern). */
     private boolean onBadge(TreePath path, java.awt.Point point) {
         java.awt.Rectangle bounds = path == null ? null : tree.getPathBounds(path);
-        return bounds != null && path.getLastPathComponent() instanceof Node node && starrable(node.item())
+        return bounds != null && path.getLastPathComponent() instanceof Node node
+                && node.item() instanceof KnowledgeNode known && known.refreshable()
                 && point.x >= bounds.x + bounds.width - ACTION_WIDTH - BADGE_WIDTH
                 && point.x < bounds.x + bounds.width - ACTION_WIDTH;
     }
@@ -2353,15 +2556,7 @@ public final class Explorer {
 
     /** Das Bestandszeichen einer Zeile: Quellen über alle ihre Spaces, Spaces nach ihrem Stand, Seiten nach Zustand bzw. Teilbaum. */
     TreeStates.Badge badge(Item item) {
-        return switch (item) {
-            case SourceItem source -> states.all(List.of(source.sourceId()), treeSpaces());
-            case SpaceItem space -> states.space(space.sourceId(), space.spaceKey());
-            case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP ->
-                    states.folder(page.sourceId(), page.spaceKey(), page.pageId());
-            case PageItem page -> states.page(page.sourceId(), page.spaceKey(), page.pageId(),
-                    !Boolean.FALSE.equals(page.hasChildren()));
-            case null, default -> TreeStates.Badge.NONE;
-        };
+        return item instanceof KnowledgeNode node ? node.badge(states, treeSpaces()) : TreeStates.Badge.NONE;
     }
 
     /** Für Tests: der Bestand. */
@@ -2372,25 +2567,16 @@ public final class Explorer {
     /** Ob der Punkt auf dem Stern der Zeile liegt (ganz rechts). */
     private boolean onStar(TreePath path, java.awt.Point point) {
         java.awt.Rectangle bounds = path == null ? null : tree.getPathBounds(path);
-        return bounds != null && path.getLastPathComponent() instanceof Node node && starrable(node.item())
+        return bounds != null && path.getLastPathComponent() instanceof Node node
+                && node.item() instanceof KnowledgeNode known && known.starrable()
                 && point.x >= bounds.x + bounds.width - ACTION_WIDTH;
     }
 
     // ------------------------------------------------------------------ Favoriten
 
-    /** Favorit werden können Spaces und Seiten (Angelo, 13.11.2026) und ganze Quellen (16.11.2026). */
-    static boolean starrable(Item item) {
-        return item instanceof SourceItem || item instanceof SpaceItem
-                || item instanceof PageItem page && page.kind() != HarvestSource.PageNode.Kind.GROUP;
-    }
-
     boolean isFavorite(Item item) {
-        return switch (item) {
-            case SourceItem source -> context.favorites().contains(source.sourceId(), null, null);
-            case SpaceItem space -> context.favorites().contains(space.sourceId(), space.spaceKey(), null);
-            case PageItem page -> context.favorites().contains(page.sourceId(), page.spaceKey(), page.pageId());
-            default -> false;
-        };
+        return item instanceof KnowledgeNode node
+                && context.favorites().contains(node.sourceId(), node.spaceKey(), node.pageId());
     }
 
     /**
@@ -2501,27 +2687,33 @@ public final class Explorer {
     /** Das Kontextmenü eines Knotens (für Tests ohne Mausereignis). */
     javax.swing.JPopupMenu menu(Item item) {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
-        if (item instanceof PageItem page && page.kind() == HarvestSource.PageNode.Kind.GROUP) {
+        if (!(item instanceof KnowledgeNode node)) {
             return menu;
         }
-        if (item instanceof PageItem page) {
+        if (node instanceof PageItem page) {
             javax.swing.JMenuItem open = new javax.swing.JMenuItem("Öffnen");
-            open.addActionListener(e -> context.navigator().openPage(page.sourceId(), page.pageId()));
+            open.addActionListener(e -> {
+                if (page.kind().hasOwnContent()) {
+                    context.navigator().openPage(page.sourceId(), page.pageId());
+                } else {
+                    open(page);
+                }
+            });
             menu.add(open);
         }
-        if (indexable(item)) {
+        if (node.indexable()) {
             boolean marked = indexed(item);
             javax.swing.JMenuItem index = new javax.swing.JMenuItem(marked ? UNINDEX : INDEX);
             index.setToolTipText(marked ? UNINDEX_TIP : INDEX_TIP);
             index.addActionListener(e -> {
                 if (marked) {
-                    unindex(item);
+                    unindex(node);
                 } else {
-                    index(item);
+                    index(node);
                 }
             });
             menu.add(index);
-            if (item instanceof PageItem page && !leafPage(page)) {
+            if (node instanceof PageItem page && !page.leaf()) {
                 javax.swing.JMenuItem only = new javax.swing.JMenuItem(PAGE_ONLY);
                 only.setToolTipText(PAGE_ONLY_TIP);
                 only.addActionListener(e -> context.navigator().downloadPage(page.sourceId(), page.spaceKey(),
@@ -2529,37 +2721,39 @@ public final class Explorer {
                 menu.add(only);
             }
         }
-        if (excludable(item)) {
+        if (node.excludable()) {
             javax.swing.JMenuItem exclude = new javax.swing.JMenuItem(EXCLUDE);
             exclude.setToolTipText(EXCLUDE_TIP);
-            exclude.addActionListener(e -> exclude(item));
+            exclude.addActionListener(e -> exclude(node));
             menu.add(exclude);
         }
-        if (starrable(item)) {
+        if (node.starrable()) {
             javax.swing.JMenuItem star = new javax.swing.JMenuItem(isFavorite(item) ? UNFAVORITE : FAVORITE);
             star.setIcon(isFavorite(item) ? Glyph.STAR_FILLED : Glyph.STAR);
             star.addActionListener(e -> toggleFavorite(item));
             menu.add(star);
+        }
+        if (node.refreshable()) {
             javax.swing.JMenuItem refresh = new javax.swing.JMenuItem(REFRESH);
             refresh.setIcon(Glyph.SYNC);
             refresh.setToolTipText(REFRESH_TIP);
-            refresh.addActionListener(e -> refresh(item));
+            refresh.addActionListener(e -> refresh(node));
             menu.add(refresh);
         }
-        if (item instanceof SourceItem source) {
+        if (node instanceof SourceItem source) {
             javax.swing.JMenuItem rename = new javax.swing.JMenuItem(RENAME);
             rename.setToolTipText(RENAME_TIP);
             rename.addActionListener(e -> rename(source));
             menu.add(rename);
         }
-        if (analysisScope(item, false) != null) {
+        if (node.analysisScope(false) != null) {
             String unavailable = analyses.unavailable();
             javax.swing.JMenuItem analyze = new javax.swing.JMenuItem(ANALYZE);
             analyze.setEnabled(unavailable == null);
             analyze.setToolTipText(unavailable == null ? ANALYZE_TIP : unavailable);
             analyze.addActionListener(e -> analyze(item, false));
             menu.add(analyze);
-            if (item instanceof PageItem page && !leafPage(page)) {
+            if (node instanceof PageItem page && !page.leaf()) {
                 javax.swing.JMenuItem only = new javax.swing.JMenuItem(ANALYZE_PAGE);
                 only.setEnabled(unavailable == null);
                 only.setToolTipText(unavailable == null ? ANALYZE_PAGE_TIP : unavailable);
@@ -2573,7 +2767,7 @@ public final class Explorer {
             check.setToolTipText(noCheck == null ? CHECK_TIP : noCheck);
             check.addActionListener(e -> check(item, false));
             menu.add(check);
-            if (item instanceof PageItem page && !leafPage(page)) {
+            if (node instanceof PageItem page && !page.leaf()) {
                 javax.swing.JMenuItem only = new javax.swing.JMenuItem(CHECK_PAGE);
                 only.setEnabled(noCheck == null);
                 only.setToolTipText(noCheck == null ? CHECK_PAGE_TIP : noCheck);
@@ -2584,25 +2778,9 @@ public final class Explorer {
         return menu;
     }
 
-    /** Blattseite: die Quelle sagt ausdrücklich, dass sie keine Kinder hat (wie die Darstellung im Baum). */
-    static boolean leafPage(PageItem page) {
-        return Boolean.FALSE.equals(page.hasChildren());
-    }
-
-    /**
-     * Umfang von „Analysieren“: Blattseite bzw. {@code pageOnly} → nur die Seite, übergeordnete Seite → samt allen
-     * Nachfahren, Space und Quelle vollständig; {@code null} für Hilfseinträge („Weitere laden …“, Hinweise).
-     */
+    /** Umfang von „Analysieren“ ({@link KnowledgeNode#analysisScope}); {@code null} für Hilfseinträge. */
     static StatementAnalysisJobs.Scope analysisScope(Item item, boolean pageOnly) {
-        return switch (item) {
-            case SourceItem source -> new StatementAnalysisJobs.Scope.Source(source.sourceId());
-            case SpaceItem space -> new StatementAnalysisJobs.Scope.Space(space.sourceId(), space.spaceKey());
-            case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP -> null;
-            case PageItem page -> pageOnly || leafPage(page)
-                    ? new StatementAnalysisJobs.Scope.SinglePage(page.sourceId(), page.spaceKey(), page.pageId())
-                    : new StatementAnalysisJobs.Scope.Subtree(page.sourceId(), page.spaceKey(), page.pageId());
-            default -> null;
-        };
+        return item instanceof KnowledgeNode node ? node.analysisScope(pageOnly) : null;
     }
 
     /**

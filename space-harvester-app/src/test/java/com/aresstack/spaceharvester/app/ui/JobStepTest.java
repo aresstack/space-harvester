@@ -154,7 +154,7 @@ class JobStepTest {
         assertThat(ActivitiesView.startPage(job(null, null))).isEqualTo("–");
         assertThat(ActivitiesView.where(job("42", null))).isEqualTo("wiki / OPS ab „Seite 42“");
         assertThat(ActivitiesView.where(job("42", "Betriebshandbuch"))).isEqualTo("wiki / OPS ab „Betriebshandbuch“");
-        assertThat(Explorer.indexable(new Explorer.PageItem("wiki", "OPS", "42", "Betriebshandbuch", true)))
+        assertThat(Explorer.PageItem.of("wiki", "OPS", "42", "Betriebshandbuch", true).indexable())
                 .isTrue();
     }
 
