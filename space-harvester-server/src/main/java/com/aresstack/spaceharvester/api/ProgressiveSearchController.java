@@ -73,8 +73,10 @@ public class ProgressiveSearchController {
                     + "Zeitbudget plus 5 s) und antwortet mit 200 und der fertigen Liste; sonst 202 mit dem "
                     + "Stand. Delegierte Benutzer warten immer, weil ihre Anmeldung den Aufruf nicht überdauert. "
                     + "Eine Quelle ohne Freigabe liefert nichts; scheitert jede Suchanfrage, endet die Suche mit "
-                    + "reason=failed. Bekannt sind die letzten " + ProgressiveSearches.CAPACITY + " Suchen, beendete "
-                    + "5 Minuten lang.")
+                    + "reason=failed. Höchstens space-harvester.search.progressive.max-running Suchen laufen zugleich "
+                    + "(Standard " + ProgressiveSearches.DEFAULT_MAX_RUNNING + ", darüber 429 too-many-searches); "
+                    + "beendete bleiben space-harvester.search.progressive.retention lang abrufbar (Standard 5 "
+                    + "Minuten).")
     @ApiResponse(responseCode = "200", description = "Mit wait=true: die fertige Liste mit Abschlussgrund")
     @ApiResponse(responseCode = "202", description = "Die Suche läuft; Location nennt den Stand")
     @ApiResponse(responseCode = "400", description = "Ungültige Anfrage, etwa ohne q oder mit Werten außerhalb der "
