@@ -602,6 +602,8 @@ public final class Harvester implements AutoCloseable {
             List<EnrichmentProcessor> processors = new ArrayList<>(List.of(acronyms,
                     new OutlineProcessor(), new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(),
                     new RelationProcessor(), termProcessor));
+            processors.addAll(builder.additionalProcessors);
+            builder.snapshotProcessors.forEach(factory -> processors.add(factory.apply(cache::find)));
             if (embedding != null) {
                 processors.add(embedding);
             }
@@ -730,6 +732,9 @@ public final class Harvester implements AutoCloseable {
                     new com.aresstack.spaceharvester.application.query.LocalPageSections(structuredDocuments));
 
             this.access = new AccessGuard(builder.accessPolicy);
+            var dependentEnrichments = new com.aresstack.spaceharvester.application.enrichment.DependentEnrichments(
+                    enrichments, cache, backgroundJobs, sourceId -> catalog.find(sourceId).isPresent()
+                            && access.permitsSourceWide(AccessContext.technicalClient(OWNER), sourceId, AccessKind.CONTENT));
             // ADR 0027: Bestand je Space; jeder Commit des Cache meldet ihm seine Änderungen. Schließt vor dem Cache.
             LuceneHoldingsCatalog holdingsCatalog = new LuceneHoldingsCatalog(cache);
             this.holdings = new Holdings(catalog, holdingsCatalog, access, builder.maxTreeNodes);
@@ -786,6 +791,7 @@ public final class Harvester implements AutoCloseable {
             this.pages = new PageQueries(catalog, reader, access, freshness,
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave, cache::saveWaiting),
                             enrichments, texts, snapshot -> {
+                                dependentEnrichments.changed(snapshot.key().sourceId());
                                 DocumentEnrichments sections = sectionTexts.get();
                                 if (sections != null) {
                                     sections.indexedLocal(snapshot);
@@ -1116,7 +1122,8 @@ public final class Harvester implements AutoCloseable {
                     // SY1: danach der automatische Synonymlauf der Quelle als Hintergrundauftrag.
                     // B1: danach die automatische Bildbeschreibung der Quelle als eigener Auftrag (Standard aus).
                     // K4: danach die Fachbegriffe der Quelle als Hintergrundauftrag (Standard aus).
-                    List.of(acronymRelationRule::refresh, sourceId -> synonymDiscovery.automatic(sourceId),
+                    List.of(dependentEnrichments::changed, acronymRelationRule::refresh,
+                            sourceId -> synonymDiscovery.automatic(sourceId),
                             sourceId -> glossaryClassification.automatic(sourceId),
                             sourceId -> {
                                 var automatic = this.automaticImages;
@@ -3549,6 +3556,8 @@ public final class Harvester implements AutoCloseable {
         private int chunkTokens = KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS;
         private int chunkOverlapSentences = KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES;
         private final List<SourceAdapter> sourceAdapters = new ArrayList<>();
+        private final List<EnrichmentProcessor> additionalProcessors = new ArrayList<>();
+        private final List<java.util.function.Function<java.util.function.Function<PageKey, Optional<PageSnapshot>>, EnrichmentProcessor>> snapshotProcessors = new ArrayList<>();
         private SourceSecrets secretProvider;
         private EmbeddingProvider embeddingProvider;
         private Predicate<String> embeddingSources;
@@ -3901,6 +3910,17 @@ public final class Harvester implements AutoCloseable {
         /** Eine Quelle wie unter {@code space-harvester.sources}. */
         public Builder source(SourceSettingsConfig source) {
             sources.add(Objects.requireNonNull(source, "source"));
+            return this;
+        }
+
+        /** Supply processors with a read-only lookup of stored snapshots, never a live source. */
+        public Builder snapshotEnrichmentProcessor(java.util.function.Function<java.util.function.Function<PageKey, Optional<PageSnapshot>>, EnrichmentProcessor> factory) {
+            snapshotProcessors.add(java.util.Objects.requireNonNull(factory));
+            return this;
+        }
+
+        public Builder enrichmentProcessor(EnrichmentProcessor processor) {
+            additionalProcessors.add(java.util.Objects.requireNonNull(processor));
             return this;
         }
 

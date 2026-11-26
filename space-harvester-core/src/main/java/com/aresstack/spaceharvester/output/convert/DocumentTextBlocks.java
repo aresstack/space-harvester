@@ -47,6 +47,12 @@ final class DocumentTextBlocks {
             }
             return Optional.of(blocks);
         }
+        if (com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider.SOURCE_TEXT_FORMAT.equals(payload.nativeFormat())) {
+            return Optional.of(List.of(new CodeBlock("", new String(payload.bytes(), StandardCharsets.UTF_8))));
+        }
+        if (com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.NdvSourceProvider.SOURCE_TEXT_FORMAT.equals(payload.nativeFormat())) {
+            return Optional.of(List.of(new CodeBlock("natural", new String(payload.bytes(), StandardCharsets.UTF_8))));
+        }
         if (!NativePayload.DOCUMENT_TEXT.equals(payload.nativeFormat())) {
             return Optional.empty();
         }

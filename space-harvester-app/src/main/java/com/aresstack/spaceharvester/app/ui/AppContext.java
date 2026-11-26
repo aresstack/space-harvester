@@ -93,6 +93,10 @@ public final class AppContext {
 
         void openPage(String sourceId, String pageId);
 
+        default void openProgram(String sourceId, String pageId, String rawSha256, int line) {
+            openPage(sourceId, pageId);
+        }
+
         /**
          * Öffnet einen Absatz über seine stabile Passage-ID (#452) unter Inhalte im Reiter „Absätze“; ohne eigene
          * Umsetzung nur seine Seite.

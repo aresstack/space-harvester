@@ -34,6 +34,7 @@ class ParityFtpTest {
             Map<String, String> texts = sync(harvester);
             assertThat(texts.keySet()).containsExactlyInAnyOrder(ParityFtp.DOCUMENTS);
             assertThat(String.join("\n", texts.values())).contains(ParityFtp.SENTENCES);
+            assertThat(texts).isEqualTo(ParityFtp.FILES);
 
             awaitEnrichments(harvester);
             KeywordSearch.Results found = harvester.keywordSearch().search(harvester.caller(),
@@ -66,9 +67,18 @@ class ParityFtpTest {
         JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), Duration.ofSeconds(60));
         assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
         List<ListedPage> pages = harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages();
-        return pages.stream().collect(Collectors.toMap(this::path, page -> new String(harvester.pages()
-                .page(harvester.caller(), "parity", page.header().key().pageId(), false).snapshot().payload().bytes(),
-                StandardCharsets.UTF_8)));
+        return pages.stream().collect(Collectors.toMap(this::path, page -> {
+            var snapshot = harvester.pages().page(harvester.caller(), "parity", page.header().key().pageId(), false)
+                    .snapshot();
+            assertThat(snapshot.key()).isEqualTo(page.header().key());
+            assertThat(snapshot.payload().nativeFormat()).isEqualTo(
+                    com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider.SOURCE_TEXT_FORMAT);
+            assertThat(snapshot.payload().rawSha256()).isEqualTo("sha256:" + snapshot.revision());
+            String content = new String(snapshot.payload().bytes(), StandardCharsets.UTF_8);
+            assertThat(new com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector().project(snapshot))
+                    .hasValueSatisfying(text -> assertThat(text.text()).isEqualTo(content));
+            return content;
+        }));
     }
 
     /** Dateiname aus dem Titel; auf dem Paritäts-Server sind die Namen eindeutig. */

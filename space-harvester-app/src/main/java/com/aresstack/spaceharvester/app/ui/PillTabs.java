@@ -181,7 +181,7 @@ public final class PillTabs extends JPanel {
 
     public void select(String name) {
         ComposerToggleButton button = buttons.get(name);
-        if (button != null) {
+        if (button != null && button.isVisible()) {
             current = name;
             button.setSelected(true);
             cards.show(deck, name);
@@ -215,7 +215,19 @@ public final class PillTabs extends JPanel {
 
     /** Namen der Reiter in der Reihenfolge der Leiste. */
     public java.util.List<String> names() {
-        return java.util.List.copyOf(buttons.keySet());
+        return buttons.entrySet().stream().filter(entry -> entry.getValue().isVisible())
+                .map(Map.Entry::getKey).toList();
+    }
+
+    /** Show only the requested tabs, keeping the selection if it remains available. */
+    public void showOnly(java.util.List<String> names) {
+        if (names.isEmpty() || !buttons.keySet().containsAll(names)) {
+            throw new IllegalArgumentException("Expected a non-empty set of registered tabs");
+        }
+        buttons.forEach((name, button) -> button.setVisible(names.contains(name)));
+        if (!names.contains(current)) select(names.get(0));
+        bar.revalidate();
+        bar.repaint();
     }
 
     public ComposerToggleButton button(String name) {

@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.marks.VideoMarks;
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.images.ImagePayload;
@@ -541,6 +542,75 @@ public final class Workspace {
      * Die lokal gespeicherte Seite, nur aus dem Cache und ohne Abruf oder Prüfung bei der Quelle; leer, wenn sie
      * nicht lokal liegt oder nicht lesbar ist. Das Wissen des Chats liest so (ADR 0028: nur Lokales geht an die KI).
      */
+    /** Build a read-only query view of current COBOL artifacts in one configured FTP source. */
+    public com.aresstack.spaceharvester.app.runtime.program.StoredCobolSearch.Snapshot storedCobolSearch(
+            String sourceId, java.util.function.BooleanSupplier cancelled) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
+        var config = harvester.sourceManagement().sources().stream()
+                .filter(source -> source.id().equals(sourceId) && "ftp".equalsIgnoreCase(source.type()))
+                .findFirst().orElseThrow(() -> new IllegalArgumentException("Keine FTP-Wissensquelle"));
+        if (!sourceEnabled(sourceId) || sourceDataBeingDeleted(sourceId)) {
+            throw new IllegalStateException("Wissensquelle nicht verfügbar");
+        }
+        var search = new com.aresstack.spaceharvester.app.runtime.program.StoredCobolSearch(
+                key -> cachedPage(key.sourceId(), key.pageId()), this::enrichments);
+        return search.build(sourceId,
+                com.aresstack.spaceharvester.app.runtime.program.StoredCopybooks.libraries(config.options().get("syslib")),
+                visitor -> harvester.pages().visitCachedHeaders(caller, sourceId, visitor, cancelled), cancelled);
+    }
+
+    public java.util.Set<String> programMcpSources() {
+        return programSearchSources().stream().filter(harvester.aiRelease()::sourceReleased)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    public List<String> programSearchSources() {
+        return sources().stream()
+                .filter(source -> "ftp".equalsIgnoreCase(source.type()) || "ndv".equalsIgnoreCase(source.type()))
+                .filter(source -> sourceEnabled(source.id()) && !sourceDataBeingDeleted(source.id())
+                        && access.permits(caller, ResourceScope.source(source.id()), AccessKind.CONTENT))
+                .map(source -> source.id()).sorted().toList();
+    }
+
+    public boolean programFactCurrent(com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch.Fact fact) {
+        var location = fact.location();
+        var available = new java.util.HashSet<>(programSearchSources());
+        if (!available.contains(location.key().sourceId())) return false;
+        if (cachedPage(location.key().sourceId(), location.key().pageId())
+                .filter(page -> location.rawSha256().equals(page.snapshot().payload().rawSha256())).isEmpty()) return false;
+        for (var origin : fact.evidence()) {
+            if (!available.contains(origin.key().sourceId())
+                    || cachedPage(origin.key().sourceId(), origin.key().pageId())
+                    .filter(page -> origin.rawSha256().equals(page.snapshot().payload().rawSha256())).isEmpty()) return false;
+        }
+        return true;
+    }
+
+    /** Combine authorized, already stored program analyses across the requested sources. */
+    public com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch.Snapshot storedProgramSearch(
+            java.util.Set<String> sourceIds, java.util.function.BooleanSupplier cancelled) {
+        var search = new com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch(
+                key -> cachedPage(key.sourceId(), key.pageId()), this::enrichments);
+        var configured = harvester.sourceManagement().sources();
+        for (String sourceId : sourceIds.stream().sorted().toList()) {
+            if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+                throw new java.util.concurrent.CancellationException();
+            }
+            access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
+            var config = configured.stream().filter(source -> source.id().equals(sourceId)).findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Unbekannte Wissensquelle"));
+            boolean ndv = "ndv".equalsIgnoreCase(config.type());
+            if (!ndv && !"ftp".equalsIgnoreCase(config.type())) throw new IllegalArgumentException("Keine Programmquelle");
+            if (!sourceEnabled(sourceId) || sourceDataBeingDeleted(sourceId)) {
+                throw new IllegalStateException("Wissensquelle nicht verfügbar");
+            }
+            if (!ndv) search.addCobol(storedCobolSearch(sourceId, cancelled), cancelled);
+            search.addSource(sourceId, ndv, visitor -> harvester.pages().visitCachedHeaders(
+                    caller, sourceId, visitor, cancelled), cancelled);
+        }
+        return search.snapshot();
+    }
+
     public Optional<DeliveredPage> cachedPage(String sourceId, String pageId) {
         try {
             return harvester.pages().cached(caller, sourceId, pageId);
@@ -876,7 +946,48 @@ public final class Workspace {
 
     /** Anreicherungen einer gelieferten Seite ({@code view=extended}); das Lesen der Seite hat CONTENT geprüft. */
     public List<Enrichments.View> enrichments(DeliveredPage page) {
-        return harvester.enrichments().view(page.snapshot());
+        var views = harvester.enrichments().view(page.snapshot());
+        return views.stream().map(view -> {
+            if (!com.aresstack.spaceharvester.app.runtime.program.CobolBusinessEnrichment.ID
+                    .equals(view.enrichment().processorId())) return view;
+            if (view.freshness() == Enrichment.Freshness.CURRENT
+                    && cobolBusiness().visible(page, view.enrichment(), views)) return view;
+            // Conceal stale or inaccessible evidence, including the derived hypothesis text.
+            var previous = view.enrichment();
+            var concealed = new Enrichment(previous.key(), previous.processorId(), previous.processorVersion(),
+                    previous.inputSha256(), previous.revision(), Enrichment.Status.OK, "{}", List.of(), null,
+                    previous.computedAt());
+            return new Enrichments.View(concealed, Enrichment.Freshness.STALE);
+        }).toList();
+    }
+
+    private com.aresstack.spaceharvester.app.runtime.program.CobolBusinessUseCase cobolBusiness() {
+        return cobolBusiness(() -> true);
+    }
+
+    private com.aresstack.spaceharvester.app.runtime.program.CobolBusinessUseCase cobolBusiness(
+            java.util.function.BooleanSupplier modelUnchanged) {
+        return new com.aresstack.spaceharvester.app.runtime.program.CobolBusinessUseCase(harvester.enrichments(),
+                key -> cachedPage(key.sourceId(), key.pageId()),
+                source -> modelUnchanged.getAsBoolean() && sourceEnabled(source) && !sourceDataBeingDeleted(source)
+                        && harvester.aiRelease().sourceReleased(source),
+                page -> access.require(caller, ResourceScope.space(page.header().key().sourceId(),
+                        page.header().metadata().partitionKey()), AccessKind.SYNC),
+                this::releasePageForChat, java.time.Clock.systemUTC());
+    }
+
+    /** Run only by an explicit request; no remote source fetch or implicit AI release. */
+    public Enrichments.Run recomputeCobolBusiness(PageKey key, String rawSha256, String model, int batchCharacters,
+            java.util.function.BooleanSupplier modelUnchanged, java.util.function.Consumer<com.aresstack.spaceharvester.application.jobs.JobState> state) {
+        var page = cachedPage(key.sourceId(), key.pageId())
+                .orElseThrow(() -> new IllegalStateException("Programm nicht im Wissensbestand verfügbar."));
+        if (!page.snapshot().payload().rawSha256().equals(rawSha256)) {
+            throw new IllegalStateException("Programm nicht mehr aktuell.");
+        }
+        access.require(caller, ResourceScope.space(key.sourceId(), page.header().metadata().partitionKey()), AccessKind.SYNC);
+        return harvester.pageRecomputation().execute(caller.jobOwner(), page.snapshot(),
+                com.aresstack.spaceharvester.app.runtime.program.CobolBusinessEnrichment.ID, state,
+                context -> cobolBusiness(modelUnchanged).run(key, rawSha256, harvester::aiChat, model, batchCharacters, context));
     }
 
     /**

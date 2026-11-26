@@ -2176,7 +2176,17 @@ public final class ChatPanel extends JPanel {
         if (custom != null) {
             // #1151: dieselbe Unterhaltung, aber die Werkzeuge der Perspektive (Command Deck: Maskenassistent).
             custom.tools().modelSelected(modelName);
-            turn.withToolset(custom.tools(), custom.system());
+            var perspectiveTools = custom.tools();
+            if (appSearchOn && (custom.scopeKey().startsWith("command-deck/ftp")
+                    || custom.scopeKey().startsWith("command-deck/ndv"))) {
+                var programs = new com.aresstack.spaceharvester.app.chat.StoredProgramChatTools(runtime.workspace(),
+                        () -> context.runtime() == runtime
+                                ? appSearchSources(context.settings(), runtime, true) : Set.of(),
+                        () -> context.runtime() != runtime,
+                        (spaceKey, key) -> runtime.workspace().releasePageForChat(spaceKey, key));
+                perspectiveTools = programs.attach(perspectiveTools, () -> context.runtime() == runtime);
+            }
+            turn.withToolset(perspectiveTools, custom.system());
         } else {
             // ADR 0033: Was offen ist, sieht das Modell; den Rest des Bereichs holt es sich per Werkzeug.
             Selection open = selection;
@@ -2192,8 +2202,10 @@ public final class ChatPanel extends JPanel {
             turn.searchingNeighbors(com.aresstack.spaceharvester.app.runtime.SearchMethods.user().neighbors());
             // Interne Suche: die globale Suche über die freigegebenen Wissensquellen, gelesen beim Aufruf.
             if (appSearchOn) {
-                turn.appSearch(() -> appSearchSources(context.settings(), context.runtime()),
-                        () -> appSearchSources(context.settings(), context.runtime(), true));
+                turn.appSearch(() -> context.runtime() == runtime
+                                ? appSearchSources(context.settings(), runtime) : Set.of(),
+                        () -> context.runtime() == runtime
+                                ? appSearchSources(context.settings(), runtime, true) : Set.of());
             }
             // K5a: ebenso der Suchmethode „Synonyme der Fachbegriffe“.
             turn.searchingGlossarySynonyms(

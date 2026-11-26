@@ -300,6 +300,7 @@ public final class PageDetailPanel extends JPanel {
     private final JComponent tabIcons;
     /** Zweite Reiterzeile unter „Analysen“ (#499): Absätze, Begriffe, Verweise, Bilder und Aussagen. */
     private final PillTabs analysisTabs = new PillTabs();
+    private final ProgramAnalysisTabs programAnalysisTabs;
     /**
      * Ablage der Aussagenanalyse oben rechts in Aussagen und Graph (Fahrplan A3), also überall, wo der Inhalt von
      * der Ablage abhängt (UX). „Beziehungen“ liest nur Glossar-Beziehungen und Analyseschritte, nicht die Ablage.
@@ -514,6 +515,15 @@ public final class PageDetailPanel extends JPanel {
             String mediaType) {
     }
     private boolean originalLinkShown;
+    private boolean originalProgramShown;
+    private final javax.swing.JButton recomputeProgram = new javax.swing.JButton("Programmanalyse berechnen");
+    private final javax.swing.JButton recomputeBusiness = new javax.swing.JButton("Fachliche KI-Analyse");
+    private final javax.swing.JButton searchPrograms = new javax.swing.JButton("Programmsuche");
+    private java.util.concurrent.Future<?> programSearchTask;
+    private int programSearchGeneration;
+    private ProgramFocus pendingProgramFocus;
+
+    private record ProgramFocus(PageKey key, String rawSha256, int line) { }
     /** Hilfetext der Leseansicht einer Seite; nur sichtbar, solange sie gezeigt wird. */
     static final String READING_HELP = "Die Leseansicht zeigt die Seite, wie die Quelle sie darstellt. Liegt sie im "
             + "Cache, erscheint sie sofort; die Prüfung bei der Quelle läuft im Hintergrund.\n\n"
@@ -806,9 +816,27 @@ public final class PageDetailPanel extends JPanel {
                 .tab(STATEMENTS, withBelow(statements, statementsBelow))
                 .tab(GRAPH, withBelow(graph, graphBelow))
                 .tab(RELATIONS, analysisView);
+        programAnalysisTabs = new ProgramAnalysisTabs(analysisTabs);
         // Die Unterreiter mittig, „mit Unterseiten“ rechts in der unteren Leiste mit der Lupe (Angelo 23.11.2026); die
         // übrigen Aktionen in der Kopfzeile links vom Stern. „Synonyme vorschlagen“ und „Neue Beziehung …“ nur, solange
         // „Beziehungen“ gewählt ist (BG2b).
+        analysisActions.add(searchPrograms);
+        searchPrograms.setVisible(false);
+        searchPrograms.addActionListener(event -> searchStoredPrograms());
+        analysisActions.add(recomputeProgram);
+        recomputeProgram.setVisible(false);
+        recomputeProgram.addActionListener(event -> {
+            if (page == null) return;
+            String processor = com.aresstack.spaceharvester.app.runtime.program.StoredNaturalSource.read(page.snapshot()).isPresent()
+                    ? com.aresstack.spaceharvester.app.runtime.program.NaturalProgramEnrichment.ID
+                    : com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment.source(page.snapshot()).isPresent()
+                        ? com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment.ID
+                        : com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment.ID;
+            recompute(processor);
+        });
+        analysisActions.add(recomputeBusiness);
+        recomputeBusiness.setVisible(false);
+        recomputeBusiness.addActionListener(event -> analyzeBusiness());
         analysisActions.add(storeField);
         analysisActions.add(analysisView.proposeIcon());
         analysisActions.add(analysisView.createIcon());
@@ -1065,6 +1093,13 @@ public final class PageDetailPanel extends JPanel {
         sourceId = null;
         pageId = null;
         page = null;
+        programAnalysisTabs.reset();
+        recomputeProgram.setVisible(false);
+        recomputeBusiness.setVisible(false);
+        searchPrograms.setVisible(false);
+        cancelProgramSearch();
+        pendingProgramFocus = null;
+        subpages.box().setVisible(true);
         // Der Graph verlässt die Seite vor den Unterseiten: Deren Abmeldung soll für die alte Seite nichts mehr laden.
         graphView.page(null);
         subpages.page(null, null, null, null);
@@ -1388,6 +1423,16 @@ public final class PageDetailPanel extends JPanel {
      * Der Unterreiter „Beziehungen“ unter „Analysen“ liest nur, solange er zu sehen ist; seine beiden Aktionen stehen
      * nur dann in der Reiterzeile. Ohne Seite steht er beim Stand und erfährt dort, ob er zu sehen ist.
      */
+    private void showProgramAnalysis(PageSnapshot snapshot) {
+        boolean program = programAnalysisTabs.show(snapshot, views);
+        subpages.box().setVisible(!program);
+        recomputeProgram.setVisible(program);
+        recomputeBusiness.setVisible(program && com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot).isPresent());
+        searchPrograms.setVisible(snapshot.metadata().attributes().containsKey("ftp.path")
+                || snapshot.metadata().attributes().containsKey("ndv.library"));
+        showRelations();
+    }
+
     private void showRelations() {
         String sub = analysisTabs.selected();
         storeField.setVisible(STATEMENTS.equals(sub) || GRAPH.equals(sub));
@@ -1708,6 +1753,10 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null || sourceId == null || pageId == null) {
             return;
         }
+        cancelProgramSearch();
+        if (pendingProgramFocus != null && !pendingProgramFocus.key().equals(new PageKey(sourceId, pageId))) {
+            pendingProgramFocus = null;
+        }
         remember(Place.page(sourceId, pageId));
         this.sourceId = sourceId;
         this.pageId = pageId;
@@ -1716,6 +1765,7 @@ public final class PageDetailPanel extends JPanel {
         this.referencesLoaded = false;
         this.imagesLoaded = false;
         this.page = null;
+        programAnalysisTabs.pending();
         // Die Meldung von „Anhänge ablegen“ gehört zu ihrer Seite; läuft hier noch einer, erscheint sie wieder.
         leaveHarvest();
         // Ebenso die Rückmeldung von „Anhänge vorladen“: Eine fremde soll die neue Seite nicht neu laden.
@@ -2563,6 +2613,7 @@ public final class PageDetailPanel extends JPanel {
 
         showReader(loaded.reader(), page.live());
         showOriginalContent(viewable(metadata, snapshot.metadata()), snapshot.payload());
+        showStoredProgram(snapshot);
         showTextOriginal(loaded.reader());
         raw.setText(loaded.display());
         raw.setCaretPosition(0);
@@ -2603,6 +2654,7 @@ public final class PageDetailPanel extends JPanel {
 
         analysisView.steps(views, this::stepResult);
         analysisView.scope(pageScope(snapshot.key()));
+        showProgramAnalysis(snapshot);
         setActionsEnabled(true);
         browse.setEnabled(metadata.url() != null && Desktop.isDesktopSupported());
     }
@@ -2628,6 +2680,130 @@ public final class PageDetailPanel extends JPanel {
         return new PageMetadata(header.pageId(), header.resourceId(), header.title(), header.partitionKey(),
                 header.parentPageId(), header.version(), header.modifiedAt(),
                 header.url() != null ? header.url() : snapshot.url(), attributes);
+    }
+
+    private void searchStoredPrograms() {
+        if (programSearchTask != null) {
+            cancelProgramSearch();
+            feedback.info("Programmsuche abgebrochen", null);
+            return;
+        }
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null) return;
+        String source = sourceId;
+        int current = request;
+        int generation = ++programSearchGeneration;
+        searchPrograms.setText("Suche abbrechen");
+        feedback.working("Gespeicherte Programmanalysen werden gelesen …");
+        var sources = runtime.workspace().programSearchSources();
+        programSearchTask = Background.start(() -> runtime.workspace().storedProgramSearch(java.util.Set.copyOf(sources),
+                () -> Thread.currentThread().isInterrupted()), snapshot -> {
+            if (current != request || context.runtime() != runtime || generation != programSearchGeneration) return;
+            programSearchTask = null;
+            searchPrograms.setText("Programmsuche");
+            feedback.clear();
+            new StoredProgramSearchDialog(snapshot, sources, source).show(this).ifPresent(fact -> {
+                if (current == request && context.runtime() == runtime) openStoredProgramHit(runtime, fact, current);
+            });
+        }, error -> {
+            if (current != request || context.runtime() != runtime || generation != programSearchGeneration) return;
+            programSearchTask = null;
+            searchPrograms.setText("Programmsuche");
+            feedback.problem(error);
+        });
+    }
+
+    private void cancelProgramSearch() {
+        programSearchGeneration++;
+        if (programSearchTask != null) {
+            programSearchTask.cancel(true);
+            programSearchTask = null;
+        }
+        searchPrograms.setText("Programmsuche");
+    }
+
+    private void openStoredProgramHit(AppRuntime runtime,
+            com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch.Fact fact, int current) {
+        var location = fact.location();
+        String source = location.key().sourceId();
+        String id = location.key().pageId();
+        String hash = location.rawSha256();
+        Background.run(() -> runtime.workspace().programFactCurrent(fact), valid -> {
+            if (current != request || context.runtime() != runtime) return;
+            if (!valid) {
+                feedback.warning("Fundstelle nicht mehr aktuell", "Programmsuche erneut öffnen.");
+                return;
+            }
+            context.navigator().openProgram(source, id, hash, location.line());
+        }, error -> {
+            if (current == request && context.runtime() == runtime) feedback.problem(error);
+        });
+    }
+
+    void openProgram(String source, String id, String rawSha256, int line) {
+        pendingProgramFocus = new ProgramFocus(new PageKey(source, id), rawSha256, line);
+        load(source, id, false);
+    }
+
+    private void showStoredProgram(PageSnapshot snapshot) {
+        var focus = pendingProgramFocus;
+        pendingProgramFocus = null;
+        var natural = com.aresstack.spaceharvester.app.runtime.program.StoredNaturalSource.read(snapshot);
+        if (natural.isPresent()) {
+            boolean matchingNatural = focus != null && focus.key().equals(snapshot.key())
+                    && focus.rawSha256().equals(snapshot.payload().rawSha256());
+            showOriginalProgram(natural.get().content(), matchingNatural ? focus.line() : 0,
+                    com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.NATURAL);
+            if (matchingNatural) tabs.select(READING);
+            if (focus != null && !matchingNatural) feedback.warning("Fundstelle nicht mehr aktuell", "Quelltextrevision hat sich geändert.");
+            return;
+        }
+        boolean matching = focus != null && focus.key().equals(snapshot.key())
+                && focus.rawSha256().equals(snapshot.payload().rawSha256());
+        boolean nativeFtp = com.aresstack.spaceharvester.app.runtime.program.StoredFtpText.nativeFormat(snapshot.payload());
+        java.util.Optional<String> code = matching || nativeFtp
+                ? com.aresstack.spaceharvester.app.runtime.program.StoredFtpText.read(snapshot)
+                    .map(com.aresstack.spaceharvester.app.runtime.program.StoredFtpText::content)
+                : com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment.source(snapshot)
+                    .map(com.aresstack.spaceharvester.app.runtime.program.StoredFtpText::content)
+                    .or(() -> com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot)
+                        .map(com.aresstack.spaceharvester.mainframe.cobol.CobolSource::content));
+        code.ifPresent(source -> showOriginalProgram(source, matching ? focus.line() : 0));
+        if (matching && code.isPresent()) tabs.select(READING);
+        if (focus != null && (!matching || code.isEmpty())) {
+            feedback.warning("Fundstelle nicht mehr aktuell", "Quelltextrevision hat sich geändert.");
+        }
+    }
+
+    private void showOriginalProgram(String source, int line) {
+        String syntax = switch (com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpProgramClassifier
+                .classify(source)) {
+            case COBOL, COPYBOOK -> com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.COBOL;
+            case JCL -> com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.JCL;
+            case UNKNOWN -> org.fife.ui.rsyntaxtextarea.SyntaxConstants.SYNTAX_STYLE_NONE;
+        };
+        showOriginalProgram(source, line, syntax);
+    }
+
+    private void showOriginalProgram(String source, int line, String syntax) {
+        com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.register();
+        var editor = new org.fife.ui.rsyntaxtextarea.RSyntaxTextArea();
+        editor.setSyntaxEditingStyle(syntax);
+        editor.setEditable(false);
+        editor.setText(source);
+        editor.setCaretPosition(0);
+        fileContent.add(new org.fife.ui.rtextarea.RTextScrollPane(editor), BorderLayout.CENTER);
+        originalProgramShown = true;
+        originalCards.show(originalContent, ORIGINAL_FILE_CARD);
+        if (line > 0 && line <= editor.getLineCount()) {
+            try {
+                editor.setCaretPosition(editor.getLineStartOffset(line - 1));
+                tabs.select(READING);
+            } catch (javax.swing.text.BadLocationException invalid) {
+                feedback.warning("Fundstelle nicht verfügbar", "Zeile liegt außerhalb des Quelltexts.");
+            }
+        }
+        updateFootTools(tabs.selected());
     }
 
     void showOriginalContent(PageMetadata metadata, NativePayload payload) {
@@ -3157,6 +3333,7 @@ public final class PageDetailPanel extends JPanel {
             originalVideoViewer = null;
         }
         originalLinkShown = false;
+        originalProgramShown = false;
         videoTranscriptShown = false;
         videoFrames = null;
         stopTranscriptWatch();
@@ -3454,7 +3631,7 @@ public final class PageDetailPanel extends JPanel {
         if (ATTACHMENTS.equals(visible)) {
             loadAssets(false);
         }
-        if (READING.equals(visible) && originalFileViewer == null && originalVideoViewer == null && !originalLinkShown) {
+        if (READING.equals(visible) && originalFileViewer == null && originalVideoViewer == null && !originalLinkShown && !originalProgramShown) {
             loadReading();
         }
         if (REFERENCES.equals(visible)) {
@@ -3628,7 +3805,7 @@ public final class PageDetailPanel extends JPanel {
      */
     private void loadReading() {
         AppRuntime runtime = context.runtime();
-        if (runtime == null || page == null || readingLoaded || originalFileViewer != null || originalLinkShown) {
+        if (runtime == null || page == null || readingLoaded || originalFileViewer != null || originalLinkShown || originalProgramShown) {
             return;
         }
         readingLoaded = true;
@@ -4731,6 +4908,7 @@ public final class PageDetailPanel extends JPanel {
             }
             views = result.views();
             analysisView.steps(views, this::stepResult);
+            if (page != null) showProgramAnalysis(page.snapshot());
             showReader(result.reader(), page.live());
             statementsView.page(page.snapshot(), result.reader() == null ? null : result.reader().text());
         }, error -> {
@@ -5770,7 +5948,56 @@ public final class PageDetailPanel extends JPanel {
         }
     }
 
+    private void analyzeBusiness() {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null) return;
+        var snapshot = page.snapshot();
+        var key = snapshot.key();
+        var ai = runtime.settings().ai();
+        if (ai.chatModel() == null || ai.chatModel().isBlank()) {
+            feedback.warning("Kein Chat-Modell eingestellt", null);
+            return;
+        }
+        if (!ai.externalProcessingSources().contains(key.sourceId())) {
+            feedback.warning("FTP-Wissensquelle nicht für KI freigegeben", "Freigabe unter Einstellungen prüfen.");
+            return;
+        }
+        int budget = ai.contextTokens() == null ? 12000
+                : (int) Math.min(12000L, Math.max(512L, (long) ai.contextTokens() - 1024L));
+        int current = request;
+        recomputeBusiness.setEnabled(false);
+        feedback.working("Fachliche KI-Analyse wird berechnet …");
+        Background.run(() -> {
+            runtime.workspace().recomputeCobolBusiness(key, snapshot.payload().rawSha256(), ai.chatModel(), budget,
+                    () -> context.runtime() == runtime && ai.equals(runtime.settings().ai()),
+                    state -> javax.swing.SwingUtilities.invokeLater(() -> {
+                        if (current == request && context.runtime() == runtime) {
+                            feedback.working(state == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED
+                                    ? "Wartet auf freien Platz …" : "Fachliche KI-Analyse wird berechnet …");
+                        }
+                    }));
+            var cached = runtime.workspace().cachedPage(key.sourceId(), key.pageId())
+                    .orElseThrow(() -> new IllegalStateException("Programm nicht mehr verfügbar."));
+            return runtime.workspace().enrichments(cached);
+        }, updated -> {
+            if (current != request || context.runtime() != runtime) return;
+            recomputeBusiness.setEnabled(true);
+            views = updated;
+            showProgramAnalysis(snapshot);
+            analysisTabs.select("Fachliche Analyse");
+            feedback.success("Fachliche KI-Analyse gespeichert");
+        }, error -> {
+            if (current != request || context.runtime() != runtime) return;
+            recomputeBusiness.setEnabled(true);
+            feedback.warning("Fachliche KI-Analyse nicht abgeschlossen", error.getMessage());
+        });
+    }
+
     void recompute() {
+        recompute(null);
+    }
+
+    private void recompute(String processor) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || page == null) {
             return;
@@ -5784,7 +6011,7 @@ public final class PageDetailPanel extends JPanel {
         feedback.working("Analysen werden berechnet …");
         Background.run(() -> {
             // Abnahme #1078: Wartet der Auftrag hinter laufenden Folgeaufträgen, sagt die Statuszeile es.
-            Enrichments.Run run = runtime.workspace().recomputeEnrichments(source, id, null, state ->
+            Enrichments.Run run = runtime.workspace().recomputeEnrichments(source, id, processor, state ->
                     javax.swing.SwingUtilities.invokeLater(() -> {
                         if (current == request) {
                             feedback.working(state == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED
@@ -5805,6 +6032,7 @@ public final class PageDetailPanel extends JPanel {
             Enrichments.Run run = result.run();
             views = result.views();
             analysisView.steps(views, this::stepResult);
+            if (page != null) showProgramAnalysis(page.snapshot());
             int caret = reader.getCaretPosition();
             showReader(result.reader(), live);
             reader.setCaretPosition(Math.min(caret, reader.getDocument().getLength()));
@@ -5884,6 +6112,9 @@ public final class PageDetailPanel extends JPanel {
         updatePreviewEnabled();
         recompute.setEnabled(enabled);
         recomputeReader.setEnabled(enabled);
+        recomputeProgram.setEnabled(enabled);
+        recomputeBusiness.setEnabled(enabled);
+        searchPrograms.setEnabled(enabled);
     }
 
     /** Die Überschrift der Seite für die Zeile der Bereichsanzeige; öffnet beim Überfahren die Details. */
