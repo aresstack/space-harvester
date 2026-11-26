@@ -8,9 +8,11 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.HexFormat;
 
-/** Capture a bounded prefix while counting and hashing the completed binary FTP transfer. */
+/**
+ * Capture a prefix of the configured size while counting and hashing the completed binary FTP transfer. Die Größe
+ * der Stichprobe stellt der Aufrufer ein (App: {@code MvsDiagnosisSettings}), hier gibt es keine feste Obergrenze.
+ */
 public final class BinarySample {
-    public static final int MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
     private final byte[] prefix;
     private final long totalBytes;
     private final String sha256;
@@ -22,7 +24,7 @@ public final class BinarySample {
     }
 
     public static BinarySample capture(InputStream input, int limit) throws IOException {
-        if (limit < 1 || limit > MAX_CAPTURE_BYTES) {
+        if (limit < 1) {
             throw new IllegalArgumentException("Ungültiges Diagnoselimit.");
         }
         MessageDigest digest;
