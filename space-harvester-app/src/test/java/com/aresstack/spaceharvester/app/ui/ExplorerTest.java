@@ -91,19 +91,19 @@ class ExplorerTest {
             javax.swing.JTree tree = explorer.tree();
             javax.swing.tree.TreeCellRenderer renderer = tree.getCellRenderer();
 
-            Explorer.PageItem directory = new Explorer.PageItem("source", "space", "folder", "Ordner",
+            Explorer.PageItem directory = Explorer.PageItem.of("source", "space", "folder", "Ordner",
                     true, HarvestSource.PageNode.Kind.FOLDER);
             java.awt.Component folderComponent = renderer.getTreeCellRendererComponent(tree,
                     new Explorer.Node(directory), false, false, false, 0, false);
             Class<?> folderIcon = ((javax.swing.JLabel) folderComponent).getIcon().getClass();
 
-            Explorer.PageItem page = new Explorer.PageItem("source", "space", "page", "Seite",
+            Explorer.PageItem page = Explorer.PageItem.of("source", "space", "page", "Seite",
                     true, HarvestSource.PageNode.Kind.PAGE);
             java.awt.Component pageComponent = renderer.getTreeCellRendererComponent(tree,
                     new Explorer.Node(page), false, false, false, 0, false);
             Class<?> pageIcon = ((javax.swing.JLabel) pageComponent).getIcon().getClass();
 
-            Explorer.PageItem file = new Explorer.PageItem("source", "space", "file", "Datei",
+            Explorer.PageItem file = Explorer.PageItem.of("source", "space", "file", "Datei",
                     false, HarvestSource.PageNode.Kind.FILE);
             java.awt.Component fileComponent = renderer.getTreeCellRendererComponent(tree,
                     new Explorer.Node(file), false, false, true, 0, false);
@@ -149,7 +149,7 @@ class ExplorerTest {
             javax.swing.tree.DefaultTreeModel model = (javax.swing.tree.DefaultTreeModel) explorer.tree().getModel();
             javax.swing.tree.DefaultMutableTreeNode root = (javax.swing.tree.DefaultMutableTreeNode) model.getRoot();
             for (HarvestSource.PageNode.Kind kind : HarvestSource.PageNode.Kind.values()) {
-                Explorer.Node node = new Explorer.Node(new Explorer.PageItem("source", "space", kind.name(),
+                Explorer.Node node = new Explorer.Node(Explorer.PageItem.of("source", "space", kind.name(),
                         "Knoten " + kind, kind != HarvestSource.PageNode.Kind.FILE, kind));
                 root.add(node);
                 explorer.activate(new javax.swing.tree.TreePath(node.getPath()));
@@ -173,14 +173,14 @@ class ExplorerTest {
             Explorer explorer = new Explorer(context);
             Explorer.Node root = (Explorer.Node) explorer.tree().getModel().getRoot();
             Explorer.Node parent = new Explorer.Node(new Explorer.SpaceItem("source", "space", "Space"));
-            Explorer.Node cached = new Explorer.Node(new Explorer.PageItem("source", "space", "doc",
+            Explorer.Node cached = new Explorer.Node(Explorer.PageItem.of("source", "space", "doc",
                     "Dokument.pdf", null, HarvestSource.PageNode.Kind.PAGE));
             cached.add(new Explorer.Node(new Explorer.Note("Noch nicht geladen")));
             parent.add(cached);
             root.add(parent);
             ((javax.swing.tree.DefaultTreeModel) explorer.tree().getModel()).reload();
 
-            Explorer.Node confirmed = new Explorer.Node(new Explorer.PageItem("source", "space", "doc",
+            Explorer.Node confirmed = new Explorer.Node(Explorer.PageItem.of("source", "space", "doc",
                     "Dokument.pdf", false, HarvestSource.PageNode.Kind.FILE));
             confirmed.loaded = true;
             explorer.merge(parent, new Explorer.Batch(List.of(confirmed), null), true);

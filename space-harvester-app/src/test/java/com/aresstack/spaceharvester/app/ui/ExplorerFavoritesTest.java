@@ -80,7 +80,7 @@ class ExplorerFavoritesTest {
             assertThat(explorer[0].favoriteView().shown()).singleElement()
                     .satisfies(favorite -> assertThat(favorite.where()).isEqualTo("Handbuch"));
             // Eine Seite merkt sich ihren Pfad im Hintergrund.
-            explorer[0].toggleFavorite(new Explorer.PageItem("handbuch", space, pageId, "Wartung", false));
+            explorer[0].toggleFavorite(Explorer.PageItem.of("handbuch", space, pageId, "Wartung", false));
         });
         // Der Pfad kommt aus dem Core im Hintergrund, die Liste frischt danach auf dem EDT auf; auf dem CI-Läufer
         // dauert das länger als hier. Auf die Liste warten, nicht nur auf den Speicher, sonst liest die Prüfung vor
@@ -178,11 +178,11 @@ class ExplorerFavoritesTest {
         PageNavigation.Position position = new PageNavigation.Position("wiki", "OPS", "Betrieb",
                 List.of(node("100", "Handbücher"), node("200", "Server")), node("4711", "Backup"));
         Favorites.Favorite favorite = Explorer.favorite(position, "Confluence",
-                new Explorer.PageItem("wiki", "OPS", "4711", "Backup (alt)", true));
+                Explorer.PageItem.of("wiki", "OPS", "4711", "Backup (alt)", true));
         assertThat(favorite.title()).isEqualTo("Backup");
         assertThat(favorite.where()).isEqualTo("Confluence › Betrieb › Handbücher › Server");
         assertThat(favorite.ancestorIds()).containsExactly("100", "200");
-        assertThat(Explorer.favorite(null, "Confluence", new Explorer.PageItem("wiki", "OPS", "4711", "Backup",
+        assertThat(Explorer.favorite(null, "Confluence", Explorer.PageItem.of("wiki", "OPS", "4711", "Backup",
                 true)).where()).isEqualTo("Confluence › OPS");
     }
 

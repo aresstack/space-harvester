@@ -30,9 +30,9 @@ import org.junit.jupiter.api.io.TempDir;
 /** „Analysieren“ im Kontextmenü des Explorers (#499 E): Einträge, Umfang, Bestätigung und Start. */
 class ExplorerAnalyzeTest {
 
-    private static final Explorer.PageItem LEAF = new Explorer.PageItem("wiki", "OPS", "p1", "Blatt", false);
-    private static final Explorer.PageItem PARENT = new Explorer.PageItem("wiki", "OPS", "p2", "Eltern", true);
-    private static final Explorer.PageItem UNKNOWN = new Explorer.PageItem("wiki", "OPS", "p3", "Offen", null);
+    private static final Explorer.PageItem LEAF = Explorer.PageItem.of("wiki", "OPS", "p1", "Blatt", false);
+    private static final Explorer.PageItem PARENT = Explorer.PageItem.of("wiki", "OPS", "p2", "Eltern", true);
+    private static final Explorer.PageItem UNKNOWN = Explorer.PageItem.of("wiki", "OPS", "p3", "Offen", null);
     private static final Explorer.SpaceItem SPACE = new Explorer.SpaceItem("wiki", "OPS", "Betrieb");
     private static final Explorer.SourceItem SOURCE = new Explorer.SourceItem("wiki", "Wiki");
 
