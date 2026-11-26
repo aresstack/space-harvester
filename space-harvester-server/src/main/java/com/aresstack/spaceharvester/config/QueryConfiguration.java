@@ -82,6 +82,7 @@ import org.springframework.context.annotation.Configuration;
  * antworten ihre Routen mit {@code cache-unavailable}.
  */
 @Configuration(proxyBeanMethods = false)
+@org.springframework.boot.context.properties.EnableConfigurationProperties(ProgressiveSearchProperties.class)
 class QueryConfiguration {
 
     /**
@@ -237,9 +238,11 @@ class QueryConfiguration {
      * wenn die wirksame Konfiguration eines hat, sonst nach Regeln.
      */
     @Bean(destroyMethod = "close")
-    ProgressiveSearches progressiveSearches(SearchOrchestrator orchestrator, QueryVariantModels models) {
+    ProgressiveSearches progressiveSearches(SearchOrchestrator orchestrator, QueryVariantModels models,
+                                            ProgressiveSearchProperties limits) {
         return new ProgressiveSearches(orchestrator, () -> SearchProfile.defaults().withExpansion(
-                models.get().isPresent() ? SearchProfile.Expansion.AI : SearchProfile.Expansion.RULES));
+                models.get().isPresent() ? SearchProfile.Expansion.AI : SearchProfile.Expansion.RULES),
+                limits.toLimits());
     }
 
     /**
