@@ -3,7 +3,7 @@ package com.aresstack.spaceharvester.app.ui.deck;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
 import com.aresstack.spaceharvester.deck.ndv.analysis.NaturalDependencyGraph;
-import com.aresstack.spaceharvester.deck.ndv.analysis.NaturalDependencyService;
+import com.aresstack.spaceharvester.mainframe.dependency.NaturalDependencyService;
 import com.aresstack.spaceharvester.deck.ndv.analysis.NdvAnalysis;
 import java.awt.BorderLayout;
 import java.awt.event.KeyEvent;

@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.deck.ndv.analysis;
 
+import com.aresstack.spaceharvester.mainframe.dependency.NaturalDependencyService;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.deck.ndv.FakeNdvServer;
