@@ -827,9 +827,11 @@ public final class PageDetailPanel extends JPanel {
         recomputeProgram.setVisible(false);
         recomputeProgram.addActionListener(event -> {
             if (page == null) return;
-            String processor = com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment.source(page.snapshot()).isPresent()
-                    ? com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment.ID
-                    : com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment.ID;
+            String processor = com.aresstack.spaceharvester.app.runtime.program.StoredNaturalSource.read(page.snapshot()).isPresent()
+                    ? com.aresstack.spaceharvester.app.runtime.program.NaturalProgramEnrichment.ID
+                    : com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment.source(page.snapshot()).isPresent()
+                        ? com.aresstack.spaceharvester.app.runtime.program.JclProgramEnrichment.ID
+                        : com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment.ID;
             recompute(processor);
         });
         analysisActions.add(recomputeBusiness);
@@ -2748,6 +2750,16 @@ public final class PageDetailPanel extends JPanel {
     private void showStoredProgram(PageSnapshot snapshot) {
         var focus = pendingProgramFocus;
         pendingProgramFocus = null;
+        var natural = com.aresstack.spaceharvester.app.runtime.program.StoredNaturalSource.read(snapshot);
+        if (natural.isPresent()) {
+            boolean matchingNatural = focus != null && focus.key().equals(snapshot.key())
+                    && focus.rawSha256().equals(snapshot.payload().rawSha256());
+            showOriginalProgram(natural.get().content(), matchingNatural ? focus.line() : 0,
+                    com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.NATURAL);
+            if (matchingNatural) tabs.select(READING);
+            if (focus != null && !matchingNatural) feedback.warning("Fundstelle nicht mehr aktuell", "Quelltextrevision hat sich geändert.");
+            return;
+        }
         boolean matching = focus != null && focus.key().equals(snapshot.key())
                 && focus.rawSha256().equals(snapshot.payload().rawSha256());
         boolean nativeFtp = com.aresstack.spaceharvester.app.runtime.program.StoredFtpText.nativeFormat(snapshot.payload());
@@ -2766,14 +2778,18 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private void showOriginalProgram(String source, int line) {
-        com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.register();
-        var editor = new org.fife.ui.rsyntaxtextarea.RSyntaxTextArea();
         String syntax = switch (com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpProgramClassifier
                 .classify(source)) {
             case COBOL, COPYBOOK -> com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.COBOL;
             case JCL -> com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.JCL;
             case UNKNOWN -> org.fife.ui.rsyntaxtextarea.SyntaxConstants.SYNTAX_STYLE_NONE;
         };
+        showOriginalProgram(source, line, syntax);
+    }
+
+    private void showOriginalProgram(String source, int line, String syntax) {
+        com.aresstack.spaceharvester.mainframe.syntax.MainframeSyntax.register();
+        var editor = new org.fife.ui.rsyntaxtextarea.RSyntaxTextArea();
         editor.setSyntaxEditingStyle(syntax);
         editor.setEditable(false);
         editor.setText(source);

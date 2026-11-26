@@ -16,6 +16,10 @@ import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourceScope;
+import com.aresstack.enterpriseai.source.api.StoredContent;
+import com.aresstack.enterpriseai.source.api.StoredContentSource;
+import java.time.Instant;
+import java.util.Base64;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.pal.core.api.IPalTypeSystemFile;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.pal.core.api.ObjectKind;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.pal.core.api.ObjectType;
@@ -48,7 +52,7 @@ import java.util.function.LongSupplier;
  * {@code NdvService.findObject}, {@code NdvClient.readSource}). Eine Verbindung je Quelle wird wiederverwendet;
  * Benutzer und Passwort kommen nur beim (Wieder-)Verbinden über den {@link SecretProvider}.
  */
-final class NdvKnowledgeSource implements KnowledgeSourcePort {
+final class NdvKnowledgeSource implements KnowledgeSourcePort, StoredContentSource {
 
     static final String SCHEME = "ndv";
 
@@ -184,6 +188,37 @@ final class NdvKnowledgeSource implements KnowledgeSourcePort {
 
     @Override
     public KnowledgeDocument load(KnowledgeResourceId resourceId) throws KnowledgeSourceException {
+        String path = pathOf(resourceId);
+        StoredContent content = readContent(resourceId);
+        return KnowledgeDocument.of(content.resource(), "# " + path + "\n\n```natural\n"
+                + new String(content.payload(), StandardCharsets.UTF_8) + "\n```");
+    }
+
+    @Override
+    public String localId(KnowledgeResourceId resourceId) {
+        try {
+            pathOf(resourceId);
+            return Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(resourceId.value().getBytes(StandardCharsets.UTF_8));
+        } catch (KnowledgeSourceException invalid) {
+            return null;
+        }
+    }
+
+    @Override
+    public StoredContent storedContent(String localId) throws KnowledgeSourceException {
+        KnowledgeResourceId resourceId;
+        try {
+            resourceId = KnowledgeResourceId.of(new String(Base64.getUrlDecoder().decode(localId),
+                    StandardCharsets.UTF_8));
+            if (!localId.equals(localId(resourceId))) throw new IllegalArgumentException("Invalid resource ID");
+        } catch (IllegalArgumentException | NullPointerException invalid) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Invalid NDV resource ID");
+        }
+        return readContent(resourceId);
+    }
+
+    private StoredContent readContent(KnowledgeResourceId resourceId) throws KnowledgeSourceException {
         final String path = pathOf(resourceId);
         int slash = path.indexOf('/');
         int dot = path.lastIndexOf('.');
@@ -212,7 +247,11 @@ final class NdvKnowledgeSource implements KnowledgeSourcePort {
             KnowledgeRevision revision = revision(object);
             KnowledgeResource resource = resource(path, object, revision.isKnown() ? revision
                     : KnowledgeRevision.version(sha256(text)));
-            return KnowledgeDocument.of(resource, "# " + path + "\n\n```natural\n" + text + "\n```");
+            Map<String, String> metadata = new LinkedHashMap<String, String>(resource.metadata().asMap());
+            metadata.put(NdvSourceProvider.SOURCE_HASH, sha256(text));
+            resource = resource.toBuilder().metadata(KnowledgeMetadata.of(metadata)).build();
+            return new StoredContent(resource, text.getBytes(StandardCharsets.UTF_8), "text/plain",
+                    NdvSourceProvider.SOURCE_TEXT_FORMAT, Instant.now());
         });
     }
 

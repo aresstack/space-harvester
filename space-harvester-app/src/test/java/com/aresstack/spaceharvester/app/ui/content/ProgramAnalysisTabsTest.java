@@ -95,6 +95,48 @@ class ProgramAnalysisTabsTest {
     }
 
     @Test
+    void reopensNaturalFactsAndPreservesNativeSourceWithoutInventoryDigest() throws Exception {
+        String code = "DEFINE DATA\nLOCAL\n1 #CUSTOMER (A10)\nEND-DEFINE\nCALLNAT 'BOOKING' #CUSTOMER\nEND\n";
+        var format = com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.NdvSourceProvider.SOURCE_TEXT_FORMAT;
+        var payload = new NativePayload(code.getBytes(StandardCharsets.UTF_8), "text/plain", format);
+        var metadata = new PageMetadata("natural", "ndv:host:2700/LIB/DEMO.NSP", "DEMO.NSP", "ndv", null, "date|size=20",
+                null, null, PageMetadata.sorted(Map.of("ndv.library", "LIB")));
+        var program = PageSnapshot.of("ndv", metadata, payload, Instant.now());
+        var changed = PageSnapshot.of("ndv", metadata, new NativePayload(code.replace("BOOKING", "PAYMENT")
+                .getBytes(StandardCharsets.UTF_8), "text/plain", format), Instant.now());
+        var processor = new com.aresstack.spaceharvester.app.runtime.program.NaturalProgramEnrichment(Set.of("ndv"));
+        assertThat(com.aresstack.spaceharvester.app.runtime.program.StoredNaturalSource.read(program))
+                .hasValueSatisfying(source -> assertThat(source.content()).isEqualTo(code));
+        try (var store = LuceneEnrichmentStore.open(home)) {
+            var enrichments = new Enrichments(new KnowledgeDocumentTextProjector(), List.of(processor), store, Clock.systemUTC());
+            assertThat(enrichments.refresh(program).computed()).isEqualTo(1);
+            assertThat(enrichments.refresh(program).current()).isEqualTo(1);
+            store.flush();
+        }
+        try (var store = LuceneEnrichmentStore.open(home)) {
+            var enrichments = new Enrichments(new KnowledgeDocumentTextProjector(), List.of(processor), store, Clock.systemUTC());
+            var views = enrichments.view(program);
+            assertThat(views).singleElement().satisfies(view -> {
+                assertThat(view.freshness()).isEqualTo(Enrichment.Freshness.CURRENT);
+                var artifact = com.aresstack.spaceharvester.app.runtime.program.NaturalProgramEnrichment.read(view.enrichment().payloadJson());
+                assertThat(artifact.analysis().dependencies()).singleElement().satisfies(dep -> assertThat(dep.target()).isEqualTo("BOOKING"));
+            });
+            SwingUtilities.invokeAndWait(() -> {
+                var tabs = new PillTabs().tab("Absätze", new JPanel());
+                var analysis = new ProgramAnalysisTabs(tabs);
+                assertThat(analysis.show(program, views)).isTrue();
+                assertThat(tabs.names()).containsExactly("Natural-Struktur", "Natural-Abhängigkeiten", "Natural-Hinweise");
+                tabs.select("Natural-Abhängigkeiten");
+                assertThat(cells(tabs)).contains("BOOKING");
+                assertThat(analysis.show(changed, enrichments.view(changed))).isTrue();
+                assertThat(cells(tabs)).doesNotContain("BOOKING");
+                analysis.reset();
+                assertThat(tabs.names()).containsExactly("Absätze");
+            });
+        }
+    }
+
+    @Test
     void reopensJclAnalysisAndSwitchesDocumentSpecificTabs() throws Exception {
         String code = "//JOB JOB\n//STEP EXEC PGM=DEMO\n//IN DD DSN=APP.DATA.IN,DISP=SHR\n";
         var legacy = snapshot("ftp", code, code);

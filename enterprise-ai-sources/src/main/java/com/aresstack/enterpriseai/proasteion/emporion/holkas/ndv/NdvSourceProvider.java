@@ -23,6 +23,8 @@ import java.util.List;
 public final class NdvSourceProvider implements KnowledgeSourceProvider {
 
     public static final String TYPE_ID = "ndv";
+    public static final String SOURCE_TEXT_FORMAT = "ndv-decoded-text/v1";
+    public static final String SOURCE_HASH = "ndv.sourceSha256";
 
     private static final KnowledgeSourceType TYPE = KnowledgeSourceType.builder(TYPE_ID, NdvKnowledgeSource.SCHEME,
                     "Natural (NDV)")

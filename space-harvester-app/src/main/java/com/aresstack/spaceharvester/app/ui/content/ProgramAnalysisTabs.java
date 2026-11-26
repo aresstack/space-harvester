@@ -27,6 +27,7 @@ final class ProgramAnalysisTabs {
     private final DataFlowView dataFlow = new DataFlowView();
     private final BusinessAnalysisView business = new BusinessAnalysisView();
     private final JclAnalysisTabs jcl;
+    private final NaturalAnalysisTabs natural;
 
     ProgramAnalysisTabs(PillTabs tabs) {
         this.tabs = tabs;
@@ -40,6 +41,7 @@ final class ProgramAnalysisTabs {
         tabs.tab("Datenfluss", dataFlow);
         tabs.tab("Fachliche Analyse", business);
         jcl = new JclAnalysisTabs(tabs);
+        natural = new NaturalAnalysisTabs(tabs);
         reset();
     }
 
@@ -60,14 +62,16 @@ final class ProgramAnalysisTabs {
         dataFlow.show(null, "Analyse wird geladen …");
         business.pending();
         jcl.clear("Analyse wird geladen …");
+        natural.clear("Analyse wird geladen …");
     }
 
     boolean show(PageSnapshot snapshot, List<Enrichments.View> views) {
         if (StoredCobolSource.read(snapshot).isEmpty()) {
             reset();
-            return jcl.show(snapshot, views);
+            return jcl.show(snapshot, views) || natural.show(snapshot, views);
         }
         jcl.clear("");
+        natural.clear("");
         String message = "Noch keine aktuelle Programmanalyse im Bestand. Wissensquelle indexieren.";
         var view = views.stream().filter(item -> CobolProgramEnrichment.ID.equals(item.enrichment().processorId()))
                 .findFirst().orElse(null);

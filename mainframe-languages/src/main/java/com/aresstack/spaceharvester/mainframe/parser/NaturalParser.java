@@ -81,17 +81,17 @@ public class NaturalParser {
 
     // CALLNAT 'name' / CALLNAT name
     private static final Pattern CALLNAT = Pattern.compile(
-            "^\\s*CALLNAT\\s+['\"]?([A-Za-z][A-Za-z0-9_.#@$-]*)['\"]?",
+            "^\\s*CALLNAT\\s+['\"]?([#@$*]?[A-Za-z][A-Za-z0-9_.#@$-]*)['\"]?",
             Pattern.CASE_INSENSITIVE);
 
     // CALL 'name' / CALL name (3GL call)
     private static final Pattern CALL_3GL = Pattern.compile(
-            "^\\s*CALL\\s+['\"]?([A-Za-z][A-Za-z0-9_.#@$-]*)['\"]?",
+            "^\\s*CALL\\s+['\"]?([#@$*]?[A-Za-z][A-Za-z0-9_.#@$-]*)['\"]?",
             Pattern.CASE_INSENSITIVE);
 
     // FETCH [RETURN] 'name'
     private static final Pattern FETCH = Pattern.compile(
-            "^\\s*FETCH\\s+(?:RETURN\\s+)?['\"]?([A-Za-z][A-Za-z0-9_.#@$-]*)['\"]?",
+            "^\\s*FETCH\\s+(?:RETURN\\s+)?['\"]?([#@$*]?[A-Za-z][A-Za-z0-9_.#@$-]*)['\"]?",
             Pattern.CASE_INSENSITIVE);
 
     // READ [WORK] FILE name / READ name [WITH ...]
@@ -183,6 +183,30 @@ public class NaturalParser {
     /**
      * Parse Natural content and return outline model.
      */
+    private static void attach(JclElement element, int level,
+                               java.util.NavigableMap<Integer, JclElement> levels, JclElement scope) {
+        levels.tailMap(level, true).clear();
+        var parent = levels.lowerEntry(level);
+        if (parent != null) parent.getValue().addChild(element);
+        else if (scope != null) scope.addChild(element);
+        levels.put(level, element);
+    }
+
+    private static int commentIndex(String text) {
+        char quote = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (quote != 0) {
+                if (ch == quote) {
+                    if (i + 1 < text.length() && text.charAt(i + 1) == quote) i++;
+                    else quote = 0;
+                }
+            } else if (ch == '\'' || ch == '"') quote = ch;
+            else if (ch == '/' && i + 1 < text.length() && text.charAt(i + 1) == '*') return i;
+        }
+        return -1;
+    }
+
     public JclOutlineModel parse(String content, String sourceName) {
         JclOutlineModel model = new JclOutlineModel();
         model.setSourceName(sourceName);
@@ -197,7 +221,7 @@ public class NaturalParser {
 
         JclElement defineDataBlock = null;
         JclElement currentScope = null;
-        JclElement currentLevel01 = null;
+        java.util.NavigableMap<Integer, JclElement> levels = new java.util.TreeMap<>();
         boolean inDefineData = false;
         int defineDataDepth = 0; // for nested DEFINE DATA (unlikely but safe)
 
@@ -213,7 +237,7 @@ public class NaturalParser {
             if (COMMENT.matcher(trimmed).find()) continue;
 
             // Strip inline comments: everything after /*
-            int commentIdx = trimmed.indexOf("/*");
+            int commentIdx = commentIndex(trimmed);
             if (commentIdx > 0) {
                 trimmed = trimmed.substring(0, commentIdx).trim();
                 if (trimmed.isEmpty()) continue;
@@ -228,7 +252,7 @@ public class NaturalParser {
                     inDefineData = false;
                     defineDataBlock = null;
                     currentScope = null;
-                    currentLevel01 = null;
+                    levels.clear();
                 }
                 continue;
             }
@@ -268,7 +292,7 @@ public class NaturalParser {
                         defineDataBlock.addChild(scope);
                     }
                     currentScope = scope;
-                    currentLevel01 = null;
+                    levels.clear();
                     continue;
                 }
 
@@ -280,8 +304,7 @@ public class NaturalParser {
                     view.addParameter("LEVEL", m.group(1));
                     view.addParameter("OF", m.group(3));
                     model.addElement(view);
-                    if (currentScope != null) currentScope.addChild(view);
-                    currentLevel01 = view;
+                    attach(view, Integer.parseInt(m.group(1)), levels, currentScope);
                     continue;
                 }
 
@@ -318,16 +341,8 @@ public class NaturalParser {
                     if (init != null) var.addParameter("INIT", init.trim());
                     if (isConst) var.addParameter("CONST", mc.group(1));
 
-                    // Hierarchy: show level 1 as top-level, others nested
-                    if (level == 1) {
-                        model.addElement(var);
-                        if (currentScope != null) currentScope.addChild(var);
-                        currentLevel01 = var;
-                    } else if (level == 2 && currentLevel01 != null) {
-                        model.addElement(var);
-                        currentLevel01.addChild(var);
-                    }
-                    // Deeper levels omitted for clean outline
+                    model.addElement(var);
+                    attach(var, level, levels, currentScope);
                     continue;
                 }
 
