@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.UnaryOperator;
@@ -213,6 +214,21 @@ class FakeSource implements HarvestSource {
     }
 
     /** „Nicht gefunden“ bestätigt ab jetzt eine Löschung, wie bei lokalen Dateien (ADR 0014). */
+    /** Seiten außerhalb des eingestellten Umfangs ({@code outsideScope}). */
+    final Set<String> outsideScope = new java.util.HashSet<>();
+    /** Seiten in einem nicht vollständig inventarisierten Bereich ({@code inventoryCovers} falsch). */
+    final Set<String> uncovered = new java.util.HashSet<>();
+
+    @Override
+    public boolean outsideScope(String pageId) {
+        return outsideScope.contains(pageId);
+    }
+
+    @Override
+    public boolean inventoryCovers(String pageId) {
+        return !uncovered.contains(pageId);
+    }
+
     FakeSource confirmingDeletion() {
         confirmsDeletion = true;
         return this;

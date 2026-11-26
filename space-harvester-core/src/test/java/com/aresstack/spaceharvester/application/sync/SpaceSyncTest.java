@@ -115,6 +115,65 @@ class SpaceSyncTest {
         assertThat(next.withheldPageIds()).isEmpty();
     }
 
+    /** ADR 0037, Punkt 12: Ein verkleinerter Umfang beweist keine Löschung, auch wenn die Quelle Löschungen bestätigt. */
+    @Test
+    void aPageOutsideTheScopeStaysUnchangedWithoutALookup() {
+        source.confirmingDeletion();
+        firstRun();
+        source.remove("2");
+        source.outsideScope.add("2");
+        int lookups = source.singlePageCalls;
+
+        SyncPlan plan = sync.plan("wiki", "DOC");
+
+        assertThat(only(plan, "2").kind()).isEqualTo(PageChange.Kind.NOT_SEEN);
+        assertThat(plan.removals()).isEmpty();
+        assertThat(source.singlePageCalls).as("keine Einzelabfrage").isEqualTo(lookups);
+        SyncBaseline next = sync.confirm(plan, Set.of());
+        assertThat(next.pages()).containsOnlyKeys("1", "2", "3");
+        assertThat(next.stalePageIds()).isEmpty();
+        assertThat(next.withheldPageIds()).isEmpty();
+        // Auch der nächste Lauf lässt sie stehen.
+        SyncBaseline after = sync.confirm(sync.plan("wiki", "DOC"), Set.of());
+        assertThat(after.pages()).containsKey("2");
+    }
+
+    /** ADR 0037, Punkt 13: Fehlt eine Seite in einem unvollständig inventarisierten Bereich, bleibt sie, wie sie war. */
+    @Test
+    void aPageInAnIncompleteAreaKeepsItsStateIncludingStale() {
+        source.confirmingDeletion();
+        firstRun();
+        source.put("3", "DOC", null, "8", null);
+        SyncBaseline stale = sync.confirm(sync.plan("wiki", "DOC", SyncMode.CATALOG_ONLY), Set.of());
+        assertThat(stale.stalePageIds()).containsExactly("3");
+        source.remove("3");
+        source.uncovered.add("3");
+
+        SyncPlan plan = sync.plan("wiki", "DOC");
+
+        assertThat(only(plan, "3").kind()).isEqualTo(PageChange.Kind.NOT_SEEN);
+        assertThat(plan.removals()).isEmpty();
+        SyncBaseline next = sync.confirm(plan, Set.of());
+        assertThat(next.pages()).containsKey("3");
+        assertThat(next.pages().get("3")).isEqualTo(stale.pages().get("3"));
+        assertThat(next.stalePageIds()).containsExactly("3");
+    }
+
+    /** Auch im Nachholen mit reiner ID-Liste ({@link ChangeSync}) ist „außerhalb des Umfangs“ kein Löschbeleg. */
+    @Test
+    void theRemovalCheckKeepsAPageOutsideTheScope() {
+        source.confirmingDeletion();
+        source.remove("2");
+        source.outsideScope.add("2");
+
+        RemovalCheck.Result result = new RemovalCheck(source.queries())
+                .verify("wiki", "DOC", List.of("2"), Set.of("1", "3")).get("2");
+
+        assertThat(result.verdict()).isEqualTo(RemovalCheck.Verdict.UNVERIFIED);
+        assertThat(result.removes()).isFalse();
+        assertThat(result.problem()).isEqualTo(RemovalCheck.OUTSIDE_SCOPE);
+    }
+
     @Test
     void notFoundWithoutConfirmedDeletionWithholdsThePageSinceThisRun() {
         firstRun();
