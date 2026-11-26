@@ -83,7 +83,7 @@ SharePoint ist die erste Quelle dieser Navigation. Was nur SharePoint betrifft (
 | Verhalten eines echten SharePoint bei mehr als 100 Dateien | **nicht nachgewiesen** (PowerShell-Test steht aus) |
 | Vollständiger Abruf als Rückfall mit Fortschritt und Abbruch, Zustand „unvollständig geladen“ | nicht nachgesehen, beschlossen (F40-3) |
 | Paginierte Vorschau aus dem Cache (Punkt 11) | umgesetzt auf develop: `PageNavigation.cachedChildren` mit Cursor (Sortierschlüssel des letzten Kindes), ohne Gesamtgrenze; „Weitere laden“ blättert im Cache, auch ohne Quelle; Stapelgröße wie beim Live-Baum (`Explorer.BATCH`) |
-| Ebenenweiser Baum statt Gesamtbaum mit Tiefengrenze (Punkt 12) | **weicht ab:** der Gesamtbaum wird ab 200 Ebenen abgewiesen; Kinder je Knoten liefert die Navigation bereits |
+| Ebenenweiser Baum statt Gesamtbaum mit Tiefengrenze (Punkt 12) | umgesetzt auf develop: `GET …/tree` mit `root` und `levels` (höchstens 200 je Antwort), Knoten mit `more` setzen fort; keine Gesamttiefe mehr. Ohne Parameter liefert die Antwort wie bisher den ganzen Baum, solange er nicht tiefer als 200 Ebenen ist. Kinder je Knoten liefert die Navigation ohnehin |
 
 ## Widersprüche und Auffälligkeiten
 
@@ -120,12 +120,11 @@ Nach ADR 0036, Punkt 12. Stand main `69835ca8`. Keine dieser Grenzen ist eine Ei
 | Stapelgröße der Seitenliste je Anfrage | 100 (zugleich Höchstwert) | **fest im Code** (`PageQueries.MAX_PAGE_LIMIT`) | nein |
 | Stapel der Vorschau aus dem Cache | 100, ohne Gesamtgrenze | **fest im Code** (`Explorer.BATCH`, wie beim Live-Baum) | nein |
 | Titelsuche: Treffer, Suchtiefe bei verdrängten Treffern | 100, 1000 | **fest im Code** (`PageNavigation.MAX_TITLE_LIMIT`, `MAX_TITLE_DEPTH`) | nein |
-| Baum eines Space: Tiefe, Stapel beim Aufbau | 200 Ebenen, 1000 | **fest im Code** (`PageQueries.MAX_TREE_DEPTH`, `TREE_BATCH`) | nein |
+| Baum eines Space: Ebenen je Antwort, Stapel beim Aufbau | 200 Ebenen (Invariante des JSON-Formats), 1000 | **fest im Code** (`PageQueries.MAX_TREE_LEVELS`, `TREE_BATCH`) | nein |
 | Gemerkte Versionsprüfungen | 10 000 | **fest im Code** (`PageQueries.MAX_CHECKED`) | nein |
 
-Stapelgrößen sind nach Punkt 8 nie ein fachliches Limit. Die 1000 Kinder der Vorschau (Punkt 11) sind entfallen.
-Die Tiefe von 200 Ebenen (Punkt 12), bei der ein tieferer Baum abgewiesen wird (`TreeTooLargeException`) und nur
-der Export ihn liefert, ist noch eines und entfällt.
+Stapelgrößen sind nach Punkt 8 nie ein fachliches Limit. Die 1000 Kinder der Vorschau (Punkt 11) und die
+Gesamttiefe von 200 Ebenen (Punkt 12) sind entfallen; 200 Ebenen sind nur noch der Ausschnitt einer Antwort.
 
 ## Folgen
 
