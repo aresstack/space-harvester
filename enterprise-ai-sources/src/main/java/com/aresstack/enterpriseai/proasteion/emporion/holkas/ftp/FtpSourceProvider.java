@@ -46,12 +46,15 @@ public final class FtpSourceProvider implements KnowledgeSourceProvider {
             .field(SourceSettingField.of("credentialRef", SourceSettingField.Kind.SECRET_REF,
                     "KeePass-Eintrag", "Eintrag mit Benutzer, Passwort und Adresse des FTP-Servers; leer = anonym"))
             .field(SourceSettingField.text("startPoints", "HLQs / Startpunkte",
-                    "Manuell, durch Semikolon oder Komma getrennt: HLQ, Dataset/PDS oder Member").required())
+                    "Manuell, durch Semikolon oder Komma getrennt: HLQ, Dataset/PDS oder Member; leer nur bei nutzungsabhängiger Befüllung"))
             .field(SourceSettingField.of("maxDepth", SourceSettingField.Kind.NUMBER, "Tiefe",
                     "Optional: Tiefe begrenzen (0 = nur direkte Einträge; leer = vollständig)")
                     .advanced())
             .field(SourceSettingField.of("maxResources", SourceSettingField.Kind.NUMBER,
                     "Höchstzahl Member (optional)", "Optionaler Umfang; leer = keine Begrenzung").advanced())
+            .field(SourceSettingField.of("navigationFill", SourceSettingField.Kind.FLAG,
+                    "Beim Navigieren befüllen", "Direkt besuchte Dateien zusätzlich in den Suchindex aufnehmen")
+                    .withDefault("false"))
             .field(SourceSettingField.of("programSourcesOnly", SourceSettingField.Kind.FLAG,
                     "Nur Programmquellen", "MVS: COBOL, Copybooks und JCL anhand einer Inhaltsprobe erkennen")
                     .withDefault("false"))
@@ -208,13 +211,13 @@ public final class FtpSourceProvider implements KnowledgeSourceProvider {
                 startPoints.add(point);
             }
         }
-        if (startPoints.isEmpty()) {
+        boolean navigationFill = r.bool("navigationFill", false);
+        if (startPoints.isEmpty() && !navigationFill) {
             r.problem("startPoints", "mindestens ein HLQ, Dataset oder Pfad erforderlich");
-            return SourceScope.of("-");
         }
         int depth = r.integer("maxDepth", Integer.MAX_VALUE, 0, Integer.MAX_VALUE);
         int resources = r.integer("maxResources", DEFAULT_MAX_RESOURCES, 1, Integer.MAX_VALUE);
-        return SourceScope.builder().startPoints(startPoints)
+        return SourceScope.builder().automaticStartPoints().startPoints(startPoints)
                 .maxDepth(depth).maxResources(resources).build();
     }
 }

@@ -31,6 +31,9 @@ final class FtpInventory {
     }
 
     List<KnowledgeResource> discover(SourceScope scope, ResourceFactory resources) throws KnowledgeSourceException {
+        if (scope.startPoints().isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
         boolean mvs = sessions.run(FtpClientSession::mvs);
         List<String> starts = normalizeStartPoints(scope, mvs);
         Map<String, KnowledgeResource> found = new LinkedHashMap<String, KnowledgeResource>();

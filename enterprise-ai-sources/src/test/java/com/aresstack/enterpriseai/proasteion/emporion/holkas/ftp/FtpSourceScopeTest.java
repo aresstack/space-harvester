@@ -38,6 +38,13 @@ public class FtpSourceScopeTest {
                 .anyMatch(problem -> problem.contains("HLQ")));
     }
 
+    @Test
+    public void allowsNavigationOnlyWithoutAnyInventoryStartPoint() {
+        SourceSettings settings = SourceSettings.empty().with("host", "localhost").with("navigationFill", "true");
+        org.junit.Assert.assertTrue(provider().validate(settings).isEmpty());
+        org.junit.Assert.assertTrue(provider().scope(settings).startPoints().isEmpty());
+    }
+
     private static FtpSourceProvider provider() {
         return new FtpSourceProvider(ref -> {
             throw new AssertionError("Do not access credentials while configuring a scope");

@@ -10,6 +10,7 @@ import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.NavigationResourceSource;
 import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourceScope;
 
@@ -37,7 +38,7 @@ import java.util.Map;
  *   <li>Revision: Änderungszeit, falls der Server sie meldet, beim Laden zusätzlich der SHA-256 des Texts.</li>
  * </ul>
  */
-final class FtpKnowledgeSource implements KnowledgeSourcePort {
+final class FtpKnowledgeSource implements KnowledgeSourcePort, NavigationResourceSource {
 
     static final String SCHEME = "ftp";
 
@@ -73,6 +74,22 @@ final class FtpKnowledgeSource implements KnowledgeSourcePort {
     @Override
     public List<KnowledgeResource> discover(final SourceScope scope) throws KnowledgeSourceException {
         return new FtpInventory(sessions, programSourcesOnly).discover(scope, this::resource);
+    }
+
+    @Override
+    public KnowledgeResourceId navigationResource(String nativePath) throws KnowledgeSourceException {
+        return sessions.run(session -> {
+            String path = session.mvs() ? MvsQuoteNormalizer.unquote(nativePath).toUpperCase(Locale.ROOT)
+                    : nativePath.replaceFirst("^/+", "");
+            if (path.isEmpty() || session.mvs() && MvsQuoteNormalizer.hasWildcard(path)) {
+                return null;
+            }
+            if (programSourcesOnly && session.mvs() && FtpProgramClassifier.classify(session.sampleText(path))
+                    == FtpProgramClassifier.Kind.UNKNOWN) {
+                return null;
+            }
+            return idOf(path);
+        });
     }
 
     @Override
