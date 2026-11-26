@@ -33,6 +33,25 @@ class EnrichmentFactsTest {
     }
 
     @Test
+    void identicalFactsInDifferentLocalSectionsHaveDistinctStableIds() {
+        Enrichment result = FactTestResults.acronyms(PAGE, FactTestResults.TEXT);
+        var document = com.aresstack.spaceharvester.application.assets.DocumentKey.localOriginal(PAGE);
+        Enrichment first = new Enrichment(PAGE, result.processorId(), result.processorVersion(),
+                result.inputSha256(), result.revision(), result.status(), result.payloadJson(), result.warnings(),
+                null, result.computedAt(), document, 0, "extraction");
+        Enrichment second = new Enrichment(PAGE, result.processorId(), result.processorVersion(),
+                result.inputSha256(), result.revision(), result.status(), result.payloadJson(), result.warnings(),
+                null, result.computedAt(), document, 1, "extraction");
+
+        var firstFacts = EnrichmentFacts.of(first);
+        var secondFacts = EnrichmentFacts.of(second);
+        assertThat(firstFacts).extracting(MetadataFact::id)
+                .doesNotContainAnyElementsOf(secondFacts.stream().map(MetadataFact::id).toList());
+        assertThat(EnrichmentFacts.of(first)).isEqualTo(firstFacts);
+        assertThat(secondFacts).allSatisfy(fact -> assertThat(fact.provenance().localSection()).isEqualTo(1));
+    }
+
+    @Test
     void everyDistinctExpansionIsADefinitionAndIdentifiersAreTheirOwnType() {
         // Wie AcronymFindings im EAC: je unterschiedlicher Ausschreibung ein ACRONYM_DEFINITION, Kennungen getrennt.
         Enrichment result = FactTestResults.acronyms(PAGE,

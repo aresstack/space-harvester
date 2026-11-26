@@ -92,7 +92,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
 
     private static final Pattern SAFE_EXPORT_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9-]{0,99}");
     /** Dateinamen konvertierter Dateien. */
-    private static final String CONVERTED_NAME = "[a-z][a-z0-9-]{0,40}\\.(json|md|docx|pdf)";
+    private static final String CONVERTED_NAME = "[a-z][a-z0-9-]{0,40}\\.(json|md|docx|pdf|zip)";
     private static final Pattern SAFE_CONVERTED = Pattern.compile(CONVERTED_NAME);
     // Nur Kleinbuchstaben: Dateisysteme ohne Groß-/Kleinschreibung dürfen keine zwei Seiten zusammenlegen.
     private static final Pattern SAFE_FILE = Pattern.compile(

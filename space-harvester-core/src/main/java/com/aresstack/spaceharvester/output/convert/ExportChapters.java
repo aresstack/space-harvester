@@ -164,7 +164,7 @@ final class ExportChapters {
      * bleibt der Hinweis, gemeldet als {@link ConversionNotice.Kind#OMITTED_CONTENT}.
      */
     static Figures figures(ConvertiblePage page, StorageParser parser, ConversionInput input) {
-        return figures(page, parser, input.assets(), input.readingView(page.pageId()), false);
+        return figures(page, parser, input.assets(), input.readingView(page.pageId()), false, input.fileText(page));
     }
 
     /**
@@ -174,18 +174,18 @@ final class ExportChapters {
      * ohne lesbare Quelldaten oder mitten in einer Zeile (Tabelle, Liste) bleibt es eine Abbildung.
      */
     static Figures markdownFigures(ConvertiblePage page, StorageParser parser, ConversionInput input) {
-        return figures(page, parser, input.assets(), input.readingView(page.pageId()), true);
+        return figures(page, parser, input.assets(), input.readingView(page.pageId()), true, input.fileText(page));
     }
 
     private static Figures figures(ConvertiblePage page, StorageParser parser, ExportAssets assets,
                                    Optional<ExportReadingView> view) {
-        return figures(page, parser, assets, view, false);
+        return figures(page, parser, assets, view, false, Optional.empty());
     }
 
     private static Figures figures(ConvertiblePage page, StorageParser parser, ExportAssets assets,
-                                   Optional<ExportReadingView> view, boolean drawioSource) {
+                                   Optional<ExportReadingView> view, boolean drawioSource, Optional<String> fileText) {
         List<ConversionNotice> omitted = new ArrayList<>();
-        String markdown = markdown(page, parser, view, omitted);
+        String markdown = markdown(page, parser, view, omitted, fileText);
         if (drawioSource) {
             markdown = drawioSources(markdown, page.pageId(), assets);
         }
@@ -482,12 +482,12 @@ final class ExportChapters {
 
     /** Seiten-ID, Version und Link in Confluence, darunter der Inhalt; Überschriften ab Ebene 1 (verschiebt der Writer). */
     static String markdown(ConvertiblePage page, StorageParser parser) {
-        return markdown(page, parser, Optional.empty(), new ArrayList<>());
+        return markdown(page, parser, Optional.empty(), new ArrayList<>(), Optional.empty());
     }
 
     /** Wie {@link #markdown(ConvertiblePage, StorageParser)}; fehlende ausgeführte Makros landen in {@code omitted}. */
     private static String markdown(ConvertiblePage page, StorageParser parser, Optional<ExportReadingView> view,
-                                   List<ConversionNotice> omitted) {
+                                   List<ConversionNotice> omitted, Optional<String> fileText) {
         PageMetadata metadata = page.header().metadata();
         StringBuilder facts = new StringBuilder("Seite " + MarkdownConverter.escape(page.pageId()));
         if (metadata.version() != null) {
@@ -503,7 +503,11 @@ final class ExportChapters {
                 : parser.parse(storage, available.html(), available.baseUri()));
         List<Block> blocks = parsed.map(StorageParser.Parsed::blocks)
                 .or(() -> DocumentTextBlocks.of(page.snapshot().payload()))
-                .orElse(List.of(new Note("Die Payload enthält keinen Inhalt im Storage-Format")));
+                .or(() -> fileText.map(text -> List.<Block>of(new StorageDocument.Paragraph(
+                        List.of(StorageDocument.Text.plain(text))))))
+                .orElse(List.of(new Note("file".equals(page.snapshot().payload().nativeFormat())
+                        ? "Für die exportierte Originaldatei ist kein Lesetext verfügbar"
+                        : "Die Payload enthält keinen Inhalt im Storage-Format")));
         String reason = omittedReason(view);
         parsed.ifPresent(p -> p.omitted().forEach(omission -> omitted.add(new ConversionNotice(page.pageId(),
                 ConversionNotice.Kind.OMITTED_CONTENT, omission.reference(),

@@ -189,7 +189,11 @@ public final class DocumentExtractions {
         return originalText(extraction, maxTextChars);
     }
 
-    private OriginalPreview originalText(StoredExtraction extraction, int maxChars) {
+    /** Read retained text using the caller's explicit character budget, independently of the reader preview. */
+    public OriginalPreview originalText(StoredExtraction extraction, int maxChars) {
+        if (maxChars < 1) {
+            throw new IllegalArgumentException("maxChars must be positive");
+        }
         TextCollector text = new TextCollector(maxChars);
         if (usable(extraction.document().outcome())) {
             collect(extraction, text);
@@ -892,6 +896,9 @@ public final class DocumentExtractions {
             int separator = text.isEmpty() ? 0 : PARAGRAPH_BREAK.length();
             if (text.length() + separator + piece.length() > max) {
                 int room = max - text.length() - separator;
+                if (room > 0 && Character.isHighSurrogate(piece.charAt(room - 1))) {
+                    room--;
+                }
                 if (room > 0) {
                     text.append(separator > 0 ? PARAGRAPH_BREAK : "").append(piece, 0, room);
                 }
