@@ -53,7 +53,13 @@ public interface HoldingsCatalog {
      * @param version       Version nach den aktuellen Kopfdaten oder {@code null}
      * @param loadedVersion Version des gespeicherten Inhalts oder {@code null}
      */
-    record CatalogPage(String pageId, String parentPageId, boolean loaded, String version, String loadedVersion) {
+    record CatalogPage(String pageId, String parentPageId, boolean loaded, String version, String loadedVersion,
+                       String rawSha256, String title, boolean folder,
+                       com.aresstack.spaceharvester.application.assets.ExtractionStatus extractionStatus) {
+
+        public CatalogPage(String pageId, String parentPageId, boolean loaded, String version, String loadedVersion) {
+            this(pageId, parentPageId, loaded, version, loadedVersion, null, "", false, null);
+        }
 
         public CatalogPage {
             Objects.requireNonNull(pageId, "pageId");

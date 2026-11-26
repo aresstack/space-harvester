@@ -113,6 +113,7 @@ public final class PageCacheSchema {
     static final String PAYLOAD_BYTES = "payloadBytes";
     static final String MEDIA_TYPE = "mediaType";
     static final String NATIVE_FORMAT = "nativeFormat";
+    static final String LOCAL_EXTRACTION_STATUS = "localExtractionStatus";
     static final String RETRIEVED_AT = "retrievedAt";
 
     // Bestätigte Generation
@@ -298,6 +299,9 @@ public final class PageCacheSchema {
             doc.add(new StoredField(PAYLOAD_BYTES, payload.length()));
             doc.add(new StoredField(MEDIA_TYPE, payload.mediaType()));
             doc.add(new StoredField(NATIVE_FORMAT, payload.nativeFormat()));
+            com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.read(payload)
+                    .ifPresent(reference -> doc.add(new StoredField(LOCAL_EXTRACTION_STATUS,
+                            reference.status().name())));
             doc.add(new StoredField(RETRIEVED_AT, snapshot.retrievedAt().toString()));
             doc.add(new StoredField(RAW_JSON, payload.bytes()));
         }

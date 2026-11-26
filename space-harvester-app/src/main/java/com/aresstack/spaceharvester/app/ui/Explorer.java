@@ -2120,7 +2120,8 @@ public final class Explorer {
         return switch (item) {
             case SourceItem source -> states.all(List.of(source.sourceId()), treeSpaces());
             case SpaceItem space -> states.space(space.sourceId(), space.spaceKey());
-            case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP -> TreeStates.Badge.NONE;
+            case PageItem page when page.kind() == HarvestSource.PageNode.Kind.GROUP ->
+                    states.folder(page.sourceId(), page.spaceKey(), page.pageId());
             case PageItem page -> states.page(page.sourceId(), page.spaceKey(), page.pageId(),
                     !Boolean.FALSE.equals(page.hasChildren()));
             case null, default -> TreeStates.Badge.NONE;

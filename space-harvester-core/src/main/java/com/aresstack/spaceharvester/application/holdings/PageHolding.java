@@ -13,7 +13,12 @@ import java.util.Objects;
  * @param subtree      Zähler ihres Teilbaums einschließlich der Seite selbst; {@link HoldingCounts#ZERO} bei
  *                     {@link HoldingState#REMOVED}
  */
-public record PageHolding(String pageId, String parentPageId, HoldingState state, HoldingCounts subtree) {
+public record PageHolding(String pageId, String parentPageId, HoldingState state, HoldingCounts subtree,
+                          IndexState indexState, IndexCoverage indexCoverage) {
+
+    public PageHolding(String pageId, String parentPageId, HoldingState state, HoldingCounts subtree) {
+        this(pageId, parentPageId, state, subtree, null, null);
+    }
 
     public PageHolding {
         Objects.requireNonNull(pageId, "pageId");

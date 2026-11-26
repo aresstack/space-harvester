@@ -59,6 +59,45 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
     private final HoldingsCatalog catalog;
     private final AccessGuard access;
     private final int maxTreeNodes;
+    private volatile com.aresstack.spaceharvester.application.query.PageTextIndex textIndex;
+
+    public void localIndex(com.aresstack.spaceharvester.application.query.PageTextIndex index) {
+        textIndex = Objects.requireNonNull(index, "index");
+    }
+
+    /** Route primary index changes only to sources using local originals. */
+    public HoldingsChanges localIndexChanges() {
+        return new HoldingsChanges() {
+            @Override
+            public void pagesChanged(String sourceId, String spaceKey, Collection<String> pageIds) {
+                if (localOriginals(sourceId)) {
+                    Holdings.this.pagesChanged(sourceId, spaceKey, pageIds);
+                }
+            }
+
+            @Override
+            public void spaceChanged(String sourceId, String spaceKey) {
+                if (localOriginals(sourceId)) {
+                    Holdings.this.spaceChanged(sourceId, spaceKey);
+                }
+            }
+
+            @Override
+            public void sourceChanged(String sourceId) {
+                spaceChanged(sourceId, "");
+            }
+
+            @Override
+            public void loading(String sourceId, String spaceKey, Collection<String> pageIds) {
+                // Cache loads already report their own progress.
+            }
+        };
+    }
+
+    private boolean localOriginals(String sourceId) {
+        return sources.find(sourceId).filter(source -> "files".equals(source.type())
+                && source.readsOriginalInPlace()).isPresent();
+    }
     private final Listeners<Subscriber> listeners = new Listeners<>("Bestand");
     private final Coalescer<Space, Mark> notifier;
 
@@ -158,7 +197,10 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
         for (HoldingState state : states.values()) {
             total = total.plus(HoldingCounts.of(state));
         }
-        SpaceSummary summary = new SpaceSummary(sourceId, spaceKey, stock.generation(), total);
+        Map<String, IndexState> indexStates = indexStates(caller, sourceId, spaceKey, stock, states);
+        IndexCoverage coverage = indexStates == null ? null : indexStates.values().stream()
+                .map(IndexCoverage::of).reduce(IndexCoverage.ZERO, IndexCoverage::plus);
+        SpaceSummary summary = new SpaceSummary(sourceId, spaceKey, stock.generation(), total, coverage);
         if (!tree) {
             return new Computed(summary, Map.of());
         }
@@ -169,9 +211,36 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
         parents.forEach((pageId, parent) -> entries.add(new TreeEntry(pageId, parent)));
         Map<String, PageHolding> pages = new HashMap<>(states.size() * 2);
         for (PageTree.Node root : PageTreeBuilder.build(entries).roots()) {
-            accumulate(root, states, pages);
+            accumulate(root, states, indexStates, pages);
         }
         return new Computed(summary, pages);
+    }
+
+    /** Resolve local full-text coverage separately from cache/export eligibility. */
+    private Map<String, IndexState> indexStates(AccessContext caller, String sourceId, String spaceKey,
+                                                HoldingsCatalog.Stock stock, Map<String, HoldingState> states) {
+        var index = textIndex;
+        if (index == null || !localOriginals(sourceId)) {
+            return null;
+        }
+        Map<String, com.aresstack.spaceharvester.application.query.PageTextIndex.ContentState> indexed =
+                index.contentStates(sourceId, spaceKey);
+        Map<String, IndexState> result = new HashMap<>();
+        for (HoldingsCatalog.CatalogPage page : stock.pages()) {
+            HoldingState state = states.get(page.pageId());
+            if (state != null) {
+                HoldingState readable = access.canRead(caller, sourceId, spaceKey, page.pageId())
+                        ? state : HoldingState.LOCKED;
+                result.put(page.pageId(), LocalIndexStatus.state(page, spaceKey, readable,
+                        indexed.get(page.pageId())));
+            }
+        }
+        states.forEach((id, state) -> {
+            if (state == HoldingState.LOCKED) {
+                result.putIfAbsent(id, IndexState.LOCKED);
+            }
+        });
+        return result;
     }
 
     /** Zustand und Elternseite jeder Seite des Space, die der Aufrufer sehen darf. */
@@ -662,7 +731,7 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
 
     /** Zähler je Teilbaum, ohne Rekursion: erst von oben nach unten ordnen, dann von unten nach oben zusammenzählen. */
     private static void accumulate(PageTree.Node root, Map<String, HoldingState> states,
-                                   Map<String, PageHolding> into) {
+                                   Map<String, IndexState> indexStates, Map<String, PageHolding> into) {
         List<PageTree.Node> order = new ArrayList<>();
         Map<String, String> parentOf = new HashMap<>();
         Deque<PageTree.Node> open = new ArrayDeque<>();
@@ -679,10 +748,17 @@ public final class Holdings implements HoldingsChanges, PageLoads, AutoCloseable
             PageTree.Node node = order.get(i);
             HoldingState state = states.get(node.pageId());
             HoldingCounts subtree = HoldingCounts.of(state);
+            IndexState indexState = indexStates == null ? null : indexStates.get(node.pageId());
+            IndexCoverage coverage = indexState == null ? null : IndexCoverage.of(indexState);
             for (PageTree.Node child : node.children()) {
-                subtree = subtree.plus(into.get(child.pageId()).subtree());
+                PageHolding found = into.get(child.pageId());
+                subtree = subtree.plus(found.subtree());
+                if (coverage != null && found.indexCoverage() != null) {
+                    coverage = coverage.plus(found.indexCoverage());
+                }
             }
-            into.put(node.pageId(), new PageHolding(node.pageId(), parentOf.get(node.pageId()), state, subtree));
+            into.put(node.pageId(), new PageHolding(node.pageId(), parentOf.get(node.pageId()), state, subtree,
+                    indexState, coverage));
         }
     }
 
