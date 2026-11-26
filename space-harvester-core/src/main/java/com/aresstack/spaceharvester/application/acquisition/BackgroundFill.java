@@ -298,8 +298,11 @@ public final class BackgroundFill implements AutoCloseable {
     private final Set<Where> restPending = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Spaces, deren fortgesetzter Teil auf eine Suche im Katalog wartet ({@link #scanFor}). Unter monitor. */
     private final Set<Where> scanPending = java.util.concurrent.ConcurrentHashMap.newKeySet();
-    /** Quellen, die gerade bereinigt werden: {@link #feed} fordert für sie nichts an. Unter {@link #monitor}. */
-    private final Set<String> purging = new HashSet<>();
+    /**
+     * Quellen, die gerade bereinigt werden, je mit der Zahl der Sperren ({@link #holdSource}): {@link #feed} fordert für
+     * sie nichts an, und nichts von ihnen wird eingereiht. Unter {@link #monitor}.
+     */
+    private final Map<String, Integer> purging = new HashMap<>();
 
     /**
      * @param caller   technischer Aufrufer, ohne Benutzeranmeldung
@@ -482,16 +485,42 @@ public final class BackgroundFill implements AutoCloseable {
     public void removeSource(String sourceId) {
         Objects.requireNonNull(sourceId, "sourceId");
         ensureMirrored();
-        synchronized (monitor) {
-            // Erst sperren und austragen, dann zurückziehen (Abnahme #1087): Sonst forderte feed die Seiten neu an.
-            purging.add(sourceId);
-        }
+        // Erst sperren und austragen, dann zurückziehen (Abnahme #1087): Sonst forderte feed die Seiten neu an.
+        hold(sourceId);
         try {
             purgeSource(sourceId);
         } finally {
-            synchronized (monitor) {
-                purging.remove(sourceId);
+            release(sourceId);
+        }
+    }
+
+    /**
+     * Hält eine Quelle aus der Füllung heraus, bis die Rückgabe geschlossen wird, für die ganze Dauer von „Daten
+     * bereinigen“ ({@code SourceDataPurge.Quiesce}): Nichts von ihr wird eingereiht oder angefordert. Sonst fände eine
+     * Suche im Katalog zwischen dem Leeren der Füllschlange ({@link #removeSource}) und dem des Katalogs die Seiten der
+     * Quelle noch, reihte sie wieder ein und lüde sie nach der Bereinigung zurück in den Cache (CI, Offline-ZIP-Bau
+     * 26.11.2026). Sperren derselben Quelle zählen; erst die letzte gibt sie frei.
+     */
+    public AutoCloseable holdSource(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        hold(sourceId);
+        java.util.concurrent.atomic.AtomicBoolean released = new java.util.concurrent.atomic.AtomicBoolean();
+        return () -> {
+            if (released.compareAndSet(false, true)) {
+                release(sourceId);
             }
+        };
+    }
+
+    private void hold(String sourceId) {
+        synchronized (monitor) {
+            purging.merge(sourceId, 1, Integer::sum);
+        }
+    }
+
+    private void release(String sourceId) {
+        synchronized (monitor) {
+            purging.computeIfPresent(sourceId, (id, holds) -> holds > 1 ? holds - 1 : null);
         }
         changed();
     }
@@ -693,7 +722,7 @@ public final class BackgroundFill implements AutoCloseable {
                     // Schon gespiegelt heißt: wartet schon (oder endet gerade); dann nicht erneut hinzufügen, sonst
                     // hinge der Eintrag nach seinem Abschluss ohne Spiegel in der Schlange. Eine Quelle im Bereinigen
                     // nimmt nichts an.
-                    if (!whereOf.containsKey(gap.key()) && !purging.contains(gap.key().sourceId())) {
+                    if (!whereOf.containsKey(gap.key()) && !purging.containsKey(gap.key().sourceId())) {
                         Where where = located.get(gap.key());
                         whereOf.put(gap.key(), where);
                         waitingIn.merge(where, 1, Integer::sum);
@@ -738,7 +767,7 @@ public final class BackgroundFill implements AutoCloseable {
             List<PageKey> orphans;
             synchronized (monitor) {
                 orphans = candidates.stream().filter(key -> !whereOf.containsKey(key)
-                        && !inFlight.containsKey(key) && !purging.contains(key.sourceId())).toList();
+                        && !inFlight.containsKey(key) && !purging.containsKey(key.sourceId())).toList();
             }
             if (orphans.isEmpty()) {
                 return false;
@@ -1207,8 +1236,8 @@ public final class BackgroundFill implements AutoCloseable {
             synchronized (monitor) {
                 at = whereOf.get(gap.key());
                 // Inzwischen ausgetragen (geladen, geruht, bereinigt) oder die Quelle wird bereinigt: nicht anfordern.
-                gone = at == null || purging.contains(sourceId);
-                if (at == null && !purging.contains(sourceId)) {
+                gone = at == null || purging.containsKey(sourceId);
+                if (at == null && !purging.containsKey(sourceId)) {
                     // Ohne Spiegel: ein Waise, den sonst nichts austrägt; er belegte dauerhaft einen Platz im Blick.
                     unmirrored.add(gap.key());
                 }
@@ -1247,7 +1276,7 @@ public final class BackgroundFill implements AutoCloseable {
             // Anfrage nicht (Abnahme #1087): zurückziehen, nicht übergeben.
             boolean withdraw;
             synchronized (monitor) {
-                withdraw = purging.contains(sourceId);
+                withdraw = purging.containsKey(sourceId);
             }
             withdraw = withdraw || !allowed(sourceId) || resting(at);
             if (!withdraw) {
