@@ -806,7 +806,7 @@ public final class Harvester implements AutoCloseable {
                                     sections.indexedLocal(snapshot);
                                 }
                             }),
-                    builder.maxTreeNodes, freshnessRule(builder), clock);
+                    builder.maxTreeNodes, freshnessRule(builder), clock, builder.queryLimits);
             this.addresses = new PageAddresses(catalog, access, pages);
             // ADR 0026, AP9a: Lesetexte der Abschnitte von Anhängen, sobald die Analysen je Dokument stehen (unten).
             DocumentTexts documentTexts = (document, section, inputSha256, extraction) -> sectionTexts.get() == null
@@ -838,7 +838,7 @@ public final class Harvester implements AutoCloseable {
             this.search = new PageSearch(catalog, index, access);
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
             this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
-                    termProcessor.version(), documentTexts);
+                    termProcessor.version(), documentTexts, builder.queryLimits);
             // Die Verwalter der Begriffszahlen hören wie Bestand und Verweise auf jeden Commit des Seiten-Caches.
             // Die gemerkten Verben je Seite (VerbQueries) entstehen erst später; bis dahin geht die Meldung ins Leere.
             java.util.concurrent.atomic.AtomicReference<Runnable> verbsStale =
@@ -3595,6 +3595,8 @@ public final class Harvester implements AutoCloseable {
         private Duration checkTimeout = PageFreshness.DEFAULT_TIMEOUT;
         private Duration largeFileTimeout = PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT;
         private int maxTreeNodes = 50_000;
+        private com.aresstack.spaceharvester.application.query.QueryLimits queryLimits =
+                com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULTS;
         private int maxPageBytes = LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES;
         private boolean localOriginalReferences = true;
         private long maxTextFileBytes = DEFAULT_MAX_TEXT_FILE_BYTES;
@@ -4119,6 +4121,12 @@ public final class Harvester implements AutoCloseable {
 
         public Builder maxTreeNodes(int maxTreeNodes) {
             this.maxTreeNodes = maxTreeNodes;
+            return this;
+        }
+
+        /** Stapelgrößen der Abfragen ({@code space-harvester.query.max-page-limit}, {@code max-term-scan}). */
+        public Builder queryLimits(com.aresstack.spaceharvester.application.query.QueryLimits queryLimits) {
+            this.queryLimits = java.util.Objects.requireNonNull(queryLimits, "queryLimits");
             return this;
         }
 

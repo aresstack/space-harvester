@@ -626,11 +626,13 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param checkTimeout    Frist einer Prüfung gegen die Quelle beim Öffnen und Beschaffen ({@code cache.check-timeout})
      * @param largeFileTimeout dieselbe Frist für eine Datei, deren Textauszug das ganze Original braucht
      *                        ({@code cache.large-file-timeout})
+     * @param queryLimits     Stapelgrößen der Abfragen ({@code query.max-page-limit}, {@code query.max-term-scan})
      */
     public record Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
                           long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
                           Path pdfFont, ExtractionLimits extraction, long maxPageBytes, long maxTextFileBytes,
-                          Duration checkTimeout, Duration largeFileTimeout) {
+                          Duration checkTimeout, Duration largeFileTimeout,
+                          com.aresstack.spaceharvester.application.query.QueryLimits queryLimits) {
 
         /** Vorgabe für {@link #checkTimeout}, wie im Core. */
         public static final Duration DEFAULT_CHECK_TIMEOUT =
@@ -661,6 +663,18 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                     ? DEFAULT_CHECK_TIMEOUT : checkTimeout;
             largeFileTimeout = largeFileTimeout == null || largeFileTimeout.isNegative() || largeFileTimeout.isZero()
                     ? DEFAULT_LARGE_FILE_TIMEOUT : largeFileTimeout;
+            queryLimits = queryLimits == null
+                    ? com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULTS : queryLimits;
+        }
+
+        /** Mit den Vorgaben der Stapelgrößen ({@code query.max-page-limit}, {@code max-term-scan}). */
+        public Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
+                       long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
+                       Path pdfFont, ExtractionLimits extraction, long maxPageBytes, long maxTextFileBytes,
+                       Duration checkTimeout, Duration largeFileTimeout) {
+            this(dataDirectory, exportDirectory, assetDirectory, maxAssetBytes, largeAssetBytes, maxLargeAssets,
+                    searchTimeout, maxTreeNodes, pdfFont, extraction, maxPageBytes, maxTextFileBytes, checkTimeout,
+                    largeFileTimeout, null);
         }
 
         /** Mit den Vorgaben für die größte Datei im Cache und den Textauszug. */
