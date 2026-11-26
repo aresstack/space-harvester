@@ -98,6 +98,9 @@ public final class FakeEakteServer implements AutoCloseable {
     private volatile boolean separateWebDavSession;
     private volatile boolean nameCallbacks;
     private volatile boolean foreignFormAction;
+    /** Der nächste Abruf der Nachricht reißt nach einem Viertel ab (abgerissene WLAN-Verbindung). */
+    private final java.util.concurrent.atomic.AtomicBoolean breakMessage = new java.util.concurrent.atomic.AtomicBoolean();
+    private final List<String> messageRanges = new CopyOnWriteArrayList<>();
 
     public FakeEakteServer() throws IOException {
         InetAddress loopback = InetAddress.getLoopbackAddress();
@@ -159,6 +162,17 @@ public final class FakeEakteServer implements AutoCloseable {
     }
 
     /** Beendet alle Sitzungen der E-Akte (OpenAM-Sitzung bleibt). */
+    /** Der nächste Abruf der Nachricht reißt nach einem Viertel ab; danach beantwortet der Server Range mit 206. */
+    public FakeEakteServer breakMessageOnce() {
+        breakMessage.set(true);
+        return this;
+    }
+
+    /** Die {@code Range}-Kopfzeilen der Abrufe der Nachricht ({@code "-"} ohne). */
+    public List<String> messageRanges() {
+        return List.copyOf(messageRanges);
+    }
+
     public void expireEakteSessions() {
         eakteSessions.clear();
         davSessions.clear();
@@ -239,6 +253,27 @@ public final class FakeEakteServer implements AutoCloseable {
         }
         if (exchange.getRequestMethod().equals("GET") && key.equals(MESSAGE_PATH)) {
             exchange.getResponseHeaders().add("Content-Type", MESSAGE_TYPE);
+            exchange.getResponseHeaders().add("ETag", "\"4711-1\"");
+            String range = exchange.getRequestHeaders().getFirst("Range");
+            messageRanges.add(range == null ? "-" : range);
+            if (breakMessage.compareAndSet(true, false)) {
+                exchange.sendResponseHeaders(200, MESSAGE.length);
+                OutputStream out = exchange.getResponseBody();
+                out.write(MESSAGE, 0, MESSAGE.length / 4);
+                out.flush();
+                exchange.close();
+                return;
+            }
+            if (range != null && range.startsWith("bytes=") && range.endsWith("-")) {
+                int from = Integer.parseInt(range.substring("bytes=".length(), range.length() - 1));
+                exchange.getResponseHeaders().add("Content-Range",
+                        "bytes " + from + "-" + (MESSAGE.length - 1) + "/" + MESSAGE.length);
+                exchange.sendResponseHeaders(206, MESSAGE.length - from);
+                try (OutputStream out = exchange.getResponseBody()) {
+                    out.write(MESSAGE, from, MESSAGE.length - from);
+                }
+                return;
+            }
             exchange.sendResponseHeaders(200, MESSAGE.length);
             try (OutputStream out = exchange.getResponseBody()) {
                 out.write(MESSAGE);

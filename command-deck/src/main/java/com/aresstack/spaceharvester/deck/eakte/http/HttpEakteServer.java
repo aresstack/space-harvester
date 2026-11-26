@@ -21,14 +21,25 @@ public final class HttpEakteServer implements EakteServer {
     private final HttpClientFactory clients;
     private final Duration timeout;
     private final Consumer<String> trace;
+    private final java.util.function.IntSupplier resumes;
 
     /**
      * @param trace Protokoll ohne Werte (Methode, Host, Pfad, Namen von Parametern und Cookies), für die Diagnose
      */
     public HttpEakteServer(HttpClientFactory clients, Duration timeout, Consumer<String> trace) {
+        this(clients, timeout, trace, () -> 0);
+    }
+
+    /**
+     * @param resumes wie oft ein abgerissenes Dokument je Abruf ab dem letzten Byte fortgesetzt wird (in der App
+     *                {@code jobs.retry.max-attempts}, bei jedem Abruf neu gelesen); 0 für nie
+     */
+    public HttpEakteServer(HttpClientFactory clients, Duration timeout, Consumer<String> trace,
+                           java.util.function.IntSupplier resumes) {
         this.clients = Objects.requireNonNull(clients, "clients");
         this.timeout = Objects.requireNonNull(timeout, "timeout");
         this.trace = trace == null ? line -> { } : trace;
+        this.resumes = Objects.requireNonNull(resumes, "resumes");
     }
 
     @Override
@@ -51,7 +62,7 @@ public final class HttpEakteServer implements EakteServer {
                 http.trace("Einstieg nach der Anmeldung: HTTP " + start.status());
             }
             SamlNavigator sessionOnly = new SamlNavigator(http, null);
-            HttpEakteConnection connection = new HttpEakteConnection(http, sessionOnly);
+            HttpEakteConnection connection = new HttpEakteConnection(http, sessionOnly, resumes);
             // v2.0: nach der Anmeldung über die Startseite kein zweiter Passwort- oder REST-Versuch für WebDAV.
             connection.check(profile.start() != null ? sessionOnly : withPassword);
             return connection;
