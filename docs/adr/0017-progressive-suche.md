@@ -2,8 +2,8 @@
 
 - Status: **Angenommen, im Core umgesetzt** (Strang Q, 18.10.2026; Entscheidungen von Angelo, 18.10. 18:03
   und 18:07). Ergänzt [ADR 0013](0013-suche-ueber-den-cache.md) und [ADR 0016](0016-auswahl-beschaffung-hintergrund.md).
-- Fortgeschrieben durch [ADR 0038](0038-indexbasierte-progressive-und-agentengestuetzte-suche.md): Die progressive
-  Suche ist dort Variante 2 der gemeinsamen Pipeline; die Agenten-Recherche ist eine getrennte zweite Spur.
+- **Fortgeschrieben** am 26.11.2026 durch [ADR 0038](0038-indexbasierte-progressive-und-agentengestuetzte-suche.md),
+  siehe die Fortschreibung am Ende.
 - Gilt für die **semantische Suche** (Haken, ADR 0013). Die Schlagwortsuche bleibt Standard und unverändert.
 - Umgesetzt: `SearchOrchestrator` im Core mit regelbasierten Varianten, Wellen, Prioritätsfreigabe, Qualitätsziel
   und Budgets (Paket `application.query.progressive`, `Harvester.progressiveSearch()`).
@@ -181,3 +181,17 @@ Der Server verdrahtet `SemanticVariantSearch` über seine `RelevanceSearch` im `
 - Mit Haken und Embedding-Modell sucht die progressive Suche semantisch über die Vektoren, ohne Fusion mit der
   Schlagwortsuche, in der App über den Haken, über REST mit `ranking: semantic`. Nächster Schritt ist die Anzeige in
   der App.
+
+## Fortschreibung (26.11.2026): Einordnung und Quellen ohne Beschaffung (ADR 0038)
+
+- Die progressive Suche ist Variante 2 der einen gemeinsamen Suchpipeline, keine eigene Suchmaschine. Orchestrierung,
+  Wellen, Freigabe nach Priorität, Qualitätsziel und Budgets gelten unverändert.
+- **Varianten bilden und dauerhaft laden sind unabhängig.** Varianten laufen auch für Quellen, deren Regeln nichts
+  dauerhaft laden lassen. `SemanticPreparation` lädt und bettet dann für diese Quellen nichts ein; „mit jeder
+  Variante wächst der Bestand im Cache“ (vierter Schritt) gilt nur für Quellen mit erlaubtem Nachladen.
+- **Vorgeschlagen, noch nicht bestätigt** (Antwort aus dem ursprünglichen Chat vom 26.11.2026 auf F38-1): Für
+  Quellen ohne Beschaffung zeigt auch die semantische Suche native Funde, getrennt als vorläufig und nicht
+  semantisch bewertet, nie mit Vektortreffern vermischt (ADR 0038, Punkt 5). Der vierte Schritt schließt `found`
+  semantisch aus; er gilt für alle anderen Quellen weiter und für diese, bis Angelo den Vorschlag bestätigt.
+- Der Modus `ALL_VARIANTS` „für einen Recherche-Agenten“ meint einen Agenten als Verbraucher dieser Suche. Die
+  Agenten-Recherche über Werkzeuge der Live-Dienste ist eine getrennte zweite Spur (ADR 0038, Punkt 7).

@@ -4,9 +4,8 @@
   [ADR 0010](0010-export-ohne-vorbereiteten-bestand.md) Punkt 9 (Schlagwortsuche) und
   [ADR 0011](0011-embeddings-ueber-externen-ki-dienst.md) bei der Relevanzsuche; nimmt die hybride Suche aus #181
   zurück.
-- Fortgeschrieben durch [ADR 0038](0038-indexbasierte-progressive-und-agentengestuetzte-suche.md): Punkt 1 gilt
-  unverändert; Punkt 2 und 3 gelten je Quelle nur, soweit ihre Beschaffungsregeln das Laden erlauben, und vorläufige
-  native Funde dürfen vorläufig bleiben.
+- **Fortgeschrieben** am 26.11.2026 durch [ADR 0038](0038-indexbasierte-progressive-und-agentengestuetzte-suche.md),
+  siehe die letzte Fortschreibung am Ende.
 - Bezüge: #169 (Haken „Semantische Suche“ in der App), #180 (Volltextindex), #181 (Zerlegung, Reranking),
   [ADR 0012](0012-core-als-gemeinsame-bibliothek.md) (Funktionsparität).
 
@@ -80,3 +79,14 @@ nur die Quelle meldet, und semantische Treffer tragen keine Wörter. Beim Zusamm
 nichts wird nachträglich erklärt. Der Reranker ist keine Ursache; ob er bewertet hat, steht als eigenes Kennzeichen
 (`reranked`) am Treffer der progressiven Suche. Rangfolge und Treffermenge bleiben unverändert, die Punkte 1 bis 3
 gelten weiter.
+
+## Fortschreibung (26.11.2026): Quellen ohne Beschaffung (ADR 0037, ADR 0038)
+
+- **Punkt 1 gilt unverändert:** zwei Suchen, nie gemischt, keine Fusion.
+- **Punkt 2 ist präzisiert.** *Bestätigte* Treffer kommen nur aus dem Cache. Vorläufige native Funde (seit ADR 0016)
+  dürfen dauerhaft vorläufig bleiben, wenn die Regeln ihrer Quelle das Nachladen ausschließen. Der Worker lädt
+  Kandidaten nur für Quellen, deren Regeln das erlauben. „Erst in den Cache, dann suchen“ ist für solche Quellen
+  keine Voraussetzung mehr dafür, dass ein Fund sichtbar ist.
+- **Punkt 3 ist eingeschränkt.** Mit Haken werden fehlende Embeddings nur für Quellen berechnet, deren Regeln das
+  Nachladen erlauben. In den übrigen sucht die semantische Suche nur im vorhandenen Bestand.
+- Die Punkte 4 und 5 gelten unverändert.

@@ -2,9 +2,8 @@
 
 - Status: **Angenommen, zweiter Schritt umgesetzt** (Strang Q, 18.10.2026; Entscheidungen von Angelo, 18.10.
   17:41–17:47). Ergänzt [ADR 0013](0013-suche-ueber-den-cache.md) bei der Beschaffung der Treffer.
-- Fortgeschrieben durch [ADR 0037](0037-quellenumfang-nutzungssteuerung-beschaffung.md) (Prefetch und
-  Hintergrundfüllung je Quelle unabhängig; Fund erfassen und Inhalt beschaffen getrennt) und
-  [ADR 0038](0038-indexbasierte-progressive-und-agentengestuetzte-suche.md) (Verhältnis der Suchvarianten).
+- **Fortgeschrieben** am 26.11.2026 durch [ADR 0037](0037-quellenumfang-nutzungssteuerung-beschaffung.md) und
+  [ADR 0038](0038-indexbasierte-progressive-und-agentengestuetzte-suche.md), siehe die Fortschreibung am Ende.
 - Umgesetzt mit #296: vorläufige Trefferliste, Laden in Rangfolge, Fortschritt und Abbruch je Suche.
 - Umgesetzt im zweiten Schritt (Punkte 4 bis 6): austauschbare `CandidateSelectionStrategy`, `AcquisitionScheduler`
   mit Vorrang für den Vordergrund, dauerhafte Hintergrundfüllung `BackgroundFill`.
@@ -161,3 +160,18 @@ Auszug bewerten, ohne einen Inhalt zu laden.
 - Ein katalogisierter Fund in einem Space ohne bestätigte Generation bleibt als Eintrag ohne Inhalt stehen, wenn die
   Seite in der Quelle verschwindet, bevor die Füllung sie lädt; die Füllung versucht ihn einmal und reiht ihn danach
   nicht wieder ein, weil die Suche im Katalog nur bestätigte Spaces absucht.
+
+## Fortschreibung (26.11.2026): Beschaffung je Quelle (ADR 0037, ADR 0038)
+
+- **Punkt 1 gilt unverändert** und trägt jetzt weiter: Funde einer Quelle ohne erlaubtes Nachladen bleiben
+  vorläufige Treffer.
+- **Punkt 3 ist eingeschränkt.** In Rangfolge geladen wird nur für Quellen, deren Regeln das Nachladen von
+  Suchtreffern erlauben (`prefetch-hits` je Quelle, sonst der globale Wert).
+- **Punkt 5 ist präzisiert.** „Suchtreffer nachladen“ und „Hintergrundfüllung“ sind je Quelle unabhängig
+  einstellbar; alle vier Kombinationen sind gültig (ADR 0037, Punkt 8).
+- **Katalogisieren der Funde ist vom Laden getrennt.** `FindingCataloging` führt die Kopfdaten eines Fundes
+  unabhängig davon, ob sein Inhalt geladen werden darf. Ob und wann geladen wird, entscheiden die Regeln der Quelle.
+  (Der Code erfasst Funde derzeit nur bei erlaubtem Nachladen; das ist ein bestätigter Fehler.)
+- **Punkt 6 trägt einen weiteren Auslöser.** Die navigationsgetriebene Befüllung von FTP und NDV (ADR 0037,
+  Punkt 9) nutzt dieselbe Pipeline und denselben Planer. Auslöser, Eignungsprüfung und Erwerbsgrund sind getrennte
+  Verantwortlichkeiten (ADR 0037, Punkt 10).

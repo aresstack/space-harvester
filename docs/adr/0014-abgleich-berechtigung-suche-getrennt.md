@@ -131,3 +131,16 @@ dem Bekannten: Was fehlt und auch nicht geändert gemeldet wurde, wird einzeln n
 der Inventur entfernt (`DELETED`, `MOVED_OUT`) oder gesperrt (`INACCESSIBLE`). Scheitert nur die Seitenliste, gelten die
 Änderungen trotzdem, Löschungen prüft der nächste Lauf. Scheitert die Änderungsliste, nennt der Auftrag den echten Grund
 (Fehlerart und Meldung der Quelle, HTTP-Status in der Diagnose).
+
+## Fortschreibung (26.11.2026): Geltungsbereich der Inventur und Erwerbsgründe (ADR 0037)
+
+- **Eine Inventur gilt nur für ihren Bereich.** Was `HarvestSource.inventoryCovers` verneint, gehört nicht zum
+  Abgleich: Es wird durch ihn weder entfernt noch als fehlend geprüft. Das betrifft vor allem Ressourcen, die bei
+  FTP und NDV durch Navigationsbefüllung außerhalb der konfigurierten Startpunkte erworben wurden.
+- **Eine unvollständige Inventur ist niemals ein Löschungsnachweis.** Fehler, erreichte Tiefen- oder Mengengrenzen
+  und Abbruch führen zu keiner Entfernung. Punkt 4 (`DELETED` nur bei autoritativer Bestätigung der Quelle) gilt
+  unverändert und für jede Quelle.
+- **Neu ist ein dritter Fall neben Löschung und fehlender Berechtigung:** Der Benutzer nimmt einen Bereich aus dem
+  Umfang. Dann zählen die Erwerbsgründe der Ressource (ADR 0037, Punkt 12). Diese Regel ist eine Konkretisierung
+  vom 26.11.2026 und noch nicht als Entscheidung bestätigt; bis dahin entfernt das Verkleinern des Umfangs nichts
+  ohne Rückfrage.

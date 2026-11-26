@@ -1,8 +1,9 @@
 # ADR 0040: Zustandslose Navigation und revisionsgesicherte Paginierung
 
 - Status: **Angenommen, auf main umgesetzt** (Entscheidungen von Angelo, 25./26.11.2026, festgehalten in #1438 und
-  #1468). Die Abnahme an einem echten SharePoint steht aus, #1438 und #1468 sind deshalb offen. Die Punkte unter
-  „Offene Fragen“ sind nicht entschieden.
+  #1468). Die Abnahme an einem echten SharePoint steht aus, #1438 und #1468 sind deshalb offen. Was im Text
+  mit *vorgeschlagen* gekennzeichnet ist, stammt aus den Antworten des ursprünglichen Chats vom 26.11.2026, 13:21,
+  und gilt erst mit Angelos Bestätigung.
 - Quellen: #1438, #1468 samt Kommentaren, PRs #1455, #1464, #1465, #1469, #1484, Enterprise AI Client #248 bis
   #250; Angelos Zusammenfassung vom 26.11.2026 (Abschnitte 10 und 11) und Klärung vom 26.11.2026, 13:12 (Punkte 5
   und 6).
@@ -10,7 +11,8 @@
   (Rechte), [ADR 0027](0027-beobachter-statt-abfragen.md) (kein Polling),
   [ADR 0036](0036-gemeinsame-systemzugriffsarchitektur.md) (Fähigkeiten als Verträge),
   [ADR 0037](0037-quellenumfang-nutzungssteuerung-beschaffung.md) (strikte Inventur),
-  [ADR 0039](0039-austauschbare-originalspeicherung-und-portable-wissensbestaende.md) (Originalspeicherung).
+  [ADR 0039](0039-austauschbare-originalspeicherung-und-portable-wissensbestaende.md) (Originalspeicherung),
+  [ADR 0042](0042-native-sharepoint-quelle.md) (SharePoint als erste Quelle dieser Navigation).
 
 ## Kontext
 
@@ -48,33 +50,20 @@ stören und setzen eine künstliche Grenze. Angelo hat beides verworfen.
    als Rückfall der vollständige Abruf. Es darf nie vorkommen, dass
    - Einträge nach dem hundertsten unsichtbar bleiben,
    - eine unvollständige Auflistung als vollständig gilt,
-   - eine unvollständige Inventur Löschungen im Bestand auslöst (ADR 0037, Punkt 12).
+   - eine unvollständige Inventur Löschungen im Bestand auslöst (ADR 0037, Punkt 13).
+
+   **Der vollständige Abruf als Rückfall läuft mit sichtbarem Fortschritt und Abbruch, ohne zusätzliche
+   Rückfrage** (*vorgeschlagen*). Wird er abgebrochen oder scheitert er, zeigt der Ordner „unvollständig geladen“,
+   nie „vollständig“, und es folgt keine Löschung aus einer unvollständigen Inventur.
 9. **Keine zugesicherte Snapshot-Konsistenz.** Ändert sich der Ordner auf dem Server während des Blätterns und
    bietet die Quelle keinen Snapshot, ist eine lückenlose Sicht nicht garantiert.
 
-### SharePoint als erste Quelle dieser Navigation
+10. **Der Cursor-Schlüssel lebt nur zur Laufzeit** (*vorgeschlagen*). Nach einem Neustart oder bei einer anderen
+    Instanz ist ein ausgegebener Cursor ungültig; der Client beginnt neu (Punkte 6 und 7). Ein einstellbarer,
+    dauerhafter Schlüssel kommt erst, wenn mehrere Server-Instanzen oder lange lebende Cursor gebraucht werden.
 
-10. **SharePoint ist eine eigenständige, native Wissensquelle**, kein eingebundenes Netzlaufwerk.
-
-    | Verworfen oder zurückgestellt | Beschlossen |
-    | --- | --- |
-    | WebDAV-Mount als lokalen Ordner durchsuchen | Native SharePoint-REST-API |
-    | Vollständiger Dateisystemscan | Navigation über Bibliotheken und Ordner |
-    | Alle Ordnerinhalte sofort laden | Paginierung nach Bedarf |
-    | Passwortpflicht | Integrierte Windows-Anmeldung möglich |
-    | JNA oder eigener nativer Authentifizierungsclient | Bordmittel des JDK |
-    | Eigener Viewer, eigene Suchmaschine | Gemeinsamer Dokumentviewer, vorhandene Suchpipeline (ADR 0038) |
-
-    Der bestehende Adapter im Enterprise AI Client wird weiterentwickelt, es gibt keine parallele Implementierung.
-    Eine generische Netzlaufwerkquelle ist zurückgestellt.
-11. **Die Anmeldeart wird ausdrücklich gewählt** (bestätigt am 26.11.2026): „Manuell“ (ausdrückliche Zugangsdaten),
-    „KeePass“ oder „Windows-Anmeldung“ (integrierte Anmeldung des aktuellen Windows-Benutzers). Die
-    Windows-Anmeldung wird nie selbsttätig aktiviert, weil die nötigen JDK-Einstellungen für den ganzen Prozess
-    wirken und nicht nur für eine Quelle. Bestehende Quellen ohne Zugangsdaten werden nicht umgestellt. Bereits
-    eingerichtete Quellen und von Hand gesetzte JVM-Parameter funktionieren weiter. Die Unterscheidung von Kerberos
-    und NTLM ist bewusst zurückgestellt.
-12. **Inkrementelle Synchronisierung über `GetChanges`.** Nicht unterstützte oder strukturell heikle Änderungen
-    führen zu einem vollständigen Inventurabgleich.
+SharePoint ist die erste Quelle dieser Navigation. Was nur SharePoint betrifft (native Quelle, Anmeldeart,
+Änderungsabgleich), steht in [ADR 0042](0042-native-sharepoint-quelle.md).
 
 ## Stand (main `69835ca8`, 26.11.2026)
 
@@ -84,36 +73,59 @@ stören und setzen eine künstliche Grenze. Angelo hat beides verworfen.
 | SharePoint-Cursor ohne Sitzung und ohne Grenze (`SharePointNavigationCursor`, HMAC), `$top=100`, Überspringen leerer Seiten mit Zyklenerkennung | auf main (#1465, #1469, EAC #249, #250) |
 | `InvalidNavigationCursorException`, REST 400 `invalid-navigation-cursor` | auf main (#1469) |
 | Explorer: Abgleich nach ID, einmaliger Neuabruf, Erhalt der Ansicht | auf main (#1464, #1469) |
-| Native SharePoint-Quelle mit Suche, Navigation, Originalzugriff, `GetChanges` | auf main (#1455) |
-| Windows-Anmeldung als ausdrückliche Wahl im Quellenformular | auf main (#1484) |
 | Verhalten eines echten SharePoint bei mehr als 100 Dateien | **nicht nachgewiesen** (PowerShell-Test steht aus) |
-| Exakte serverseitige ChangeTokens speichern | offen |
+| Vollständiger Abruf als Rückfall mit Fortschritt und Abbruch, Zustand „unvollständig geladen“ | nicht nachgesehen, vorgeschlagen (F40-3) |
 
 ## Widersprüche und Auffälligkeiten
 
-- **ChangeToken:** #1438 verlangt, das Token „erst nach bestätigtem Stand zu speichern“. Auf main dient die
-  vorhandene Synchronisationszeitmarke als Ausgangspunkt (`SharePointChangeLog` bildet daraus `ChangeTokenStart`).
-  Das exakte Token wird nicht gespeichert. Angelos Zusammenfassung führt das als offen.
 - **Der Schlüssel der Cursor lebt nur im Prozess.** `NavigationContinuation` und `SharePointNavigationCursor`
-  erzeugen ihren HMAC-Schlüssel beim Start zufällig. Nach einem Neustart ist jeder ausgegebene Cursor ungültig, und
-  hinter einem Lastverteiler versteht eine Server-Instanz die Cursor der anderen nicht. Der Explorer fängt das über
-  Punkt 7 ab; ein REST-Client bekommt HTTP 400 und muss neu beginnen. „Zustandslos“ gilt damit je Prozess.
+  erzeugen ihren HMAC-Schlüssel beim Start zufällig. Hinter einem Lastverteiler versteht eine Server-Instanz die
+  Cursor der anderen nicht. Der Explorer fängt das über Punkt 7 ab; ein REST-Client bekommt HTTP 400 und muss neu
+  beginnen. „Zustandslos“ gilt damit je Prozess. Nach Punkt 10 genügt das vorerst.
 - **Der Rückfall aus Punkt 8 ist am echten Server ungeprüft.** #1468 nennt einen „Offset-/Fingerprint-Refetch“ als
   Rückfall. Ob er bei einem Server ohne Fortsetzungsverweis alle Einträge liefert, ist nur gegen Attrappen getestet.
+- **Die Vorschau aus dem Cache endet nach 1000 Kindern** (`PageNavigation.MAX_CACHED_CHILDREN`). Der Baum zeigt
+  zuerst diesen Stand und fragt dann die Quelle. Ob er bei einem größeren Ordner bis dahin erkennbar macht, dass die
+  Vorschau unvollständig ist, habe ich nicht nachgesehen (siehe F40-5).
+- **Beim Änderungsabgleich von SharePoint gibt es noch ein Register mit fester Größe** (`SharePointChangePages`,
+  vier Schnappschüsse). Das steht in ADR 0042.
+
+## Geklärt am 26.11.2026
+
+Stand der Antworten: **Beschlossen** gilt. *Vorgeschlagen* ist eine Empfehlung aus dem ursprünglichen Chat und gilt
+erst, wenn Angelo sie bestätigt.
+
+| Frage | Antwort | Stand |
+| --- | --- | --- |
+| F40-1: Lebensdauer des Cursor-Schlüssels | Ein Schlüssel nur zur Laufzeit genügt vorerst | *Vorgeschlagen*, in Punkt 10 |
+| F40-2: Exaktes ChangeToken speichern | Ja, wie in #1438 vorgesehen | **Bestätigt** (ursprüngliches Ziel), in ADR 0042, Punkt 5 |
+| F40-3: Vollständiger Abruf als Rückfall | Mit Fortschritt und Abbruch, ohne zusätzliche Rückfrage | *Vorgeschlagen*, in Punkt 8 |
+| F40-4: Eigene ADR für SharePoint | Ja | *Vorgeschlagen*, umgesetzt als ADR 0042 |
+
+## Grenzen und Limits
+
+Nach ADR 0036, Punkt 12. Stand main `69835ca8`. Keine dieser Grenzen ist eine Einstellung.
+
+| Grenze | Standard | Einstellung | In der Oberfläche |
+| --- | --- | --- | --- |
+| Offene Cursor | ohne Grenze | keine nötig (Punkt 1) | entfällt |
+| Stapelgröße der Seitenliste je Anfrage | 100 (zugleich Höchstwert) | **fest im Code** (`PageQueries.MAX_PAGE_LIMIT`) | nein |
+| Kinder je Knoten in der Vorschau aus dem Cache | 1000 | **fest im Code** (`PageNavigation.MAX_CACHED_CHILDREN`) | nein |
+| Titelsuche: Treffer, Suchtiefe bei verdrängten Treffern | 100, 1000 | **fest im Code** (`PageNavigation.MAX_TITLE_LIMIT`, `MAX_TITLE_DEPTH`) | nein |
+| Baum eines Space: Tiefe, Stapel beim Aufbau | 200 Ebenen, 1000 | **fest im Code** (`PageQueries.MAX_TREE_DEPTH`, `TREE_BATCH`) | nein |
+| Gemerkte Versionsprüfungen | 10 000 | **fest im Code** (`PageQueries.MAX_CHECKED`) | nein |
+
+Stapelgrößen sind nach Punkt 8 nie ein fachliches Limit. Die Tiefe von 200 Ebenen ist eines: Ein tieferer Baum
+wird abgewiesen (`TreeTooLargeException`) und nur der Export liefert ihn.
 
 ## Offene Fragen an Angelo
 
-- **F40-1:** Der Cursor-Schlüssel gilt nur bis zum Neustart und nur für eine Instanz. Reicht das (Desktop-App, ein
-  Server), oder soll der Server-Schlüssel einstellbar sein, damit Cursor einen Neustart und mehrere Instanzen
-  überleben?
-- **F40-2:** Soll das exakte SharePoint-ChangeToken gespeichert werden, wie #1438 es vorsieht, oder bleibt die
-  Zeitmarke mit Inventur-Rückfall die Lösung?
-- **F40-3 (zu Punkt 8):** Wenn weder ein Fortsetzungsverweis noch eine andere Paginierung des Servers greift: Soll
-  der vollständige Abruf eines sehr großen Ordners ohne Rückfrage laufen, oder mit sichtbarem Fortschritt und
-  Abbruch? Mein Vorschlag: mit Fortschritt und Abbruch, und ein abgebrochener Abruf zeigt den Ordner als
-  „unvollständig geladen“, nie als vollständig.
-- **F40-4:** SharePoint (Punkte 10 bis 12) steht hier als Abschnitt, weil keine eigene Nummer vergeben wurde. Soll
-  die native SharePoint-Quelle eine eigene ADR bekommen?
+- **F40-5 (zu Punkt 8):** Die Vorschau aus dem Cache zeigt höchstens 1000 Kinder eines Knotens, bevor die Quelle
+  antwortet. Mein Vorschlag: Die Vorschau wird wie die Live-Auflistung paginiert, damit es dort keine feste Grenze
+  mehr braucht. Einverstanden, oder genügt eine Einstellung?
+- **F40-6 (zu „Grenzen und Limits“):** Ein Baum mit mehr als 200 Ebenen wird über REST abgewiesen. Soll das ein
+  einstellbarer Wert werden, oder soll der Baum grundsätzlich ebenenweise geliefert werden, sodass die Grenze
+  entfällt?
 
 ## Folgen
 
