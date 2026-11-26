@@ -5962,8 +5962,14 @@ public final class PageDetailPanel extends JPanel {
             feedback.warning("FTP-Wissensquelle nicht für KI freigegeben", "Freigabe unter Einstellungen prüfen.");
             return;
         }
-        int budget = ai.contextTokens() == null ? 12000
-                : (int) Math.min(12000L, Math.max(512L, (long) ai.contextTokens() - 1024L));
+        com.aresstack.spaceharvester.app.runtime.program.CobolBusinessAnalysis.Budget budget;
+        try {
+            budget = com.aresstack.spaceharvester.app.runtime.program.CobolBusinessAnalysis.Budget.of(
+                    ai.contextTokens(), ai.chatMaxTokens());
+        } catch (IllegalStateException missing) {
+            feedback.warning("Kontextbudget nicht bestimmbar", missing.getMessage());
+            return;
+        }
         int current = request;
         recomputeBusiness.setEnabled(false);
         feedback.working("Fachliche KI-Analyse wird berechnet …");

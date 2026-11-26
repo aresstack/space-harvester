@@ -979,7 +979,8 @@ public final class Workspace {
     }
 
     /** Run only by an explicit request; no remote source fetch or implicit AI release. */
-    public Enrichments.Run recomputeCobolBusiness(PageKey key, String rawSha256, String model, int batchCharacters,
+    public Enrichments.Run recomputeCobolBusiness(PageKey key, String rawSha256, String model,
+            com.aresstack.spaceharvester.app.runtime.program.CobolBusinessAnalysis.Budget budget,
             java.util.function.BooleanSupplier modelUnchanged, java.util.function.Consumer<com.aresstack.spaceharvester.application.jobs.JobState> state) {
         var page = cachedPage(key.sourceId(), key.pageId())
                 .orElseThrow(() -> new IllegalStateException("Programm nicht im Wissensbestand verfügbar."));
@@ -989,7 +990,7 @@ public final class Workspace {
         access.require(caller, ResourceScope.space(key.sourceId(), page.header().metadata().partitionKey()), AccessKind.SYNC);
         return harvester.pageRecomputation().execute(caller.jobOwner(), page.snapshot(),
                 com.aresstack.spaceharvester.app.runtime.program.CobolBusinessEnrichment.ID, state,
-                context -> cobolBusiness(modelUnchanged).run(key, rawSha256, harvester::aiChat, model, batchCharacters, context));
+                context -> cobolBusiness(modelUnchanged).run(key, rawSha256, harvester::aiChat, model, budget, context));
     }
 
     /**

@@ -39,7 +39,7 @@ public final class CobolBusinessUseCase {
     }
 
     public Enrichments.Run run(PageKey key, String requestedHash, Supplier<AiChat> chat, String model,
-                                int batchCharacters, JobContext context) {
+                                CobolBusinessAnalysis.Budget budget, JobContext context) {
         requireAllowed(key);
         var page = readable(key, requestedHash);
         writable.accept(page);
@@ -64,7 +64,7 @@ public final class CobolBusinessUseCase {
             var evidence = readable(origin.getKey(), origin.getValue());
             release.accept(evidence.header().metadata().partitionKey(), origin.getKey());
         }
-        var result = new CobolBusinessAnalysis().analyze(facts.analysis(), modelClient, model, batchCharacters,
+        var result = new CobolBusinessAnalysis().analyze(facts.analysis(), modelClient, model, budget,
                 authorize, verifyInput, context);
         authorize.run();
         verifyInput.run();

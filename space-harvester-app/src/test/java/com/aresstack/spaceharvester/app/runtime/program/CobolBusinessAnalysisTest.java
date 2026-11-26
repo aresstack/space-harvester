@@ -85,17 +85,17 @@ class CobolBusinessAnalysisTest {
             };
             allowed.set(false);
             assertThatThrownBy(() -> useCase.run(program.key(), program.payload().rawSha256(),
-                    () -> model, "test-model", 4096, new Context())).isInstanceOf(IllegalStateException.class);
+                    () -> model, "test-model", ROOMY, new Context())).isInstanceOf(IllegalStateException.class);
             assertThat(requests).hasValue(0);
             assertThat(released).isEmpty();
             allowed.set(true);
             dependencyReadable.set(false);
             assertThatThrownBy(() -> useCase.run(program.key(), program.payload().rawSha256(),
-                    () -> model, "test-model", 4096, new Context())).isInstanceOf(IllegalStateException.class);
+                    () -> model, "test-model", ROOMY, new Context())).isInstanceOf(IllegalStateException.class);
             assertThat(requests).hasValue(0);
             assertThat(released).isEmpty();
             dependencyReadable.set(true);
-            assertThat(useCase.run(program.key(), program.payload().rawSha256(), () -> model, "test-model", 1024,
+            assertThat(useCase.run(program.key(), program.payload().rawSha256(), () -> model, "test-model", forFacts(340),
                     new Context()).computed()).isEqualTo(1);
             assertThat(requests.get()).isGreaterThan(1);
             assertThat(released).containsExactlyInAnyOrder(program.key(), copy.key());
@@ -111,7 +111,7 @@ class CobolBusinessAnalysisTest {
                 return () -> { };
             };
             assertThatThrownBy(() -> useCase.run(program.key(), program.payload().rawSha256(),
-                    () -> revoked, "test-model", 4096, new Context())).isInstanceOf(IllegalStateException.class);
+                    () -> revoked, "test-model", ROOMY, new Context())).isInstanceOf(IllegalStateException.class);
             assertThat(store.find(program.key())).contains(business);
             allowed.set(true);
             AiChat invalid = (request, listener) -> {
@@ -119,7 +119,7 @@ class CobolBusinessAnalysisTest {
                 return () -> { };
             };
             assertThatThrownBy(() -> useCase.run(program.key(), program.payload().rawSha256(),
-                    () -> invalid, "test-model", 4096, new Context())).isInstanceOf(IllegalStateException.class);
+                    () -> invalid, "test-model", ROOMY, new Context())).isInstanceOf(IllegalStateException.class);
             assertThat(store.find(program.key())).contains(business);
             dependencyReadable.set(false);
             assertThat(useCase.visible(new DeliveredPage(program.header(), program, null, false, null, null),
@@ -132,6 +132,55 @@ class CobolBusinessAnalysisTest {
         try (var store = LuceneEnrichmentStore.open(home.resolve("analyses"))) {
             assertThat(store.find(program.key())).anyMatch(value -> value.processorId().equals(CobolBusinessEnrichment.ID));
         }
+    }
+
+    private static final CobolBusinessAnalysis.Budget ROOMY = forFacts(4096);
+
+    /** A budget that leaves exactly {@code factTokens} for facts after prompt, envelope and answer reserve. */
+    private static CobolBusinessAnalysis.Budget forFacts(int factTokens) {
+        var probe = new CobolBusinessAnalysis.Budget(1_000_000, 1);
+        int overhead = 1_000_000 - Math.min(CobolBusinessAnalysis.factBudget(probe, true),
+                CobolBusinessAnalysis.factBudget(probe, false));
+        return new CobolBusinessAnalysis.Budget(overhead + factTokens, 1);
+    }
+
+    @Test
+    void budgetsTokensWithPromptEnvelopeAndAnswerReserve() {
+        var budget = new CobolBusinessAnalysis.Budget(8192, 2048);
+        int facts = CobolBusinessAnalysis.factBudget(budget, false);
+        int fixed = CobolBusinessAnalysis.tokens("x".repeat(3000));
+        assertThat(fixed).isEqualTo(1000);
+        // Answer reserve and system prompt are taken off before any fact is packed.
+        assertThat(facts).isLessThan(8192 - 2048).isGreaterThan(0);
+        // Small context windows are rejected with a reason instead of overflowing the model.
+        assertThatThrownBy(() -> CobolBusinessAnalysis.factBudget(new CobolBusinessAnalysis.Budget(300, 200), false))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("Antwortreserve");
+        // Missing settings are named, not guessed.
+        assertThatThrownBy(() -> CobolBusinessAnalysis.Budget.of(null, 1024))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("Kontextlänge");
+        assertThatThrownBy(() -> CobolBusinessAnalysis.Budget.of(8192, null))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("Ausgabelimit");
+        // The estimate never undercounts words or dense text.
+        assertThat(CobolBusinessAnalysis.tokens("MOVE WS-CUSTOMER-ID TO OUT-ID")).isGreaterThanOrEqualTo(10);
+    }
+
+    @Test
+    void oversizedSingleFactStopsWithAnExplanationInsteadOfBeingShortened() {
+        var position = new com.aresstack.spaceharvester.mainframe.cobol.CobolAnalysis.Position("DEMO", 7, 8);
+        var span = new com.aresstack.spaceharvester.mainframe.cobol.CobolAnalysis.Span(position, position);
+        var element = new com.aresstack.spaceharvester.mainframe.cobol.CobolAnalysis.Element(
+                com.aresstack.spaceharvester.mainframe.cobol.CobolAnalysis.Kind.PROGRAM_ID, "DEMO", -1, span,
+                "X".repeat(3000), Map.of());
+        var analysis = new com.aresstack.spaceharvester.mainframe.cobol.CobolAnalysis(List.of(element), List.of(),
+                List.of(), List.of(), true);
+        var requests = new java.util.concurrent.atomic.AtomicInteger();
+        AiChat chat = (request, listener) -> { requests.incrementAndGet(); listener.completed("{\"hypotheses\":[]}"); return () -> { }; };
+        assertThatThrownBy(() -> new CobolBusinessAnalysis().analyze(analysis, chat, "m", forFacts(200), () -> { },
+                () -> { }, new Context())).isInstanceOf(IllegalStateException.class).hasMessageContaining("F1")
+                .hasMessageContaining("Zeile 7");
+        assertThat(requests).hasValue(0);
+        assertThat(new CobolBusinessAnalysis().analyze(analysis, chat, "m", forFacts(4096), () -> { }, () -> { },
+                new Context()).batches()).isEqualTo(1);
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.runtime.program;
 
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.ai.AiChatException;
+import com.aresstack.enterpriseai.astu.knowledge.KnowledgeTokenCounter;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.mainframe.cobol.CobolAnalysis;
 import java.util.ArrayList;
@@ -39,20 +40,63 @@ public final class CobolBusinessAnalysis {
         public Result { hypotheses = List.copyOf(hypotheses); }
     }
 
-    public Result analyze(CobolAnalysis analysis, AiChat chat, String model, int batchCharacters,
+    /**
+     * Token budget of one model request (#1486): the model's context length from the AI settings minus the answer
+     * reserve (the configured output limit of the chat model). The system prompt and the JSON envelope of a request are
+     * subtracted before facts are packed, so a request never exceeds the context length by estimate.
+     *
+     * @param contextTokens context length of the chat model in tokens
+     * @param answerTokens  tokens kept free for the answer
+     */
+    public record Budget(int contextTokens, int answerTokens) {
+        public Budget {
+            if (contextTokens < 1) throw new IllegalArgumentException("Kontextlänge des Chat-Modells fehlt.");
+            if (answerTokens < 1) throw new IllegalArgumentException("Ausgabelimit des Chat-Modells fehlt.");
+        }
+
+        /** From the AI settings; explains which setting is missing instead of guessing a value. */
+        public static Budget of(Integer contextTokens, Integer answerTokens) {
+            if (contextTokens == null || contextTokens < 1) {
+                throw new IllegalStateException("Kontextlänge des Chat-Modells unter Einstellungen › KI-Dienst angeben.");
+            }
+            if (answerTokens == null || answerTokens < 1) {
+                throw new IllegalStateException("Ausgabelimit des Chat-Modells unter Einstellungen › KI-Dienst angeben;"
+                        + " es ist die Reserve für die Antwort.");
+            }
+            return new Budget(contextTokens, answerTokens);
+        }
+    }
+
+    /**
+     * Characters per token assumed at most by the estimate. No tokenizer of the configured model is available here,
+     * so {@link #tokens(String)} takes the larger of the word-and-symbol count used for chunking
+     * ({@link KnowledgeTokenCounter#wordsAndSymbols()}) and the text length divided by this value. Common BPE
+     * tokenizers yield clearly more than three characters per token for COBOL facts and German prose, so the estimate
+     * errs on the side of smaller batches.
+     */
+    static final int CHARACTERS_PER_TOKEN = 3;
+    private static final KnowledgeTokenCounter WORDS = KnowledgeTokenCounter.wordsAndSymbols();
+
+    /** Conservative token estimate of a request part; see {@link #CHARACTERS_PER_TOKEN}. */
+    static int tokens(String text) {
+        int byLength = (text.length() + CHARACTERS_PER_TOKEN - 1) / CHARACTERS_PER_TOKEN;
+        return Math.max(WORDS.count(text), byLength);
+    }
+
+    public Result analyze(CobolAnalysis analysis, AiChat chat, String model, Budget budget,
                           Runnable authorize, Runnable verifyInput, JobContext context) {
         if (model == null || model.isBlank() || chat == null) throw new IllegalStateException("Kein Chat-Modell eingestellt.");
-        if (batchCharacters < 512) throw new IllegalArgumentException("Kontextbudget zu klein.");
-        var evidence = evidence(analysis);
-        var batches = batches(evidence, batchCharacters);
+        java.util.Objects.requireNonNull(budget, "budget");
         boolean partial = analysis.isPartial() || analysis.controlFlow().partial() || analysis.dataFlow().partial();
+        var evidence = evidence(analysis);
+        var batches = batches(evidence, factBudget(budget, partial));
         var hypotheses = new ArrayList<Hypothesis>();
         context.phase("COBOL", "Fachliche KI-Hypothesen ableiten");
         for (var batch : batches) {
             context.checkpoint();
             authorize.run();
             verifyInput.run();
-            String prompt = JSON.writeValueAsString(Map.of("technicalPartial", partial, "facts", batch));
+            String prompt = prompt(partial, batch);
             String response = request(chat, model, prompt, authorize, context);
             hypotheses.addAll(validate(response, batch));
         }
@@ -103,13 +147,34 @@ public final class CobolBusinessAnalysis {
         facts.add(new Evidence("F" + (facts.size() + 1), kind, fact, span));
     }
 
+    /** Tokens left for facts once system prompt, envelope and answer reserve are accounted for. */
+    static int factBudget(Budget budget, boolean partial) {
+        int fixed = tokens(SYSTEM) + tokens(prompt(partial, List.of()));
+        int left = budget.contextTokens() - budget.answerTokens() - fixed;
+        if (left < 1) {
+            throw new IllegalStateException("Kontextlänge des Chat-Modells (" + budget.contextTokens()
+                    + " Tokens) reicht nicht für Systemanweisung (~" + fixed + " Tokens) und Antwortreserve ("
+                    + budget.answerTokens() + " Tokens).");
+        }
+        return left;
+    }
+
+    private static String prompt(boolean partial, List<Evidence> batch) {
+        return JSON.writeValueAsString(Map.of("technicalPartial", partial, "facts", batch));
+    }
+
     private static List<List<Evidence>> batches(List<Evidence> facts, int budget) {
         var result = new ArrayList<List<Evidence>>();
         var batch = new ArrayList<Evidence>();
         int size = 0;
         for (var fact : facts) {
-            int length = JSON.writeValueAsString(fact).length() + 1;
-            if (length > budget) throw new IllegalStateException("Ein Analysefakt überschreitet das Kontextbudget.");
+            // One separator token per fact; facts are never shortened, an oversized one stops the analysis.
+            int length = tokens(JSON.writeValueAsString(fact)) + 1;
+            if (length > budget) {
+                throw new IllegalStateException("Analysefakt " + fact.id() + " (" + fact.kind() + ", Zeile "
+                        + fact.location().start().line() + ") benötigt ~" + length + " Tokens, je Anfrage sind nur "
+                        + budget + " frei. Kontextlänge erhöhen oder Ausgabelimit senken.");
+            }
             if (!batch.isEmpty() && size + length > budget) {
                 result.add(List.copyOf(batch));
                 batch.clear();
