@@ -36,7 +36,7 @@ public final class StoredProgramChatTools {
     public StoredProgramChatTools(Workspace workspace, Supplier<Set<String>> allowedSources,
                                   BooleanSupplier cancelled, BiConsumer<String, PageKey> release) {
         this(new ProgramMcpTools.Holdings() {
-            @Override public Set<String> sources() { return workspace.programMcpSources(); }
+            @Override public Set<String> sources() { return workspace.programChatSources(); }
             @Override public StoredProgramSearch.Snapshot search(Set<String> sources, BooleanSupplier stopped) {
                 return workspace.storedProgramSearch(sources, stopped);
             }

@@ -559,7 +559,7 @@ public final class Workspace {
                 visitor -> harvester.pages().visitCachedHeaders(caller, sourceId, visitor, cancelled), cancelled);
     }
 
-    public java.util.Set<String> programMcpSources() {
+    public java.util.Set<String> programChatSources() {
         return programSearchSources().stream().filter(harvester.aiRelease()::sourceReleased)
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }

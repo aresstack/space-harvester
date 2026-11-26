@@ -220,7 +220,6 @@ final class ChatTools {
             // Ohne Bereich (Angelo 24.11.2026): nur die interne Suche samt Lesen ihrer Treffer, wenn sie an ist.
             if (appSources == null) return List.of();
             List<AiChat.Tool> all = new ArrayList<>(List.of(readDefinition(), appSearchDefinition()));
-            if (storedCobolTool().availableForChat()) all.add(StoredCobolChatTool.definition());
             if (explicitAppSources != null) all.addAll(storedProgramTools().definitions());
             return List.copyOf(all);
         }
@@ -229,7 +228,6 @@ final class ChatTools {
         }
         List<AiChat.Tool> all = new ArrayList<>(definitions(nodes != null));
         all.add(appSearchDefinition());
-        if (storedCobolTool().availableForChat()) all.add(StoredCobolChatTool.definition());
         if (explicitAppSources != null) all.addAll(storedProgramTools().definitions());
         return List.copyOf(all);
     }
@@ -331,7 +329,6 @@ final class ChatTools {
             case READ -> "Liest eine Seite";
             case TERM -> "Schlägt einen Fachbegriff nach";
             case APP_SEARCH -> "Durchsucht die Wissensquellen";
-            case StoredCobolChatTool.NAME -> "Durchsucht gespeicherte COBOL-Analysen";
             case StoredProgramChatTools.SOURCES, StoredProgramChatTools.SEARCH, StoredProgramChatTools.ANALYSIS ->
                     StoredProgramChatTools.describe(call.name());
             default -> "Werkzeug";
@@ -365,7 +362,6 @@ final class ChatTools {
                         .asInt(0)));
                 case TERM -> term(arguments.path("begriff").asString(""));
                 case APP_SEARCH -> appSearch(arguments);
-                case StoredCobolChatTool.NAME -> cobolSearch(arguments);
                 case StoredProgramChatTools.SOURCES, StoredProgramChatTools.SEARCH, StoredProgramChatTools.ANALYSIS ->
                         explicitAppSources == null || appSources == null ? "Unbekanntes Werkzeug."
                                 : storedProgramTools().run(call.name(), arguments);
@@ -983,24 +979,6 @@ final class ChatTools {
         return (space > KeywordSearch.MAX_TEXT_LENGTH / 2 ? cut.substring(0, space) : cut).strip();
     }
 
-    /**
-     * {@value #APP_SEARCH}: dieselbe globale Suche wie die Suchleiste, über die freigegebenen Wissensquellen, ohne
-     * Vorab-Entscheidung, ob gesucht wird. Treffer werden lesbar ({@link #granted}); Text geht erst mit {@value #READ}
-     * an das Modell und wird dort freigegeben.
-     */
-    private String cobolSearch(JsonNode arguments) {
-        if (explicitAppSources == null) return "Unbekanntes Werkzeug.";
-        return storedCobolTool().run(arguments);
-    }
-
-    private StoredCobolChatTool storedCobolTool() {
-        return new StoredCobolChatTool(workspace, explicitAppSources, () -> cancelled,
-                (spaceKey, key) -> {
-                    release(spaceKey, key);
-                    granted.add(key);
-                });
-    }
-
     private StoredProgramChatTools storedProgramTools() {
         return new StoredProgramChatTools(workspace, explicitAppSources, () -> cancelled,
                 (spaceKey, key) -> {
@@ -1009,6 +987,11 @@ final class ChatTools {
                 });
     }
 
+    /**
+     * {@value #APP_SEARCH}: dieselbe globale Suche wie die Suchleiste, über die freigegebenen Wissensquellen, ohne
+     * Vorab-Entscheidung, ob gesucht wird. Treffer werden lesbar ({@link #granted}); Text geht erst mit {@value #READ}
+     * an das Modell und wird dort freigegeben.
+     */
     String appSearch(JsonNode arguments) {
         if (appSources == null) {
             return "Unbekanntes Werkzeug.";
