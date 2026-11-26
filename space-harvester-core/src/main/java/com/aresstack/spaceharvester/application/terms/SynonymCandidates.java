@@ -346,7 +346,7 @@ public class SynonymCandidates {
             this.budget = budget;
             this.context = context;
             this.sourceIds = scope.global()
-                    ? catalog.all().stream().map(HarvestSource::id).collect(java.util.stream.Collectors.toSet())
+                    ? catalog.globalSearchSources().stream().map(HarvestSource::id).collect(java.util.stream.Collectors.toSet())
                     : catalog.find(scope.sourceId()).map(source -> Set.of(source.id())).orElse(Set.of());
         }
 

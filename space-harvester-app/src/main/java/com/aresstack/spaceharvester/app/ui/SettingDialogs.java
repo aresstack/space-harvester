@@ -933,6 +933,7 @@ final class SettingDialogs {
         JComboBox<String> beforeSearch = global ? onOff(sync.beforeSearch()) : tri(current.beforeSearch());
         JComboBox<String> events = global ? onOff(sync.events()) : tri(current.events());
         JComboBox<String> background = global ? onOff(sync.backgroundFill()) : tri(current.backgroundFill());
+        JComboBox<String> prefetch = tri(current.prefetchHits());
         javax.swing.JSpinner parallel = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(
                 sync.backgroundParallelism(), 1, SyncSettings.MAX_BACKGROUND_PARALLELISM, 1));
         JComboBox<String> refresh = global ? choice(refreshStrategy(cache), ALWAYS_CHECK, TIMED_WITHOUT_CHECK,
@@ -965,6 +966,10 @@ final class SettingDialogs {
                 + (global ? "" : globally + onOffLabel(sync.beforeSearch())));
         rows.add("Webhooks", events, "Nur im Server; Confluence-Administratoren richten sie dort ein"
                 + (global ? "" : globally + onOffLabel(sync.events())));
+        if (!global) {
+            rows.add("Suchtreffer nachladen", prefetch, "Gefundene Inhalte automatisch in den Cache übernehmen; "
+                    + "Aus lässt native Funde vorläufig. Die Hintergrundfüllung bleibt davon unabhängig.");
+        }
         rows.add(BACKGROUND_TITLE, background, "Seiten des Katalogs ohne oder mit veraltetem Inhalt laden, solange "
                 + "nichts anderes läuft; jede Aktion hat Vorrang" + (global ? "" : globally
                 + onOffLabel(sync.backgroundFill())));
@@ -1010,7 +1015,7 @@ final class SettingDialogs {
         };
         Supplier<SourceSyncOverride> draft = () -> new SourceSyncOverride(changeSearch.value(), inventory.value(),
                 triValue(events), triValue(catchUp), triValue(beforeSearch), chosenMode.get(), chosenStrategy.get(),
-                maxAge.value(), retention.value(), triValue(background));
+                maxAge.value(), retention.value(), triValue(background), triValue(prefetch));
         Supplier<AppSettings.Cache> cacheDraft = () -> {
             boolean always = chosenStrategy.get() == RefreshStrategy.ALWAYS_CHECK_VERSION;
             return new AppSettings.Cache(always ? java.time.Duration.ZERO : maxAge.value(),
@@ -1025,10 +1030,10 @@ final class SettingDialogs {
         JPanel body = new JPanel(new BorderLayout(0, 10));
         body.setOpaque(false);
         body.add(wrapped(global ? "Gilt für alle Quellen, soweit eine Quelle unter Wissensquellen › Synchronisierung "
-                + "nichts anderes festlegt. Neue Seiten aus der Suche kommen immer in den Cache; Leserechte prüft der "
+                + "nichts anderes festlegt. Die Suchbeschaffung folgt den Suchoptionen; Leserechte prüft der "
                 + "Core bei jedem Abruf. Ein vollständiger Abgleich von Hand ist der Kreispfeil am Space."
                 : "Gilt nur für diese Quelle; „Wie global“ nimmt den gemeinsamen Wert aller Quellen (Knopf „Alle "
-                + "Quellen …“ bzw. Einstellungen › Cache). Neue Seiten aus der Suche kommen immer in den Cache. Ein "
+                + "Quellen …“ bzw. Einstellungen › Cache). Suchbeschaffung und Hintergrundfüllung sind unabhängig. Ein "
                 + "vollständiger Abgleich von Hand ist der Kreispfeil am Space."), BorderLayout.NORTH);
         body.add(rows, BorderLayout.CENTER);
         Shell shell = new Shell(parent, global ? SYNC_ALL_TITLE : SYNC_RULES_TITLE, body);
@@ -1444,7 +1449,7 @@ final class SettingDialogs {
                                     String trustBundle) {
         return new SourceDraft(d.id(), d.type(), d.title(), d.baseUrl(), d.directory(), d.include(), authType,
                 username, variable, certificateType, certificatePath, certificatePasswordVariable, alias, thumbprint,
-                trustBundle, d.extraOptions(), d.baseUrlType());
+                trustBundle, d.extraOptions(), d.baseUrlType(), d.showInExplorer(), d.includeInGlobalSearch());
     }
 
     private static JPanel row(JTextField field, ComposerButton button) {

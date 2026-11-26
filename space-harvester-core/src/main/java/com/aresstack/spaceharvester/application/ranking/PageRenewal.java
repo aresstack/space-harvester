@@ -35,6 +35,7 @@ public final class PageRenewal implements RelevanceSearch.Renewal, AutoCloseable
     private final Executor background;
     private final Set<PageKey> queued = ConcurrentHashMap.newKeySet();
     private final PageLoads loads;
+    private final java.util.function.Predicate<String> acquisitionAllowed;
     private final Coalescer<AccessContext, PageKey> collected;
 
     /** @param background begrenzter Hintergrund, etwa {@code Enrichments.background(100)} */
@@ -44,6 +45,12 @@ public final class PageRenewal implements RelevanceSearch.Renewal, AutoCloseable
 
     /** @param loads Hintergrundaufträge „Seiten nachladen“, oder {@code null} für den bisherigen Hintergrund */
     public PageRenewal(PageQueries pages, Executor background, PageLoads loads) {
+        this(pages, background, loads, sourceId -> true);
+    }
+
+    public PageRenewal(PageQueries pages, Executor background, PageLoads loads,
+                       java.util.function.Predicate<String> acquisitionAllowed) {
+        this.acquisitionAllowed = Objects.requireNonNull(acquisitionAllowed, "acquisitionAllowed");
         this.pages = Objects.requireNonNull(pages, "pages");
         this.background = Objects.requireNonNull(background, "background");
         this.loads = loads;
@@ -52,6 +59,9 @@ public final class PageRenewal implements RelevanceSearch.Renewal, AutoCloseable
 
     @Override
     public void renew(AccessContext caller, PageKey key) {
+        if (!acquisitionAllowed.test(key.sourceId())) {
+            return;
+        }
         // Abnahme #1080: Bei nur einem Platz liefe der Teil nie; dann der bisherige Weg.
         if (collected != null && loads.canRun()) {
             collected.mark(caller, java.util.List.of(key));
@@ -64,7 +74,9 @@ public final class PageRenewal implements RelevanceSearch.Renewal, AutoCloseable
             background.execute(() -> {
                 try {
                     // ADR 0030: die Suche hat den veralteten Treffer gemeldet.
-                    ChangeTrigger.SEARCH.run(() -> pages.page(caller, key.sourceId(), key.pageId(), false));
+                    if (acquisitionAllowed.test(key.sourceId())) {
+                        ChangeTrigger.SEARCH.run(() -> pages.page(caller, key.sourceId(), key.pageId(), false));
+                    }
                 } catch (RuntimeException e) {
                     // Ohne Seiten-ID; die Suche hat den Treffer schon als veraltet markiert.
                     LOG.log(System.Logger.Level.INFO, "Nachladen in {0} gescheitert ({1})", key.sourceId(),
@@ -83,7 +95,10 @@ public final class PageRenewal implements RelevanceSearch.Renewal, AutoCloseable
         try {
             // ADR 0030: Die Suche hat die Treffer als veraltet gemeldet, egal mit welchem Aufrufer und auf welchem Platz
             // sie laden (Abnahme #1080).
-            loads.join(caller, TITLE, keys, true, ChangeTrigger.SEARCH);
+            var eligible = keys.stream().filter(key -> acquisitionAllowed.test(key.sourceId())).toList();
+            if (!eligible.isEmpty()) {
+                loads.join(caller, TITLE, eligible, true, ChangeTrigger.SEARCH);
+            }
         } catch (RuntimeException e) {
             // Voll oder beendet: Die nächste Suche meldet die Treffer wieder als veraltet.
             LOG.log(System.Logger.Level.INFO, "{0} veraltete Treffer nicht nachgeladen ({1})", keys.size(),

@@ -63,6 +63,7 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
     private final FtpConnectForm form;
     private final SegmentedToggle toggle = new SegmentedToggle();
     private final EditorSessions editors;
+    private FtpNavigationObserver navigation = FtpNavigationObserver.NONE;
     /** Der Stand der gewählten Sitzung für die Statuszeile der App (links); leer beim Formular. */
     private final StatusLabel status = new StatusLabel();
     private volatile FtpSession selected;
@@ -251,6 +252,10 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         };
     }
 
+    public void navigationObserver(FtpNavigationObserver observer) {
+        navigation = java.util.Objects.requireNonNull(observer);
+    }
+
     private void added(FtpSession session) {
         // Schon wieder geschlossen (etwa eine sofort gescheiterte erste Verbindung)? Dann kein Reiter.
         if (pillOf.containsKey(session) || !sessions.all().contains(session)) {
@@ -264,7 +269,7 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         pills.add(pill, pills.getComponentCount() - 1);
         pillOf.put(session, pill);
         FtpSessionView view = new FtpSessionView(session,
-                () -> toggle.select(FtpSessionView.JOBS), editors);
+                () -> toggle.select(FtpSessionView.JOBS), editors, navigation);
         view.show(toggle.selected());
         viewOf.put(session, view);
         center.add(view, session.id());

@@ -37,9 +37,9 @@ public final class NdvSourceProvider implements KnowledgeSourceProvider {
             .field(SourceSettingField.of("credentialRef", SourceSettingField.Kind.SECRET_REF,
                     "KeePass-Eintrag", "Eintrag mit Benutzer, Passwort und Adresse des NDV-Servers").required())
             .field(SourceSettingField.text("startPoints", "Bibliotheken",
-                    "Kommagetrennt, optional mit Filter: MYLIB oder MYLIB/CUST*").required())
+                    "Kommagetrennt: MYLIB, MYLIB/CUST*; FDDM: für DDMs").required())
             .field(SourceSettingField.of("maxResources", SourceSettingField.Kind.NUMBER,
-                    "Höchstzahl Objekte (optional)", "Obergrenze je Lauf; leer = 5000").advanced())
+                    "Höchstzahl Objekte (optional)", "Inventur bricht bei Überschreitung ab; leer = 5000").advanced())
             .build();
 
     private static final int DEFAULT_PORT = 8011;
@@ -89,6 +89,7 @@ public final class NdvSourceProvider implements KnowledgeSourceProvider {
         if (reader.hasProblems() || host == null || credentialRef == null) {
             throw new IllegalArgumentException("NDV-Quelle " + sourceId + " ist fehlerhaft: " + reader.problems());
         }
+        boolean ddmsEnabled = scope(reader).startPoints().stream().anyMatch(NdvDdmScope::isStartPoint);
         return new NdvKnowledgeSource(sourceId, host, port, credentialRef, secrets, (h, p, user, password) -> {
             NdvClient client = new NdvClient();
             try {
@@ -97,7 +98,7 @@ public final class NdvSourceProvider implements KnowledgeSourceProvider {
                 throw new NdvKnowledgeSource.NdvLoginException(e.getMessage(), e);
             }
             return client;
-        });
+        }, ddmsEnabled, System::nanoTime);
     }
 
     /** {@code host:port} des NDV-Servers, klein ({@code ndv:host:8011/LIB/OBJ.NSP}). */

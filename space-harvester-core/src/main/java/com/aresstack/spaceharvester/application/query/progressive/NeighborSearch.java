@@ -86,7 +86,8 @@ public final class NeighborSearch {
         NeighborSource.Found neighborhood = neighbors.find(caller, seeds);
         Map<PageKey, HitReason.Neighbor> candidates = new LinkedHashMap<>();
         neighborhood.local().forEach((key, via) -> {
-            if (!known.contains(key) && NeighborScope.allows(query, key, neighborhood.places().get(key))) {
+            if (!known.contains(key) && keywords.includesSource(query, key.sourceId())
+                    && NeighborScope.allows(query, key, neighborhood.places().get(key))) {
                 candidates.put(key, via);
             }
         });
@@ -112,7 +113,7 @@ public final class NeighborSearch {
         found.forEach(hit -> confirmed.add(new PageKey(hit.sourceId(), hit.pageId())));
         Set<PageKey> pages = new LinkedHashSet<>();
         candidates.keySet().stream().filter(key -> !confirmed.contains(key)).forEach(pages::add);
-        neighborhood.missing().keySet().stream().filter(key -> !known.contains(key)
+        neighborhood.missing().keySet().stream().filter(key -> !known.contains(key) && keywords.includesSource(query, key.sourceId())
                 && NeighborScope.allows(query, key, neighborhood.places().get(key))).forEach(pages::add);
         Optional<NeighborLoader.Load> loading = Optional.empty();
         if (!pages.isEmpty()) {

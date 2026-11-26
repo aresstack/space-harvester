@@ -133,6 +133,65 @@ final class CommonsNetFtpSession implements FtpClientSession {
         return !closed && client.isConnected();
     }
 
+    @Override
+    public boolean usable() {
+        return connected();
+    }
+
+    @Override
+    public String sampleText(String path) throws IOException {
+        List<String> candidates = mvs ? dialect.resolveCandidates(path) : Collections.singletonList(unixPath(path));
+        IOException last = null;
+        for (String candidate : candidates) {
+            try {
+                return RecordStructureText.decode(retrieveSample(candidate), settings.encoding, recordStructure);
+            } catch (FtpNotFoundException e) {
+                last = e;
+            }
+        }
+        throw last != null ? last : new FtpNotFoundException("Not found: " + path);
+    }
+
+    private byte[] retrieveSample(String path) throws IOException {
+        final int sampleBytes = 64 * 1024;
+        InputStream stream = client.retrieveFileStream(path);
+        if (stream == null) {
+            throw new FtpNotFoundException("Not found: " + path + " (" + client.getReplyCode() + ")");
+        }
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        boolean complete = false;
+        try (InputStream in = stream) {
+            byte[] buffer = new byte[8192];
+            int remaining = sampleBytes;
+            while (remaining > 0) {
+                int read = in.read(buffer, 0, Math.min(buffer.length, remaining));
+                if (read == -1) {
+                    complete = true;
+                    break;
+                }
+                remaining -= read;
+                for (int i = 0; i < read; i++) {
+                    if (buffer[i] != PADDING) {
+                        out.write(buffer[i]);
+                    }
+                }
+            }
+            if (remaining == 0) {
+                complete = in.read() == -1;
+            }
+        } finally {
+            if (!complete) {
+                // Discard the control connection with a pending transfer instead of reusing it.
+                closed = true;
+                client.disconnect();
+            }
+        }
+        if (complete && !client.completePendingCommand()) {
+            throw new IOException("Incomplete FTP sample: " + path);
+        }
+        return out.toByteArray();
+    }
+
     private byte[] retrieve(String resolvedPath) throws IOException {
         InputStream in = client.retrieveFileStream(resolvedPath);
         if (in == null) {
@@ -158,6 +217,44 @@ final class CommonsNetFtpSession implements FtpClientSession {
             throw new IOException("Übertragung unvollständig: " + resolvedPath + " (" + client.getReplyCode() + ")");
         }
         return out.toByteArray();
+    }
+
+    @Override
+    public boolean isSequentialDataset(String path) throws IOException {
+        if (!mvs) {
+            return false;
+        }
+        String dataset = MvsQuoteNormalizer.unquote(path);
+        if (dataset.indexOf('(') >= 0) {
+            return false;
+        }
+        String exact = dialect.toAbsolutePath(dataset);
+        if (sequentialDataset(client.listFiles(exact), dataset)) {
+            return true;
+        }
+        int dot = dataset.lastIndexOf('.');
+        if (dot < 0) {
+            return false;
+        }
+        return sequentialDataset(client.listFiles(dialect.toAbsolutePath(dataset.substring(0, dot + 1) + "*")),
+                dataset);
+    }
+
+    static boolean sequentialDataset(FTPFile[] files, String dataset) {
+        if (files == null) {
+            return false;
+        }
+        for (FTPFile file : files) {
+            if (file == null || file.getRawListing() == null) {
+                continue;
+            }
+            String[] columns = file.getRawListing().trim().split("\\s+");
+            if (columns.length >= 3 && "PS".equalsIgnoreCase(columns[columns.length - 2])
+                    && dataset.equalsIgnoreCase(MvsQuoteNormalizer.unquote(columns[columns.length - 1]))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private List<FtpEntry> listUnix(String resolved) throws IOException {

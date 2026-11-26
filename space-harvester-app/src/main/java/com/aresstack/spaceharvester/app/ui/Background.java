@@ -14,11 +14,10 @@ import java.util.function.Consumer;
  */
 public final class Background {
 
+    private static final BackgroundActivity ACTIVITY = new BackgroundActivity();
+    private static final java.util.concurrent.ThreadFactory THREADS = Thread.ofVirtual().name("ui-task-", 0).factory();
     private static final ExecutorService EXECUTOR = Executors.newThreadPerTaskExecutor(
-            Thread.ofVirtual().name("ui-task-", 0).factory());
-
-    private static final Object IDLE_MONITOR = new Object();
-    private static int pending;
+            work -> THREADS.newThread(ACTIVITY.track(work)));
 
     private Background() {
     }
@@ -32,17 +31,14 @@ public final class Background {
      * ihren Thread). Eine abgebrochene Arbeit meldet sich, wenn überhaupt, als Fehler.
      */
     public static <T> Future<?> start(Callable<T> work, Consumer<T> onSuccess, Consumer<Throwable> onFailure) {
-        var task = new java.util.concurrent.FutureTask<Void>(() -> {
+        return EXECUTOR.submit(() -> {
             try {
                 T result = work.call();
-                deliver(() -> onSuccess.accept(result));
+                SwingUtilities.invokeLater(ACTIVITY.track(() -> onSuccess.accept(result)));
             } catch (Throwable e) {
-                deliver(() -> onFailure.accept(e));
+                SwingUtilities.invokeLater(ACTIVITY.track(() -> onFailure.accept(e)));
             }
-            return null;
         });
-        executeTracked(task);
-        return task;
     }
 
     /**
@@ -50,64 +46,7 @@ public final class Background {
      * (etwa in Tests von Hand ausgeführt).
      */
     public static java.util.concurrent.Executor executor() {
-        return Background::executeTracked;
-    }
-
-    private static void executeTracked(Runnable task) {
-        started();
-        try {
-            EXECUTOR.execute(() -> {
-                try {
-                    task.run();
-                } finally {
-                    finished();
-                }
-            });
-        } catch (RuntimeException failure) {
-            finished();
-            throw failure;
-        }
-    }
-
-    private static void deliver(Runnable callback) {
-        started();
-        SwingUtilities.invokeLater(() -> {
-            try {
-                callback.run();
-            } finally {
-                finished();
-            }
-        });
-    }
-
-    private static void started() {
-        synchronized (IDLE_MONITOR) {
-            pending++;
-        }
-    }
-
-    private static void finished() {
-        synchronized (IDLE_MONITOR) {
-            pending--;
-            IDLE_MONITOR.notifyAll();
-        }
-    }
-
-    /** Wait for actual worker completion and EDT delivery, including follow-up work. */
-    static void awaitIdle(java.time.Duration timeout) throws InterruptedException {
-        if (SwingUtilities.isEventDispatchThread()) {
-            throw new IllegalStateException("Cannot await background tasks on the EDT");
-        }
-        long deadline = System.nanoTime() + timeout.toNanos();
-        synchronized (IDLE_MONITOR) {
-            while (pending != 0) {
-                long remaining = deadline - System.nanoTime();
-                if (remaining <= 0) {
-                    throw new IllegalStateException("Background tasks still running: " + pending);
-                }
-                java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(IDLE_MONITOR, remaining);
-            }
-        }
+        return EXECUTOR;
     }
 
     /** Wie {@link #run}, für Arbeit ohne Ergebnis. */
@@ -116,6 +55,14 @@ public final class Background {
             work.run();
             return null;
         }, ignored -> onSuccess.run(), onFailure);
+    }
+
+    /** Await background tasks and their completion callbacks before closing test fixtures. */
+    static void awaitIdle(java.time.Duration timeout) throws InterruptedException, java.util.concurrent.TimeoutException {
+        if (SwingUtilities.isEventDispatchThread()) {
+            throw new IllegalStateException("Await background activity outside the event dispatch thread");
+        }
+        ACTIVITY.awaitIdle(timeout);
     }
 
     @FunctionalInterface

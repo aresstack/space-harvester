@@ -40,18 +40,19 @@ public final class FileNdvSourceStore implements NdvSourceCache.Store {
                     continue;
                 }
                 List<String> lines = Files.readAllLines(meta, StandardCharsets.UTF_8);
-                if (lines.size() < 4) {
+                if (lines.size() < 6) {
                     continue;
                 }
-                int size;
                 try {
-                    size = Integer.parseInt(lines.get(2).trim());
+                    NdvSourceCache.Entry entry = new NdvSourceCache.Entry(library, lines.get(0), lines.get(1),
+                            Files.readString(src, StandardCharsets.UTF_8), Integer.parseInt(lines.get(2)),
+                            lines.get(3), Integer.parseInt(lines.get(4)), Integer.parseInt(lines.get(5)));
+                    if (file.equals(safe(entry.objectKey()) + ".meta")) {
+                        entries.put(entry.objectKey(), entry);
+                    }
                 } catch (NumberFormatException e) {
-                    size = 0;
+                    // Ignore incomplete or invalid metadata rather than trusting the text.
                 }
-                NdvSourceCache.Entry entry = new NdvSourceCache.Entry(library, lines.get(0), lines.get(1),
-                        Files.readString(src, StandardCharsets.UTF_8), size, lines.get(3));
-                entries.put(entry.name(), entry);
             }
         } catch (IOException e) {
             throw new UncheckedIOException("NDV-Zwischenspeicher nicht lesbar: " + folder, e);
@@ -64,10 +65,11 @@ public final class FileNdvSourceStore implements NdvSourceCache.Store {
         Path folder = folder(server, entry.library());
         try {
             Files.createDirectories(folder);
-            String name = safe(entry.name());
+            String name = safe(entry.objectKey());
             Files.writeString(folder.resolve(name + ".src"), entry.source(), StandardCharsets.UTF_8);
             Files.writeString(folder.resolve(name + ".meta"), String.join("\n", entry.name(), entry.extension(),
-                    String.valueOf(entry.size()), entry.date()) + "\n", StandardCharsets.UTF_8);
+                    String.valueOf(entry.size()), entry.date(), String.valueOf(entry.databaseId()),
+                    String.valueOf(entry.fileNumber())) + "\n", StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new UncheckedIOException("NDV-Zwischenspeicher nicht schreibbar: " + folder, e);
         }
@@ -89,7 +91,7 @@ public final class FileNdvSourceStore implements NdvSourceCache.Store {
     }
 
     private Path folder(String server, String library) {
-        return base.resolve(safe(server)).resolve(safe(library));
+        return base.resolve("v2").resolve(safe(server)).resolve(safe(library));
     }
 
     /**

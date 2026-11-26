@@ -841,7 +841,8 @@ public final class AppSettingsLoader {
                             problems),
                     optionalFlag(get(rule, SourceSyncOverride.BEFORE_SEARCH), prefix + "before-search", problems),
                     mode, strategy, maxAge, retention,
-                    optionalFlag(get(rule, SourceSyncOverride.BACKGROUND_FILL), prefix + "background-fill", problems)));
+                    optionalFlag(get(rule, SourceSyncOverride.BACKGROUND_FILL), prefix + "background-fill", problems),
+                    optionalFlag(get(rule, SourceSyncOverride.PREFETCH_HITS), prefix + "prefetch-hits", problems)));
         }
         return rules;
     }
@@ -1035,7 +1036,10 @@ public final class AppSettingsLoader {
                     password.value(), text(get(certificate, "thumbprint"), problems));
         }
         SourceSettingsConfig config = new SourceSettingsConfig(id.trim(), type.trim(), text(get(source, "title"),
-                problems), baseUrl, credentials, options, clientCertificate, text(get(source, "trust-bundle"), problems));
+                problems), baseUrl, credentials, options, clientCertificate, text(get(source, "trust-bundle"), problems),
+                !Boolean.FALSE.equals(optionalFlag(get(source, "show-in-explorer"), id + ".show-in-explorer", problems)),
+                !Boolean.FALSE.equals(optionalFlag(get(source, "include-in-global-search"),
+                        id + ".include-in-global-search", problems)));
         return new AppSettings.SourceEntry(config, secret.missing(), secret.variable(), placeholderOptions);
     }
 

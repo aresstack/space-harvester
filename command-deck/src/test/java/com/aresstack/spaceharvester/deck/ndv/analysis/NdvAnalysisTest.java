@@ -206,11 +206,45 @@ class NdvAnalysisTest {
         store.put("h:1", new NdvSourceCache.Entry("LIB#1", "A#B", "NSP", "* eins", 6, ""));
         store.put("h:1", new NdvSourceCache.Entry("LIB#1", "A$B", "NSP", "* zwei", 6, ""));
         store.put("h:1", new NdvSourceCache.Entry("LIB$1", "A_B", "NSP", "* drei", 6, ""));
-        assertThat(store.load("h:1", "LIB#1")).containsOnlyKeys("A#B", "A$B");
-        assertThat(store.load("h:1", "LIB#1").get("A#B").source()).isEqualTo("* eins");
-        assertThat(store.load("h:1", "LIB$1")).containsOnlyKeys("A_B");
+        assertThat(store.load("h:1", "LIB#1")).containsOnlyKeys("A#B.NSP@0-0", "A$B.NSP@0-0");
+        assertThat(store.load("h:1", "LIB#1").get("A#B.NSP@0-0").source()).isEqualTo("* eins");
+        assertThat(store.load("h:1", "LIB$1")).containsOnlyKeys("A_B.NSP@0-0");
         assertThat(FileNdvSourceStore.safe("..")).isEqualTo("_2E_2E");
         assertThat(FileNdvSourceStore.safe("LAGER001")).isEqualTo("LAGER001");
+    }
+
+    @Test
+    void sameNameDifferentTypesAndSystemFilesNeverOverwriteAndAmbiguousLookupFails(@TempDir Path folder) {
+        var store = new FileNdvSourceStore(folder);
+        var program = new NdvSourceCache.Entry("LIB", "BOOK", "NSP", "program", 10, "date", 1, 2);
+        var map = new NdvSourceCache.Entry("LIB", "BOOK", "NSM", "map", 10, "date", 1, 2);
+        var other = new NdvSourceCache.Entry("LIB", "BOOK", "NSP", "other", 10, "date", 1, 3);
+        store.put("account-a", program);
+        store.put("account-a", map);
+        store.put("account-a", other);
+        store.put("account-b", new NdvSourceCache.Entry("LIB", "BOOK", "NSP", "private", 10, "date", 1, 2));
+        assertThat(store.load("account-a", "LIB").values()).containsExactlyInAnyOrder(program, map, other);
+        var cache = new NdvSourceCache("account-a", store, new NdvAccessRules());
+        assertThat(cache.size("LIB")).isEqualTo(3);
+        assertThat(cache.entry("LIB", "BOOK")).isEmpty();
+        assertThat(cache.sources("LIB")).isEmpty();
+        assertThat(cache.search("LIB", "private", 10)).isEmpty();
+        assertThat(cache.search("LIB", "map", 10)).extracting(NdvSourceCache.Hit::extension).containsExactly("NSM");
+        var exact = new NdvObject("LIB", "BOOK",
+                new com.aresstack.spaceharvester.deck.ndv.NdvObjectType(16, "Program", "NSP"),
+                true, 10, "", "date", new NdvObject.Location(1, 2, "", 1, false));
+        assertThat(cache.entry(exact)).contains(program);
+    }
+
+    @Test
+    void absentDateOrSizeIsNotProofThatSourceIsUnchanged() {
+        var cached = new NdvSourceCache.Entry("LIB", "BOOK", "NSP", "program", 10, "");
+        var type = new com.aresstack.spaceharvester.deck.ndv.NdvObjectType(16, "Program", "NSP");
+        var location = new NdvObject.Location(1, 2, "", 1, false);
+        assertThat(NdvSourceCache.unchanged(cached, new NdvObject("LIB", "BOOK", type,
+                true, 10, "", "", location))).isFalse();
+        assertThat(NdvSourceCache.unchanged(cached, new NdvObject("LIB", "BOOK", type,
+                true, 0, "", "date", location))).isFalse();
     }
 
     @Test

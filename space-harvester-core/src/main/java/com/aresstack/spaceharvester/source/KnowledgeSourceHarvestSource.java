@@ -602,6 +602,22 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
      * dieser Quelle: Schema und Endpoint der Quellenadresse ({@link KnowledgeSourcePort#sourceId()}), dahinter das
      * Ziel. Ob es die Seite gibt, klärt erst das Laden.
      */
+    @Override
+    public Optional<String> navigationPageId(String nativePath) {
+        if (!(port instanceof com.aresstack.enterpriseai.source.api.NavigationResourceSource navigation)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.ofNullable(navigation.navigationResource(nativePath)).map(this::nativeId);
+        } catch (KnowledgeSourceException e) {
+            if (e.kind() == KnowledgeSourceException.Kind.NOT_FOUND
+                    || e.kind() == KnowledgeSourceException.Kind.ACCESS_DENIED) {
+                return Optional.empty();
+            }
+            throw accessFailure(e);
+        }
+    }
+
     private Optional<KnowledgeResourceId> ownResource(String value) {
         SourceAddress address = port.sourceId();
         if (address == null || address.scheme().isEmpty()) {
@@ -723,6 +739,24 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     public boolean outsideScope(String pageId) {
         Set<String> current = inScope;
         return restriction != null && current != null && !current.contains(pageId);
+    }
+
+    @Override
+    public boolean inventoryCovers(String pageId) {
+        if (!"ftp".equals(type) || scope == null) {
+            return true;
+        }
+        try {
+            KnowledgeResourceId resourceId = resourceIdOf(pageId);
+            if (ownResource(resourceId.value()).isEmpty()) {
+                return false;
+            }
+            String specific = resourceId.schemeSpecificPart();
+            String path = specific.substring(port.sourceId().locator().length() + 1);
+            return FtpInventoryCoverage.covers(scope, path);
+        } catch (SourceAccessException e) {
+            return false;
+        }
     }
 
     /**

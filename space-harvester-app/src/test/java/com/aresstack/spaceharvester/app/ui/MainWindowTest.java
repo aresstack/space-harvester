@@ -50,7 +50,6 @@ class MainWindowTest {
             } finally {
                 context.shutdown();
             }
-            Background.awaitIdle(java.time.Duration.ofSeconds(30));
         }
     }
 

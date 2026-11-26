@@ -767,6 +767,9 @@ final class SourceForm {
                     kept.certificateType(), kept.certificatePath(), kept.certificatePasswordVariable(),
                     kept.certificateAlias(), kept.thumbprint(), kept.trustBundle(), options(false));
         }
+        if (editing != null) {
+            draft = draft.withUsage(editing.draft().showInExplorer(), editing.draft().includeInGlobalSearch());
+        }
         if (generic && authType == SourceSettingsConfig.AuthType.BASIC && !typed()
                 && !SourceSaving.secretAvailable(context, editing, draft, false)) {
             // Ohne eingegebenes oder hinterlegtes Passwort keine Zeile password: der Core fragt das Programm (ADR 0022).

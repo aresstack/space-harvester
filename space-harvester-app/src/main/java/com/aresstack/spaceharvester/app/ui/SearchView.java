@@ -937,7 +937,7 @@ public final class SearchView implements View {
             sourceBoxes.forEach((id, box) -> {
                 List<String> spaces = scopes.stream().filter(scope -> id.equals(scope.sourceId()))
                         .map(Explorer.Scope::spaceKey).toList();
-                boolean whole = scopes.isEmpty() || spaces.contains(null);
+                boolean whole = scopes.isEmpty() ? globalSearchSource(id) : spaces.contains(null);
                 boolean partial = !whole && !spaces.isEmpty();
                 box.setSelected(whole || partial);
                 com.aresstack.spaceharvester.app.ui.controls.PartialCheckMenuItem.partial(box, partial);
@@ -976,7 +976,8 @@ public final class SearchView implements View {
         boolean wasPartial = com.aresstack.spaceharvester.app.ui.controls.PartialCheckMenuItem.partial(box);
         boolean whole = wasPartial || box.isSelected();
         List<Explorer.Scope> base = scopes.isEmpty()
-                ? sourceBoxes.keySet().stream().map(source -> new Explorer.Scope(source, null)).toList()
+                ? sourceBoxes.keySet().stream().filter(this::globalSearchSource)
+                        .map(source -> new Explorer.Scope(source, null)).toList()
                 : scopes;
         List<Explorer.Scope> next = new ArrayList<>(base.stream().filter(scope -> !id.equals(scope.sourceId()))
                 .toList());
@@ -988,8 +989,9 @@ public final class SearchView implements View {
             syncBoxesToScope(scopes);
             return;
         }
-        boolean all = sourceBoxes.keySet().stream().allMatch(source -> next.contains(new Explorer.Scope(source,
-                null)));
+        boolean all = new java.util.HashSet<>(next).equals(sourceBoxes.keySet().stream()
+                .filter(this::globalSearchSource).map(source -> new Explorer.Scope(source, null))
+                .collect(java.util.stream.Collectors.toSet()));
         List<Explorer.Scope> wanted = all ? List.of() : List.copyOf(next);
         if (sourcesListener != null) {
             // Der Baum wählt und meldet die Auswahl zurück ({@link #scope}).
@@ -1464,7 +1466,8 @@ public final class SearchView implements View {
      */
     Set<String> chosenSources() {
         Set<String> searched = searchedSources();
-        return chosen.isEmpty() && searched.size() == sourceBoxes.size() ? Set.of() : searched;
+        return chosen.isEmpty() && searched.equals(sourceBoxes.keySet().stream().filter(this::globalSearchSource)
+                .collect(java.util.stream.Collectors.toSet())) ? Set.of() : searched;
     }
 
     /**
@@ -1507,6 +1510,13 @@ public final class SearchView implements View {
         Set<DocumentKind> checked = chosenKinds();
         kindsLabel.setText(!anyKind() ? "Dateitypen: keiner angehakt" : checked.isEmpty() ? "Dateitypen: alle"
                 : "Dateitypen: " + String.join(", ", checked.stream().map(DocumentKind::label).toList()));
+    }
+
+    private boolean globalSearchSource(String id) {
+        AppRuntime runtime = context.runtime();
+        return runtime == null || runtime.settings().sources().stream()
+                .filter(entry -> entry.id().equals(id))
+                .allMatch(entry -> entry.config().includeInGlobalSearch());
     }
 
     private Set<String> knownSources() {
@@ -1555,7 +1565,7 @@ public final class SearchView implements View {
             JCheckBox box = sourceBoxes.get(source.id());
             if (box == null) {
                 box = checkBox(source.title(), "Diese Wissensquelle durchsuchen; abgehakt fehlt sie in der Suche");
-                box.setSelected(true);
+                box.setSelected(globalSearchSource(source.id()));
                 String sourceId = source.id();
                 box.putClientProperty(SOURCE_TITLE, source.title());
                 box.addItemListener(e -> {
@@ -1569,6 +1579,9 @@ public final class SearchView implements View {
                 box.setText(source.title());
                 changed = true;
             }
+            box.setToolTipText(globalSearchSource(source.id())
+                    ? "Diese Wissensquelle durchsuchen"
+                    : "Nur gezielte Suche – diese Quelle ausdrücklich anhaken");
             current.put(source.id(), box);
         }
         changed |= !current.keySet().equals(sourceBoxes.keySet());

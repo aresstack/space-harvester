@@ -52,10 +52,16 @@ class TermQueriesTest {
             new String(snapshot.payload().bytes(), StandardCharsets.UTF_8), List.of()));
 
     private final List<String> configured = List.of("wiki-a", "wiki-b");
+    private final Set<String> directOnly = new HashSet<>();
     private final SourceCatalog catalog = new SourceCatalog() {
         @Override
         public List<HarvestSource> all() {
             return configured.stream().map(TermQueriesTest::source).toList();
+        }
+
+        @Override
+        public boolean includeInGlobalSearch(String sourceId) {
+            return !directOnly.contains(sourceId);
         }
 
         @Override
@@ -109,6 +115,16 @@ class TermQueriesTest {
     private TermQueries.TermSummary only(TermQueries.TermList list, String normalized, TermKind kind) {
         return list.terms().stream().filter(term -> term.normalized().equals(normalized) && term.kind() == kind)
                 .findFirst().orElseThrow(() -> new AssertionError(normalized + " fehlt in " + list.terms()));
+    }
+
+    @Test
+    void directOnlySourcesDoNotContributeToGlobalTermStatistics() {
+        directOnly.add("wiki-b");
+        var global = only(list(null, null, TermKind.ACRONYM, null, 50, null), "rsl", TermKind.ACRONYM);
+        assertThat(global.pages()).isEqualTo(1);
+        assertThat(global.sources()).isEqualTo(1);
+        var explicit = only(list("wiki-b", null, TermKind.ACRONYM, null, 50, null), "rsl", TermKind.ACRONYM);
+        assertThat(explicit.pages()).isEqualTo(2);
     }
 
     @Test

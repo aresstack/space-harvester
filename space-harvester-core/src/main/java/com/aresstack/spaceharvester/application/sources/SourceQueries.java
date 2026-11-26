@@ -26,6 +26,14 @@ public class SourceQueries {
         return catalog.all();
     }
 
+    public boolean showInExplorer(String sourceId) {
+        return catalog.showInExplorer(sourceId);
+    }
+
+    public boolean includeInGlobalSearch(String sourceId) {
+        return catalog.includeInGlobalSearch(sourceId);
+    }
+
     /** Die Quellentypen, die der Katalog kennt, in Registrierungsreihenfolge (#187). */
     public List<SourceType> types() {
         return catalog.types();
@@ -177,6 +185,10 @@ public class SourceQueries {
      */
     public boolean outsideScope(String sourceId, String pageId) {
         return source(sourceId).outsideScope(pageId);
+    }
+
+    public boolean inventoryCovers(String sourceId, String pageId) {
+        return source(sourceId).inventoryCovers(pageId);
     }
 
     /**

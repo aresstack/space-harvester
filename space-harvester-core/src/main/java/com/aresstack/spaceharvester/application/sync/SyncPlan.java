@@ -97,7 +97,17 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
      * Legt fest, welche gesperrten Seiten dieser Lauf endgültig entfernt: die, deren Sperre spätestens bei
      * {@code cutoff} begann und die die Inventur nicht wieder listet. Nur bei bestätigter Inventur, sonst unverändert.
      */
+    public SyncPlan withinInventoryCoverage(java.util.function.Predicate<String> covered) {
+        List<PageChange> scoped = changes.stream().filter(change -> change.current() != null
+                || covered.test(change.pageId())).toList();
+        return new SyncPlan(inventory, baseline, scoped, removals, purges);
+    }
+
     public SyncPlan withPurgesDue(Instant cutoff) {
+        return withPurgesDue(cutoff, pageId -> true);
+    }
+
+    public SyncPlan withPurgesDue(Instant cutoff, java.util.function.Predicate<String> covered) {
         Objects.requireNonNull(cutoff, "cutoff");
         if (baseline == null || !inventory.confirmed()) {
             return this;
@@ -105,7 +115,7 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
         Map<String, PageMetadataListing.Entry> listed = inventory.byPageId();
         Set<String> due = new TreeSet<>();
         baseline.withheldPageIds().forEach((pageId, since) -> {
-            if (!listed.containsKey(pageId) && !since.isAfter(cutoff)) {
+            if (!listed.containsKey(pageId) && covered.test(pageId) && !since.isAfter(cutoff)) {
                 due.add(pageId);
             }
         });

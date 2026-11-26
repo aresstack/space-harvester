@@ -150,6 +150,7 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
     private final Store store;
     private final Consumer<List<BackgroundFill.Gap>> catalogued;
     private final Clock clock;
+    private final java.util.function.Predicate<String> acquisitionAllowed;
     private final Object monitor = new Object();
     /**
      * Höchstens {@value #PARALLELISM} Kopfdatenabrufe zugleich, über alle Teile und den bisherigen Weg hinweg
@@ -179,6 +180,13 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
      */
     public FindingCataloging(SourceCatalog sources, AccessGuard access, Store store,
                              Consumer<List<BackgroundFill.Gap>> catalogued, Clock clock) {
+        this(sources, access, store, catalogued, clock, id -> true);
+    }
+
+    public FindingCataloging(SourceCatalog sources, AccessGuard access, Store store,
+                             Consumer<List<BackgroundFill.Gap>> catalogued, Clock clock,
+                             java.util.function.Predicate<String> acquisitionAllowed) {
+        this.acquisitionAllowed = Objects.requireNonNull(acquisitionAllowed, "acquisitionAllowed");
         this.sources = Objects.requireNonNull(sources, "sources");
         this.access = Objects.requireNonNull(access, "access");
         this.store = Objects.requireNonNull(store, "store");
@@ -204,7 +212,7 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
             return accepted;
         }
         if (finder == null || finder.kind() == AccessContext.PrincipalKind.END_USER || finder.credential() != null
-                || sourceId == null || findings.isEmpty()) {
+                || sourceId == null || !acquisitionAllowed.test(sourceId) || findings.isEmpty()) {
             findings.forEach(finding -> {
                 if (finding != null) {
                     accepted.add(finding.pageId());
@@ -313,6 +321,9 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
     /** @return die Version, die die Seite jetzt hat, soweit bekannt, und was geschah */
     private Done catalog(Task task) {
         PageKey key = task.key();
+        if (!acquisitionAllowed.test(key.sourceId())) {
+            return new Done(null, Effect.SKIPPED);
+        }
         HarvestSource source = sources.find(key.sourceId()).orElse(null);
         if (source == null || !source.capabilities().contains(SourceCapability.PAGE_METADATA)) {
             return new Done(task.version(), Effect.SKIPPED);
@@ -343,6 +354,9 @@ public final class FindingCataloging implements FindingCatalog, AutoCloseable {
             // Von der Richtlinie ausgeschlossen: kein Eintrag, kein bestehender wird angefasst.
             count(() -> excluded++);
             return new Done(metadata.version(), Effect.SKIPPED);
+        }
+        if (!acquisitionAllowed.test(key.sourceId())) {
+            return new Done(null, Effect.SKIPPED);
         }
         Outcome outcome = store.catalog(PageHeader.of(key.sourceId(), metadata, clock.instant()));
         switch (outcome) {

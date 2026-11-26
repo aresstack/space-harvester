@@ -230,6 +230,7 @@ public final class MainWindow implements AppContext.Navigator {
                 new com.aresstack.spaceharvester.app.ui.deck.AppTerminalTunnel(context));
         // NDV direkt wie MainframeMate; nur Verbindungen mit „Proxy der App verwenden“ nehmen den Proxy der App.
         commandDeck.ndvRoute(com.aresstack.spaceharvester.app.ui.deck.NdvNetwork.of(context));
+        commandDeck.ftpNavigation(new FtpNavigationFill(context));
         // E-Akte: Proxy und TLS-Vertrauen der App (Windows-ROOT), das Anmeldeprotokoll ohne Werte ins Log.
         org.slf4j.Logger eakteLog = org.slf4j.LoggerFactory.getLogger("command-deck.eakte");
         commandDeck.eakte(new com.aresstack.spaceharvester.deck.eakte.http.HttpEakteServer(
