@@ -23,7 +23,6 @@ public final class FtpChatTools implements ChatToolset {
     public static final String READ = "dataset_lesen";
 
     static final int MAX_ENTRIES = 300;
-    static final long TIMEOUT_SECONDS = 120;
     static final String NO_SESSION = "Im FTP-Bereich ist keine verbundene Sitzung gewählt. Bitte den Benutzer, eine "
             + "Verbindung zu öffnen.";
 
@@ -127,13 +126,15 @@ public final class FtpChatTools implements ChatToolset {
     }
 
     private static <T> T await(Future<T> future) throws Exception {
+        java.time.Duration timeout = com.aresstack.spaceharvester.app.ui.deck.DeckTimeouts.shared()
+                .get(com.aresstack.spaceharvester.app.ui.deck.DeckTimeouts.Value.FTP_CHAT);
         try {
-            return future.get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (ExecutionException e) {
             throw e.getCause() instanceof Exception cause ? cause : e;
         } catch (TimeoutException e) {
             future.cancel(true);
-            throw new java.io.IOException("Keine Antwort vom Host in " + TIMEOUT_SECONDS + " s");
+            throw new java.io.IOException("Keine Antwort vom Host in " + timeout.toSeconds() + " s");
         }
     }
 }

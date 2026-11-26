@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.deck.files.sharepoint.windows;
 
 import com.aresstack.spaceharvester.deck.files.sharepoint.WebDavLogin;
 
+import java.time.Duration;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -25,16 +26,28 @@ import java.util.concurrent.TimeoutException;
  */
 public final class NetUseLogin implements WebDavLogin {
 
-    private static final long TIMEOUT_SECONDS = 60;
+    /** Vorgabe: so lange darf „net use“ dauern; die App stellt die Frist ein ({@code DeckTimeouts}). */
+    public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
 
     private final boolean windows;
+    private final java.util.function.Supplier<Duration> timeout;
 
     public NetUseLogin() {
-        this(System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win"));
+        this(() -> DEFAULT_TIMEOUT);
+    }
+
+    /** @param timeout Frist für „net use“, bei jedem Aufruf neu gelesen */
+    public NetUseLogin(java.util.function.Supplier<Duration> timeout) {
+        this(System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win"), timeout);
     }
 
     NetUseLogin(boolean windows) {
+        this(windows, () -> DEFAULT_TIMEOUT);
+    }
+
+    NetUseLogin(boolean windows, java.util.function.Supplier<Duration> timeout) {
         this.windows = windows;
+        this.timeout = java.util.Objects.requireNonNull(timeout, "timeout");
     }
 
     @Override
@@ -45,7 +58,7 @@ public final class NetUseLogin implements WebDavLogin {
         if (!windows) {
             return Outcome.failed("SharePoint über WebDAV geht nur unter Windows (Dienst „WebClient“).");
         }
-        Run run = netUse(List.of("net", "use", root(uncPath)), null);
+        Run run = netUse(List.of("net", "use", root(uncPath)), null, timeout.get());
         if (run.ok() || exists(uncPath)) {
             return Outcome.ok();
         }
@@ -64,7 +77,7 @@ public final class NetUseLogin implements WebDavLogin {
             return Outcome.credentialsNeeded("Bitte einen Benutzer angeben.");
         }
         List<String> command = new ArrayList<>(List.of("net", "use", root(uncPath), "*", "/user:" + user.strip()));
-        Run run = netUse(command, password);
+        Run run = netUse(command, password, timeout.get());
         if (run.ok() || exists(uncPath)) {
             return Outcome.ok();
         }
@@ -118,7 +131,7 @@ public final class NetUseLogin implements WebDavLogin {
         }
     }
 
-    private static Run netUse(List<String> command, char[] password) {
+    private static Run netUse(List<String> command, char[] password, Duration timeout) {
         try {
             Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
             try (OutputStream in = process.getOutputStream()) {
@@ -138,7 +151,7 @@ public final class NetUseLogin implements WebDavLogin {
                     output.complete(new byte[0]);
                 }
             });
-            if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
                 process.destroyForcibly();
                 return new Run(-1, "keine Antwort von „net use“");
             }

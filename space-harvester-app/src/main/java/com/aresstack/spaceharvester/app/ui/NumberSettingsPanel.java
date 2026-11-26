@@ -29,6 +29,20 @@ public final class NumberSettingsPanel<V extends Enum<V> & NumberSetting> {
     @FunctionalInterface
     public interface Store<V> {
         boolean save(Map<V, Long> values, Runnable saved, Consumer<Throwable> failed);
+
+        /** Speichert sofort im EDT (etwa in {@code app-state.json}); ein Fehler wird gemeldet. */
+        static <V> Store<V> immediately(Consumer<Map<V, Long>> save) {
+            Objects.requireNonNull(save, "save");
+            return (values, saved, failed) -> {
+                try {
+                    save.accept(values);
+                    saved.run();
+                } catch (RuntimeException e) {
+                    failed.accept(e);
+                }
+                return true;
+            };
+        }
     }
 
     private final String heading;

@@ -155,14 +155,16 @@ public final class CommandDeck {
         com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditors.systemFunctions(
                 () -> com.aresstack.spaceharvester.app.ui.deck.visual.SystemFunctionsStore.shared().lookup());
         terminal = new TerminalWorkspace(sessions, accounts);
-        betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http()),
+        betaView = new BetaViewWorkspace(new BetaViewSessions(new HttpBetaViewServer(betaViewAccess.http(),
+                () -> DeckTimeouts.shared().get(DeckTimeouts.Value.BETAVIEW)),
                 connecting), accounts);
         files = new FilesWorkspace(new com.aresstack.spaceharvester.deck.files.FileBrowser(
                 new com.aresstack.spaceharvester.deck.files.local.LocalFileSource(() -> sharedFolders.get()),
                 connecting), editors, new com.aresstack.spaceharvester.deck.files.local.LocalDocumentStore(),
                 new com.aresstack.spaceharvester.app.deck.DocumentPreviewStore(),
                 new com.aresstack.spaceharvester.deck.files.sharepoint.SharePointAccess(
-                        new com.aresstack.spaceharvester.deck.files.sharepoint.windows.NetUseLogin(), connecting),
+                        new com.aresstack.spaceharvester.deck.files.sharepoint.windows.NetUseLogin(
+                                () -> DeckTimeouts.shared().get(DeckTimeouts.Value.SHAREPOINT_LOGIN)), connecting),
                 () -> sharePointSites.get(), accounts);
         ftp = new FtpWorkspace(ftpSessions, accounts, editors);
         ftp.onChatChanged(() -> { if (area == DeckArea.FTP) areaObservers.forEach(Runnable::run); });

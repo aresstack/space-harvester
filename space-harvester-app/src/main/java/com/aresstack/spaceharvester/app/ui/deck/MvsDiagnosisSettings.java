@@ -3,11 +3,7 @@ package com.aresstack.spaceharvester.app.ui.deck;
 import com.aresstack.spaceharvester.app.settings.NumberSetting;
 import com.aresstack.spaceharvester.app.ui.AppState;
 
-import java.time.Duration;
-import java.util.EnumMap;
-import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * Die Werte der MVS-Binärdiagnose und der Hex-Ansicht in FTP-Datasets, gemerkt in {@code app-state.json} unter
@@ -80,10 +76,10 @@ public final class MvsDiagnosisSettings {
         }
     }
 
-    private final AppState state;
+    private final DeckNumbers<Value> numbers;
 
     public MvsDiagnosisSettings(AppState state) {
-        this.state = Objects.requireNonNull(state, "state");
+        this.numbers = new DeckNumbers<>(state, PREFIX, Value.class);
     }
 
     /** Die Werte der laufenden App. */
@@ -93,46 +89,20 @@ public final class MvsDiagnosisSettings {
 
     /** Ein Wert; fehlt er oder ist er ungültig, gilt die Vorgabe. */
     public long get(Value value) {
-        String text = state.get(PREFIX + value.key());
-        if (text == null) {
-            return value.defaultValue();
-        }
-        try {
-            long chosen = Long.parseLong(text.strip());
-            return value.accepts(chosen) ? chosen : value.defaultValue();
-        } catch (NumberFormatException e) {
-            return value.defaultValue();
-        }
+        return numbers.get(value);
     }
 
     public int number(Value value) {
         return (int) get(value);
     }
 
-    public Duration seconds(Value value) {
-        return Duration.ofSeconds(get(value));
-    }
-
     /** Alle Werte, mit Vorgaben aufgefüllt. */
     public Map<Value, Long> values() {
-        Map<Value, Long> values = new EnumMap<>(Value.class);
-        for (Value value : Value.values()) {
-            values.put(value, get(value));
-        }
-        return values;
+        return numbers.values();
     }
 
     /** Speichert die Werte; eine Vorgabe wird nicht gemerkt. */
     public void save(Map<Value, Long> values) {
-        Map<String, String> changes = new LinkedHashMap<>();
-        for (Value value : Value.values()) {
-            long chosen = values.getOrDefault(value, value.defaultValue());
-            if (!value.accepts(chosen)) {
-                throw new IllegalArgumentException(value.label() + " muss zwischen " + value.min() + " und "
-                        + value.max() + " liegen");
-            }
-            changes.put(PREFIX + value.key(), chosen == value.defaultValue() ? null : Long.toString(chosen));
-        }
-        state.putAll(changes);
+        numbers.save(values);
     }
 }
