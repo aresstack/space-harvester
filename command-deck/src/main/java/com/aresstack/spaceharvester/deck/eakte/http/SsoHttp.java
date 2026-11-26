@@ -193,7 +193,8 @@ final class SsoHttp {
     }
 
     /** Eine gestreamte Antwort ({@code GET} eines Dokuments); der Aufrufer schließt {@code body}. */
-    record Stream(URI uri, int status, String location, String contentType, long length, java.io.InputStream body) {
+    record Stream(URI uri, int status, String location, String contentType, long length, java.io.InputStream body,
+                  java.net.http.HttpHeaders headers) {
 
         boolean redirect() {
             return (status == 301 || status == 302 || status == 303 || status == 307 || status == 308)
@@ -212,6 +213,11 @@ final class SsoHttp {
 
     /** {@code GET} mit gestreamtem Inhalt; sonst wie {@link #send}. */
     Stream stream(URI target) throws IOException {
+        return stream(target, Map.of());
+    }
+
+    /** Wie {@link #stream(URI)}, mit weiteren Kopfzeilen (etwa {@code Range} für das Fortsetzen eines Downloads). */
+    Stream stream(URI target, Map<String, String> extra) throws IOException {
         if (!allows(target)) {
             throw new IOException("Weiterleitung zu einem fremden Server abgelehnt: " + host(target));
         }
@@ -221,6 +227,7 @@ final class SsoHttp {
         if (!cookieLine.isEmpty()) {
             request.header("Cookie", cookieLine);
         }
+        extra.forEach(request::header);
         HttpResponse<java.io.InputStream> response;
         try {
             response = client.send(request.build(), HttpResponse.BodyHandlers.ofInputStream());
@@ -235,7 +242,8 @@ final class SsoHttp {
         Stream result = new Stream(target, response.statusCode(),
                 response.headers().firstValue("Location").orElse(null),
                 response.headers().firstValue("Content-Type").orElse(""),
-                response.headers().firstValueAsLong("Content-Length").orElse(-1L), response.body());
+                response.headers().firstValueAsLong("Content-Length").orElse(-1L), response.body(),
+                response.headers());
         if (result.redirect()) {
             trust(target, result.next());
         }

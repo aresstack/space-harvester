@@ -183,6 +183,40 @@ class HttpEakteServerTest {
                 && line.contains(FakeEakteServer.MESSAGE_TYPE));
     }
 
+    /** Angelo 26.11.2026 (WLAN): Ein abgerissenes Dokument geht ab dem letzten Byte weiter, mit derselben Sitzung. */
+    @Test
+    void aBrokenDocumentContinuesFromTheLastByte() throws Exception {
+        HttpEakteServer resuming = new HttpEakteServer(HttpClientFactory.direct(), Duration.ofSeconds(10), trace::add,
+                () -> 2);
+        try (EakteConnection connection = resuming.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
+            EakteEntry inbox = connection.list(connection.rootHref()).get(1);
+            EakteEntry vorgang = connection.list(inbox.href()).get(0);
+            EakteEntry message = connection.list(vorgang.href()).get(0);
+            fake.breakMessageOnce();
+
+            java.io.ByteArrayOutputStream target = new java.io.ByteArrayOutputStream();
+            long copied = connection.download(message.href(), target);
+
+            assertThat(copied).isEqualTo(FakeEakteServer.MESSAGE.length);
+            assertThat(target.toByteArray()).isEqualTo(FakeEakteServer.MESSAGE);
+            assertThat(fake.messageRanges()).containsExactly("-",
+                    "bytes=" + (FakeEakteServer.MESSAGE.length / 4) + "-");
+        }
+        assertThat(fake.passwordPosts()).isEqualTo(1);
+    }
+
+    @Test
+    void withoutResumesABrokenDocumentFails() throws Exception {
+        try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {
+            EakteEntry inbox = connection.list(connection.rootHref()).get(1);
+            EakteEntry vorgang = connection.list(inbox.href()).get(0);
+            EakteEntry message = connection.list(vorgang.href()).get(0);
+            fake.breakMessageOnce();
+            assertThatThrownBy(() -> connection.download(message.href(), java.io.OutputStream.nullOutputStream()))
+                    .isInstanceOf(java.io.IOException.class);
+        }
+    }
+
     @Test
     void separatesNoPermissionServerErrorGoneAndEmptyFolder() throws Exception {
         try (EakteConnection connection = server.connect(profile(true), FakeEakteServer.PASSWORD.toCharArray())) {

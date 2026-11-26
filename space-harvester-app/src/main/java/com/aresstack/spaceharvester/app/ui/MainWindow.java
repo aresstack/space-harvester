@@ -238,7 +238,9 @@ public final class MainWindow implements AppContext.Navigator {
         commandDeck.eakte(new com.aresstack.spaceharvester.deck.eakte.http.HttpEakteServer(
                         com.aresstack.spaceharvester.app.ui.deck.DeckNetwork.http(context,
                                 com.aresstack.spaceharvester.app.ui.deck.EakteWorkspace::proxyWanted),
-                        java.time.Duration.ofSeconds(30), eakteLog::info));
+                        java.time.Duration.ofSeconds(30), eakteLog::info,
+                        // Abgerissene Dokumente so oft ab dem letzten Byte fortsetzen wie jobs.retry.max-attempts.
+                        () -> context.settings() == null ? 0 : context.settings().jobLimits().retry().maxAttempts()));
         // ADR 0035: Dokumentanalyse der E-Akte aus dem laufenden Core, nach jedem (Neu-)Start neu angeschlossen.
         Runnable documentAnalyses = () -> {
             AppRuntime running = context.runtime();
