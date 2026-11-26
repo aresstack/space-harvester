@@ -545,6 +545,9 @@ public class Enrichments {
             EnrichmentProcessor processor = processors.get(enrichment.processorId());
             Enrichment.Freshness freshness = input == null ? Enrichment.Freshness.STALE
                     : enrichment.freshness(input, processor == null ? null : processor.version());
+            if (freshness == Enrichment.Freshness.CURRENT && outdated(enrichment)) {
+                freshness = Enrichment.Freshness.STALE;
+            }
             views.add(new View(enrichment, freshness));
         }
         return new Inspection(input, views, applicable);
@@ -698,7 +701,8 @@ public class Enrichments {
             }
             Enrichment previous = stored.get(processor.id());
             if (!force && previous != null
-                    && previous.freshness(input, processor.version()) == Enrichment.Freshness.CURRENT) {
+                    && previous.freshness(input, processor.version()) == Enrichment.Freshness.CURRENT
+                    && !processor.outdated(previous)) {
                 current++;
                 continue;
             }
@@ -789,7 +793,7 @@ public class Enrichments {
                         .filter(enrichment -> enrichment.processorId().equals(processor.id())).findFirst()
                         .orElse(null);
                 if (!force && previous != null && previous.freshness(currentInput, processor.version())
-                        == Enrichment.Freshness.CURRENT) {
+                        == Enrichment.Freshness.CURRENT && !processor.outdated(previous)) {
                     return Queued.SKIPPED;
                 }
                 Computed computed = attempt(processor, snapshot, current, currentInput);

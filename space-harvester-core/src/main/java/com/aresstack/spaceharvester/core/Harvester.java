@@ -603,6 +603,7 @@ public final class Harvester implements AutoCloseable {
                     new OutlineProcessor(), new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(),
                     new RelationProcessor(), termProcessor));
             processors.addAll(builder.additionalProcessors);
+            builder.snapshotProcessors.forEach(factory -> processors.add(factory.apply(cache::find)));
             if (embedding != null) {
                 processors.add(embedding);
             }
@@ -3551,6 +3552,7 @@ public final class Harvester implements AutoCloseable {
         private int chunkOverlapSentences = KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES;
         private final List<SourceAdapter> sourceAdapters = new ArrayList<>();
         private final List<EnrichmentProcessor> additionalProcessors = new ArrayList<>();
+        private final List<java.util.function.Function<java.util.function.Function<PageKey, Optional<PageSnapshot>>, EnrichmentProcessor>> snapshotProcessors = new ArrayList<>();
         private SourceSecrets secretProvider;
         private EmbeddingProvider embeddingProvider;
         private Predicate<String> embeddingSources;
@@ -3903,6 +3905,12 @@ public final class Harvester implements AutoCloseable {
         /** Eine Quelle wie unter {@code space-harvester.sources}. */
         public Builder source(SourceSettingsConfig source) {
             sources.add(Objects.requireNonNull(source, "source"));
+            return this;
+        }
+
+        /** Supply processors with a read-only lookup of stored snapshots, never a live source. */
+        public Builder snapshotEnrichmentProcessor(java.util.function.Function<java.util.function.Function<PageKey, Optional<PageSnapshot>>, EnrichmentProcessor> factory) {
+            snapshotProcessors.add(java.util.Objects.requireNonNull(factory));
             return this;
         }
 

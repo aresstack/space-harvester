@@ -66,7 +66,7 @@ final class ProgramAnalysisTabs {
                     if (snapshot.payload().rawSha256().equals(artifact.rawSha256())) {
                         analysis = artifact.analysis();
                         message = analysis.isPartial()
-                                ? "Teilanalyse · Copybook-Auflösung aus dem Bestand noch nicht verfügbar."
+                                ? "Teilanalyse · Diagnosen und Copybook-Auflösung beachten."
                                 : "Statische Analyse · keine Laufzeitaussage";
                     }
                 } catch (RuntimeException invalid) {

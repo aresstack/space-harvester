@@ -241,9 +241,11 @@ public final class AppRuntime implements AutoCloseable {
                     ? KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES : ai.chunkOverlapSentences());
         }
         var ftpSources = sources.stream().filter(source -> "ftp".equalsIgnoreCase(source.type()))
-                .map(SourceSettingsConfig::id).collect(java.util.stream.Collectors.toSet());
+                .collect(java.util.stream.Collectors.toMap(SourceSettingsConfig::id,
+                        source -> com.aresstack.spaceharvester.app.runtime.program.StoredCopybooks.libraries(
+                                source.options().get("syslib"))));
         if (!ftpSources.isEmpty()) {
-            builder.enrichmentProcessor(new com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment(ftpSources));
+            builder.snapshotEnrichmentProcessor(lookup -> new com.aresstack.spaceharvester.app.runtime.program.CobolProgramEnrichment(ftpSources, lookup));
         }
         builder.accessPolicy(policy);
         // #499: MaltParser nur auf Knopfdruck; das Modell lädt erst der erste Klick, ohne Modell startet die App normal.

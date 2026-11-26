@@ -18,6 +18,11 @@ public final class StoredCobolSource {
     private StoredCobolSource() { }
 
     public static Optional<CobolSource> read(PageSnapshot snapshot) {
+        return verified(snapshot).filter(source -> containsProgramId(source.content()));
+    }
+
+    /** Recover verified source text for a program or copybook. */
+    static Optional<CobolSource> verified(PageSnapshot snapshot) {
         String path = snapshot.metadata().attributes().get("ftp.path");
         if (path == null || path.isBlank() || snapshot.revision() == null
                 || !NativePayload.DOCUMENT_TEXT.equals(snapshot.payload().nativeFormat())) {
@@ -33,7 +38,7 @@ public final class StoredCobolSource {
             return Optional.empty();
         }
         String code = payload.substring(prefix.length(), payload.length() - suffix.length());
-        if (!hash(code).equalsIgnoreCase(snapshot.revision()) || !containsProgramId(code)) {
+        if (!hash(code).equalsIgnoreCase(snapshot.revision())) {
             return Optional.empty();
         }
         return Optional.of(CobolSource.fixed(path, code));
