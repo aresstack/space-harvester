@@ -45,7 +45,11 @@ Es gibt keinen eigenen Mechanismus nur für Grenzen. Grenzen nutzen die vorhande
    `System.getProperty()` auf.
 5. **Oberfläche.** Grenzen, die für Benutzer wichtig sind, kommen in die Einstellungen der App. Die Spalte „Stand“
    unten zeigt, ob eine Grenze schon einstellbar ist.
-6. **ADR.** Die ADR des Bereichs führt die Grenze in ihrem Abschnitt „Grenzen und Limits“ (ADR 0036 Punkt 12). Dieses
+6. **Command Deck.** Die Einstellungen des Decks (Terminal, NDV, MVS-Binärdiagnose) liegen wie bisher in
+   `app-state.json` unter `deck.*` und stehen in den Einstellungen der App. Zahlen mit Grenzen beschreibt eine
+   Aufzählung nach `NumberSetting` (Schlüssel, Bezeichnung, Hinweis, Vorgabe, Grenzen); `NumberSettingsPanel` zeigt
+   sie einheitlich, wie den Bereich „Video“.
+7. **ADR.** Die ADR des Bereichs führt die Grenze in ihrem Abschnitt „Grenzen und Limits“ (ADR 0036 Punkt 12). Dieses
    Dokument ist die Gesamtliste, und beide müssen übereinstimmen.
 
 ## Die folgenreichsten Grenzen
@@ -74,6 +78,7 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Speicher und Pakete (Desktop-`FileSystemAssetStore.DEFAULT_MAX_TOTAL_BYTES`, `ZipExportPackageReader`, `ImportController.MAX_PACKAGE_BYTES`, `LocalFilesSourceAdapter.MAX_FILE_MEGABYTES`, `BscwSourceAdapter`) | 20 GiB, 256 MiB, 4 GiB, 64 MB, Tiefe 50 | größere Dateien und tiefere Ordner werden nicht geerntet oder importiert | Speicherbudget einstellbar, Bestandsgrenzen beseitigen |
 | KI-Textbudgets (Chat 24.000 Zeichen / 8 Quellen, Podcast, Zusammenfassungen, Fristen 12.000 Zeichen) | fest | Material wird vor dem Modellaufruf gekürzt | aus der Tokenlänge des Modells ableiten |
 | Modellname in der MVS-Diagnose (`MvsDiagnosisTools`) | `gpt-oss-120b` | die Diagnose läuft nur mit diesem Modell | eingestelltes Modell verwenden |
+| MVS-Binärdiagnose und Hex-Ansicht (früher `BinarySample.MAX_CAPTURE_BYTES`, `MvsDiagnosisTools.BUDGET`, Lesegröße 4096, Frist 120 s) | 8 MiB / 65536 / 4096 Bytes / 120 s | größere Stichproben waren unmöglich, die KI las höchstens 64 KiB | **einstellbar**: `MvsDiagnosisSettings` in `app-state.json` (`deck.ftp.diagnosis.sample-bytes`, `read-bytes`, `budget-bytes`, `timeout-seconds`), Einstellungen › Mainframe › „MVS-Binärdiagnose und Hex-Ansicht“. Die Modellfreigabe bleibt bis zur Entscheidung unverändert |
 
 ### Grenzen außerhalb des eigenen Codes
 
@@ -607,7 +612,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `Mp4AudioOnlySource.MAX_BOX_BYTES` | `32 * 1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `Mp4AudioOnlySource.MAX_CHUNKS` | `2_000_000` | fest | Stapel-/Seitengröße | einstellbar |
 | `Mp4AudioOnlySource.REMOTE_READ_BYTES` | `256 * 1024` | fest | Stapel-/Seitengröße | einstellbar |
-| `MvsDiagnosisTools.BUDGET` | `65536` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `NdvBrowser.SEARCH_LIMIT` | `200` | fest | Stapel-/Seitengröße | einstellbar |
 | `NdvChatTools.MAX_OBJECTS` | `300` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `PageDetailPanel.BELOW_RELATIONS_LIMIT` | `1000` | fest | Invariante/Darstellung | im Code belassen |
@@ -665,7 +669,6 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | Konstante | Wert | Stand | Kategorie (vorläufig) | Behandlung |
 |---|---|---|---|---|
 | `BetaViewHttp.MAX_REDIRECTS` | `10` | fest | Protokollgrenze | dokumentieren, berücksichtigen |
-| `BinarySample.MAX_CAPTURE_BYTES` | `8 * 1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `CopybookMemberIndex.TTL_NANOS` | `Duration.ofSeconds(60).toNanos()` | fest | Cache-Aufbewahrung | einstellbar |
 | `FtpProfile.DEFAULT_TIMEOUT_SECONDS` | `60` | Vorgabe | Timeout | einstellbar |
 | `HttpBetaViewServer.TIMEOUT` | `Duration.ofSeconds(60)` | fest | Timeout | einstellbar |

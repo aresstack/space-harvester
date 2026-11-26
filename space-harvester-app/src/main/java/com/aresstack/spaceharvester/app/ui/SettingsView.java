@@ -127,6 +127,22 @@ public final class SettingsView implements View {
     /** Bereich „Terminal“: Aktionsverzögerung, F-Tasten, Sternenhimmel, Maus-Aktionen. */
     final TerminalSettingsPanel terminal =
             new TerminalSettingsPanel(com.aresstack.spaceharvester.app.ui.deck.TerminalSettings.shared());
+    /** Bereich „Mainframe“: Stichprobe, Lesegröße, Budget und Frist der MVS-Binärdiagnose (app-state.json). */
+    static final String MVS_DIAGNOSIS_HEADING = "MVS-Binärdiagnose und Hex-Ansicht";
+    final NumberSettingsPanel<com.aresstack.spaceharvester.app.ui.deck.MvsDiagnosisSettings.Value> mvsDiagnosis =
+            new NumberSettingsPanel<>(MVS_DIAGNOSIS_HEADING,
+                    "Alle Werte der MVS-Binärdiagnose auf ihre Vorgabe zurücksetzen",
+                    com.aresstack.spaceharvester.app.ui.deck.MvsDiagnosisSettings.Value.class,
+                    () -> com.aresstack.spaceharvester.app.ui.deck.MvsDiagnosisSettings.shared().values(),
+                    (values, saved, failed) -> {
+                        try {
+                            com.aresstack.spaceharvester.app.ui.deck.MvsDiagnosisSettings.shared().save(values);
+                            saved.run();
+                        } catch (RuntimeException e) {
+                            failed.accept(e);
+                        }
+                        return true;
+                    });
     /** Bereich „NDV“: Natural-Blockfarben im Editor (wie MainframeMate). */
     final NdvSettingsPanel ndv = new NdvSettingsPanel();
     final NdvAnalysisSettingsPanel ndvAnalysis = new NdvAnalysisSettingsPanel();
@@ -330,7 +346,8 @@ public final class SettingsView implements View {
                         com.aresstack.spaceharvester.app.ui.deck.ConnectionSettings.form(
                                 new com.aresstack.spaceharvester.app.ui.deck.KeePassServerAccounts(context::keePass))),
                 Comic.plate(TerminalSettingsPanel.HEADING, Comic.PETROL, terminal.component()),
-                Comic.plate(TerminalSettingsPanel.MOUSE_HEADING, Comic.PETROL, terminal.mouseComponent())));
+                Comic.plate(TerminalSettingsPanel.MOUSE_HEADING, Comic.PETROL, terminal.mouseComponent()),
+                Comic.plate(MVS_DIAGNOSIS_HEADING, Comic.PETROL, mvsDiagnosis.component())));
         page(NDV, Comic.column(Comic.plate(NdvSettingsPanel.HEADING, Comic.PETROL, ndv.component()),
                 Comic.plate(NdvAnalysisSettingsPanel.ORDER_HEADING, Comic.PETROL, ndvAnalysis.orderComponent()),
                 Comic.plate(NdvAnalysisSettingsPanel.STEPLIB_HEADING, Comic.PETROL, ndvAnalysis.stepLibComponent()),
