@@ -1,5 +1,9 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
+import com.aresstack.enterpriseai.astu.source.SourceLocators;
+import com.aresstack.enterpriseai.astu.source.SourceSettings;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.ui.deck.FtpNavigationObserver;
@@ -61,12 +65,19 @@ final class FtpNavigationFill implements FtpNavigationObserver {
                 .map(AppSettings.SourceEntry::id).toList();
     }
 
+    /** Nur für {@link FtpSourceProvider#locator}: liest keine Zugangsdaten. */
+    private static final FtpSourceProvider FTP = new FtpSourceProvider(ref -> {
+        throw new SecretUnavailableException(SecretUnavailableException.Reason.NOT_AVAILABLE, ref,
+                "Nur Adressvergleich");
+    });
+
     static boolean matches(SourceSettingsConfig config, FtpProfile profile, String account, String user, boolean mvs) {
         if (!"ftp".equals(config.type()) || !Boolean.parseBoolean(config.options().get("navigationFill"))) {
             return false;
         }
-        String host = config.options().getOrDefault("host", "");
-        if (!host.trim().equalsIgnoreCase(profile.host()) || port(config) != profile.port()
+        // Host und Port wie die Quelle selbst sie liest (Standardports des Anbieters, etwa bei implizitem TLS).
+        String endpoint = FTP.locator(SourceSettings.of(config.options()));
+        if (endpoint.isEmpty() || !endpoint.equals(SourceLocators.hostPort(profile.host(), profile.port()))
                 || user == null || user.isBlank()) {
             return false;
         }
@@ -76,15 +87,6 @@ final class FtpNavigationFill implements FtpNavigationObserver {
         }
         return config.auth().type() == SourceSettingsConfig.AuthType.NONE && account != null
                 && ("keepass:" + account).equals(config.options().get("credentialRef"));
-    }
-
-    private static int port(SourceSettingsConfig config) {
-        try {
-            String defaultPort = "implicit".equalsIgnoreCase(config.options().get("tls")) ? "990" : "21";
-            return Integer.parseInt(config.options().getOrDefault("port", defaultPort).trim());
-        } catch (NumberFormatException e) {
-            return -1;
-        }
     }
 
     static List<String> directFiles(boolean mvs, List<RemoteEntry> entries) {

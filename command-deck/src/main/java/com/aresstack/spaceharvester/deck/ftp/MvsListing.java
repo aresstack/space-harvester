@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.deck.ftp;
 
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.MvsDatasetListing;
+
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -20,9 +22,7 @@ public final class MvsListing {
     public record Line(String name, RemoteEntry.Details details, Optional<java.time.Instant> modified) {
     }
 
-    private static final Pattern RECFM = Pattern.compile("^[FVU]B?S?A?M?$");
     private static final Pattern NUMBER = Pattern.compile("^\\d+$");
-    private static final Pattern DSORG = Pattern.compile("^(PO|PS|PO-E|VS|DA|IS|\\?\\?)$");
     private static final Pattern DATE = Pattern.compile("^\\d{4}/\\d{2}/\\d{2}$");
     private static final Pattern VERSION = Pattern.compile("^\\d{2}\\.\\d{2}$");
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyy/MM/dd", Locale.ROOT);
@@ -31,49 +31,22 @@ public final class MvsListing {
     private MvsListing() {
     }
 
-    /** Eine Zeile einer Dataset-Liste; leer für Überschrift und Unlesbares. */
+    /**
+     * Eine Zeile einer Dataset-Liste; leer für Überschrift und Unlesbares. Die Spalten liest dieselbe Stelle wie Inventur
+     * und Eignungsprüfung der Quelle ({@link MvsDatasetListing}); migrierte Datasets zeigen das Volume {@code MIGRAT}.
+     */
     public static Optional<Line> dataset(String raw) {
-        if (raw == null || raw.isBlank()) {
+        MvsDatasetListing.Dataset dataset = MvsDatasetListing.parse(raw);
+        if (dataset == null) {
             return Optional.empty();
         }
-        String[] tokens = raw.trim().split("\\s+");
-        if (tokens.length < 2 || tokens[0].equalsIgnoreCase("Volume")) {
-            return Optional.empty();
-        }
-        String name = MvsPath.unquote(tokens[tokens.length - 1]).toUpperCase(Locale.ROOT);
-        if (tokens[0].equalsIgnoreCase("Migrated") || tokens[0].equalsIgnoreCase("ARCIVE")) {
-            return Optional.of(new Line(name, new RemoteEntry.Details("", 0, 0, "", "MIGRAT", 0, ""),
+        if (dataset.migrated()) {
+            return Optional.of(new Line(dataset.name(), new RemoteEntry.Details("", 0, 0, "", "MIGRAT", 0, ""),
                     Optional.empty()));
         }
-        String volume = tokens[0];
-        String organization = "";
-        String recfm = "";
-        int lrecl = 0;
-        int blksize = 0;
-        Optional<java.time.Instant> referred = Optional.empty();
-        int last = tokens.length - 2;
-        if (last >= 0 && DSORG.matcher(tokens[last]).matches()) {
-            organization = tokens[last];
-            last--;
-        }
-        // Von rechts: BlkSz, Lrecl, Recfm
-        if (last >= 2 && NUMBER.matcher(tokens[last]).matches() && NUMBER.matcher(tokens[last - 1]).matches()
-                && RECFM.matcher(tokens[last - 2]).matches()) {
-            blksize = Integer.parseInt(tokens[last]);
-            lrecl = Integer.parseInt(tokens[last - 1]);
-            recfm = tokens[last - 2];
-        }
-        for (String token : tokens) {
-            if (DATE.matcher(token).matches()) {
-                referred = day(token);
-                break;
-            }
-        }
-        if (organization.isEmpty() && recfm.isEmpty()) {
-            return Optional.empty();
-        }
-        return Optional.of(new Line(name, new RemoteEntry.Details(recfm, lrecl, blksize, organization, volume, 0, ""),
-                referred));
+        return Optional.of(new Line(dataset.name(), new RemoteEntry.Details(dataset.recordFormat(),
+                dataset.recordLength(), dataset.blockSize(), dataset.organization(), dataset.volume(), 0, ""),
+                dataset.referred().isEmpty() ? Optional.empty() : day(dataset.referred())));
     }
 
     /** Eine Zeile einer Member-Liste (mit oder ohne ISPF-Statistik); leer für die Überschrift. */

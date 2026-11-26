@@ -732,13 +732,19 @@ public final class Workspace {
     /**
      * Schedule direct native resources through the shared acquisition and index pipeline. Stops at the first failure
      * of the source itself (refused login, unreachable host), so one visit never repeats a failing login per member.
-     * Records the acquisition reason "navigation" for every scheduled resource (ADR 0037, point 3).
+     * Records the acquisition reason "navigation" for every scheduled resource (ADR 0037, point 3). Resources already
+     * stored are checked for freshness against the source on every visit (Angelo 26.11.2026): the shared refresh path
+     * ({@code PageLoads.join} with {@code refresh}) compares the source version first and fetches content only when it
+     * changed.
+     *
+     * @return the background loads to wait for, or {@code null} when nothing was scheduled
      */
-    public void acquireVisitedResources(String sourceId, java.util.Collection<String> paths) {
+    public com.aresstack.spaceharvester.application.background.PageLoads.Joined acquireVisitedResources(
+            String sourceId, java.util.Collection<String> paths) {
         HarvestSource source = sources().stream().filter(candidate -> candidate.id().equals(sourceId))
                 .findFirst().orElse(null);
         if (source == null) {
-            return;
+            return null;
         }
         java.util.Set<PageKey> keys = new java.util.LinkedHashSet<>();
         for (String path : paths) {
@@ -761,8 +767,9 @@ public final class Workspace {
         if (!keys.isEmpty()) {
             // Erwerbsgrund „Navigation“ merken (ADR 0037, Punkt 3); Bereich ist bei FTP/NDV die Quelle selbst.
             harvester.navigationMarks().mark(sourceId, sourceId, keys.stream().map(PageKey::pageId).toList());
-            harvester.pageLoads().join(caller, "Besuchte Quelltexte laden", keys);
+            return harvester.pageLoads().join(caller, "Besuchte Quelltexte laden", keys, true);
         }
+        return null;
     }
 
     /**
