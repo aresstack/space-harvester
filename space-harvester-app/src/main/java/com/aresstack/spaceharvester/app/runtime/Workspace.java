@@ -559,6 +559,11 @@ public final class Workspace {
                 visitor -> harvester.pages().visitCachedHeaders(caller, sourceId, visitor, cancelled), cancelled);
     }
 
+    public java.util.Set<String> programMcpSources() {
+        return programSearchSources().stream().filter(harvester.aiRelease()::sourceReleased)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
     public List<String> programSearchSources() {
         return sources().stream()
                 .filter(source -> "ftp".equalsIgnoreCase(source.type()) || "ndv".equalsIgnoreCase(source.type()))

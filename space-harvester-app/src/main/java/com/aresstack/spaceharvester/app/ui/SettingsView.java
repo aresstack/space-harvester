@@ -311,6 +311,7 @@ public final class SettingsView implements View {
                 Comic.plate(DISPLAY_TITLE, Comic.BLUE, displayRows),
                 Comic.plate(ANALYTICS_TITLE, Comic.PETROL, analyticsRows),
                 Comic.plate("Ablage", Comic.PETROL, data),
+                Comic.plate("Lokaler MCP-Zugriff auf Programmanalysen", Comic.PETROL, new ProgramMcpPanel(context)),
                 Comic.plate(FileAccessEditor.HEADING, Comic.ORANGE, fileAccess.component()),
                 Comic.plate("Diagnose", Comic.DARK, diagnosis),
                 Comic.plate(CONSOLE_TITLE, Comic.DARK, consoleRows)));

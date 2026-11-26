@@ -49,6 +49,8 @@ import java.util.stream.Stream;
 public final class AppRuntime implements AutoCloseable {
 
     private volatile AppSettings settings;
+    private com.aresstack.spaceharvester.app.runtime.program.ProgramMcpServer programMcp;
+    private boolean closed;
     private volatile List<String> lastRejection = List.of();
     private final Harvester harvester;
     /** Laufzeitkonfiguration des Harvesters (ADR 0015); eine aktivierte Version wirkt ohne Neustart. */
@@ -450,8 +452,58 @@ public final class AppRuntime implements AutoCloseable {
         return waitingForSecret;
     }
 
+    public synchronized com.aresstack.spaceharvester.app.runtime.program.ProgramMcpServer startProgramMcp(
+            Set<String> selected) throws java.io.IOException {
+        if (closed) throw new IllegalStateException("Runtime closed");
+        if (programMcp != null) throw new IllegalStateException("MCP already running");
+        if (selected.isEmpty() || !workspace.programMcpSources().containsAll(selected)
+                || !settings.ai().externalProcessingSources().containsAll(selected)) {
+            throw new IllegalArgumentException("No authorized program sources selected");
+        }
+        var tools = new com.aresstack.spaceharvester.app.runtime.program.ProgramMcpTools(
+                new com.aresstack.spaceharvester.app.runtime.program.ProgramMcpTools.Holdings() {
+                    @Override public Set<String> sources() {
+                        var allowed = new java.util.HashSet<>(workspace.programMcpSources());
+                        allowed.retainAll(settings.ai().externalProcessingSources());
+                        return Set.copyOf(allowed);
+                    }
+                    @Override public com.aresstack.spaceharvester.app.runtime.program.StoredProgramSearch.Snapshot search(
+                            Set<String> sources, java.util.function.BooleanSupplier cancelled) {
+                        return workspace.storedProgramSearch(sources, cancelled);
+                    }
+                    @Override public java.util.Optional<com.aresstack.spaceharvester.application.query.DeliveredPage> page(
+                            com.aresstack.spaceharvester.application.snapshot.PageKey key) {
+                        return workspace.cachedPage(key.sourceId(), key.pageId());
+                    }
+                    @Override public java.util.List<com.aresstack.spaceharvester.application.enrichment.Enrichments.View> analyses(
+                            com.aresstack.spaceharvester.application.query.DeliveredPage page) {
+                        return workspace.enrichments(page);
+                    }
+                    @Override public void authorize(com.aresstack.spaceharvester.application.query.DeliveredPage page) {
+                        if (!sources().contains(page.header().key().sourceId())) {
+                            throw new IllegalStateException("Source no longer authorized");
+                        }
+                    }
+                }, selected);
+        programMcp = new com.aresstack.spaceharvester.app.runtime.program.ProgramMcpServer(tools);
+        return programMcp;
+    }
+
+    public synchronized java.util.Optional<com.aresstack.spaceharvester.app.runtime.program.ProgramMcpServer> programMcp() {
+        return java.util.Optional.ofNullable(programMcp);
+    }
+
+    public synchronized void stopProgramMcp() {
+        if (programMcp != null) {
+            programMcp.close();
+            programMcp = null;
+        }
+    }
+
     @Override
-    public void close() {
+    public synchronized void close() {
+        closed = true;
+        stopProgramMcp();
         harvester.close();
     }
 
