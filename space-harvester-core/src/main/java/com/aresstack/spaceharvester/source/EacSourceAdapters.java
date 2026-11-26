@@ -15,6 +15,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.outlook.OutlookSour
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointCredentials;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointCredentialsProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointSourceProvider;
+import com.aresstack.spaceharvester.application.sources.SourceDefaults;
 
 /**
  * Quellentypen aus den Kopien des Enterprise AI Client ohne Seitenliste je Partition (#187), über
@@ -43,17 +44,20 @@ public final class EacSourceAdapters {
 
     public static SourceAdapter ftp() {
         return KnowledgeSourceProviderAdapter.connected(connection -> new FtpSourceProvider(connection.secrets()),
-                CREDENTIAL_REF, null).named("FTP").withoutTls().withCredentialRefPassThrough();
+                CREDENTIAL_REF, null).named("FTP").withoutTls().withCredentialRefPassThrough()
+                .withDefaults(SourceDefaults.TARGETED_SEARCH);
     }
 
     public static SourceAdapter jes() {
         return KnowledgeSourceProviderAdapter.connected(connection -> new JesSourceProvider(connection.secrets()),
-                CREDENTIAL_REF, null).named("JES").withoutTls().withCredentialRefPassThrough().requiringCredentials();
+                CREDENTIAL_REF, null).named("JES").withoutTls().withCredentialRefPassThrough().requiringCredentials()
+                .withDefaults(SourceDefaults.TARGETED_SEARCH);
     }
 
     public static SourceAdapter ndv() {
         return KnowledgeSourceProviderAdapter.connected(connection -> new NdvSourceProvider(connection.secrets()),
-                CREDENTIAL_REF, null).named("NDV").withoutTls().withCredentialRefPassThrough().requiringCredentials();
+                CREDENTIAL_REF, null).named("NDV").withoutTls().withCredentialRefPassThrough().requiringCredentials()
+                .withDefaults(SourceDefaults.TARGETED_SEARCH);
     }
 
     public static SourceAdapter sharePoint() {
@@ -61,7 +65,7 @@ public final class EacSourceAdapters {
                 ref -> sharePointCredentials(connection.secrets(), ref), connection.routes(), connection.tls(),
                 connection.userAgent(), new OneNoteContentDetector(DocumentExtraction.detector()),
                 DocumentExtraction.registry()),
-                CREDENTIAL_REF, null).withCredentialRefPassThrough();
+                CREDENTIAL_REF, null).withCredentialRefPassThrough().withDefaults(SourceDefaults.INTEGRATED_LOGIN);
     }
 
     public static SourceAdapter betaView() {
@@ -69,7 +73,8 @@ public final class EacSourceAdapters {
                 ref -> betaViewCredentials(connection.secrets(), ref), connection.routes(), connection.tls(),
                 connection.userAgent(), new OneNoteContentDetector(DocumentExtraction.detector()),
                 DocumentExtraction.registry()),
-                CREDENTIAL_REF, null).withCredentialRefPassThrough().requiringCredentials();
+                CREDENTIAL_REF, null).withCredentialRefPassThrough().requiringCredentials()
+                .withDefaults(SourceDefaults.TARGETED_SEARCH);
     }
 
     /**
