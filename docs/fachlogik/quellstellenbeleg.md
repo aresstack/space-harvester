@@ -70,7 +70,19 @@ Teil 1 führt keine Grenze ein: keine Höchstzahl an Codestellen, Parserfakten o
   Analyseversion), gelesen nur über `ProgramAnalysisAccess`; `ProgramCurrentSources` liefert den jetzigen Stand. Das
   Auftragsereignis nennt übernommene und ausgelassene Hypothesen.
 
-## Teil 3 (offen)
+## Teil 3a: Veralten beim Lesen
+
+Ändert sich ein Copybook oder die Programmanalyse, ohne dass sich der Programmtext ändert, bliebe die Programmanalyse
+allein am Programmtext gemessen aktuell. Deshalb prüft `StatementAnalysis.reason` bei jeder Analyse mit
+Programmaussagen alle Quellstellenbelege mit `SourceLocationCheck` gegen den eingerichteten Port
+(`StatementAnalysis.programSources`, je Aufrufer). Ist ein Beleg möglicherweise veraltet oder nicht prüfbar, steht die
+Analyse auf `STALE` mit dem Grund `PageStatements.EVIDENCE_CHANGED`. Das gilt an der einen Lesestelle für Aussagen-Reiter
+und Knowledge Graph. Die App richtet den Port in `Workspace` mit `ProgramCurrentSources` ein, mit den Leserechten des
+Aufrufers. Laufzeiten ohne Programmanalyse (Dienst) richten keinen ein; dort zählt nur der Programmtext. Der Aussagen-
+Reiter nennt den Grund und verweist auf eine neue „Fachliche KI-Analyse“. Erst sie erzeugt neue Aussagen-IDs, frühere
+Bestätigungen wandern nicht mit.
+
+## Teil 3b (offen)
 
 Anzeige von Erkenntnisebene (Hypothese, bestätigt, Bestätigung veraltet) und Quellstelle in Aussagen-Reiter und Belege-
 Overlay; Zählung der Programmaussagen in Fachsicht, Glossar und Stand als Ist.

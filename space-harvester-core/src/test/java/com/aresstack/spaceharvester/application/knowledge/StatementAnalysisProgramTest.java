@@ -107,6 +107,49 @@ class StatementAnalysisProgramTest {
                         .isEqualTo(ParsedStatements.Origin.PROGRAMM));
     }
 
+    @Test
+    void aChangedCopybookOrAnalysisMarksTheProgramStatementsPossiblyStaleWithoutTextChange() {
+        var copybook = DocumentKey.page(new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "CP"));
+        var withCopybook = new SourceLocationEvidence(document, "p1",
+                List.of(new SourceLocationEvidence.CodeSite(document, "p1", 120, 121)), List.of(),
+                List.of(SourceLocationEvidence.Dependency.resolved("ANTRAGCP", copybook, "c1")), VERSION);
+        var sources = new Sources();
+        sources.copybook = Optional.of(new CurrentSources.Resolved(copybook, "c1"));
+        analysis.programSources(reader -> sources);
+        analysis.analyzeProgram(CALLER, program, List.of(new StatementAnalysis.ProgramHypothesis(
+                "Der Sachbearbeiter prüft den Antrag.", withCopybook)), sources, () -> false);
+        assertThat(analysis.read(CALLER, program).state()).isEqualTo(PageStatements.State.CURRENT);
+
+        sources.copybook = Optional.of(new CurrentSources.Resolved(copybook, "c2"));
+        var afterCopybook = analysis.read(CALLER, program);
+        sources.copybook = Optional.of(new CurrentSources.Resolved(copybook, "c1"));
+        sources.version = "cobol-program@4";
+        var afterAnalysis = analysis.read(CALLER, program);
+
+        assertThat(afterCopybook.state()).isEqualTo(PageStatements.State.STALE);
+        assertThat(afterCopybook.reason()).isEqualTo(PageStatements.EVIDENCE_CHANGED);
+        assertThat(afterAnalysis.reason()).isEqualTo(PageStatements.EVIDENCE_CHANGED);
+    }
+
+    @Test
+    void anUnreadableCopybookCannotKeepTheEvidenceCurrent() {
+        var copybook = DocumentKey.page(new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "CP"));
+        var sources = new Sources();
+        sources.copybook = Optional.of(new CurrentSources.Resolved(copybook, "c1"));
+        analysis.analyzeProgram(CALLER, program, List.of(new StatementAnalysis.ProgramHypothesis(
+                "Der Sachbearbeiter prüft den Antrag.", new SourceLocationEvidence(document, "p1",
+                        List.of(new SourceLocationEvidence.CodeSite(document, "p1", 120, 121),
+                                new SourceLocationEvidence.CodeSite(copybook, "c1", 3, 4)), List.of(),
+                        List.of(SourceLocationEvidence.Dependency.resolved("ANTRAGCP", copybook, "c1")), VERSION))),
+                sources, () -> false);
+        var unreadable = new Sources();
+        unreadable.copybook = Optional.of(new CurrentSources.Resolved(copybook, "c1"));
+        unreadable.copybookReadable = false;
+        analysis.programSources(reader -> unreadable);
+
+        assertThat(analysis.read(CALLER, program).reason()).isEqualTo(PageStatements.EVIDENCE_CHANGED);
+    }
+
     private SourceLocationEvidence source(int line, String revision) {
         return new SourceLocationEvidence(document, revision,
                 List.of(new SourceLocationEvidence.CodeSite(document, revision, line, line + 1)),
@@ -114,16 +157,18 @@ class StatementAnalysisProgramTest {
                 List.of(), VERSION);
     }
 
-    /** Programm in Revision p1 mit 400 Zeilen, analysiert mit {@value #VERSION}. */
+    /** Programm in Revision p1 mit 400 Zeilen, analysiert mit {@code version} (Vorgabe {@value #VERSION}). */
     private final class Sources implements CurrentSources {
         Optional<Resolved> copybook = Optional.empty();
+        boolean copybookReadable = true;
+        String version = VERSION;
 
         @Override
         public Optional<Current> document(DocumentKey key) {
             if (key.equals(document)) {
                 return Optional.of(new Current("p1", 400));
             }
-            return copybook.filter(resolved -> resolved.document().equals(key))
+            return copybook.filter(resolved -> copybookReadable && resolved.document().equals(key))
                     .map(resolved -> new Current(resolved.revision(), 50));
         }
 
@@ -134,7 +179,7 @@ class StatementAnalysisProgramTest {
 
         @Override
         public Optional<String> analysisVersion(DocumentKey program) {
-            return Optional.of(VERSION);
+            return Optional.of(version);
         }
     }
 }

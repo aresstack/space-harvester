@@ -21,6 +21,12 @@ public record PageStatements(State state, String reason, PageStatementAnalysis a
     public static final String ANALYZER_CHANGED = "analyzer-changed";
     /** Nach dem Entzug der KI-Freigabe fehlen Aussagen der Vorstufe (ADR 0028, ADR 0032 FL3): neu ohne Vorstufe. */
     public static final String STAGE_WITHDRAWN = "stage-withdrawn";
+    /**
+     * Ein Quellstellenbeleg der Programmaussagen ist nicht mehr aktuell oder nicht prüfbar: Programmcode, eine
+     * Abhängigkeit oder die Programmanalyse hat sich geändert (ADR 0032, Fortschreibung 26.11.2026; ADR 0041). Eine
+     * frühere Bestätigung gilt nicht für den neuen Stand.
+     */
+    public static final String EVIDENCE_CHANGED = "evidence-changed";
     /** Die Seite liegt nicht mehr im Bestand. */
     public static final String PAGE_MISSING = "page-missing";
 

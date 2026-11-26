@@ -110,6 +110,11 @@ public final class Workspace {
         this.caller = harvester.caller();
         this.glossary = new CoreGlossaryAccess(harvester, caller, this::subscribeJobs);
         this.activities = Objects.requireNonNull(activities, "activities");
+        // ADR 0032 (Fortschreibung 26.11.2026): Programmaussagen werden beim Lesen gegen den aktuellen Code, die
+        // Copybooks und die Programmanalyse geprüft, je mit den Leserechten des Aufrufers
+        harvester.statementAnalysis().programSources(reader ->
+                new com.aresstack.spaceharvester.app.runtime.program.ProgramCurrentSources(
+                        key -> cachedPage(reader, key), programAnalyses()));
     }
 
     // ------------------------------------------------------------------ Wissensquellen
@@ -655,8 +660,12 @@ public final class Workspace {
      * nicht lokal liegt oder nicht lesbar ist. Das Wissen des Chats liest so (ADR 0028: nur Lokales geht an die KI).
      */
     public Optional<DeliveredPage> cachedPage(String sourceId, String pageId) {
+        return cachedPage(caller, new PageKey(sourceId, pageId));
+    }
+
+    private Optional<DeliveredPage> cachedPage(AccessContext reader, PageKey key) {
         try {
-            return harvester.pages().cached(caller, sourceId, pageId);
+            return harvester.pages().cached(reader, key.sourceId(), key.pageId());
         } catch (AccessDeniedException | UnknownSourceException e) {
             return Optional.empty();
         }

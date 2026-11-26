@@ -101,6 +101,9 @@ final class StatementsTab extends JPanel {
             + "eingestellt (Einstellungen › Modelle).";
     static final String SIMPLIFY_NOT_RELEASED = "Die Vorstufe „" + SIMPLIFY + "“ lief nicht: Die Seite ist nicht für "
             + "die KI freigegeben.";
+    static final String EVIDENCE_CHANGED = "Programmcode, ein Copybook oder die Programmanalyse hat sich seit der "
+            + "Übernahme geändert. Die Programmaussagen unten sind möglicherweise veraltet, frühere Bestätigungen gelten "
+            + "nicht für den neuen Stand; erst eine neue „Fachliche KI-Analyse“ ersetzt sie.";
     static final String STAGE_WITHDRAWN = "Die KI-Freigabe der Seite wurde entzogen; die Aussagen der Vorstufe sind "
             + "entfernt. Bitte neu ohne Vorstufe rechnen.";
     static final String NO_EVIDENCE = "Belege und Sprünge entfallen, weil sich der Text geändert hat.";
@@ -1428,8 +1431,12 @@ final class StatementsTab extends JPanel {
                         + "geändert.";
                 case PageStatements.NO_TEXT -> "Die Seite hat derzeit keinen analysierbaren Text.";
                 case PageStatements.STAGE_WITHDRAWN -> STAGE_WITHDRAWN;
+                case PageStatements.EVIDENCE_CHANGED -> EVIDENCE_CHANGED;
                 default -> "Die Analyse passt nicht mehr zur Seite.";
             };
+            if (PageStatements.EVIDENCE_CHANGED.equals(statements.reason())) {
+                return why;
+            }
             return why + " Die Aussagen unten sind veraltet; „" + ANALYZE + "“ ersetzt sie.";
         }
         return "Analysiert am " + statements.analysis().analyzedAt().toString().replace('T', ' ').replace("Z", " UTC")
