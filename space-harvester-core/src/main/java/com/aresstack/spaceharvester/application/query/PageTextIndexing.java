@@ -76,7 +76,8 @@ public final class PageTextIndexing {
             }
             index.put(new PageTextIndex.Entry(snapshot.key(), current.partitionKey(), current.title(),
                     text.get().text(), input, mediaType, 0,
-                    text.get().sections().stream().map(PageText.Section::heading).toList()));
+                    text.get().sections().stream()
+                            .map(section -> new PageTextIndex.Heading(section.heading(), section.start())).toList()));
             return true;
         } catch (RuntimeException e) {
             // Ohne Meldung: sie könnte Text der Seite enthalten.

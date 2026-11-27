@@ -104,6 +104,8 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     private static final String HEADING = "heading";
     /** Jede Überschrift als Ganzes, so zerlegt wie die Anfrage ({@link #normalized}): exakte Überschrift oben. */
     private static final String HEADING_EXACT = "headingExact";
+    /** Gespeichert je Überschrift: ihre zerlegte Form, {@link #SEPARATOR}, ihre Zeichenposition im Text. */
+    private static final String HEADING_START = "headingStart";
     /** Gespeichertes Kennzeichen: der Eintrag führt die Überschriften (Einträge von vorher werden nachgeschrieben). */
     private static final String HEADINGS_INDEXED = "headingsIndexed";
     /** Gewicht eines Worts in Titel, Dateiname oder Überschrift gegenüber dem Fließtext. */
@@ -231,13 +233,14 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         doc.add(new StringField(SPACE_KEY, entry.spaceKey(), Field.Store.YES));
         doc.add(new TextField(TITLE, entry.title(), Field.Store.YES));
         doc.add(new TextField(TEXT, text, Field.Store.YES));
-        for (String heading : entry.headings()) {
-            doc.add(new TextField(HEADING, heading, Field.Store.NO));
-            String exact = normalized(heading);
+        for (PageTextIndex.Heading heading : entry.headings()) {
+            doc.add(new TextField(HEADING, heading.text(), Field.Store.NO));
+            String exact = normalized(heading.text());
             // Längere Überschriften als ein Lucene-Wort fassen kann, finden sich weiter über ihre Wörter.
             if (!exact.isEmpty() && exact.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
                     <= IndexWriter.MAX_TERM_LENGTH) {
                 doc.add(new StringField(HEADING_EXACT, exact, Field.Store.NO));
+                doc.add(new StoredField(HEADING_START, exact + SEPARATOR + heading.start()));
             }
         }
         doc.add(new StoredField(HEADINGS_INDEXED, Boolean.TRUE.toString()));
@@ -607,7 +610,6 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         // Eine Überschrift, die genau der Anfrage entspricht, steht oben (wie exakte Treffer zu Seitennummern, #1661),
         // in denselben Grenzen wie die übrige Rangfolge; darunter die normale Liste.
         String exact = normalized(bounded);
-        List<String> exactTokens = exact.isEmpty() ? List.of() : List.of(exact.split(" "));
         BooleanQuery exactQuery = exact.isEmpty() ? null : new BooleanQuery.Builder()
                 .add(built, BooleanClause.Occur.FILTER)
                 .add(new TermQuery(new Term(HEADING_EXACT, exact)), BooleanClause.Occur.MUST).build();
@@ -640,7 +642,7 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
                         continue;
                     }
                     String snippet = exactDocs.contains(hit.doc)
-                            ? window(doc.get(TEXT), sequenceAt(doc.get(TEXT), exactTokens))
+                            ? window(doc.get(TEXT), headingStart(doc, exact))
                             : window(doc.get(TEXT), wanted);
                     // Nur für ausgelieferte Treffer: je Wort und Feld ein Blick in die Postings dieses Dokuments.
                     Words words = words(searcher, hit.doc, terms);
@@ -791,35 +793,15 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         return String.join(" ", words);
     }
 
-    /** Zeichenposition, an der die Wortfolge {@code words} im Text beginnt, sonst -1. */
-    private int sequenceAt(String text, List<String> words) {
-        if (text == null || words.isEmpty()) {
-            return -1;
-        }
-        try (TokenStream tokens = analyzer.tokenStream(TEXT, text)) {
-            CharTermAttribute term = tokens.addAttribute(CharTermAttribute.class);
-            OffsetAttribute offset = tokens.addAttribute(OffsetAttribute.class);
-            tokens.reset();
-            java.util.ArrayDeque<Integer> starts = new java.util.ArrayDeque<>();
-            java.util.ArrayDeque<String> recent = new java.util.ArrayDeque<>();
-            int found = -1;
-            while (tokens.incrementToken()) {
-                recent.addLast(term.toString());
-                starts.addLast(offset.startOffset());
-                if (recent.size() > words.size()) {
-                    recent.removeFirst();
-                    starts.removeFirst();
-                }
-                if (recent.size() == words.size() && List.copyOf(recent).equals(words)) {
-                    found = starts.peekFirst();
-                    break;
-                }
+    /** Zeichenposition der Überschrift {@code exact} (zerlegte Form) im Text des Dokuments, sonst -1. */
+    private static int headingStart(Document doc, String exact) {
+        for (String stored : doc.getValues(HEADING_START)) {
+            int split = stored.lastIndexOf(SEPARATOR);
+            if (split > 0 && stored.substring(0, split).equals(exact)) {
+                return Integer.parseInt(stored.substring(split + 1));
             }
-            tokens.end();
-            return found;
-        } catch (IOException e) {
-            return -1;
         }
+        return -1;
     }
 
     /** Zeichenposition des ersten Worts im Text, das eines der Suchwörter ist, sonst -1. */
