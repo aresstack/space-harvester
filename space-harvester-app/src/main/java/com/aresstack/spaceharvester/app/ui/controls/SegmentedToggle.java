@@ -43,7 +43,20 @@ public final class SegmentedToggle extends JPanel {
 
     /** Fügt eine Hälfte an; die erste ist gewählt. */
     public SegmentedToggle segment(String name) {
+        return segment(name, null);
+    }
+
+    /**
+     * Fügt eine Hälfte an, die statt ihres Namens nur ein Symbol zeigt (Angelo 27.11.2026: Umschalter einheitlich als
+     * Symbole); der Name steht im Tooltip und für Bildschirmleser. Gewählt wird das Symbol in der Schriftfarbe der
+     * gefüllten Hälfte gezeichnet, gleich welche Farbe es selbst mitbringt.
+     */
+    public SegmentedToggle segment(String name, javax.swing.Icon icon) {
         Segment segment = new Segment(name);
+        segment.icon = icon;
+        if (icon != null) {
+            segment.setToolTipText(name);
+        }
         segments.put(name, segment);
         group.add(segment);
         add(segment);
@@ -110,6 +123,44 @@ public final class SegmentedToggle extends JPanel {
     private final class Segment extends JToggleButton {
         private int count;
         private Color tone = Comic.PETROL;
+        /** Das Symbol an Stelle des Namens, oder {@code null}. */
+        private javax.swing.Icon icon;
+
+        /** Breite dessen, was die Hälfte zeigt: Symbol oder Name. */
+        private int labelWidth(FontMetrics metrics) {
+            return icon != null ? icon.getIconWidth() : metrics.stringWidth(getText());
+        }
+
+        /** Zeichnet Symbol oder Name; ein Symbol auf der gefüllten Hälfte ganz in {@code color}. */
+        private void paintLabel(Graphics2D g, int x, int height, Color color, boolean on, FontMetrics metrics) {
+            if (icon == null) {
+                g.setColor(color);
+                g.drawString(getText(), x, (height - metrics.getHeight()) / 2 + metrics.getAscent());
+                return;
+            }
+            int y = (height - icon.getIconHeight()) / 2;
+            setForeground(color);
+            if (!on) {
+                icon.paintIcon(this, g, x, y);
+                return;
+            }
+            // Doppelte Auflösung, damit das eingefärbte Symbol auf dichten Bildschirmen scharf bleibt.
+            int scale = 2;
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(icon.getIconWidth() * scale,
+                    icon.getIconHeight() * scale, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            Graphics2D ig = image.createGraphics();
+            try {
+                ig.scale(scale, scale);
+                icon.paintIcon(this, ig, 0, 0);
+                ig.setComposite(java.awt.AlphaComposite.SrcIn);
+                ig.setColor(color);
+                ig.fillRect(0, 0, icon.getIconWidth(), icon.getIconHeight());
+            } finally {
+                ig.dispose();
+            }
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(image, x, y, icon.getIconWidth(), icon.getIconHeight(), null);
+        }
 
         Segment(String name) {
             super(name);
@@ -134,7 +185,7 @@ public final class SegmentedToggle extends JPanel {
         @Override
         public Dimension getPreferredSize() {
             int chip = chipWidth();
-            return new Dimension(2 * PAD + getFontMetrics(getFont()).stringWidth(getText())
+            return new Dimension(2 * PAD + labelWidth(getFontMetrics(getFont()))
                     + (chip > 0 ? CHIP_GAP + chip : 0), SEGMENT_HEIGHT);
         }
 
@@ -177,13 +228,12 @@ public final class SegmentedToggle extends JPanel {
                 }
                 FontMetrics metrics = g.getFontMetrics(getFont());
                 int chip = chipWidth();
-                int content = metrics.stringWidth(getText()) + (chip > 0 ? CHIP_GAP + chip : 0);
+                int content = labelWidth(metrics) + (chip > 0 ? CHIP_GAP + chip : 0);
                 int tx = (width - content) / 2;
                 g.setFont(getFont());
-                g.setColor(on ? Color.WHITE : Comic.INK);
-                g.drawString(getText(), tx, (height - metrics.getHeight()) / 2 + metrics.getAscent());
+                paintLabel(g, tx, height, on ? Color.WHITE : Comic.INK, on, metrics);
                 if (chip > 0) {
-                    int cx = tx + metrics.stringWidth(getText()) + CHIP_GAP;
+                    int cx = tx + labelWidth(metrics) + CHIP_GAP;
                     int cy = (height - CHIP_HEIGHT) / 2;
                     g.setColor(tone);
                     g.fillRoundRect(cx, cy, chip, CHIP_HEIGHT, CHIP_HEIGHT, CHIP_HEIGHT);
