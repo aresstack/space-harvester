@@ -285,7 +285,7 @@ public class PageNavigation {
     public Position position(AccessContext caller, String sourceId, String pageId) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
         HarvestSource source = source(sourceId);
-        HarvestSource.PagePosition position = source.position(pageId);
+        HarvestSource.PagePosition position = sourcePosition(source, sourceId, pageId);
         access.requireConcealed(caller, ResourceScope.page(sourceId, position.partitionKey(), pageId),
                 AccessKind.METADATA);
         List<PageNode> ancestors = position.ancestors();
@@ -299,6 +299,47 @@ public class PageNavigation {
         }
         return new Position(sourceId, position.partitionKey(), position.partitionName(),
                 visible(caller, sourceId, ancestors), node(caller, position.page()));
+    }
+
+    /**
+     * Die Stelle der Seite bei der Quelle. Quellen ohne Seitenbaum (ohne {@code NAVIGATION}, etwa Jira: Vorgänge
+     * liegen flach unter ihrem Projekt) haben trotzdem eine Stelle: die Partition der Seite, ohne Vorfahren. Sonst
+     * blieben das Fadenkreuz und die Brotkrumen für jede solche Seite leer (Angelo, 27.11.2026). Die Partition kommt
+     * aus dem Bestand, sonst aus den Kopfdaten der Quelle.
+     */
+    private HarvestSource.PagePosition sourcePosition(HarvestSource source, String sourceId, String pageId) {
+        try {
+            return source.position(pageId);
+        } catch (SourceAccessException unsupported) {
+            if (unsupported.reason() != SourceAccessException.Reason.UNSUPPORTED || source.capabilities().contains(
+                    com.aresstack.spaceharvester.application.sources.SourceCapability.NAVIGATION)) {
+                throw unsupported;
+            }
+            com.aresstack.spaceharvester.application.sources.PageMetadata metadata = storedMetadata(sourceId, pageId)
+                    .orElseGet(() -> source.pageMetadata(pageId));
+            if (metadata.partitionKey() == null || metadata.partitionKey().isBlank()) {
+                throw unsupported;
+            }
+            return flatPosition(pageId, metadata);
+        }
+    }
+
+    private static HarvestSource.PagePosition flatPosition(String pageId,
+            com.aresstack.spaceharvester.application.sources.PageMetadata metadata) {
+        return new HarvestSource.PagePosition(metadata.partitionKey(), null, List.of(),
+                new PageNode(pageId, metadata.title(), metadata.partitionKey(), null, PageNode.Kind.PAGE));
+    }
+
+    private Optional<com.aresstack.spaceharvester.application.sources.PageMetadata> storedMetadata(String sourceId,
+                                                                                                 String pageId) {
+        if (cache == null) {
+            return Optional.empty();
+        }
+        try {
+            return cache.header(new PageKey(sourceId, pageId)).map(PageHeader::metadata);
+        } catch (com.aresstack.spaceharvester.application.query.CacheUnavailableException unavailable) {
+            return Optional.empty();
+        }
     }
 
     /** Build a path from the hierarchy already browsed, without needing a downloaded page or database. */

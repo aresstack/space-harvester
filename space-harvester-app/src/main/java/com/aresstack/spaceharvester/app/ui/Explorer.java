@@ -1271,9 +1271,9 @@ public final class Explorer {
     }
 
     /**
-     * Wie {@link #revealPage(String, String)}. Kennt die Quelle keinen Seitenbaum ({@code position} meldet
-     * {@code UNSUPPORTED}, etwa Jira: der Adapter ist keine {@code PageNavigationSource}), sucht der Baum die Seite
-     * direkt unter {@code spaceKey} (bei Jira das Projekt), lädt dabei weitere Stapel nach und wählt sie.
+     * Wie {@link #revealPage(String, String)}. Quellen ohne Seitenbaum (etwa Jira) melden als Stelle ihre Partition
+     * ohne Vorfahren. Scheitert die Stelle trotzdem (etwa ohne Netz), sucht der Baum die Seite direkt unter
+     * {@code spaceKey} (bei Jira das Projekt), lädt dabei weitere Stapel nach und wählt sie.
      */
     public void revealPage(String sourceId, String spaceKey, String pageId) {
         AppRuntime runtime = context.runtime();
@@ -1308,8 +1308,16 @@ public final class Explorer {
         if (node.loaded) {
             tree.expandPath(path);
             next.run();
+            return;
+        }
+        node.then = next;
+        if (tree.isExpanded(path)) {
+            // Schon aufgeklappt, aber nicht fertig geladen (etwa nur aus dem Cache, weil die Quelle beim Aufklappen
+            // nicht antwortete): Aufklappen meldet nichts mehr, also selbst laden. Sonst wartete der Abstieg ewig,
+            // Fadenkreuz und Suchtreffer fanden die Seite nie, bis der Knoten anders neu aufgebaut wurde, etwa durch
+            // den Titelfilter (Angelo, 27.11.2026).
+            load(node);
         } else {
-            node.then = next;
             tree.expandPath(path);
         }
     }
@@ -1685,10 +1693,15 @@ public final class Explorer {
             }
         }, error -> {
             node.loading = false;
+            Runnable then = node.then;
             node.then = null;
             if (node.fromCache) {
                 // Der Stand aus dem Cache bleibt stehen; beim nächsten Aufklappen fragt der Baum die Quelle erneut.
                 note.setText("Nicht geladen: " + Problems.describe(error).title());
+                // Ein wartender Abstieg (Fadenkreuz, Suchtreffer) sucht in den Kindern aus dem Cache weiter.
+                if (then != null) {
+                    then.run();
+                }
                 return;
             }
             node.removeAllChildren();
@@ -1833,6 +1846,10 @@ public final class Explorer {
         model.nodeChanged(moreNode);
         Background.run(() -> cachedChildren(runtime, parent.item(), more.cursor()), batch -> {
             if (moreNode.getParent() != parent || !parent.fromCache) {
+                // Der Abgleich mit der Quelle hat die Kinder inzwischen ersetzt: ein wartender Abstieg sucht dort.
+                if (then != null && moreNode.getParent() != parent) {
+                    then.run();
+                }
                 return;
             }
             keepingView(parent, () -> {

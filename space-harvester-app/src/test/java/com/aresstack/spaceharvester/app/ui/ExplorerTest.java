@@ -676,6 +676,95 @@ class ExplorerTest {
     }
 
     /**
+     * Fadenkreuz und Suchtreffer fanden eine Seite nie wieder, wenn ihr Space schon aufgeklappt, aber nicht fertig
+     * geladen war (etwa nur aus dem Cache, weil die Quelle beim Aufklappen nicht antwortete): Das Aufklappen meldete
+     * nichts mehr, der Abstieg wartete ewig. Erst ein Neuaufbau über den Titelfilter half (Angelo, 27.11.2026).
+     */
+    @Test
+    void revealPageLoadsAnExpandedSpaceThatNeverFinishedLoading() throws Exception {
+        Path files = Files.createDirectories(home.resolve("tickets"));
+        Files.createDirectories(files.resolve("projekt"));
+        Files.writeString(files.resolve("projekt").resolve("vorgang-7.md"), "# Vorgang 7\n\nText.\n");
+        Files.writeString(files.resolve("erster.md"), "# Erster\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: tickets
+                      type: files
+                      title: Tickets
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        Explorer.SpaceItem space = (Explorer.SpaceItem) Explorer.children(context.runtime(),
+                new Explorer.SourceItem("tickets", "Tickets"), null).nodes().get(0).item();
+        List<Explorer.PageItem> pages = Explorer.children(context.runtime(), space, null).nodes().stream()
+                .map(Explorer.Node::item).filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
+                .toList();
+        Explorer.PageItem first = pages.stream().filter(page -> page.title().equals("erster.md")).findFirst()
+                .orElseThrow();
+        Explorer.PageItem folder = pages.stream().filter(page -> page.title().equals("projekt")).findFirst()
+                .orElseThrow();
+        Explorer.PageItem target = Explorer.children(context.runtime(), folder, null).nodes().stream()
+                .map(Explorer.Node::item).filter(Explorer.PageItem.class::isInstance).map(Explorer.PageItem.class::cast)
+                .filter(page -> page.title().equals("vorgang-7.md")).findFirst().orElseThrow();
+        PageNavigation.Position firstPosition = new PageNavigation.Position("tickets", space.spaceKey(),
+                space.name(), List.of(), new HarvestSource.PageNode(first.pageId(), first.title(), space.spaceKey(),
+                false, HarvestSource.PageNode.Kind.FILE));
+        PageNavigation.Position position = new PageNavigation.Position("tickets", space.spaceKey(), space.name(),
+                List.of(new HarvestSource.PageNode(folder.pageId(), folder.title(), space.spaceKey(), true,
+                        HarvestSource.PageNode.Kind.FOLDER)),
+                new HarvestSource.PageNode(target.pageId(), target.title(), space.spaceKey(), false,
+                        HarvestSource.PageNode.Kind.FILE));
+
+        Explorer[] explorer = new Explorer[1];
+        SwingUtilities.invokeAndWait(() -> {
+            explorer[0] = new Explorer(context);
+            explorer[0].revealPage(firstPosition);
+        });
+        assertThat(awaitSelected(explorer[0], first.pageId())).isEqualTo(first.pageId());
+
+        // Der Space bleibt aufgeklappt, gilt aber als nicht fertig geladen, wie nach einer gescheiterten Abfrage
+        // über einem Stand aus dem Cache.
+        SwingUtilities.invokeAndWait(() -> {
+            javax.swing.tree.TreePath spacePath = explorer[0].tree().getSelectionPath().getParentPath();
+            Explorer.Node spaceNode = (Explorer.Node) spacePath.getLastPathComponent();
+            assertThat(explorer[0].tree().isExpanded(spacePath)).isTrue();
+            spaceNode.loaded = false;
+            spaceNode.fromCache = true;
+            explorer[0].tree().clearSelection();
+            explorer[0].revealPage(position);
+        });
+
+        assertThat(awaitSelected(explorer[0], target.pageId())).as("der Baum findet die Seite")
+                .isEqualTo(target.pageId());
+    }
+
+    /** Wartet, bis {@code pageId} im Baum gewählt ist, und gibt die zuletzt gewählte Seiten-ID zurück. */
+    private static String awaitSelected(Explorer explorer, String pageId) throws Exception {
+        String[] selected = new String[1];
+        for (int i = 0; i < 200; i++) {
+            SwingUtilities.invokeAndWait(() -> {
+                javax.swing.tree.TreePath path = explorer.tree().getSelectionPath();
+                selected[0] = path != null && ((Explorer.Node) path.getLastPathComponent()).item()
+                        instanceof Explorer.PageItem page ? page.pageId() : null;
+            });
+            if (pageId.equals(selected[0])) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        return selected[0];
+    }
+
+    /**
      * Lange Titel schieben die Spalten rechts nicht aus dem sichtbaren Bereich: jede Zeile endet am rechten Rand des
      * Ausschnitts, Bestandszeichen, Stern und Download-Symbol stehen in festen Spalten, der Titel wird mit „…“
      * gekürzt (Angelo, 16.11.2026).
