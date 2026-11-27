@@ -173,6 +173,18 @@ final class PodcastControl<S> {
             new com.aresstack.spaceharvester.app.ui.IconButton(
                     com.aresstack.spaceharvester.app.ui.controls.SubtitleLine.icon(true), SUBTITLES_ON);
 
+    /**
+     * Der Schalter „Minimieren“ ganz rechts in der Leiste unten (Angelo 27.11.2026): nimmt den Player über der
+     * Suchleiste weg, die Wiedergabe läuft weiter; derselbe Knopf klappt ihn wieder nach oben auf.
+     */
+    private final com.aresstack.spaceharvester.app.ui.IconButton minimizeToggle =
+            new com.aresstack.spaceharvester.app.ui.IconButton(
+                    com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronDown(), MINIMIZE);
+
+    static final String MINIMIZE = "Podcast-Player in die Leiste minimieren";
+    static final String EXPAND = "Podcast-Player aufklappen";
+    /** Gemerkt im App-State: 1 = Player minimiert, 0 = aufgeklappt (Vorgabe). */
+    static final String MINIMIZED_KEY = "podcast.minimized";
     static final String SUBTITLES_ON = "Untertitel ausblenden";
     static final String SUBTITLES_OFF = "Untertitel einblenden";
     /** Gemerkt im App-State: 1 = Untertitel an (Vorgabe), 0 = aus. */
@@ -224,6 +236,44 @@ final class PodcastControl<S> {
     /** Der Schalter „Untertitel“ für die Leiste unten, rechtsbündig. */
     JComponent subtitleToggle() {
         return subtitleToggle;
+    }
+
+    /** Der Schalter „Minimieren | Aufklappen“ für die Leiste unten, rechts neben „Untertitel“. */
+    JComponent minimizeToggle() {
+        return minimizeToggle;
+    }
+
+    /** Was rechts in der Leiste unten steht: „Untertitel“ und „Minimieren | Aufklappen“. */
+    JComponent footTools() {
+        return com.aresstack.spaceharvester.app.ui.Comic.row(subtitleToggle, minimizeToggle);
+    }
+
+    /** Ob der Player minimiert ist; gilt für alle Podcasts und über den Neustart. */
+    static boolean minimized() {
+        return com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(MINIMIZED_KEY, 0) != 0;
+    }
+
+    private void toggleMinimized() {
+        com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(MINIMIZED_KEY, minimized() ? 0 : 1);
+        applyMinimized();
+    }
+
+    /**
+     * Stellt Schalter und Zeitleiste auf die gemerkte Einstellung: minimiert steht nur der Knopf zum Aufklappen in
+     * der Leiste, ohne „Untertitel“ (der gehört zum Player); die Wiedergabe bleibt, wie sie ist.
+     */
+    private void applyMinimized() {
+        boolean small = minimized();
+        String tip = small ? EXPAND : MINIMIZE;
+        minimizeToggle.setIcon(small ? com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronUp()
+                : com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronDown());
+        minimizeToggle.setToolTipText(tip);
+        minimizeToggle.getAccessibleContext().setAccessibleName(tip);
+        minimizeToggle.setVisible(timelineShown);
+        subtitleToggle.setVisible(timelineShown && !small);
+        if (timelineShown) {
+            events.accept(small ? TimelineEvent.hide(timelineRow) : TimelineEvent.show(timelineRow));
+        }
     }
 
     com.aresstack.spaceharvester.app.ui.controls.SubtitleLine subtitle() {
@@ -332,6 +382,9 @@ final class PodcastControl<S> {
         subtitleToggle.setVisible(false);
         subtitleToggle.addActionListener(event -> toggleSubtitles());
         applySubtitles();
+        minimizeToggle.setName(labels.name() + ".podcastMinimize");
+        minimizeToggle.addActionListener(event -> toggleMinimized());
+        applyMinimized();
         timelineRow.setName(labels.name() + ".podcastTimelineRow");
         transcriptCopy.setName(labels.name() + ".podcastTranscript");
         transcriptCopy.setVisible(false);
@@ -892,9 +945,14 @@ final class PodcastControl<S> {
             return;
         }
         timelineShown = show;
-        subtitleToggle.setVisible(show);
         subtitleAt(at());
-        events.accept(show ? TimelineEvent.show(timelineRow) : TimelineEvent.hide(timelineRow));
+        if (show) {
+            applyMinimized();
+        } else {
+            minimizeToggle.setVisible(false);
+            subtitleToggle.setVisible(false);
+            events.accept(TimelineEvent.hide(timelineRow));
+        }
         if (!show) {
             runningPicture = null;
             showStage(false);
