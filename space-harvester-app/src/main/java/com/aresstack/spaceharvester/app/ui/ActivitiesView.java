@@ -1266,6 +1266,11 @@ public final class ActivitiesView implements View {
                         com.aresstack.spaceharvester.application.presentation.VideoPresentations.FILE_PARAMETER);
                 yield file == null ? null : java.nio.file.Path.of(file).toAbsolutePath().getParent();
             }
+            case PODCAST_EXPORT -> {
+                String file = status.parameters().get(
+                        com.aresstack.spaceharvester.app.podcast.PodcastExport.FILE_PARAMETER);
+                yield file == null ? null : java.nio.file.Path.of(file).toAbsolutePath().getParent();
+            }
             case CONVERSION -> parameterDirectory(status,
                     com.aresstack.spaceharvester.application.export.ExportConversions.DIRECTORY, exportDirectory);
             case METADATA_EXPORT, ANALYTICS_EXPORT -> parameterDirectory(status,
@@ -1339,6 +1344,9 @@ public final class ActivitiesView implements View {
         String id = status.sourceId();
         if (!com.aresstack.spaceharvester.application.jobs.Jobs.ALL_SOURCES.equals(id)) {
             return id;
+        }
+        if (status.type() == JobType.PODCAST_EXPORT) {
+            return "Podcast";
         }
         return status.type() == JobType.BOOK || status.type() == JobType.RESEARCH ? "Favoriten" : "alle Quellen";
     }
@@ -2340,6 +2348,7 @@ public final class ActivitiesView implements View {
                 case DOCUMENT_ANALYSIS -> new Counters("Dokumente", "Gelesen", "Analysiert", "Fehlgeschlagen");
                 case RESEARCH -> new Counters("Schritte", "Erledigt", "Im Korb", "Fehlgeschlagen");
                 case BOOK -> new Counters("Schritte", "Erledigt", "Abschnitte", "Fehlgeschlagen");
+                case PODCAST_EXPORT -> new Counters("Abschnitte", "Gelesen", "In der Datei", "Fehlgeschlagen");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }
@@ -3358,7 +3367,8 @@ public final class ActivitiesView implements View {
         return switch (type) {
             case SYNC -> Glyph.SYNC;
             case HARVEST, IMPORT, REREAD, READING_PREFETCH -> ComposerIcons.download();
-            case EXPORT, CONVERSION, METADATA_EXPORT, ANALYTICS_EXPORT, PRESENTATION_EXPORT -> ComposerIcons.export();
+            case EXPORT, CONVERSION, METADATA_EXPORT, ANALYTICS_EXPORT, PRESENTATION_EXPORT, PODCAST_EXPORT ->
+                    ComposerIcons.export();
             case KNOWLEDGE_GRAPH_EXPORT -> Glyph.GRAPH;
             case ASSETS -> ComposerIcons.picture();
             case ATTACHMENTS -> ComposerIcons.paperclip();

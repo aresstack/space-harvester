@@ -37,6 +37,9 @@ jobs:
       - name: Paritätsbericht
         if: always()
         run: cat parity-tests/build/reports/parity/parity-report.md >> "$GITHUB_STEP_SUMMARY" || true
+      - name: Fehlgeschlagene Tests ins Log
+        if: failure()
+        run: python3 .github/scripts/test-summary.py --log space-harvester-*/build/test-results parity-tests/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results
       - name: Testübersicht
         if: always()
         run: python3 .github/scripts/test-summary.py space-harvester-*/build/test-results parity-tests/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results >> "$GITHUB_STEP_SUMMARY"

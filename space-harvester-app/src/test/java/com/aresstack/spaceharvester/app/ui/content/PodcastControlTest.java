@@ -22,6 +22,8 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Erfundene Zusammenfassung über ein fiktives Projekt „Nordlicht“ im Space DEMO. */
@@ -276,6 +278,30 @@ class PodcastControlTest {
             }
         }
         return null;
+    }
+
+    @Test
+    void offersTheExportOnlyWhenEveryPartIsVoiced(@org.junit.jupiter.api.io.TempDir Path dir) throws Exception {
+        // Angelo 27.11.2026: „Als WAV exportieren …“ und „Als Video exportieren …“ brauchen den ganzen Ton.
+        Path wav = dir.resolve("abschnitt.wav");
+        java.nio.file.Files.write(wav, new byte[0]);
+        source.parts = List.of(new Podcast.Part(0, 0, "Startseite", "Was neu ist", wav),
+                new Podcast.Part(1, -1, "Glossar", null, null));
+        onEdt(() -> {
+            control = control();
+            control.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
+            control.orb().doClick();
+            assertNull(control.exportable(), "ein Thema ist noch nicht vertont");
+        });
+        source.parts = List.of(new Podcast.Part(0, 0, "Startseite", "Was neu ist", wav),
+                new Podcast.Part(1, 0, "Glossar", "Glossar", wav));
+        onEdt(() -> {
+            control = control();
+            control.summary(summary("Das Projekt Nordlicht hat ein Glossar."));
+            control.orb().doClick();
+            assertNotNull(control.exportable());
+            assertEquals(2, control.exportable().parts().size());
+        });
     }
 
     @Test

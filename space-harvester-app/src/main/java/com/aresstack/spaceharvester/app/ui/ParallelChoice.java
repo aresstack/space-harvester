@@ -115,7 +115,16 @@ public final class ParallelChoice {
      */
     public static ParallelChoice stored(java.awt.Component owner, String tip, String key, int fallback,
                                         Consumer<String> invalid) {
-        ParallelChoice choice = new ParallelChoice(tip + " (1 bis " + CUSTOM_MAX + ").", 1, CUSTOM_MAX, STEPS,
+        return stored(owner, tip, key, fallback, STEPS, invalid);
+    }
+
+    /**
+     * Wie {@link #stored(java.awt.Component, String, String, int, Consumer)}, mit eigenen Vorschlägen statt
+     * {@link #STEPS}, etwa für Größe und Bildrate des Podcast-Videos.
+     */
+    public static ParallelChoice stored(java.awt.Component owner, String tip, String key, int fallback,
+                                        List<Integer> suggestions, Consumer<String> invalid) {
+        ParallelChoice choice = new ParallelChoice(tip + " (1 bis " + CUSTOM_MAX + ").", 1, CUSTOM_MAX, suggestions,
                 stored(key, fallback), value -> AppState.shared().put(key, value), invalid);
         choice.ask = current -> Dialogs.askNumber(owner, "Benutzerdefiniert", tip, 1, CUSTOM_MAX, current);
         return choice;
