@@ -38,6 +38,15 @@ final class ArtifactList {
     static final String RESTORE = "Wiederherstellen";
     static final String RESTORE_TIP = "Gelöscht – Klick stellt das Artefakt wieder her (bis zum nächsten Start)";
     static final String SHOW_FOLDER = "Ordner in den Wissensquellen zeigen";
+    static final String GROUP_BY_KIND = "Nach Art gruppieren";
+    /** Die Gruppen heißen wie die Arten in der App (ADR 0047 §5a), in dieser Reihenfolge. */
+    static final String DOCUMENTS = "Dokumente";
+    static final String GRAPHICS = "Grafiken";
+    static final String BOOKS = "Bücher";
+    private static final List<String> GROUPS = List.of(DOCUMENTS, GRAPHICS, BOOKS);
+    static final String DELETED = "Gelöscht";
+    /** Einmal für die ganze App gemerkt, nicht je Projekt oder Liste (Angelo 27.11.2026). */
+    static final String GROUPED_KEY = "artifacts.groupByKind";
     static final String STALE_TIP = Texts.BOOK_STALE + " – Klick auf „" + com.aresstack.spaceharvester.app.ui
             .controls.TabHeader.STALE + "“ erzeugt eine neue Auflage";
 
@@ -88,7 +97,7 @@ final class ArtifactList {
         list.setFont(Comic.regular(13f));
         list.setSelectionBackground(Comic.YELLOW);
         list.setSelectionForeground(Comic.INK);
-        list.setCellRenderer(new Row(trashed, staleBooks));
+        list.setCellRenderer(new Row(trashed, staleBooks, this::groupOf));
         list.getAccessibleContext().setAccessibleName("Artefakte");
         javax.swing.ToolTipManager.sharedInstance().registerComponent(list);
         list.addMouseListener(new MouseAdapter() {
@@ -137,6 +146,46 @@ final class ArtifactList {
         // Eine neue Auflage macht das Buch wieder aktuell (oder legt es an).
         editions = com.aresstack.spaceharvester.app.research.BookArtifacts.onChange(
                 folderId -> SwingUtilities.invokeLater(this::reload));
+    }
+
+    /** Ob nach Art gruppiert wird (Schalter unten, gemerkt in {@link AppState}). */
+    boolean grouped() {
+        return AppState.shared().getBoolean(GROUPED_KEY, false);
+    }
+
+    /** Schaltet das Gruppieren nach Art und merkt es für die ganze App. */
+    void grouped(boolean grouped) {
+        AppState.shared().put(GROUPED_KEY, grouped);
+        show();
+    }
+
+    /**
+     * Die Überschrift samt Zahl, wenn nach Art gruppiert wird und mit der Zeile eine neue Gruppe beginnt, sonst
+     * {@code null}: „Dokumente“, „Grafiken“, „Bücher“, am Ende „Gelöscht“. Eine Art ohne Artefakte hat keine Gruppe.
+     */
+    private String groupOf(int index) {
+        if (!grouped() || index < 0 || index >= model.size()) {
+            return null;
+        }
+        String group = kindGroup(model.get(index));
+        if (index > 0 && group.equals(kindGroup(model.get(index - 1)))) {
+            return null;
+        }
+        int count = 0;
+        for (int i = index; i < model.size() && group.equals(kindGroup(model.get(i))); i++) {
+            count++;
+        }
+        return group + " (" + count + ")";
+    }
+
+    private String kindGroup(ChatArtifact artifact) {
+        if (trashed.contains(artifact.id())) {
+            return DELETED;
+        }
+        if (artifact.id().startsWith(ChatArtifactStore.BOOK)) {
+            return BOOKS;
+        }
+        return artifact.kind() == ChatArtifact.Kind.GRAPHIC ? GRAPHICS : DOCUMENTS;
     }
 
     /** Was „Neue Auflage erzeugen“ und „Ordner in den Wissensquellen zeigen“ am Buch tun (Ordner-ID). */
@@ -251,6 +300,7 @@ final class ArtifactList {
                 list.isSelectedIndex(row), false);
         renderer.setBounds(0, 0, cell.width, cell.height);
         renderer.doLayout();
+        renderer.line.doLayout();
         renderer.side.doLayout();
         java.awt.Rectangle badge = SwingUtilities.convertRectangle(renderer.side, renderer.stale.getBounds(), renderer);
         return renderer.stale.isVisible() && badge.contains(point.x - cell.x, point.y - cell.y);
@@ -275,7 +325,10 @@ final class ArtifactList {
         model.clear();
         trashed.clear();
         trash.forEach(artifact -> trashed.add(artifact.id()));
-        for (ChatArtifact artifact : java.util.stream.Stream.concat(all.stream(), trash.stream()).toList()) {
+        // Gruppiert: Dokumente, Grafiken, Bücher, je die neueste Änderung zuerst; Gelöschte am Ende.
+        List<ChatArtifact> live = !grouped() ? all : all.stream()
+                .sorted(Comparator.comparingInt(artifact -> GROUPS.indexOf(kindGroup(artifact)))).toList();
+        for (ChatArtifact artifact : java.util.stream.Stream.concat(live.stream(), trash.stream()).toList()) {
             if (filter.isEmpty() || artifact.title().toLowerCase(Locale.ROOT).contains(filter)) {
                 model.addElement(artifact);
                 if (artifact.id().equals(keep)) {
@@ -427,24 +480,39 @@ final class ArtifactList {
         final javax.swing.JPanel side = new javax.swing.JPanel(new java.awt.BorderLayout(6, 0));
         private final java.util.Set<String> trashed;
         private final java.util.Set<String> staleBooks;
+        private final java.util.function.IntFunction<String> groupOf;
+        /** Überschrift über der ersten Zeile einer Gruppe (nur gruppiert). */
+        private final javax.swing.JLabel header = new javax.swing.JLabel();
+        final javax.swing.JPanel line = new javax.swing.JPanel(new java.awt.BorderLayout(6, 0));
 
-        Row(java.util.Set<String> trashed, java.util.Set<String> staleBooks) {
-            super(new java.awt.BorderLayout(6, 0));
+        Row(java.util.Set<String> trashed, java.util.Set<String> staleBooks,
+            java.util.function.IntFunction<String> groupOf) {
+            super(new java.awt.BorderLayout(0, 2));
             this.trashed = trashed;
             this.staleBooks = staleBooks;
-            setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 6));
+            this.groupOf = groupOf;
+            header.setForeground(Comic.MUTED);
+            header.setFont(Comic.semiBold(12f));
+            line.setOpaque(false);
+            line.setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 6));
+            header.setBorder(BorderFactory.createEmptyBorder(6, 2, 0, 0));
             title.setIconTextGap(6);
             time.setForeground(Comic.MUTED);
             side.setOpaque(false);
             side.add(stale, java.awt.BorderLayout.WEST);
             side.add(time, java.awt.BorderLayout.EAST);
-            add(title, java.awt.BorderLayout.CENTER);
-            add(side, java.awt.BorderLayout.EAST);
+            line.add(title, java.awt.BorderLayout.CENTER);
+            line.add(side, java.awt.BorderLayout.EAST);
+            add(header, java.awt.BorderLayout.NORTH);
+            add(line, java.awt.BorderLayout.CENTER);
         }
 
         @Override
         public Component getListCellRendererComponent(JList<? extends ChatArtifact> owner, ChatArtifact artifact,
                                                       int index, boolean selected, boolean focus) {
+            String group = groupOf.apply(index);
+            header.setText(group);
+            header.setVisible(group != null);
             title.setFont(owner.getFont());
             time.setFont(owner.getFont().deriveFont(owner.getFont().getSize2D() - 1f));
             boolean gone = trashed.contains(artifact.id());
@@ -454,7 +522,7 @@ final class ArtifactList {
                     : text);
             title.setIcon(icon(artifact));
             time.setText(when(changedAt(artifact), java.time.ZoneId.systemDefault(), java.time.LocalDate.now()));
-            java.awt.Insets in = getInsets();
+            java.awt.Insets in = line.getInsets();
             int room = owner.getWidth() - in.left - in.right;
             // Das Abzeichen bleibt immer (der Titel kürzt sich davor); die Zeit weicht zuerst.
             boolean old = !gone && staleBooks.contains(artifact.id());
@@ -462,8 +530,10 @@ final class ArtifactList {
             time.setVisible(!gone);
             time.setVisible(!gone && title.getPreferredSize().width + 6 + side.getPreferredSize().width <= room);
             setToolTipText(gone ? RESTORE_TIP : old ? text + " · " + STALE_TIP : text);
-            setOpaque(selected);
-            setBackground(owner.getSelectionBackground());
+            // Markiert wird die Zeile, nicht die Überschrift der Gruppe.
+            setOpaque(false);
+            line.setOpaque(selected);
+            line.setBackground(owner.getSelectionBackground());
             return this;
         }
     }

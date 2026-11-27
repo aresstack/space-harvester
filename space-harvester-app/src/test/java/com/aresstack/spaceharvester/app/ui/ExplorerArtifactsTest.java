@@ -85,6 +85,14 @@ class ExplorerArtifactsTest {
             ArtifactList list = explorer.artifactList();
             assertThat(list.shownIds()).containsExactly(book.id(), flow.id(), notes.id());
 
+            // Unten „Nach Art gruppieren“: Dokumente, Grafiken, Bücher; gemerkt für die ganze App.
+            assertThat(explorer.groupByKindButton().isVisible()).isTrue();
+            explorer.groupByKindButton().doClick();
+            assertThat(list.shownIds()).containsExactly(notes.id(), flow.id(), book.id());
+            assertThat(AppState.shared().getBoolean(ArtifactList.GROUPED_KEY, false)).isTrue();
+            explorer.groupByKindButton().doClick();
+            assertThat(list.shownIds()).containsExactly(book.id(), flow.id(), notes.id());
+
             // „Öffnen“ (wie der Klick) öffnet in der Mitte
             list.list().setSelectedIndex(1);
             ((javax.swing.JMenuItem) list.menu(list.list().getSelectedValue()).getComponent(0)).doClick();
@@ -135,6 +143,7 @@ class ExplorerArtifactsTest {
             // Zurück zu den Wissensquellen: der Baum ist wieder da
             holder[0].view.select(Explorer.SOURCES_TAB);
             assertThat(holder[0].artifactsShown()).isFalse();
+            assertThat(holder[0].groupByKindButton().isVisible()).isFalse();
         });
     }
 

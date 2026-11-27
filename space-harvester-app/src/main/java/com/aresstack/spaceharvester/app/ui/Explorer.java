@@ -592,6 +592,8 @@ public final class Explorer {
     private final IconButton showCurrent = new IconButton(Glyph.CROSSHAIR, "Aktuelles Dokument im Baum zeigen");
     /** Unten rechts (Angelo, 13.11.2026): Umriss = alle Knoten, gefüllt = nur die Favoriten als Liste mit Pfad. */
     private final IconButton favoritesOnly = new IconButton(Glyph.STAR, ONLY_FAVORITES);
+    /** Unten unter „Artefakte“: nach Art gruppieren (Angelo 27.11.2026), global gemerkt. */
+    private final IconButton groupByKind = new IconButton(Glyph.TABLE, ArtifactList.GROUP_BY_KIND);
     private boolean onlyFavorites;
     /** Die Favoritenansicht an Stelle des Baums (ADR 0034, 2a); im Konstruktor angelegt, sie fragt den Baum. */
     private final FavoritesView favorites;
@@ -1056,12 +1058,18 @@ public final class Explorer {
         // Hinweise nur beim Titelfilter und bei Fehlern; die Anzahl der Wissensquellen sieht man im Baum.
         note.setBorder(BorderFactory.createEmptyBorder(2, 6, 0, 0));
         favoritesOnly.addActionListener(e -> showOnlyFavorites(!onlyFavorites));
+        groupByKind.setVisible(false);
+        groupByKind.setSelected(artifacts.grouped());
+        groupByKind.addActionListener(e -> {
+            artifacts.grouped(!artifacts.grouped());
+            groupByKind.setSelected(artifacts.grouped());
+        });
         // „Neuer Ordner“ nur, solange die Favoriten gezeigt werden (Angelo 24.11.2026: unten in der Fußleiste).
         favorites.newFolderButton().setVisible(false);
         // Die gemeinsame Fußleiste aller Seitenleisten, so hoch wie die Leiste mit der Lupe daneben.
         root.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(
                 com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, showCurrent,
-                        favorites.newFolderButton()), note,
+                        favorites.newFolderButton(), groupByKind), note,
                 favoritesOnly), BorderLayout.SOUTH);
         context.onChange(ignored -> refreshSources());
         refreshSources();
@@ -2820,6 +2828,7 @@ public final class Explorer {
             part.setVisible(!shown);
         }
         actionGap.setVisible(!shown);
+        groupByKind.setVisible(shown);
         favorites.newFolderButton().setVisible(!shown && onlyFavorites);
         head.setOpaque(!shown && global);
         head.repaint();
@@ -2883,6 +2892,11 @@ public final class Explorer {
     public void unseenArtifacts(int count) {
         view.count(ARTIFACTS_TAB, count, Comic.PETROL, Texts.count(count, "Artefakt neu oder geändert",
                 "Artefakte neu oder geändert"), ARTIFACTS_TIP);
+    }
+
+    /** Für Tests: der Schalter „Nach Art gruppieren“. */
+    IconButton groupByKindButton() {
+        return groupByKind;
     }
 
     /** Für Tests: die Liste der Artefakte. */
