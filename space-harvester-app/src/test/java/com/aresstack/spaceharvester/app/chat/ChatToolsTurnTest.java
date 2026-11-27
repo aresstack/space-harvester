@@ -537,7 +537,9 @@ class ChatToolsTurnTest {
 
         assertThat(port.requests).singleElement().satisfies(request -> {
             assertThat(request.tools()).isEmpty();
-            assertThat(request.messages().get(0).text()).isEqualTo(ChatKnowledge.OWN_KNOWLEDGE_PROMPT);
+            // Angelo 27.11.2026: ohne „Schreiben“ der Hinweis, dass kein Artefakt entstehen kann.
+            assertThat(request.messages().get(0).text()).isEqualTo(ChatKnowledge.OWN_KNOWLEDGE_PROMPT + "\n\n"
+                    + com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools.WRITING_OFF);
         });
         assertThat(events.completed).isEqualTo("Aus dem Kopf.");
     }

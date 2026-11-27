@@ -219,6 +219,13 @@ public final class ChatPanel extends JPanel {
     static final int WEB_DELAY_MAX = 10000;
     static final int WEB_DELAY_SLIDER_MAX = 2000;
     private static final String WEB_KEY = "chat.web.";
+    /**
+     * Die Schalter im Eingabefeld (Angelo 27.11.2026): wie zuletzt per Klick gesetzt, auch nach einem Neustart
+     * (Bedienzustand app-state.json).
+     */
+    static final String SWITCH_WRITE = "chat.switch.write";
+    static final String SWITCH_APP_SEARCH = "chat.switch.appSearch";
+    static final String SWITCH_WEB = "chat.switch.web";
     static final String APPROVE_TEXT = "Bestätigen";
     static final String REJECT_TEXT = "Abbrechen";
     static final String APPROVE_ONCE_TEXT = "Einmal erlauben";
@@ -725,17 +732,18 @@ public final class ChatPanel extends JPanel {
         model.addActionListener(e -> showModelMenu());
         effort.addActionListener(e -> showEffortMenu());
         appSearch.getAccessibleContext().setAccessibleName(APP_SEARCH_LABEL);
-        appSearch.addActionListener(e -> appSearch(!appSearchOn));
+        appSearch.addActionListener(e -> remember(SWITCH_APP_SEARCH, appSearch(!appSearchOn)));
         write.getAccessibleContext().setAccessibleName(WRITE_LABEL);
-        write.addActionListener(e -> writing(!writeOn));
+        write.addActionListener(e -> remember(SWITCH_WRITE, writing(!writeOn)));
         web.getAccessibleContext().setAccessibleName(WEB_LABEL);
-        web.addActionListener(e -> webSearch(!webOn));
+        web.addActionListener(e -> remember(SWITCH_WEB, webSearch(!webOn)));
         webBudget.setPreferredSize(new Dimension(14, 28));
         webBudget.setMaximumSize(new Dimension(14, 28));
         webBudget.getAccessibleContext().setAccessibleName(WEB_BUDGET_LABEL);
         webBudget.addActionListener(e -> openWebPopup());
         showWebState();
         context.onBrowserChanged(this::showWebState);
+        restoreSwitches();
         mic.setAccent(ResearchUiPalette.RECORDING_ORANGE);
         mic.addActionListener(e -> toggleDictation());
         discardButton.addActionListener(e -> discardDictation());
@@ -1791,10 +1799,24 @@ public final class ChatPanel extends JPanel {
     }
 
     /** Schaltet die Schreibumgebung (ADR 0045): an ist der Knopf eingerastet; gilt ab der nächsten Frage. */
-    void writing(boolean on) {
+    boolean writing(boolean on) {
         writeOn = on;
         write.setEmphasized(on);
         write.setToolTipText(on ? WRITE_ON : WRITE_OFF);
+        return writeOn;
+    }
+
+    /** Stellt die Schalter so her, wie sie zuletzt per Klick standen; ohne gemerkten Wert bleiben sie aus. */
+    private void restoreSwitches() {
+        com.aresstack.spaceharvester.app.ui.AppState state = com.aresstack.spaceharvester.app.ui.AppState.shared();
+        writing(state.getBoolean(SWITCH_WRITE, false));
+        appSearch(state.getBoolean(SWITCH_APP_SEARCH, false));
+        webSearch(state.getBoolean(SWITCH_WEB, false));
+    }
+
+    /** Merkt einen per Klick gesetzten Schalter (nur Klicks, nicht das Setzen aus Code oder Tests). */
+    private static void remember(String key, boolean on) {
+        com.aresstack.spaceharvester.app.ui.AppState.shared().put(key, on);
     }
 
     boolean writingOn() {
@@ -1881,11 +1903,12 @@ public final class ChatPanel extends JPanel {
     }
 
     /** Schaltet die interne Suche: an ist der Knopf eingerastet. */
-    void appSearch(boolean on) {
+    boolean appSearch(boolean on) {
         appSearchOn = on;
         appSearch.setEmphasized(on);
         appSearch.setToolTipText(on ? APP_SEARCH_ON : APP_SEARCH_OFF);
         warnIfBothOn();
+        return appSearchOn;
     }
 
     /**
@@ -1933,10 +1956,11 @@ public final class ChatPanel extends JPanel {
     }
 
     /** Schaltet die Websuche dieses Chats (Composer-Knopf wie „Browser“ im Enterprise AI Client). */
-    void webSearch(boolean on) {
+    boolean webSearch(boolean on) {
         webOn = on && webAvailable();
         showWebState();
         warnIfBothOn();
+        return webOn;
     }
 
     boolean webSearchOn() {
@@ -2839,7 +2863,8 @@ public final class ChatPanel extends JPanel {
                     com.aresstack.spaceharvester.app.runtime.SearchMethods.user().glossarySynonyms());
             // Angelo 24.11.2026: In der Suche, und ohne Auswahl überhaupt, recherchiert der Chat als Suchagent, bis er
             // fertig ist; anderswo bleibt er, wie er ist.
-            if (searchFront || open == null) {
+            // Angelo 27.11.2026: Mit „Schreiben“ schreibt der Chat; er recherchiert nicht erst als Suchagent.
+            if ((searchFront || open == null) && !writeOn) {
                 turn.searchAgent();
             }
             turn.parallelAgents(parallel("agents", AGENTS_DEFAULT));

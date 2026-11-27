@@ -51,10 +51,13 @@ public final class DocumentChatTools {
     public static final String LINK_SCHEME = "artefakt:";
 
     static final String RULES = """
-            Schreibumgebung ist eingeschaltet. Längere Texte, die der Benutzer als Dokument haben möchte, schreibst du \
-            nicht in die Antwort, sondern mit den Werkzeugen in ein Dokument des Chats; der Benutzer sieht es in der \
-            Mitte und kann es nach Markdown, Word oder PDF exportieren.
+            Schreibumgebung ist eingeschaltet. Längere Texte, die der Benutzer als Dokument haben möchte (Dokument, \
+            Flyer, Brief, Konzept, Bericht, Liste …), schreibst du nicht in die Antwort, sondern mit den Werkzeugen in \
+            ein Dokument des Chats; der Benutzer sieht es in der Mitte und kann es nach Markdown, Word oder PDF \
+            exportieren.
             Regeln:
+            - Ist klar, dass geschrieben werden soll, fange sofort mit den Schreibwerkzeugen an. Steht der Inhalt schon \
+            in der Nachricht oder im bisherigen Chat, suche nicht erst; suche nur, wenn dir Fakten fehlen.
             - Neues Dokument: dokument_anlegen mit Titel und, wenn du schon weißt was, einer Gliederung aus Überschriften \
             (Markdown mit #, ##). Danach jeden Abschnitt einzeln mit abschnitt_ersetzen füllen, ein Aufruf je Abschnitt.
             - Vorhandenes Dokument ändern: erst dokument_gliederung, dann nur den gemeinten Abschnitt lesen und ändern. \
@@ -64,14 +67,29 @@ public final class DocumentChatTools {
             - abschnitt_ersetzen ersetzt nur den Text unter der Überschrift; die Überschrift ändert ueberschrift_aendern.
             - Möchte der Benutzer eine Grafik (Bild, Schaubild, Diagramm, Skizze, Plan), legst du eine Grafik an, \
             kein Dokument: grafik_zeichnen (Thema und Inhalt, gezeichnet vom Bildmodell) oder grafik_anlegen (du \
-            lieferst das SVG selbst). Ein Dokument nur, wenn er auch Text haben möchte; dann die Grafik mit \
-            grafik_einbinden in den passenden Abschnitt. Ein SVG nie in den Text eines Abschnitts schreiben.
+            lieferst das SVG selbst). Ein Dokument nur, wenn er auch Text haben möchte.
+            - Soll ein Dokument eine Grafik enthalten (eine vorhandene wie G1 oder eine neue), rufe grafik_einbinden \
+            mit Dokument, Abschnitt und Grafik auf; es reicht nicht, die Grafik im Text zu erwähnen. Ein SVG nie in den \
+            Text eines Abschnitts schreiben.
             - Vorhandene Grafik ändern: erst grafik_elemente (jedes Element hat eine Kennung e1, e2, …), dann nur das \
             gemeinte Element mit grafik_element_ersetzen (leeres svg löscht es). Nur für einen Umbau des Ganzen \
             grafik_lesen und grafik_ersetzen. Eine Grafik nie neu anlegen, wenn der Benutzer eine vorhandene ändern will.
             - Beginnt ein Zitat in der Nachricht mit „(Bezug: Dokument D…, Abschnitt a…)“, „(Bezug: Grafik G…)“ oder \
             „(Bezug: Grafik G…, Element e…)“, meint der Benutzer genau diese Stelle: lies sie und ändere nur dort.
-            - Antworte am Ende kurz, was du im Dokument getan hast; wiederhole das Dokument nicht in der Antwort.""";
+            - Deine Antwort im Chat sind ein bis zwei Sätze, was du getan hast. Den Inhalt eines Dokuments oder einer \
+            Grafik nie in der Antwort wiederholen, auch nicht auszugsweise, als Vorschau oder „zur Kontrolle“; der Link \
+            darauf steht von selbst unter der Antwort.""";
+
+    /**
+     * Der Hinweis ohne Schreibumgebung (Angelo 27.11.2026): Das Modell kann dann kein Artefakt anlegen, soll das nie
+     * behaupten und bei einem Schreibauftrag sagen, wie der Benutzer das Schreiben einschaltet.
+     */
+    public static final String WRITING_OFF = "Die Schreibumgebung ist aus: Du kannst keine Dokumente oder Grafiken "
+            + "(Artefakte) anlegen oder ändern und hast keine Werkzeuge dafür. Behaupte nie, ein Dokument, eine Grafik "
+            + "oder ein Artefakt angelegt zu haben, und erfinde keine Kennungen. Möchte der Benutzer ein Dokument, einen "
+            + "Flyer, eine Grafik oder ähnliches haben, sage ihm in einem Satz, er soll den Schalter „Schreiben“ im "
+            + "Eingabefeld einschalten und die Nachricht noch einmal senden; schreibe den Inhalt dann nicht in die "
+            + "Antwort.";
 
     /** Das Wort vor dem Bezug eines Zitats aus einem Artefakt (ADR 0045 §7), wie es {@link #RULES} nennen. */
     public static final String QUOTE_REFERENCE = "Bezug:";
@@ -146,10 +164,11 @@ public final class DocumentChatTools {
         all.add(tool(GRAPHIC_REPLACE, "Ersetzt das ganze SVG einer Grafik (für einen Umbau des Ganzen).", graphic
                 + ",\"svg\":{\"type\":\"string\",\"description\":\"vollständiges SVG mit <svg …>\"}",
                 List.of("svg")));
-        all.add(tool(GRAPHIC_EMBED, "Bindet eine Grafik am Ende eines Abschnitts ein, als Verweis (keine Kopie): "
-                + "wird die Grafik später geändert, stimmt das Dokument von selbst.", DOC + "," + SECTION
+        all.add(tool(GRAPHIC_EMBED, "Bindet eine Grafik am Ende eines Abschnitts ein (ohne abschnitt: am Ende des "
+                + "Dokuments), als Verweis (keine Kopie): wird die Grafik später geändert, stimmt das Dokument von "
+                + "selbst.", DOC + "," + SECTION
                 + ",\"grafik\":{\"type\":\"string\",\"description\":\"Kennung der Grafik, etwa G1\"}",
-                List.of("abschnitt", "grafik")));
+                List.of("grafik")));
         return all;
     }
 
@@ -294,22 +313,9 @@ public final class DocumentChatTools {
                 return "";
             }
             StringBuilder out = new StringBuilder("\n\n");
-            List<String> graphics = new ArrayList<>();
-            touched.forEach((id, title) -> {
-                boolean graphic = id.startsWith("G");
-                out.append(graphic ? "Grafik: [" : "Dokument: [").append(title.replace("]", ")"))
-                        .append("](").append(LINK_SCHEME).append(id).append(")  \n");
-                if (graphic) {
-                    graphics.add(id);
-                }
-            });
-            // Grafiken erscheinen im Chat über dieselbe Anzeige wie direktes SVG (ein Renderweg).
-            for (String id : graphics) {
-                ChatArtifact graphic = store.read(folder, chatId, id);
-                if (graphic != null && !graphic.current().svg().isBlank()) {
-                    out.append("\n````svg\n").append(graphic.current().svg().strip()).append("\n````\n");
-                }
-            }
+            // Nur Verweise, nie der Inhalt (Angelo 27.11.2026): der Chat bleibt kurz und der Verlauf spart Kontext.
+            touched.forEach((id, title) -> out.append(id.startsWith("G") ? "Grafik: [" : "Dokument: [")
+                    .append(title.replace("]", ")")).append("](").append(LINK_SCHEME).append(id).append(")  \n"));
             return out.toString().stripTrailing() + "\n";
         }
     }
@@ -504,7 +510,14 @@ public final class DocumentChatTools {
         }
         String reference = GraphicReferences.reference(graphic);
         return edit(arguments, "Grafik " + graphic.id() + " eingebunden", doc -> {
-            SectionDocument.Section section = doc.section(text(arguments, "abschnitt"));
+            // Ohne Abschnitt ans Ende des Dokuments: Einbinden scheitert nicht an einer fehlenden Kennung.
+            String wanted = text(arguments, "abschnitt");
+            if (wanted.isEmpty() && doc.sections().isEmpty()) {
+                throw new SectionDocument.SectionException("Das Dokument hat noch keinen Abschnitt. Erst einen "
+                        + "mit abschnitt_einfuegen anlegen.");
+            }
+            SectionDocument.Section section = wanted.isEmpty() ? doc.sections().get(doc.sections().size() - 1)
+                    : doc.section(wanted);
             if (GraphicReferences.ids(section.text()).contains(graphic.id())) {
                 throw new SectionDocument.SectionException("Grafik " + graphic.id() + " steht schon in Abschnitt "
                         + section.id() + ".");

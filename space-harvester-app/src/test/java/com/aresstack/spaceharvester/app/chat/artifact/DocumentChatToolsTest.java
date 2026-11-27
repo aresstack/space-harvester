@@ -213,7 +213,8 @@ class DocumentChatToolsTest {
         assertThat(withDrawing.run(new AiChat.ToolCall("3", "grafik_einbinden",
                 "{\"abschnitt\":\"a1\",\"grafik\":\"G1\"}"))).contains("schon");
         assertThat(call("grafik_einbinden", "{\"abschnitt\":\"a1\",\"grafik\":\"G9\"}")).contains("G9");
-        assertThat(withDrawing.footer()).contains("Grafik: [Beetplan](artefakt:G1)").contains("````svg");
+        assertThat(withDrawing.footer()).as("nur Verweise, nie der Inhalt").contains("Grafik: [Beetplan](artefakt:G1)")
+                .doesNotContain("<svg");
 
         store.replaceSvg(folder, chatId, "G1", ChatArtifactStore.ANY, ChatArtifact.Origin.USER, "", "<svg>neu</svg>");
         assertThat(GraphicReferences.inline(store.read(folder, chatId, "D1").content(),
