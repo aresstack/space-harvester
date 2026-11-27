@@ -1,8 +1,7 @@
 # ADR 0047: Lokale und globale Artefakte
 
-- Status: **Angenommen** (27.11.2026) nach Angelos Entscheidungen von 21:26 und 21:30 MEZ. Offen ist nur, wie viele
-  globale Artefakte geordnet werden (Abschnitt 5). Was nicht sein Wortlaut ist, steht in Abschnitt 6 als Entscheidung
-  des Architekten.
+- Status: **Angenommen** (27.11.2026) nach Angelos Entscheidungen von 21:26, 21:30 und 23:07 MEZ. Was nicht sein
+  Wortlaut ist, steht in Abschnitt 6 als Entscheidung des Architekten.
 - Quellen:
   - Angelos Nachricht vom 27.11.2026, 20:55 MEZ: „Ich würde sagen, dass wir Bücher auch als so ein Artefakt behandeln
     sollten und dann unter der Exportansicht anzeigen sollten.“
@@ -39,6 +38,19 @@
     Machen wir Wissensquellen und Artefakte und dann kann man die Ansicht umschalten und kriegt unten die Liste mit
     Artefakten, also mit den globalen Artefakten natürlich nur. Und dann hat man genug Platz, diese Artefakte auch
     irgendwie sauber zu sortieren.“
+  - **Maßgeblich für das Ordnen und für den Ort der lokalen Artefakte:** Angelos Nachricht vom 27.11.2026, 23:07 MEZ:
+    „Artefakte sortieren. […] Wenn ich jetzt in mehreren Chats ein Artefakt verwende, können diese Chats verschiedene
+    Gruppenfarben haben. Da müsste ich dann eine Mischfarbe draus machen. Das ist Quatsch. Also ich würde halt die
+    auf jeden Fall erstmal nach Typ sortieren […] nach Bildern oder Schriftstücken […]. Also die Suche ist ja sowieso
+    schon in der Seitenleiste vorhanden. Also die würde ich ja genauso übernehmen […]. Das ist ja auch eigentlich
+    streng genommen eher ein Filter […]. Und ja, eben nach Art gruppieren, das kann man aber optional vielleicht
+    einschalten unten in der Leiste, dass man das an- und abschalten kann. […] Das müsste dann natürlich wieder im
+    Application State gespeichert sein […] wir speichern das halt einmal global, diesen Zustand, und nicht irgendwie
+    an jedem Baum oder jeder Datei einzeln. […] Und die lokalen Artefakte […], die kannst du quasi im Dropdown
+    lassen. Meine Idee war aber eigentlich […], dass das bei den Exporten direkt auftaucht. Man kann das ja quasi auf
+    der leeren Seite machen. Wenn ich auf Exporte gehe, ist diese Seite ja normalerweise erstmal leer. So bevor ich
+    einen neuen Tab öffne. Und da könnte man sie bereits präsentieren, diese Artefakte. Und man kann sie auch
+    zusätzlich nochmal ins Dropdown packen, falls eine Seite auf ist, dass man trotzdem noch drankommt.“
 - Bezüge:
   - [ADR 0027](0027-beobachter-statt-abfragen.md): kein Polling
   - [ADR 0034](0034-favoriten-ordner-als-sammlungen.md), Abschnitt 7: Überblick eines Ordners
@@ -71,7 +83,7 @@ Alles, was die App oder die KI erzeugt und ablegt, ist ein **Artefakt**. Es gibt
 | Grafik | global | Chat oder Benutzer | Projekt | ja, Benutzer und Chat | ja |
 | Buch | global | „Buch schreiben“ am Ordner | Projekt, erreichbar an seinem Ordner | ja, Benutzer und Chat | ja, jede Auflage bleibt |
 | Podcast | lokal | Kopfhörer | Seite, Ordner oder Space | nein, Sprechtext nur lesen | nein, wird überschrieben |
-| Zusammenfassung | lokal | Leseansicht | Seite oder Bereich | nein | nein, wird überschrieben |
+| Zusammenfassung | lokal | Leseansicht | Ordner, Space oder Quelle | nein | nein, wird überschrieben |
 
 ### 2. Globale Artefakte: das Projekt besitzt, nie der Chat
 - Dokumente, Grafiken und Bücher gehören immer dem Projekt, auch im Standardprojekt „AresStack“. Das ersetzt aus
@@ -90,6 +102,10 @@ Alles, was die App oder die KI erzeugt und ablegt, ist ein **Artefakt**. Es gibt
   bisher (ADR 0043, F3). Sonst bleiben Artefakte in ihrem Projekt.
 
 ### 3. Lokale Artefakte: bleiben an der Seite
+- Stand im Code (develop, 27.11.2026): Eine einzelne Seite hat als lokales Artefakt ihren Erklär-Podcast; eine
+  Zusammenfassung einer einzelnen Seite gibt es nicht. Ordner, Space und Quelle haben die Zusammenfassung des
+  Bereichs und den Podcast des Bereichs, der Ordner zusätzlich den Podcast aus dem Buch. Gezeigt wird je Knoten nur,
+  was es für ihn gibt.
 - Zusammenfassung und Podcast bleiben an ihrer Seite, in ihrer heutigen Ablage. Sie sind in jedem Projekt zu sehen,
   weil sie aus dem Wissen entstehen und nicht aus einem Chat.
 - An der Seite sind sie als Artefakte zu sehen. Sie stehen in keiner globalen Übersicht und in keiner Liste des
@@ -117,11 +133,25 @@ Alles, was die App oder die KI erzeugt und ablegt, ist ein **Artefakt**. Es gibt
   globalen Artefakte des aktiven Projekts, und nur diese. Lokale Artefakte stehen dort nie.
 - Die Liste nutzt Kopf und Fuß der Seitenleiste wie der Baum (`SideHead` mit Filterfeld, `SideFoot`). Es entsteht
   kein neues Steuerelement.
-- Sortiert wird zunächst nach der letzten Änderung, neueste zuerst; das Filterfeld filtert nach dem Titel.
-- **Offen:** wie die Liste geordnet wird, wenn es viele Artefakte sind. Angelo ist am 27.11.2026 gefragt: farbige
-  Gruppen wie bei den Chats, eigene Ordner oder nur Suche. Bis zu seiner Antwort bleibt es bei „neueste zuerst“.
+- **Ordnen (Angelo, 23:07 MEZ):**
+  - Der Filter ist der vorhandene der Seitenleiste, unverändert. Es ist ein Filter nach dem Titel, keine Suche.
+  - Unten in der Leiste (`SideFoot`) steht ein Schalter „Nach Art gruppieren“. Aus: eine Liste, neueste zuerst. An:
+    je Art eine Gruppe, darin neueste zuerst.
+  - Der Zustand des Schalters steht einmal global im Zustand der Anwendung. Was zuletzt eingestellt war, gilt
+    überall und nach dem Neustart, nicht je Projekt, Baum oder Datei.
+  - Keine Gruppenfarben aus dem Chat und keine Gruppen von Hand: Ein Artefakt kann in mehreren Chats verwendet
+    werden und hätte dann mehrere Farben.
 - Verworfen, nicht bauen: eine Liste aller Artefakte des Projekts samt der lokalen (Angelo, 21:19 MEZ), und globale
   Artefakte an Knoten des Baums (Angelo, 21:22 MEZ).
+
+### 5a. Ort der lokalen Artefakte: die leere Seite von „Export“ und das ▾-Menü
+- Der Reiter „Export“ einer Seite zeigt, solange kein Export-Reiter offen ist, die lokalen Artefakte dieser Seite:
+  Zusammenfassung und Podcast, mit ihrem Zustand und der Marke „Veraltet“ als Knopf zum Neuerzeugen. Die
+  Ausgabe-Knöpfe bleiben in der unteren Leiste.
+- Zusätzlich stehen dieselben Einträge im Menü „Weitere Aktionen zur Seite“ (▾), damit man sie auch erreicht, wenn
+  ein Export-Reiter offen ist.
+- Dasselbe gilt für Ordner, Space und Quelle mit deren lokalen Artefakten. Leseansicht und Podcast-Ansicht bleiben
+  unverändert.
 
 ### 6. Entscheidungen des Architekten, nicht Angelos Wortlaut
 1. Das Buch ist global. Angelo nennt es in seiner Nachricht als Beispiel für ein versioniertes Artefakt; versioniert
@@ -130,8 +160,8 @@ Alles, was die App oder die KI erzeugt und ablegt, ist ein **Artefakt**. Es gibt
    Artefakten und nicht je Auflage einmal.
 3. Ältere Auflagen sind lesbar und ausgebbar; bearbeitet wird die neueste. Der Stand einer älteren Auflage ist ihr
    letzter Stand samt Nachbearbeitungen.
-4. Wo an der Seite die lokalen Artefakte „als Artefakte zu sehen“ sind, ist noch nicht festgelegt. Bis dahin bleiben
-   Leseansicht und Podcast-Ansicht ihr Ort, wie heute.
+4. Die Gruppen des Schalters „Nach Art gruppieren“ heißen wie die Arten in der App: Dokumente, Grafiken, Bücher.
+   Angelo nennt als Beispiel „Bilder oder Schriftstücke“.
 5. „Rigoros“ (21:04 MEZ) heißt überschreiben. Veraltetes wird nicht von selbst gelöscht.
 6. Ein Klick auf ein Artefakt in der Liste links öffnet es in der Mitte, so wie ein Klick im Baum eine Seite öffnet.
    Die Schreibansicht (ADR 0045) bleibt dieselbe, sie steht dann in der Mitte statt im Reiter „Export“ einer Seite.
@@ -141,9 +171,9 @@ Alles, was die App oder die KI erzeugt und ablegt, ist ein **Artefakt**. Es gibt
 8. Legt die KI im Chat ein Artefakt an oder ändert sie eines, während links „Wissensquellen“ gewählt ist, schaltet
    nichts von selbst um. Die Antwort trägt den Verweis (ein Klick wechselt), die Hälfte „Artefakte“ der Wippe zeigt
    eine Zahl, die Statuszeile meldet es einmal. Steht links „Artefakte“, öffnet sich das Artefakt wie heute.
-9. Vorschlag, noch nicht zum Bau vergeben: Die lokalen Artefakte einer Seite stehen im Menü „Weitere Aktionen zur
-   Seite“ als Abschnitt „Aus dieser Seite erzeugt“, an der Stelle der bisherigen Artefaktliste, mit Öffnen, Neu
-   erzeugen und Löschen.
+9. Die lokalen Artefakte tragen an beiden Orten (Abschnitt 5a) dieselben Aktionen: Öffnen (Zusammenfassung in der
+   Leseansicht, Podcast in der Podcast-Ansicht, kein zweiter Player), Neu erzeugen (überschreibt) und Löschen nach
+   „wirklich löschen?“. Es stehen nur Einträge da, die es für die Seite gibt.
 
 Zurückgenommen: Der Architekt hatte „keine Versionierung“ von 21:04 MEZ zunächst auch auf das Buch bezogen („Neue
 Auflage überschreibt“). Das war falsch und ist nie gebaut worden.
@@ -168,7 +198,8 @@ Jeder Schritt ein kleiner PR auf develop. Den Speicher der Artefakte ändert nur
 3. Wippe „Wissensquellen | Artefakte“ links mit der Liste der globalen Artefakte, Öffnen in der Mitte.
 4. Globale Artefakte aus „Export“ und aus dem Menü „Weitere Aktionen zur Seite“ herausnehmen (Abschnitt 6,
    Punkte 7 und 8).
-5. Ordnung der Liste nach Angelos Antwort zu Abschnitt 5.
+5. Schalter „Nach Art gruppieren“ im Fuß der Leiste, Zustand global gemerkt.
+6. Lokale Artefakte auf der leeren Seite von „Export“ und im Menü „Weitere Aktionen zur Seite“.
 
 ## Der einmalige Umzug (Schritt 1, Stand des Baus vom 27.11.2026)
 
