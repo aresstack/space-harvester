@@ -16,7 +16,8 @@ import java.util.Map;
  *       form) opens Firefox's modal "resend data" prompt. That prompt is browser chrome, not a page
  *       dialog, so Playwright cannot dismiss it; it blocks the tab and every probe of it, and
  *       "Cancel" simply lets it reappear. Accepting it re-submits the same request the user already
- *       made, which is what the user ends up clicking anyway.</li>
+ *       made, which is what the user ends up clicking anyway. A test run (Proving Ground) starts without
+ *       it: a test must never send a form a second time unasked; there the prompt blocks and the step fails.</li>
  * </ul>
  */
 public final class FirefoxSessionPrefs {
@@ -29,8 +30,15 @@ public final class FirefoxSessionPrefs {
 
     /** Adds the session prefs without overriding a value the launch profile already sets. */
     static Map<String, Object> apply(Map<String, Object> prefs) {
+        return apply(prefs, true);
+    }
+
+    /** As {@link #apply(Map)}; with {@code acceptRepost = false} the "resend data" prompt is not accepted. */
+    static Map<String, Object> apply(Map<String, Object> prefs, boolean acceptRepost) {
         prefs.putIfAbsent(NO_BFCACHE, 0);
-        prefs.putIfAbsent(ALWAYS_ACCEPT_REPOST, Boolean.TRUE);
+        if (acceptRepost) {
+            prefs.putIfAbsent(ALWAYS_ACCEPT_REPOST, Boolean.TRUE);
+        }
         return prefs;
     }
 }

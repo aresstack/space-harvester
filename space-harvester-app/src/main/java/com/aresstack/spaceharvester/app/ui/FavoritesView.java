@@ -190,6 +190,11 @@ final class FavoritesView {
         book.openBook(folderId);
     }
 
+    /** Wählt den Ordner im Baum (etwa „Ordner in den Wissensquellen zeigen“ am Buch). */
+    void select(String folderId) {
+        tree.select(List.of(folderId));
+    }
+
     /** „Neue Auflage erzeugen“ für den Ordner, etwa aus der Leseansicht. */
     void newEdition(String folderId) {
         book.newEdition(folderId);

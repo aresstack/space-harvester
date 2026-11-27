@@ -1029,4 +1029,10 @@ class ChatPanelTest {
         // Beim Anhängen steht die Frage noch nicht fest: das Modell liest mit der allgemeinen Anweisung.
         assertThat(instructions).containsExactly(com.aresstack.spaceharvester.app.chat.AttachmentImages.PROMPT);
     }
+
+    @Test
+    void enterDoesNotStopARunningAnswer() {
+        assertThat(ChatPanel.enterSends(false)).isTrue();
+        assertThat(ChatPanel.enterSends(true)).isFalse();
+    }
 }

@@ -99,9 +99,9 @@ public final class BrowserRuntime {
     public RunningBrowser persistent(String profileKey, boolean headless, BrowserAddon addon)
             throws BrowserStartException {
         if (profileKey == null || profileKey.isBlank()) {
-            return start(true, null, headless, addon);
+            return start(true, null, headless, addon, true);
         }
-        return start(true, ProfileLease.keyedFolder(config.profilesDirectory(), profileKey), headless, addon);
+        return start(true, ProfileLease.keyedFolder(config.profilesDirectory(), profileKey), headless, addon, true);
     }
 
     /**
@@ -110,16 +110,26 @@ public final class BrowserRuntime {
      */
     public RunningBrowser persistentIn(Path profileFolder, boolean headless, BrowserAddon addon)
             throws BrowserStartException {
-        return start(true, profileFolder.toAbsolutePath().normalize(), headless, addon);
+        return start(true, profileFolder.toAbsolutePath().normalize(), headless, addon, true);
     }
 
     /** A browser with a throw-away profile (Playwright deletes it on close); the caller creates its contexts. */
     public RunningBrowser ephemeral(boolean headless, BrowserAddon addon) throws BrowserStartException {
-        return start(false, null, headless, addon);
+        return start(false, null, headless, addon, true);
     }
 
-    private RunningBrowser start(boolean persistent, Path profileFolder, boolean headless, BrowserAddon addon)
+    /**
+     * As {@link #ephemeral(boolean, BrowserAddon)}; with {@code acceptRepost = false} Firefox and Camoufox do not
+     * accept the "resend data" prompt on their own ({@link FirefoxSessionPrefs}), so a test never re-submits a form
+     * unasked. Chrome and Edge are not affected.
+     */
+    public RunningBrowser ephemeral(boolean headless, BrowserAddon addon, boolean acceptRepost)
             throws BrowserStartException {
+        return start(false, null, headless, addon, acceptRepost);
+    }
+
+    private RunningBrowser start(boolean persistent, Path profileFolder, boolean headless, BrowserAddon addon,
+                                 boolean acceptRepost) throws BrowserStartException {
         BrowserChannel channel = config.channel();
         Playwright playwright = null;
         BrowserContext context = null;
@@ -212,8 +222,8 @@ public final class BrowserRuntime {
                 }
             } else {
                 BrowserType.LaunchOptions options = switch (channel) {
-                    case CAMOUFOX -> camoufoxLaunchOptions(executable, camoufox, headless);
-                    case FIREFOX -> firefoxLaunchOptions(executable, headless);
+                    case CAMOUFOX -> camoufoxLaunchOptions(executable, camoufox, headless, acceptRepost);
+                    case FIREFOX -> firefoxLaunchOptions(executable, headless, acceptRepost);
                     case CHROME, EDGE -> chromiumLaunchOptions(channel, headless);
                 };
                 if (config.startTimeout().toMillis() > 0) {
@@ -302,11 +312,15 @@ public final class BrowserRuntime {
     }
 
     static BrowserType.LaunchOptions firefoxLaunchOptions(Path executable, boolean headless) {
+        return firefoxLaunchOptions(executable, headless, true);
+    }
+
+    static BrowserType.LaunchOptions firefoxLaunchOptions(Path executable, boolean headless, boolean acceptRepost) {
         return new BrowserType.LaunchOptions()
                 .setChannel(FIREFOX_BIDI_CHANNEL)
                 .setExecutablePath(executable)
                 .setHeadless(headless)
-                .setFirefoxUserPrefs(FirefoxSessionPrefs.apply(new LinkedHashMap<>()));
+                .setFirefoxUserPrefs(FirefoxSessionPrefs.apply(new LinkedHashMap<>(), acceptRepost));
     }
 
     /**
@@ -327,7 +341,7 @@ public final class BrowserRuntime {
                 .setReducedMotion(null)
                 .setForcedColors(null)
                 .setContrast(null)
-                .setFirefoxUserPrefs(camoufoxPrefs(launch));
+                .setFirefoxUserPrefs(camoufoxPrefs(launch, true));
         if (!launch.args().isEmpty()) {
             options.setArgs(launch.args());
         }
@@ -335,12 +349,17 @@ public final class BrowserRuntime {
     }
 
     static BrowserType.LaunchOptions camoufoxLaunchOptions(Path executable, CamoufoxLaunch launch, boolean headless) {
+        return camoufoxLaunchOptions(executable, launch, headless, true);
+    }
+
+    static BrowserType.LaunchOptions camoufoxLaunchOptions(Path executable, CamoufoxLaunch launch, boolean headless,
+                                                           boolean acceptRepost) {
         BrowserType.LaunchOptions options = new BrowserType.LaunchOptions()
                 .setChannel(FIREFOX_BIDI_CHANNEL)
                 .setExecutablePath(executable)
                 .setHeadless(headless)
                 .setEnv(camoufoxEnvironment(launch))
-                .setFirefoxUserPrefs(camoufoxPrefs(launch));
+                .setFirefoxUserPrefs(camoufoxPrefs(launch, acceptRepost));
         if (!launch.args().isEmpty()) {
             options.setArgs(launch.args());
         }
@@ -353,9 +372,9 @@ public final class BrowserRuntime {
         return environment;
     }
 
-    private static Map<String, Object> camoufoxPrefs(CamoufoxLaunch launch) {
+    private static Map<String, Object> camoufoxPrefs(CamoufoxLaunch launch, boolean acceptRepost) {
         // no bfcache + no blocking "resend data" prompt, on top of the fingerprint prefs
-        return FirefoxSessionPrefs.apply(new LinkedHashMap<>(launch.prefs()));
+        return FirefoxSessionPrefs.apply(new LinkedHashMap<>(launch.prefs()), acceptRepost);
     }
 
     private BrowserType.LaunchPersistentContextOptions chromiumPersistentOptions(BrowserChannel channel,

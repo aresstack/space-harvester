@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
@@ -35,5 +36,13 @@ class BrowserLaunchOptionsTest {
         assertEquals(executable, persistent.executablePath);
         assertEquals(Boolean.FALSE, persistent.acceptDownloads);
         assertNull(persistent.viewportSize.orElse(null), "a real window, no viewport emulation");
+    }
+
+    /** A test run (Proving Ground) never re-submits a form unasked: the "resend data" pref stays out. */
+    @Test
+    void aTestRunStartsWithoutAcceptingTheResendPrompt() {
+        BrowserType.LaunchOptions launch = BrowserRuntime.firefoxLaunchOptions(temp.resolve("firefox"), true, false);
+        assertEquals(0, launch.firefoxUserPrefs.get(FirefoxSessionPrefs.NO_BFCACHE));
+        assertFalse(launch.firefoxUserPrefs.containsKey(FirefoxSessionPrefs.ALWAYS_ACCEPT_REPOST));
     }
 }

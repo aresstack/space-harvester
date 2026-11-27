@@ -414,6 +414,7 @@ public final class ExportPanel extends JPanel {
     private final Map<String, Pending> sourceJobs = new LinkedHashMap<>();
     /** Die Anmeldung bei {@link AppContext#onChange}; ein geschlossener Export-Reiter meldet sich damit ab. */
     private final Subscription contextSubscription;
+    private final Subscription outputSubscription;
     /** Ein Export aus der Quelle, dessen Auftrag gerade erst angefordert wird. */
     private Pending sourceStarting;
     /** Zählt Abfragen; nur das Ergebnis der jüngsten wird gezeigt. */
@@ -498,6 +499,12 @@ public final class ExportPanel extends JPanel {
                 refresh();
             }
         });
+        // Wechselt das Projekt oder sein Speicherort, zeigt die Liste die Dateien des neuen Ordners.
+        outputSubscription = context.onExportDirectoryChange(() -> {
+            if (!disposed) {
+                refresh();
+            }
+        });
     }
 
     /** Ob die Fläche die Daten ihrer Auswahl zeigt (für Tests: geladen). */
@@ -555,6 +562,7 @@ public final class ExportPanel extends JPanel {
     void dispose() {
         disposed = true;
         contextSubscription.close();
+        outputSubscription.close();
         if (subscription != null) {
             subscription.close();
             subscription = null;
@@ -808,14 +816,15 @@ public final class ExportPanel extends JPanel {
             int notLoaded = (int) rows.stream().filter(row -> !loaded.contains(row.part().sourceId() + "\u0000"
                     + row.part().spaceKey())).count();
             return new Data(selection, null, running(jobs, selection), null, List.of(), rows, holdings,
-                    conversion(jobs, selection), finished, finishedSource, produced, restQueries, notLoaded);
+                    conversion(jobs, selection), finished, finishedSource, produced, restQueries, notLoaded,
+                    directory);
         }
         JobStatus newest = newest(jobs, selection, preferred.get(selection.normalized()));
         ExportDatasetInfo dataset = newest == null ? null
                 : runtime.workspace().exportDataset(newest.id()).orElse(null);
         List<String> files = dataset == null ? List.of() : outputFiles(directory, dataset.exportId());
         return new Data(selection, newest, running(jobs, selection), dataset, files, List.of(), holdings,
-                conversion(jobs, selection), finished, finishedSource, produced, restQueries, 0);
+                conversion(jobs, selection), finished, finishedSource, produced, restQueries, 0, directory);
     }
 
     /** Die Quellen der Auswahl: alle bei „Wissensquellen“, die eine eines Knotens, die der Favoriten einer Sammlung. */
@@ -938,7 +947,7 @@ public final class ExportPanel extends JPanel {
             }
         }
         return new Data(null, null, null, null, List.of(), List.of(), null, null, finished, finishedSource, produced,
-                false, 0);
+                false, 0, null);
     }
 
     /** Meldet die beendeten Aufträge aus {@code data}: Datei oder Grund in die Statuszeile, Knöpfe neu. */
@@ -956,9 +965,10 @@ public final class ExportPanel extends JPanel {
     record Data(Selection selection, JobStatus newest, JobStatus running, ExportDatasetInfo dataset,
                 List<String> files, List<SpaceRow> spaces, PageSelection holdings, JobStatus conversion,
                 List<JobStatus> finished, List<JobStatus> finishedSource,
-                Map<String, ExportConversions.ConvertedFile> produced, boolean restQueries, int notLoaded) {
+                Map<String, ExportConversions.ConvertedFile> produced, boolean restQueries, int notLoaded,
+                Path directory) {
         static final Data NONE = new Data(null, null, null, null, List.of(), List.of(), null, null, List.of(),
-                List.of(), Map.of(), false, 0);
+                List.of(), Map.of(), false, 0, null);
     }
 
     /**
@@ -1083,7 +1093,8 @@ public final class ExportPanel extends JPanel {
 
     private void renderOutput(Data data) {
         ExportDatasetInfo dataset = data.dataset();
-        Path directory = context.exportDirectory();
+        // Der Ordner, aus dem die Dateien gelesen wurden; ein Projektwechsel dazwischen löst sie nicht falsch auf.
+        Path directory = data.directory() != null ? data.directory() : context.exportDirectory();
         outputFiles = data.files();
         boolean other = dataset == null || shownDataset == null
                 || !shownDataset.exportId().equals(dataset.exportId());
@@ -1445,7 +1456,9 @@ public final class ExportPanel extends JPanel {
         if (export == null) {
             return;
         }
-        Path directory = context.exportDirectory();
+        // Der Ordner, in den der Auftrag geschrieben hat, nicht der des inzwischen vielleicht anderen Projekts.
+        String written = job.parameters().get(SourceQueryExports.DIRECTORY);
+        Path directory = written == null || written.isBlank() ? context.exportDirectory() : Path.of(written);
         String file = SourceQueryExports.fileName(job.type(), job.partitionKey(), job.rootPageId(), job.id());
         long open = sourceJobs.values().stream().filter(export::equals).count();
         if (job.state() == JobState.COMPLETED) {

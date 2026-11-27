@@ -1498,6 +1498,32 @@ public final class MainWindow implements AppContext.Navigator {
         explorer.openBook(folderId);
     }
 
+    /**
+     * Öffnet ein globales Artefakt (etwa das Buch aus „Buch öffnen“) in der Mitte, links unter „Artefakte“ (ADR 0047 §5);
+     * gehört es einem anderen Projekt, wird dieses aktiv.
+     */
+    @Override
+    public void openArtifact(String projectId, String artifactId) {
+        show(AppContext.Section.CONTENT);
+        if (projectId != null && (context.projects().active() == null
+                || !projectId.equals(context.projects().active().id()))) {
+            context.projects().activate(projectId);
+            // Der Chat wechselt auf die Meldung des Projekts hin; erst danach öffnen.
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                explorer.revealArtifacts();
+                content.openArtifact(artifactId);
+            });
+            return;
+        }
+        explorer.revealArtifacts();
+        content.openArtifact(artifactId);
+    }
+
+    @Override
+    public boolean opensArtifacts() {
+        return true;
+    }
+
     @Override
     public void newBookEdition(String folderId) {
         explorer.newBookEdition(folderId);
