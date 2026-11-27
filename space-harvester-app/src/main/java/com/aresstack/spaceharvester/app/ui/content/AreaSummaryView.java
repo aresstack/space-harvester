@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.changelog.SummaryStatement;
 import com.aresstack.spaceharvester.application.changelog.SummaryUnavailableException;
 import com.aresstack.spaceharvester.application.changelog.UpdateSummary;
 import com.aresstack.spaceharvester.application.jobs.JobListener;
+import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.observe.Subscription;
@@ -61,6 +62,7 @@ final class AreaSummaryView extends JPanel {
 
     static final String NO_SUMMARY = "Noch kein Überblick über diesen Bereich.";
     static final String SUMMARIZING = "Überblick wird erstellt …";
+    static final String LOADING = "Überblick wird gelesen …";
     static final String EMPTY = "Dieser Bereich hat noch keine geladene Seite, die sich zusammenfassen lässt.";
     static final String NO_MODEL = "Für den Überblick ist kein Chat-Modell eingestellt. Unter Einstellungen › "
             + "Modelle wählen; danach entsteht er beim Öffnen von selbst.";
@@ -84,6 +86,15 @@ final class AreaSummaryView extends JPanel {
      * Favoriten, „mit Unterseiten“) nie von selbst einen KI-Lauf (ADR 0034 §7).
      */
     private static final Set<String> AUTO_CONSIDERED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /**
+     * Der laufende Überblick-Auftrag je Bereich ({@link Target#identity()}), für beide Ansichten (Lese- und
+     * Podcast-Ansicht) und über einen Wechsel der Auswahl hinweg (Angelo 27.11.2026: der Ring verschwand, der Auftrag
+     * lief weiter, das fertige Ergebnis erschien nicht). Kehrt man zum Bereich zurück, zeigt die Ansicht den Ring wieder
+     * und liest beim Ende neu. Nur Kennungen; der Stand kommt vom Core.
+     */
+    private static final java.util.Map<String, String> RUNNING = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Zählt die Kennungen für den Vorrang der offenen Ansicht ({@link #view}). */
+    private static final java.util.concurrent.atomic.AtomicLong VIEWS = new java.util.concurrent.atomic.AtomicLong();
     static final String NO_FAVORITES = "Der Ordner hat noch keine Favoriten.";
 
     /** Was die Ansicht zeigt: zum Lesen oder zum Hören. */
@@ -230,6 +241,12 @@ final class AreaSummaryView extends JPanel {
     private int generation;
     private Subscription subscription = Subscription.NONE;
     private Subscription jobWatch = Subscription.NONE;
+    /**
+     * Die offene Ansicht für den Vorrang ({@code Foreground}), solange dieser Bereich sichtbar ist: Ein Überblick, den
+     * sie startet, wartet nicht hinter anderen Aufträgen (etwa „Buch schreiben“) auf einen Platz; verlässt man sie,
+     * läuft er ohne Vorrang weiter (Angelo 24.11.2026). {@code null} ohne.
+     */
+    private String view;
 
     AreaSummaryView(Supplier<Workspace> workspace, Mode mode) {
         this(() -> Actions.of(workspace.get()), new SourceUpdatesView.Runner() {
@@ -291,8 +308,12 @@ final class AreaSummaryView extends JPanel {
         }
         add(new ReportLayer(busy, mode == Mode.LISTEN ? podcast.orb() : null, reportScroll), BorderLayout.CENTER);
         addHierarchyListener(event -> {
-            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
-                becameVisible();
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0) {
+                if (isShowing()) {
+                    becameVisible();
+                } else {
+                    leaveView();
+                }
             }
         });
         area(null, null);
@@ -375,12 +396,18 @@ final class AreaSummaryView extends JPanel {
         }
         subscription.close();
         subscription = Subscription.NONE;
+        jobWatch.close();
+        jobWatch = Subscription.NONE;
+        leaveView();
         generation++;
         target = next;
         summary = null;
         empty = next != null && next.empty();
         failure = null;
         loaded = false;
+        // Der Ring gehört zum Bereich, nicht zur Ansicht: läuft für ihn schon ein Überblick, zeigt sie ihn wieder.
+        runningJob = next == null ? null : RUNNING.get(next.identity());
+        busy.setText(null);
         podcast.summary(null);
         offer();
         if (next == null) {
@@ -412,6 +439,9 @@ final class AreaSummaryView extends JPanel {
             }
         }
         subscription = () -> subscriptions.forEach(Subscription::close);
+        if (runningJob != null) {
+            watch(current, runningJob, next);
+        }
         reload();
     }
 
@@ -469,23 +499,62 @@ final class AreaSummaryView extends JPanel {
     }
 
     private void becameVisible() {
+        // Die andere Ansicht (Lese- bzw. Podcast-Ansicht) hat den Überblick inzwischen gestartet: Ring auch hier.
+        Actions current = actions.get();
+        String running = target == null ? null : RUNNING.get(target.identity());
+        if (runningJob == null && running != null && current != null) {
+            runningJob = running;
+            offer();
+            render();
+            watch(current, running, target);
+            return;
+        }
         if (autoSummarize()) {
             render();
         }
     }
 
+    /** Öffnet die Ansicht für den Vorrang, solange ein Bereich sichtbar gezeigt wird; die Kennung, sonst {@code null}. */
+    private String enterView() {
+        if (target == null || !showing.getAsBoolean()) {
+            return null;
+        }
+        if (view == null) {
+            view = "ueberblick-" + VIEWS.incrementAndGet();
+            com.aresstack.spaceharvester.application.jobs.Foreground.open(view);
+        }
+        return view;
+    }
+
+    /** Verlässt die Ansicht: ein laufender Überblick verliert den Vorrang und läuft normal weiter. */
+    private void leaveView() {
+        if (view != null) {
+            com.aresstack.spaceharvester.application.jobs.Foreground.close(view);
+            view = null;
+        }
+    }
+
     /**
-     * Fehlt der Überblick beim ersten sichtbaren Öffnen des Bereichs, entsteht er einmal von selbst (ADR 0034 §7: als
-     * nachrangiger Auftrag, ein Klick zieht vor); nur mit Chat-Modell. Wer den Bereich schon einmal gesehen hat, bekommt
-     * bei einer Änderung nur „veraltet“, nie einen KI-Lauf von selbst. {@code true}, wenn gestartet.
+     * Fehlt der Überblick beim ersten sichtbaren Öffnen des Bereichs, entsteht er einmal von selbst (ADR 0034 §7), mit
+     * dem Vorrang der offenen Ansicht; nur mit Chat-Modell. Wer den Bereich schon einmal gesehen hat, bekommt bei einer
+     * Änderung nur „veraltet“, nie einen KI-Lauf von selbst. {@code true}, wenn gestartet.
      */
     private boolean autoSummarize() {
-        if (!loaded || !available || runningJob != null || target == null || !target.automatic()
-                || !showing.getAsBoolean() || !AUTO_CONSIDERED.add(target.identity()) || summary != null || empty) {
+        if (!startsByItself()) {
             return false;
         }
         summarize(false);
         return true;
+    }
+
+    /**
+     * Die einzige Stelle, die entscheidet, ob der Überblick beim Öffnen von selbst startet (weitere Bedingungen gehören
+     * hierher, etwa „der Knoten hat ein Buch“). Merkt sich den Bereich, wenn ja, so startet er je Sitzung höchstens
+     * einmal von selbst.
+     */
+    private boolean startsByItself() {
+        return loaded && available && runningJob == null && target != null && target.automatic()
+                && summary == null && !empty && showing.getAsBoolean() && AUTO_CONSIDERED.add(target.identity());
     }
 
     private void summarize(boolean interactive) {
@@ -501,10 +570,25 @@ final class AreaSummaryView extends JPanel {
         if (interactive) {
             onStatus.accept(SUMMARIZING);
         }
-        runner.run(() -> current.summarize(of, interactive), status -> {
+        String priority = enterView();
+        runner.run(() -> {
+            JobStatus[] started = new JobStatus[1];
+            com.aresstack.spaceharvester.application.jobs.Foreground.run(priority,
+                    () -> started[0] = current.summarize(of, interactive));
+            return started[0];
+        }, status -> {
+            RUNNING.put(of.identity(), status.id());
+            if (!Objects.equals(of, target)) {
+                // Inzwischen ein anderer Bereich gewählt: Kehrt man zurück, zeigt er den Ring (RUNNING).
+                return;
+            }
             runningJob = status.id();
             watch(current, status.id(), of);
+            progressed(status, of);
         }, problem -> {
+            if (!Objects.equals(of, target)) {
+                return;
+            }
             runningJob = null;
             if (problem instanceof SummaryUnavailableException unavailable
                     && unavailable.reason() == SummaryUnavailableException.Reason.EMPTY_AREA) {
@@ -540,11 +624,40 @@ final class AreaSummaryView extends JPanel {
         } catch (RuntimeException e) {
             jobWatch = Subscription.NONE;
         }
-        runner.run(() -> current.shared().job(jobId), status -> progressed(status, of), failure -> { });
+        runner.run(() -> current.shared().job(jobId), status -> {
+            if (status != null) {
+                progressed(status, of);
+            } else {
+                forget(jobId, of);
+            }
+        }, failure -> forget(jobId, of));
+    }
+
+    /** Der Auftrag ist nicht mehr bekannt (etwa aus der Liste entfernt): kein Ring mehr, der Stand neu gelesen. */
+    private void forget(String jobId, Target of) {
+        RUNNING.remove(of.identity(), jobId);
+        if (!Objects.equals(of, target) || !jobId.equals(runningJob)) {
+            return;
+        }
+        runningJob = null;
+        jobWatch.close();
+        jobWatch = Subscription.NONE;
+        offer();
+        reload();
     }
 
     private void progressed(JobStatus status, Target of) {
-        if (!status.id().equals(runningJob) || !status.state().terminal()) {
+        if (status.state().terminal()) {
+            RUNNING.remove(of.identity(), status.id());
+        }
+        if (!Objects.equals(of, target) || !status.id().equals(runningJob)) {
+            return;
+        }
+        if (!status.state().terminal()) {
+            // Teilfortschritt sofort: wie viele Teile schon gelesen sind, unter dem Ring.
+            JobProgress progress = status.progress();
+            busy.setText(progress != null && progress.discovered() > 0
+                    ? SUMMARIZING + " " + progress.processed() + "/" + progress.discovered() : SUMMARIZING);
             return;
         }
         runningJob = null;
@@ -557,16 +670,14 @@ final class AreaSummaryView extends JPanel {
             default -> "Überblick fehlgeschlagen" + (status.error() == null ? "" : ": " + status.error().message());
         };
         onStatus.accept(outcome);
-        if (status.state() == JobState.FAILED && Objects.equals(of, target)) {
+        if (status.state() == JobState.FAILED) {
             failure = outcome + (outcome.endsWith(".") ? "" : ".") + " " + FAILURE_HINT;
         }
         offer();
-        if (Objects.equals(of, target)) {
-            if (status.state() == JobState.COMPLETED) {
-                reload();
-            } else {
-                render();
-            }
+        if (status.state() == JobState.COMPLETED) {
+            reload();
+        } else {
+            render();
         }
     }
 
@@ -590,7 +701,11 @@ final class AreaSummaryView extends JPanel {
         summarize.getAccessibleContext().setAccessibleName(summary == null ? SourceUpdatesView.SUMMARIZE
                 : SourceUpdatesView.RESUMMARIZE);
         boolean working = runningJob != null && target != null;
-        busy.setText(working ? SUMMARIZING : null);
+        if (!working) {
+            busy.setText(null);
+        } else if (!busy.isBusy() || busy.text().isEmpty()) {
+            busy.setText(SUMMARIZING);
+        }
         busy.setBusy(working);
     }
 
@@ -611,7 +726,8 @@ final class AreaSummaryView extends JPanel {
         } else if (target == null) {
             SummaryReport.add(reportBody, Comic.wrapped(" ", Comic.MUTED, 13.5f));
         } else if (!loaded) {
-            SummaryReport.add(reportBody, Comic.wrapped(" ", Comic.MUTED, 13.5f));
+            // Nicht leer stehen lassen, solange der gespeicherte Überblick gelesen wird (Angelo 27.11.2026).
+            SummaryReport.add(reportBody, Comic.wrapped(LOADING, Comic.MUTED, 13.5f));
         } else if (empty) {
             SummaryReport.add(reportBody, Comic.wrapped(target.empty() ? NO_FAVORITES : EMPTY, Comic.MUTED, 13.5f));
         } else if (!available) {
