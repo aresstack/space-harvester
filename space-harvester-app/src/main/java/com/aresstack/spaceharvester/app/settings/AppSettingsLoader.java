@@ -1287,7 +1287,9 @@ public final class AppSettingsLoader {
                         count(ai, AiServiceSettings.PODCAST_SPEECH_ATTEMPTS, 1,
                                 AiServiceSettings.Speech.MAX_PODCAST_ATTEMPTS, problems),
                         count(ai, AiServiceSettings.PODCAST_SPEECH_WORKERS, 1,
-                                AiServiceSettings.Speech.MAX_PODCAST_WORKERS, problems)),
+                                AiServiceSettings.Speech.MAX_PODCAST_WORKERS, problems),
+                        count(ai, AiServiceSettings.PODCAST_SECTION_CHARS, 1, Integer.MAX_VALUE, problems),
+                        count(ai, AiServiceSettings.PODCAST_SECTIONS, 1, Integer.MAX_VALUE, problems)),
                 use(ai, "diagnosis", problems), optionalFlag(get(ai, AiServiceSettings.DIAGNOSIS_ENABLED),
                         "space-harvester.ai." + AiServiceSettings.DIAGNOSIS_ENABLED, problems),
                 timeouts(ai, problems));

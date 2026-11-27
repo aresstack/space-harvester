@@ -24,6 +24,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** Material des Erklär-Podcasts einer Seite, mit erfundenen Seiten. */
 class PagePodcastsTest {
 
+    private static final PagePodcasts.Reading READING = PagePodcasts.Reading.DEFAULT;
+
     private static PagePodcasts.Page page(String id, String title, String text, PageText.Section... sections) {
         return new PagePodcasts.Page(id, title, "DEMO", new PageText("test/v1", text, List.of(sections)));
     }
@@ -117,7 +119,7 @@ class PagePodcastsTest {
         PagePodcasts.Subpage child = new PagePodcasts.Subpage(page("2", "Eskalation", "Drei Stufen bis zur Leitung."),
                 List.of(page("3", "Rufnummern", "Wen man nachts erreicht.")));
 
-        PodcastWriter.Material material = PagePodcasts.material(root, List.of(child), List.of("Handbuch", "Betrieb"));
+        PodcastWriter.Material material = PagePodcasts.material(root, List.of(child), List.of("Handbuch", "Betrieb"), READING);
 
         assertThat(material.format()).isEqualTo(PodcastWriter.Format.EXPLAINER);
         assertThat(material.stories()).extracting(PodcastWriter.Story::title)
@@ -140,13 +142,13 @@ class PagePodcastsTest {
                 new PageText.Section("Ablauf", 2, ablauf, stoerungen),
                 new PageText.Section("Störungen", 2, stoerungen, text.length()));
 
-        List<PagePodcasts.Part> parts = PagePodcasts.parts(root, PagePodcasts.MAX_SECTIONS);
+        List<PagePodcasts.Part> parts = PagePodcasts.parts(root, READING);
 
         assertThat(parts).extracting(PagePodcasts.Part::title).containsExactly("Einleitung", "Ablauf", "Störungen");
         assertThat(parts).extracting(part -> text.substring(part.start(), part.end()).strip()).containsExactly(
                 "Wozu es den Nachtlauf gibt.", "Ablauf\nErst Prüfung, dann Start.", "Störungen\nBereitschaft anrufen.");
         // Meldung n des Materials ist Teil n−1: dieselbe Reihenfolge, dieselben Titel
-        assertThat(PagePodcasts.material(root, List.of(), List.of()).stories()).extracting(PodcastWriter.Story::title)
+        assertThat(PagePodcasts.material(root, List.of(), List.of(), READING).stories()).extracting(PodcastWriter.Story::title)
                 .containsExactly("Einleitung", "Ablauf", "Störungen");
     }
 
@@ -164,20 +166,48 @@ class PagePodcastsTest {
                 new PodcastPlan.Topic("Einstieg", "", 0.5, List.of(), List.of()),
                 new PodcastPlan.Topic("Ablauf", "", 0.5, List.of(), List.of(2))), List.of());
 
-        List<PagePodcasts.Span> covered = PagePodcasts.coverage(root, plan);
+        List<PagePodcasts.Span> covered = PagePodcasts.coverage(root, plan, READING);
 
         assertThat(covered).hasSize(2);
         assertThat(covered.get(0)).isEqualTo(new PagePodcasts.Span(0, ablauf));
         // Vom langen Ablauf ging nur der Anfang an das Modell: die Abdeckung endet dort, wo der gekürzte Text endet
         PagePodcasts.Span told = covered.get(1);
         assertThat(told.start()).isEqualTo(ablauf);
-        assertThat(told.end()).isLessThan(historie).isGreaterThan(ablauf + PagePodcasts.SECTION_CHARS / 2);
-        String sent = PagePodcasts.material(root, List.of(), List.of()).stories().get(1).text();
+        assertThat(told.end()).isLessThan(historie).isGreaterThan(ablauf + READING.sectionChars() / 2);
+        String sent = PagePodcasts.material(root, List.of(), List.of(), READING).stories().get(1).text();
         assertThat(sent).endsWith("…");
         assertThat(text.substring(told.start(), told.end())).isEqualTo(sent.substring(0, sent.length() - 1));
         // Gelb endet an derselben Grenze: das Laufende verdeckt nie das Grau dahinter
-        assertThat(PagePodcasts.read(text, PagePodcasts.parts(root, PagePodcasts.MAX_SECTIONS).get(1),
-                PagePodcasts.SECTION_CHARS)).isEqualTo(told);
+        assertThat(PagePodcasts.read(text, PagePodcasts.parts(root, READING).get(1),
+                READING.sectionChars())).isEqualTo(told);
+    }
+
+    @Test
+    void howMuchThePodcastReadsFollowsTheSettingsNotAFixedLimit() {
+        String text = "Wozu es den Nachtlauf gibt.\nAblauf\nErst Prüfung, dann Start.\nStörungen\nBereitschaft anrufen.";
+        int ablauf = text.indexOf("Ablauf");
+        int stoerungen = text.indexOf("Störungen");
+        PagePodcasts.Page root = page("1", "Nachtlauf Nordlicht", text,
+                new PageText.Section("Ablauf", 2, ablauf, stoerungen),
+                new PageText.Section("Störungen", 2, stoerungen, text.length()));
+        // ein Hauptabschnitt als eigener Teil (der Rest hängt daran), davor die Einleitung; je Teil 12 Zeichen
+        PagePodcasts.Reading small = new PagePodcasts.Reading(12, 1);
+
+        assertThat(PagePodcasts.parts(root, small)).extracting(PagePodcasts.Part::title)
+                .containsExactly("Einleitung", "Ablauf");
+        PodcastWriter.Material material = PagePodcasts.material(root, List.of(), List.of(), small);
+        assertThat(material.stories().get(1).text()).hasSizeLessThanOrEqualTo(12).endsWith("…");
+        // dieselbe Menge gilt auch beim Planen und Schreiben, kein zweites festes Kürzen dahinter
+        assertThat(material.storyChars()).isEqualTo(12);
+        assertThat(PagePodcasts.material(root, List.of(), List.of(), new PagePodcasts.Reading(9000, 1)).storyChars())
+                .isEqualTo(9000);
+        PodcastPlan plan = new PodcastPlan("Nordlicht", List.of(
+                new PodcastPlan.Topic("Ablauf", "", 0.5, List.of(), List.of(2))), List.of());
+        PagePodcasts.Span told = PagePodcasts.coverage(root, plan, small).get(0);
+        assertThat(told.start()).isEqualTo(ablauf);
+        assertThat(told.end()).isLessThan(stoerungen);
+        assertThat(PagePodcasts.Reading.of(com.aresstack.spaceharvester.ai.AiServiceSettings.Speech.AUTOMATIC
+                .withPodcastReading(4500, 14))).isEqualTo(new PagePodcasts.Reading(4500, 14));
     }
 
     @Test
@@ -194,7 +224,7 @@ class PagePodcastsTest {
         String paragraph = "Ein Absatz über die Testumgebung. ".repeat(60).strip();
         String text = paragraph + "\n" + paragraph + "\n" + paragraph;
 
-        List<PagePodcasts.Part> parts = PagePodcasts.parts(page("1", "Testumgebung", text), PagePodcasts.MAX_SECTIONS);
+        List<PagePodcasts.Part> parts = PagePodcasts.parts(page("1", "Testumgebung", text), READING);
 
         assertThat(parts).hasSize(3);
         assertThat(parts).allSatisfy(part -> assertThat(text.substring(part.start(), part.end())).isEqualTo(paragraph));
@@ -207,7 +237,7 @@ class PagePodcastsTest {
         int ablauf = text.indexOf("Ablauf");
         PodcastWriter.Material material = PagePodcasts.material(page("1", "Nordlicht", text,
                 new PageText.Section("Vorab", 3, vorab, ablauf),
-                new PageText.Section("Ablauf", 2, ablauf, text.length())), List.of(), List.of());
+                new PageText.Section("Ablauf", 2, ablauf, text.length())), List.of(), List.of(), READING);
 
         assertThat(material.stories()).extracting(PodcastWriter.Story::title).containsExactly("Einleitung", "Ablauf");
         assertThat(material.stories().get(0).text()).contains("Wichtiger Hinweis");
@@ -217,7 +247,7 @@ class PagePodcastsTest {
     void aPageWithoutHeadingsIsSplitAtParagraphs() {
         String paragraph = "Ein Absatz über die Testumgebung. ".repeat(60);
         PodcastWriter.Material material = PagePodcasts.material(page("1", "Testumgebung",
-                paragraph + "\n" + paragraph + "\n" + paragraph), List.of(), List.of());
+                paragraph + "\n" + paragraph + "\n" + paragraph), List.of(), List.of(), READING);
 
         assertThat(material.stories()).hasSizeGreaterThan(1);
         assertThat(material.stories().get(0).title()).isEqualTo("Testumgebung (1)");
@@ -225,12 +255,12 @@ class PagePodcastsTest {
 
     @Test
     void theInputChangesWithTheContent() {
-        PodcastWriter.Material one = PagePodcasts.material(page("1", "Start", "Alt."), List.of(), List.of());
-        PodcastWriter.Material two = PagePodcasts.material(page("1", "Start", "Neu."), List.of(), List.of());
+        PodcastWriter.Material one = PagePodcasts.material(page("1", "Start", "Alt."), List.of(), List.of(), READING);
+        PodcastWriter.Material two = PagePodcasts.material(page("1", "Start", "Neu."), List.of(), List.of(), READING);
 
         assertThat(PagePodcasts.input(one)).isNotEqualTo(PagePodcasts.input(two));
         assertThat(PagePodcasts.input(one)).isEqualTo(PagePodcasts.input(
-                PagePodcasts.material(page("1", "Start", "Alt."), List.of(), List.of())));
+                PagePodcasts.material(page("1", "Start", "Alt."), List.of(), List.of(), READING)));
     }
 
     @Test

@@ -57,7 +57,8 @@ public final class ConfigurationOverlay {
             "ai." + AiServiceSettings.PODCAST_VOICE_HOST, "ai." + AiServiceSettings.PODCAST_VOICE_COHOST,
             "ai." + AiServiceSettings.READ_ALOUD_MODEL, "ai." + AiServiceSettings.READ_ALOUD_VOICE,
             "ai." + AiServiceSettings.PODCAST_PAUSE_MILLIS, "ai." + AiServiceSettings.PODCAST_SPEECH_ATTEMPTS,
-            "ai." + AiServiceSettings.PODCAST_SPEECH_WORKERS, "ai." + AiServiceSettings.DIAGNOSIS_ENABLED,
+            "ai." + AiServiceSettings.PODCAST_SPEECH_WORKERS, "ai." + AiServiceSettings.PODCAST_SECTION_CHARS,
+            "ai." + AiServiceSettings.PODCAST_SECTIONS, "ai." + AiServiceSettings.DIAGNOSIS_ENABLED,
             "ai." + AiServiceSettings.DIAGNOSIS_MODEL, "ai." + AiServiceSettings.DIAGNOSIS_MAX_TOKENS,
             "ai." + AiServiceSettings.DIAGNOSIS_THINKING, "ai." + AiServiceSettings.SUMMARY_TIMEOUT,
             "ai." + AiServiceSettings.LABEL_TIMEOUT, "ai." + AiServiceSettings.EXPANSION_TIMEOUT,
@@ -158,6 +159,8 @@ public final class ConfigurationOverlay {
         put(properties, "ai." + AiServiceSettings.PODCAST_PAUSE_MILLIS, ai.speech().podcastPauseMillis());
         put(properties, "ai." + AiServiceSettings.PODCAST_SPEECH_ATTEMPTS, ai.speech().podcastAttempts());
         put(properties, "ai." + AiServiceSettings.PODCAST_SPEECH_WORKERS, ai.speech().podcastWorkers());
+        put(properties, "ai." + AiServiceSettings.PODCAST_SECTION_CHARS, ai.speech().podcastSectionChars());
+        put(properties, "ai." + AiServiceSettings.PODCAST_SECTIONS, ai.speech().podcastSections());
         put(properties, "ai." + AiServiceSettings.DIAGNOSIS_ENABLED, ai.diagnosis().enabled());
         put(properties, "ai." + AiServiceSettings.DIAGNOSIS_MODEL, ai.diagnosis().use().model());
         put(properties, "ai." + AiServiceSettings.DIAGNOSIS_MAX_TOKENS, ai.diagnosis().use().maxTokens());

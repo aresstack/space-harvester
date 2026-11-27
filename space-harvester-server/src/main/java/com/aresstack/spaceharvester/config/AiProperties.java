@@ -57,6 +57,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param podcastPauseMillis  Pause zwischen zwei Beiträgen des Podcasts in ms; leer: Vorgabe des Core
  * @param podcastSpeechAttempts Versuche je Stück beim Vertonen des Podcasts; leer: Vorgabe des Core
  * @param podcastSpeechWorkers gleichzeitige Synthesen je Beitrag des Podcasts; leer: Vorgabe des Core
+ * @param podcastSectionChars so viele Zeichen eines Abschnitts liest der Erklär-Podcast einer Seite; leer: Vorgabe
+ * @param podcastSections     so viele Abschnitte einer Seite werden eigene Teile des Erklär-Podcasts; leer: Vorgabe
  * @param diagnosisEnabled    Schalter „Diagnose per KI“; leer: eingeschaltet
  * @param diagnosisModel      Modell der Diagnose; leer: gpt-oss-120b
  * @param diagnosisMaxTokens  Tokenlänge der Diagnose; leer: die des Chats
@@ -84,7 +86,8 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                            Integer deadlineMaxTokens, String deadlineThinking, String podcastSpeechModel,
                            String podcastVoiceHost, String podcastVoiceCohost, String readAloudModel,
                            String readAloudVoice, Integer podcastPauseMillis, Integer podcastSpeechAttempts,
-                           Integer podcastSpeechWorkers, Boolean diagnosisEnabled, String diagnosisModel,
+                           Integer podcastSpeechWorkers, Integer podcastSectionChars, Integer podcastSections,
+                           Boolean diagnosisEnabled, String diagnosisModel,
                            Integer diagnosisMaxTokens, String diagnosisThinking, Duration summaryTimeout,
                            Duration labelTimeout, Duration expansionTimeout) {
 
@@ -100,7 +103,7 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                 new AiServiceSettings.ModelUse(deadlineModel, deadlineMaxTokens, deadlineThinking),
                 new AiServiceSettings.Speech(podcastSpeechModel, podcastVoiceHost, podcastVoiceCohost,
                         readAloudModel, readAloudVoice, podcastPauseMillis, podcastSpeechAttempts,
-                        podcastSpeechWorkers),
+                        podcastSpeechWorkers, podcastSectionChars, podcastSections),
                 new AiServiceSettings.Diagnosis(diagnosisEnabled,
                         new AiServiceSettings.ModelUse(diagnosisModel, diagnosisMaxTokens, diagnosisThinking)),
                 new AiServiceSettings.Timeouts(summaryTimeout, labelTimeout, expansionTimeout));
