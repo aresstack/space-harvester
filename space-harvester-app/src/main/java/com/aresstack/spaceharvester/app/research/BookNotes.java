@@ -121,6 +121,16 @@ public record BookNotes(String mission, String edge, List<String> included, List
         Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }
 
+    /** Wann die Notizen des Ordners zuletzt geschrieben wurden; {@code null} ohne Notizen. */
+    public static java.time.Instant savedAt(Path dataDirectory, String folderId) {
+        try {
+            Path file = file(dataDirectory, folderId);
+            return Files.isRegularFile(file) ? Files.getLastModifiedTime(file).toInstant() : null;
+        } catch (IOException | RuntimeException unknown) {
+            return null;
+        }
+    }
+
     static Path file(Path dataDirectory, String folderId) {
         Objects.requireNonNull(dataDirectory, "dataDirectory");
         String name = Objects.requireNonNull(folderId, "folderId").replaceAll("[^A-Za-z0-9._-]", "_");

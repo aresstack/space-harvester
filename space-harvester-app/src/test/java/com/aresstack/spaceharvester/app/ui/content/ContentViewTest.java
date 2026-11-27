@@ -898,6 +898,29 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.canGoForward())).isFalse();
     }
 
+    /** Architekt 27.11.2026: ein Ordner mit Buch zeigt es in der Leseansicht, unten „Buch | Bereich“. */
+    @Test
+    void aFolderWithABookShowsItAndOffersBookOrArea() throws Exception {
+        com.aresstack.spaceharvester.app.research.BookEditions.add(home.resolve("data"), "ordner-buch",
+                java.time.Instant.parse("2026-11-27T14:00:00Z"), "# Erfundenes Buch\n\nText.", "Bericht", List.of());
+        String space = space("handbuch");
+        ExportPanel.Selection.Collection folder = new ExportPanel.Selection.Collection("ordner-buch", "Buchordner",
+                List.of(com.aresstack.spaceharvester.application.holdings.Selection.Root.space("handbuch", space)),
+                false);
+        onEdt(() -> {
+            view.detail().showFolder(folder);
+            return null;
+        });
+        await(() -> view.detail().areaView().edition() != null);
+        await(() -> view.detail().bookToggles().stream().anyMatch(java.awt.Component::isVisible));
+
+        assertThat(onEdt(() -> view.detail().areaView().bookShown())).isTrue();
+        assertThat(onEdt(() -> view.detail().scopeToggles())).noneSatisfy(toggle ->
+                assertThat(toggle.isVisible()).isTrue());
+        assertThat(onEdt(() -> view.detail().bookToggles())).allSatisfy(toggle ->
+                assertThat(toggle.selected()).isEqualTo(AreaSummaryView.BOOK));
+    }
+
     @Test
     void theScopeToggleSwitchesBothViewsToTheAreaOverviewAndIsRememberedForEveryPage() throws Exception {
         String before = onEdt(() -> com.aresstack.spaceharvester.app.ui.AppState.shared()
