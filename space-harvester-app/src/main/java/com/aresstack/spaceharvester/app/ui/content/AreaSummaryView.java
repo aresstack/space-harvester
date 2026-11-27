@@ -244,6 +244,9 @@ final class AreaSummaryView extends JPanel {
      * hinter dem Schleier (Angelo: „Teilergebnisse sofort“); {@code null} ohne.
      */
     private UpdateSummary partial;
+    /** Abbrechen, solange der vorläufige Stand ohne Schleier zu sehen ist. */
+    private final com.aresstack.spaceharvester.app.ui.controls.EscCircle stopPartial =
+            new com.aresstack.spaceharvester.app.ui.controls.EscCircle(this::cancel, BusyOverlay.CANCEL);
     private boolean available = true;
     private boolean empty;
     /**
@@ -751,8 +754,13 @@ final class AreaSummaryView extends JPanel {
             reportBody.add(Box.createVerticalStrut(8));
         }
         if (partial != null && runningJob != null) {
-            SummaryReport.add(reportBody, Comic.wrapped(busy.text().isEmpty() ? PARTIAL : busy.text() + " " + PARTIAL,
-                    Comic.BLUE, 13.5f));
+            // Ohne Schleier bleibt der Abbruch erreichbar: der Kreis „Esc“ vor dem Fortschritt, wie im Ring.
+            JPanel head = new JPanel(new BorderLayout(8, 0));
+            head.setOpaque(false);
+            head.add(stopPartial, BorderLayout.WEST);
+            head.add(Comic.wrapped(busy.text().isEmpty() ? PARTIAL : busy.text() + " " + PARTIAL, Comic.BLUE, 13.5f),
+                    BorderLayout.CENTER);
+            SummaryReport.add(reportBody, head);
             reportBody.add(Box.createVerticalStrut(8));
             summaryReport.render(partial, () -> { });
         } else if (summary != null) {

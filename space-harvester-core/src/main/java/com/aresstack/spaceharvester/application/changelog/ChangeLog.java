@@ -890,11 +890,20 @@ public final class ChangeLog implements AutoCloseable {
                         .map(com.aresstack.spaceharvester.application.holdings.Selection.Root::sourceId).distinct()
                         .forEach(coalescer::mark);
                 // Nach jedem fertigen Teil der vorläufige Stand, sofort für die Ansichten (Teilergebnisse sofort).
+                // Nach dem Ende des Laufs (abgelegt, gescheitert, abgebrochen) zählt kein vorläufiger Stand mehr, auch
+                // nicht von einem Unterauftrag, dessen Antwort erst nach dem Abbruch kommt.
+                java.util.concurrent.atomic.AtomicBoolean ended = new java.util.concurrent.atomic.AtomicBoolean();
                 java.util.function.Consumer<ThematicSummarizer.Result> partial = interim -> {
                     Instant at = runtime.clock().instant();
-                    partialAreas.put(scope.key(), new StoredSummary(scope.key(), SummaryScope.Selected.STORED_UPDATE,
-                            null, interim.text(), interim.statements(), runtime.model().version(), at, at,
-                            interim.unreadable(), state + "+vorlaeufig", interim.inputPages(), null));
+                    StoredSummary shown = new StoredSummary(scope.key(), SummaryScope.Selected.STORED_UPDATE, null,
+                            interim.text(), interim.statements(), runtime.model().version(), at, at,
+                            interim.unreadable(), state + "+vorlaeufig", interim.inputPages(), null);
+                    synchronized (ended) {
+                        if (ended.get()) {
+                            return;
+                        }
+                        partialAreas.put(scope.key(), shown);
+                    }
                     announce.run();
                 };
                 try {
@@ -917,7 +926,10 @@ public final class ChangeLog implements AutoCloseable {
                 } finally {
                     // Abgelegt, gescheitert oder abgebrochen: der vorläufige Stand ist erst nach der Ablage weg, so
                     // steht die Ansicht nie ohne beides da.
-                    partialAreas.remove(scope.key());
+                    synchronized (ended) {
+                        ended.set(true);
+                        partialAreas.remove(scope.key());
+                    }
                 }
                 // Die Ablage meldet den Platz; die Ansichten hören auf ihre Quellen.
                 announce.run();

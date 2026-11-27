@@ -273,7 +273,7 @@ final class ThematicSummarizer {
 
     /**
      * Meldet den vorläufigen Stand nach einem fertigen Teil: die Themen der fertigen Teile in der Reihenfolge der Teile,
-     * die Seiten genau dieser Teile. Teile laufen gleichzeitig; die Meldungen sind deshalb geordnet.
+     * die Seiten des ganzen Laufs. Teile laufen gleichzeitig; die Meldungen sind deshalb geordnet.
      */
     private static void publish(java.util.function.Consumer<Result> partial,
                                 java.util.NavigableMap<Integer, List<Answer>> done, int index, List<Answer> answered,
@@ -282,13 +282,13 @@ final class ThematicSummarizer {
         synchronized (done) {
             done.put(index, answered);
             List<StoredSummary.Statement> statements = new ArrayList<>();
+            // Alle Seiten des Laufs als Eingang, nicht nur die der fertigen Teile: so stimmen die Aliase ({@link
+            // #aliases}) mit denen der Anfragen überein, auch wo dieselbe Seiten-ID in mehreren Quellen vorkommt.
             List<StoredSummary.InputPage> inputs = new ArrayList<>();
-            done.forEach((part, answers) -> {
-                answers.forEach(answer -> statements.addAll(answer.statements()));
-                parts.get(part).forEach(material -> inputs.add(new StoredSummary.InputPage(
-                        material.page().sourceId(), material.spaceKey(), material.page().pageId(),
-                        material.content())));
-            });
+            done.values().forEach(answers -> answers.forEach(answer -> statements.addAll(answer.statements())));
+            parts.forEach(part -> part.forEach(material -> inputs.add(new StoredSummary.InputPage(
+                    material.page().sourceId(), material.spaceKey(), material.page().pageId(),
+                    material.content()))));
             snapshot = new Result("", List.copyOf(statements), withheld, List.copyOf(inputs));
             try {
                 partial.accept(snapshot);
