@@ -2324,12 +2324,12 @@ public final class ChatPanel extends JPanel {
             status.setText(NO_RUNTIME);
             return;
         }
-        var port = runtime.workspace().aiChat();
+        var port = use == null ? runtime.workspace().aiChat() : runtime.workspace().aiChat(use);
         String modelName = use != null && use.model() != null ? use.model()
                 : context.settings() == null || context.settings().ai() == null ? null
                 : context.settings().ai().chatModel();
-        String effort = use == null || use.thinking() == null ? effortValue()
-                : "none".equals(use.thinking()) ? null : use.thinking();
+        // Ist in der Zeile Nachdenken eingestellt, setzt es der Zugang selbst (auch „aus“ richtig je Dienst).
+        String effort = use == null || use.thinking() == null ? effortValue() : null;
         if (port == null || modelName == null || modelName.isBlank()) {
             status.setText(NO_CHAT_MODEL);
             return;

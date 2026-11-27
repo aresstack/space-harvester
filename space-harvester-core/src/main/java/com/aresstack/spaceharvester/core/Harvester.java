@@ -2806,7 +2806,19 @@ public final class Harvester implements AutoCloseable {
      * Chat-Modell. Je Aufruf frisch gebaut, damit geänderte Einstellungen ohne Neustart gelten (ADR 0015).
      */
     public AiChat aiChat() {
-        AiServiceSettings current = currentAi.get();
+        return aiChat(null);
+    }
+
+    /**
+     * Wie {@link #aiChat()} mit Modell, Tokenlänge und Nachdenken einer eigenen Zeile unter KI-Dienst › Modelle (etwa
+     * „Zusammenfassung“): Ausgabelimit und Nachdenken gehen mit jeder Anfrage mit, die keine eigenen setzt; „aus“
+     * schickt bei einem OpenAI-kompatiblen Dienst kein {@code reasoning_effort}, bei Ollama {@code think: false}.
+     * Leeres in der Zeile kommt vom Text-Modell; {@code use == null} wie {@link #aiChat()}.
+     */
+    public AiChat aiChat(AiServiceSettings.ModelUse use) {
+        AiServiceSettings configured = currentAi.get();
+        AiServiceSettings current = configured == null || use == null ? configured
+                : configured.forChat(use.model(), use.maxTokens(), use.thinking());
         if (current == null || !current.chat()) {
             return null;
         }
