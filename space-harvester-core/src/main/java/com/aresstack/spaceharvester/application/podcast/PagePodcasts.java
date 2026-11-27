@@ -169,6 +169,14 @@ public final class PagePodcasts {
         return hash(VERSION + '\n' + caller.jobOwner() + '\n' + sourceId + '\n' + pageId);
     }
 
+    /**
+     * Der Schlüssel des Podcasts zum Buch eines Favoritenordners (ADR 0044: der Podcast nutzt das Buch); ohne Lesen.
+     * Je Ordner ein Podcast: eine neue Auflage ändert das Material, dann entsteht er beim nächsten Start neu.
+     */
+    public static String bookKey(AccessContext caller, String folderId) {
+        return hash(VERSION + '\n' + caller.jobOwner() + "\nbook\n" + Objects.requireNonNull(folderId, "folderId"));
+    }
+
     /** Ob Chat-Modell und ein Dienst mit Sprachausgabe eingerichtet sind. */
     public boolean available() {
         return production.available();
@@ -197,16 +205,119 @@ public final class PagePodcasts {
      * Erzeugung geändert hat und kein Auftrag läuft (dann erzeugt der nächste Start ihn neu).
      */
     public Optional<Podcast> podcast(AccessContext caller, String sourceId, String pageId) {
-        String key = key(caller, sourceId, pageId);
+        return podcast(key(caller, sourceId, pageId), () -> material(caller, sourceId, pageId));
+    }
+
+    /**
+     * Der Stand des Podcasts zum Buch eines Ordners; leer, solange nichts erzeugt ist oder wenn das Buch seither eine
+     * neue Auflage hat und kein Auftrag läuft. Das Buch hat die App schon gelesen, es ging bereits an das Modell.
+     */
+    public Optional<Podcast> bookPodcast(AccessContext caller, Book book) {
+        return podcast(bookKey(caller, book.folderId()), () -> Optional.of(book.material()));
+    }
+
+    private Optional<Podcast> podcast(String key, java.util.function.Supplier<Optional<PodcastWriter.Material>> read) {
         boolean running = UpdatePodcasts.open(jobs, key) != null;
         if (!running) {
             Optional<PodcastStore.Meta> meta = production.store().meta(key);
-            Optional<PodcastWriter.Material> material = material(caller, sourceId, pageId);
+            Optional<PodcastWriter.Material> material = read.get();
             if (material.isEmpty() || meta.isPresent() && !input(material.get()).equals(meta.get().input())) {
                 return Optional.empty();
             }
         }
         return production.podcast(key, running);
+    }
+
+    /** Der gesprochene Text des Podcasts zum Buch, soweit geschrieben; leer ohne gültigen Podcast. */
+    public Optional<String> bookTranscript(AccessContext caller, Book book) {
+        return bookPodcast(caller, book).flatMap(podcast -> production.transcript(podcast.key()));
+    }
+
+    /**
+     * Startet den Podcast zum Buch eines Ordners oder setzt ihn fort; ein offener Auftrag desselben Podcasts ist die
+     * Antwort. Eine frühere Fassung zu einer älteren Auflage fällt weg.
+     */
+    public JobStatus startBook(AccessContext caller, Book book) {
+        Objects.requireNonNull(caller, "caller");
+        if (!available()) {
+            throw new IllegalStateException("Kein Chat-Modell oder keine Sprachausgabe eingerichtet");
+        }
+        String key = bookKey(caller, book.folderId());
+        PodcastWriter.Material material = book.material();
+        String input = input(material);
+        synchronized (starting) {
+            JobStatus running = UpdatePodcasts.open(jobs, key);
+            if (running != null) {
+                return running;
+            }
+            production.store().delete(meta -> meta.key().equals(key) && !input.equals(meta.input()));
+            PodcastStore.Meta origin = new PodcastStore.Meta(key, null, null, null, null, input, material.pageIds(),
+                    null, null, null, BOOK_AREA + book.folderId());
+            return jobs.submit(JobType.UPDATE_PODCAST, Jobs.ALL_SOURCES, null, null, caller.jobOwner(),
+                    Map.of(UpdatePodcasts.PODCAST_PARAMETER, key),
+                    JobTask.blocking(context -> production.run(context, origin, material)));
+        }
+    }
+
+    /** Bereich eines Buch-Podcasts in der Ablage: davor die Ordner-ID. */
+    static final String BOOK_AREA = "book:";
+
+    /**
+     * Das Buch eines Favoritenordners für den Podcast: Titel (Ordnername) und der Text der neuesten Auflage, wie die
+     * Leseansicht ihn zeigt (Markdown); Überschriften gliedern ihn wie die Abschnitte einer Seite.
+     */
+    public record Book(String folderId, String title, String markdown) {
+        public Book {
+            Objects.requireNonNull(folderId, "folderId");
+            title = title == null || title.isBlank() ? "Buch" : title.strip();
+            markdown = markdown == null ? "" : markdown;
+        }
+
+        /** Der Text mit seinen Überschriften ({@code #} bis {@code ######}) als Abschnitte. */
+        PageText text() {
+            List<PageText.Section> sections = new ArrayList<>();
+            java.util.regex.Matcher heading = java.util.regex.Pattern.compile("(?m)^(#{1,6})[ \\t]+(.+?)[ \\t#]*$")
+                    .matcher(markdown);
+            List<int[]> found = new ArrayList<>();
+            List<String> titles = new ArrayList<>();
+            while (heading.find()) {
+                found.add(new int[]{heading.start(), heading.group(1).length()});
+                titles.add(heading.group(2).strip());
+            }
+            for (int i = 0; i < found.size(); i++) {
+                int end = markdown.length();
+                for (int next = i + 1; next < found.size(); next++) {
+                    if (found.get(next)[1] <= found.get(i)[1]) {
+                        end = found.get(next)[0];
+                        break;
+                    }
+                }
+                sections.add(new PageText.Section(titles.get(i), found.get(i)[1], found.get(i)[0], end));
+            }
+            return new PageText("book-markdown/v1", markdown, sections);
+        }
+
+        PodcastWriter.Material material() {
+            return PagePodcasts.material(new Page(folderId, title, null, text()), List.of(), List.of(), Kind.BOOK);
+        }
+    }
+
+    /** Wie das Material seinen Gegenstand nennt: eine Seite oder ein Buch. */
+    enum Kind {
+        PAGE("Die Seite", "auf der Seite", "Anfang der Seite", "Seite"),
+        BOOK("Das Buch", "im Buch", "Anfang des Buchs", "Buch");
+
+        final String subject;
+        final String place;
+        final String start;
+        final String label;
+
+        Kind(String subject, String place, String start, String label) {
+            this.subject = subject;
+            this.place = place;
+            this.start = start;
+            this.label = label;
+        }
     }
 
     /**
@@ -468,8 +579,12 @@ public final class PagePodcasts {
      * letzten.
      */
     static List<Part> parts(Page page, int max) {
+        return parts(page, max, Kind.PAGE);
+    }
+
+    static List<Part> parts(Page page, int max, Kind kind) {
         List<Part> parts = new ArrayList<>();
-        String here = "auf der Seite „" + page.title() + "“";
+        String here = kind.place + " „" + page.title() + "“";
         PageText text = page.text();
         String all = text.text();
         List<PageText.Section> sections = text.sections();
@@ -483,7 +598,16 @@ public final class PagePodcasts {
             return parts;
         }
         int top = sections.stream().mapToInt(PageText.Section::level).min().orElse(1);
-        List<PageText.Section> main = sections.stream().filter(section -> section.level() == top).toList();
+        if (kind == Kind.BOOK) {
+            // Ein Buch hat oft eine einzige Titelüberschrift; erzählt wird nach seinen Kapiteln darunter.
+            int title = top;
+            if (sections.stream().filter(section -> section.level() == title).count() == 1) {
+                top = sections.stream().mapToInt(PageText.Section::level).filter(level -> level > title).min()
+                        .orElse(title);
+            }
+        }
+        int level = top;
+        List<PageText.Section> main = sections.stream().filter(section -> section.level() == level).toList();
         // Bis zur ersten Hauptüberschrift: Unterabschnitte davor gehören zur Einleitung.
         int introEnd = Math.min(main.get(0).start(), all.length());
         if (!all.substring(0, introEnd).isBlank()) {
@@ -537,9 +661,13 @@ public final class PagePodcasts {
      * fallen weg. Meldung n (ab 1) bis zur Zahl der Teile ist Teil n−1 der Seite ({@link #parts}).
      */
     static PodcastWriter.Material material(Page page, List<Subpage> subpages, List<String> ancestors) {
+        return material(page, subpages, ancestors, Kind.PAGE);
+    }
+
+    static PodcastWriter.Material material(Page page, List<Subpage> subpages, List<String> ancestors, Kind kind) {
         List<PodcastWriter.Story> stories = new ArrayList<>();
         String all = page.text().text();
-        for (Part part : parts(page, MAX_SECTIONS)) {
+        for (Part part : parts(page, MAX_SECTIONS, kind)) {
             stories.add(new PodcastWriter.Story(part.title(),
                     sectionText(all.substring(part.start(), part.end()), SECTION_CHARS), List.of(part.place()),
                     List.of(page.pageId())));
@@ -560,7 +688,7 @@ public final class PagePodcasts {
             stories.add(new PodcastWriter.Story(child.title(), body.toString(),
                     List.of("auf der Unterseite „" + child.title() + "“"), ids));
         }
-        StringBuilder overview = new StringBuilder("Die Seite „").append(page.title()).append("“");
+        StringBuilder overview = new StringBuilder(kind.subject).append(" „").append(page.title()).append("“");
         if (page.spaceKey() != null) {
             overview.append(" im Space ").append(page.spaceKey());
         }
@@ -575,9 +703,9 @@ public final class PagePodcasts {
         }
         String start = PodcastWriter.flat(PodcastTables.prune(all));
         if (!start.isBlank()) {
-            overview.append(" Anfang der Seite: ").append(PodcastWriter.cut(start, 600));
+            overview.append(' ').append(kind.start).append(": ").append(PodcastWriter.cut(start, 600));
         }
-        return new PodcastWriter.Material(overview.toString(), stories, "Seite „" + page.title() + "“",
+        return new PodcastWriter.Material(overview.toString(), stories, kind.label + " „" + page.title() + "“",
                 PodcastWriter.Format.EXPLAINER);
     }
 
