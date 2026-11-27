@@ -86,18 +86,4 @@ public final class SearchMethods {
     public void glossarySynonyms(boolean on) {
         glossarySynonyms = on;
     }
-
-    /**
-     * Suchmethode „Nur Fachbegriffe“ (K5b); Standard aus, gilt nur für die Sitzung. Der Chat übernimmt sie nicht: sie
-     * ist eine Pflegeansicht für das Glossar und liefert keine Seitentreffer.
-     */
-    public boolean technicalTermsOnly() {
-        return technicalTermsOnly;
-    }
-
-    public void technicalTermsOnly(boolean on) {
-        technicalTermsOnly = on;
-    }
-
-    private volatile boolean technicalTermsOnly;
 }

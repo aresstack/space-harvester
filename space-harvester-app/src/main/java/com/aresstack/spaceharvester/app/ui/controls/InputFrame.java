@@ -193,7 +193,12 @@ public class InputFrame extends JPanel {
 
     /** Suchfeld wie in AskAI: Lupe links, ✕ rechts im Feld, sobald Text steht. */
     public static InputFrame search(JTextComponent field) {
-        InputFrame frame = new InputFrame(field, magnifier());
+        return search(field, magnifier());
+    }
+
+    /** Wie {@link #search(JTextComponent)}, mit eigenem Symbol links, etwa der Lupe als Umschalter. */
+    public static InputFrame search(JTextComponent field, Component west) {
+        InputFrame frame = new InputFrame(field, west);
         frame.addClearButton();
         return frame;
     }
