@@ -728,11 +728,12 @@ public final class PageDetailPanel extends JPanel {
         });
         pagePictures.onClosedByUser(pagePodcast::pictureClosed);
         pagePodcast.stored(this::loadPagePictures);
-        // Links neben der Lupe das Kopieren, rechtsbündig der Schalter „Untertitel“ (Angelo 22.11.2026).
+        // Links neben der Lupe das Kopieren, rechtsbündig die Schalter „Untertitel“ (Angelo
+        // 22.11.2026) und „Minimieren | Aufklappen“ (Angelo 27.11.2026).
         pageFoot.add(Comic.row(pagePodcast.transcriptCopy()), BorderLayout.WEST);
-        pageFoot.add(Comic.row(pagePodcast.subtitleToggle()), BorderLayout.EAST);
+        pageFoot.add(pagePodcast.footTools(), BorderLayout.EAST);
         sourceFoot.add(Comic.row(sourceChanges.podcast().transcriptCopy()), BorderLayout.WEST);
-        sourceFoot.add(Comic.row(sourceChanges.podcast().subtitleToggle()), BorderLayout.EAST);
+        sourceFoot.add(sourceChanges.podcast().footTools(), BorderLayout.EAST);
         sourceFoot.add(scopeRow(), BorderLayout.CENTER);
         readingSourceFoot.add(scopeRow(), BorderLayout.CENTER);
         areaFoot.add(Comic.row(areaPodcast.podcast().transcriptCopy()), BorderLayout.WEST);
@@ -740,7 +741,7 @@ public final class PageDetailPanel extends JPanel {
         // der Ordnerleiste und unter „Analysen“ (TabFoot); früher hier mittig, so sprang sie (Angelo 27.11.2026).
         JPanel areaEast = new JPanel(new BorderLayout());
         areaEast.setOpaque(false);
-        areaEast.add(Comic.row(areaPodcast.podcast().subtitleToggle()), BorderLayout.CENTER);
+        areaEast.add(areaPodcast.podcast().footTools(), BorderLayout.CENTER);
         areaFolderSlot.setOpaque(false);
         areaEast.add(areaFolderSlot, BorderLayout.EAST);
         areaFoot.add(areaEast, BorderLayout.EAST);
