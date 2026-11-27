@@ -512,7 +512,7 @@ class ChatPanelTest {
                 enabled[0] = panel[0].webSearchEnabled();
             });
             BrowserSettings.shared().saveExecutable(BrowserSettings.DEFAULT_CHANNEL,
-                    Files.writeString(home.resolve("msedge"), "").toString());
+                    Files.writeString(home.resolve("firefox"), "").toString());
             SwingUtilities.invokeAndWait(() -> {
                 context.browserChannelChanged();
                 enabled[1] = panel[0].webSearchEnabled();
@@ -528,10 +528,10 @@ class ChatPanelTest {
         Path config = home.resolve("app.yml");
         Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
-        // Ein Edge, den nichts startet: Die Weltkugel braucht nur seinen Pfad.
-        Path edge = Files.writeString(home.resolve("msedge"), "");
+        // Ein Firefox, den nichts startet: Die Weltkugel braucht nur seinen Pfad.
+        Path browser = Files.writeString(home.resolve("firefox"), "");
         String before = BrowserSettings.shared().executable(BrowserSettings.DEFAULT_CHANNEL);
-        BrowserSettings.shared().saveExecutable(BrowserSettings.DEFAULT_CHANNEL, edge.toString());
+        BrowserSettings.shared().saveExecutable(BrowserSettings.DEFAULT_CHANNEL, browser.toString());
         try {
             String[] texts = new String[3];
             boolean[] visible = new boolean[3];

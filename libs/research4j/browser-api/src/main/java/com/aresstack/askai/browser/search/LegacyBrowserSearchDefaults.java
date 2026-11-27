@@ -119,7 +119,9 @@ public final class LegacyBrowserSearchDefaults {
                         "iframe[src*='captcha']", "iframe[title*='challenge']", "#challenge-form",
                         "[class*='captcha']", "[id*='captcha']",
                         // Bing's "one last step" challenge container
-                        "#b_rrsr", "iframe[src*='turnstile']"),
+                        "#b_rrsr", "iframe[src*='turnstile']",
+                        // Cloudflare's interstitial (also the chat's page check, one detection for both)
+                        "#cf-challenge-running", "iframe[src*='challenges.cloudflare']"),
                 // Challenge PHRASES only. The bare word "captcha" was dropped: it names a product or a widget
                 // ("FriendlyCaptcha" in a footer contact form, articles about CAPTCHAs), not a challenge page,
                 // and parked readable pages (INNOQ). Stored profiles still carrying the old shipped list are
