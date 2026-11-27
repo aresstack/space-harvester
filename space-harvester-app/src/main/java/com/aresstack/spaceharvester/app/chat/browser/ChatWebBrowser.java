@@ -8,7 +8,6 @@ import com.aresstack.enterpriseai.astu.approval.ToolApprovalGate;
 import com.aresstack.enterpriseai.astu.chat.ChatConversationId;
 import com.aresstack.enterpriseai.browser.api.BrowserException;
 import com.aresstack.enterpriseai.browser.api.ChatBrowserPort;
-import com.aresstack.enterpriseai.browser.firefox.FirefoxEngine;
 import com.aresstack.enterpriseai.browser.runtime.BrowserProfileStore;
 import com.aresstack.enterpriseai.browser.runtime.ChatBrowserRuntime;
 import com.aresstack.enterpriseai.proasteion.application.agent.BrowserMcpTools;
@@ -17,6 +16,8 @@ import com.aresstack.enterpriseai.proasteion.application.browser.DelegatingBrows
 import com.aresstack.enterpriseai.proasteion.application.browser.WebExplorationProgress;
 import com.aresstack.enterpriseai.proasteion.application.config.BrowserProfile;
 import com.aresstack.enterpriseai.proasteion.katagogion.McpToolContribution;
+import com.aresstack.askai.browser.playwright.PlaywrightChatEngine;
+import com.aresstack.spaceharvester.app.ui.AppTimeouts;
 import com.aresstack.spaceharvester.application.assets.DocumentText;
 
 import java.nio.file.Path;
@@ -28,17 +29,16 @@ import java.util.function.Supplier;
 
 /**
  * Der Browser der Chats für die Websuche, zusammengesetzt wie {@code AdapterAssembly.browsers} und die
- * Browser-Teile von {@code CompositionRoot} im Enterprise AI Client: ein sichtbares Firefox mit eigenem Profil je Chat
- * unter {@code <Datenordner>/browser-profiles}, gesteuert über WebDriver BiDi. Firefox kommt aus
- * {@code -Denterpriseai.firefox} oder dem üblichen Installationsort; ohne Firefox gibt es keine Websuche
- * ({@link #start} liefert {@code null}). Jede Adresse prüft die Richtlinie des aktiven Profils (Extern oder Intern);
+ * Browser-Teile von {@code CompositionRoot} im Enterprise AI Client, seit ADR 0046 aus Research4j: die Werkzeuge aus
+ * {@code browser-tools}, als Engine ein sichtbarer Browser über Playwright ({@link PlaywrightChatEngine}) mit eigenem
+ * Profil je Chat unter {@code <Datenordner>/browser-profiles}. Welcher Browser (Edge als Vorgabe, Chrome, Camoufox),
+ * steht unter Einstellungen › Browser; ist er nicht installiert, gibt es keine Websuche ({@link #start} liefert
+ * {@code null}, {@link #unavailable} sagt warum). Jede Adresse prüft die Richtlinie des aktiven Profils (Extern oder Intern);
  * unbekannte Websites und verändernde Aktionen fragt der Chat nach. Nach jeder Antwort schließt der Browser, das
  * Profil bleibt.
  */
 public final class ChatWebBrowser {
 
-    /** Systemeigenschaft mit dem Pfad zu Firefox, wie im Enterprise AI Client. */
-    public static final String FIREFOX_PROPERTY = "enterpriseai.firefox";
     static final String PROFILES_DIRECTORY = "browser-profiles";
     private static final System.Logger LOG = System.getLogger(ChatWebBrowser.class.getName());
 
@@ -69,21 +69,43 @@ public final class ChatWebBrowser {
                 new ToolApprovalGate(ApprovalRules::none, changes, ToolApprovalGate.DEFAULT_TIMEOUT_MILLIS));
     }
 
+    /** Warum es zuletzt keinen Browser gab (Kanal und Grund), leer wenn er verfügbar war. */
+    private static volatile String unavailable = "";
+
     /**
-     * Startet die Browser der Chats, ohne Firefox {@code null}. Firefox selbst startet erst mit dem ersten
-     * Browser-Werkzeug eines Chats.
+     * Startet die Browser der Chats; {@code null}, wenn der gewählte Browser hier nicht starten kann. Der Browser
+     * selbst startet erst mit dem ersten Browser-Werkzeug eines Chats.
      */
     public static ChatWebBrowser start(Path dataDirectory, BrowserSettings settings) {
-        Path firefox = FirefoxEngine.locate(System.getProperty(FIREFOX_PROPERTY), System.getenv(),
-                System.getProperty("os.name"));
-        if (firefox == null) {
+        String channel = settings.channel();
+        try {
+            PlaywrightDriverJars.prepare(dataDirectory);
+        } catch (java.io.IOException failed) {
+            unavailable = "Treiber der Websuche nicht entpackt: " + failed.getMessage();
+            LOG.log(System.Logger.Level.WARNING, unavailable);
             return null;
         }
+        String readiness = PlaywrightChatEngine.readiness(channel);
+        if (!readiness.startsWith("READY")) {
+            String name = BrowserSettings.CHANNELS.getOrDefault(channel, channel);
+            unavailable = readiness.startsWith("BROWSER_NOT_INSTALLED") ? name + " ist hier nicht installiert"
+                    : name + " nicht verfügbar (" + readiness + ")";
+            LOG.log(System.Logger.Level.WARNING, "Websuche im Chat: " + unavailable);
+            return null;
+        }
+        unavailable = "";
+        AppTimeouts timeouts = AppTimeouts.shared();
         DelegatingBrowserAccessGuard guard = new DelegatingBrowserAccessGuard();
-        ChatBrowserRuntime runtime = new ChatBrowserRuntime(new FirefoxEngine(firefox,
-                com.aresstack.spaceharvester.app.ui.AppTimeouts.shared().get(com.aresstack.spaceharvester.app.ui.AppTimeouts.Value.FIREFOX_START).toMillis()),
+        ChatBrowserRuntime runtime = new ChatBrowserRuntime(new PlaywrightChatEngine(channel, false,
+                timeouts.get(AppTimeouts.Value.BROWSER_START).toMillis(),
+                timeouts.get(AppTimeouts.Value.BROWSER_NAVIGATION).toMillis()),
                 new BrowserProfileStore(dataDirectory.resolve(PROFILES_DIRECTORY)), guard);
         return new ChatWebBrowser(runtime, guard, settings);
+    }
+
+    /** Warum der letzte {@link #start} keinen Browser lieferte; leer, wenn er einen lieferte. */
+    public static String unavailable() {
+        return unavailable;
     }
 
     /** Text verlinkter Dokumente (PDF, Office) über Tika mit den Grenzen der Quellen ({@code assets.extraction.*}). */
@@ -119,15 +141,25 @@ public final class ChatWebBrowser {
         }
     }
 
-    /** Die Browser-Werkzeuge des Chats {@code chatId}; der Chat wird hier gebunden, nie vom Modell. */
+    /**
+     * Die Browser-Werkzeuge des Chats {@code chatId}; der Chat wird hier gebunden, nie vom Modell. Im Profil Intern
+     * fehlt {@code browser_search}: Suchbegriffe aus dem Intranet gehen nie an eine öffentliche Suchmaschine, dort
+     * sucht der Chat über die Such-URLs des Profils und die Suche der Websites.
+     */
     public List<McpToolContribution> tools(String chatId) {
-        return tools.contributionsFor(new ChatConversationId(chatId));
+        ChatConversationId chat = new ChatConversationId(chatId);
+        List<McpToolContribution> all = tools.contributionsFor(chat);
+        if (profile(chat) == BrowserProfile.EXTERNAL) {
+            return all;
+        }
+        return all.stream().filter(tool -> !BrowserMcpTools.SEARCH.equals(tool.getName())).toList();
     }
 
     /** Die Regel des Browserprofils mit seinen Such-URLs für den Systemhinweis. */
     public String profileRule(String chatId) {
         BrowserProfile profile = profile(new ChatConversationId(chatId));
-        return BrowserRules.browserProfile(profile.label(), settings.load().profile(profile).searchUrls());
+        return BrowserRules.browserProfile(profile.label(), settings.load().profile(profile).searchUrls(),
+                profile == BrowserProfile.EXTERNAL);
     }
 
     /** Das Profil eines Chats, ohne Wahl Extern. */

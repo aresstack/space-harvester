@@ -276,6 +276,32 @@ class AreaSummaryViewTest {
     }
 
     @Test
+    void underAreaTheBookFolderShowsTheOverviewAndStartsItOnlyOnAClick() throws Exception {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+            com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
+                    new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, "# Buch", "", List.of());
+            view.books(id -> edition);
+            AreaSummaryView.chooseBook("ordner-wahl", false);
+            try {
+                view.folder(folder("ordner-wahl", Root.space("wiki", "BAU")));
+
+                assertThat(view.bookShown()).isFalse();
+                assertThat(view.texts()).contains(AreaSummaryView.NO_SUMMARY);
+                assertThat(actions.summarized).isEmpty();
+                assertThat(view.summarizeOffered()).isTrue();
+
+                AreaSummaryView.chooseBook("ordner-wahl", true);
+                view.bookChanged();
+                assertThat(view.bookShown()).isTrue();
+                assertThat(view.summarizeOffered()).isFalse();
+            } finally {
+                AreaSummaryView.chooseBook("ordner-wahl", true);
+            }
+        });
+    }
+
+    @Test
     void theListeningViewKeepsTheOverviewForNow() {
         AreaSummaryView view = view(AreaSummaryView.Mode.LISTEN, true);
         actions.stored = overview("selection-abc");
