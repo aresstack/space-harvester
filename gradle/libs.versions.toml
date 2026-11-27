@@ -4,7 +4,9 @@
 [versions]
 # Bibliotheken der Ask-AI-Aufteilung (noch unveröffentlicht, Arbeitszweig per Composite Build, siehe settings.gradle)
 knowledge4j = "0.3.0"
-research4j = "0.2.0"
+research4j = "0.3.0"
+# Treiber-Prozess der Chat-Websuche (GraalVM 25 nur dort, ADR 0046); dieselbe Fassung wie in Research4j
+playwright4j = "0.3.0"
 writing4j = "0.5.0"
 springBoot = "4.1.1"
 springDependencyManagement = "1.1.7"
@@ -83,6 +85,9 @@ zxing = "3.5.3"
 knowledge4j-api = { module = "com.aresstack:knowledge4j-knowledge-api", version.ref = "knowledge4j" }
 knowledge4j-model = { module = "com.aresstack:knowledge4j-knowledge-model", version.ref = "knowledge4j" }
 research4j-core = { module = "com.aresstack:research4j-research-core", version.ref = "research4j" }
+research4j-browser-tools = { module = "com.aresstack:research4j-browser-tools", version.ref = "research4j" }
+research4j-browser-playwright = { module = "com.aresstack:research4j-browser-playwright", version.ref = "research4j" }
+playwright4j = { module = "com.aresstack:playwright4j", version.ref = "playwright4j" }
 writing4j-core = { module = "com.aresstack:writing4j-core", version.ref = "writing4j" }
 openterm = { module = "com.ascert.open:openterm", version.ref = "openterm" }
 rsyntaxtextarea = { module = "com.fifesoft:rsyntaxtextarea", version.ref = "rsyntaxtextarea" }

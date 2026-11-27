@@ -27,10 +27,6 @@ include 'enterprise-ai-sources'
 
 include 'enterprise-ai-keepass'
 
-// Chatgebundener Browser (Firefox über WebDriver BiDi) aus enterprise-ai-client, unveränderte Kopie, siehe
-// enterprise-ai-browser/UPSTREAM.md.
-include 'enterprise-ai-browser'
-
 // Dokumentausgabe des Enterprise AI Client (Word, PDF, Markdown) als eigene Bibliothek ohne Swing (angepasste Kopie,
 // siehe document-export/UPSTREAM.md).
 include 'document-export'
@@ -83,7 +79,9 @@ if (aresstackLibs != null) {
     }
     includeBuild(new File(libs, 'research4j')) {
         dependencySubstitution {
-            substitute module('com.aresstack:research4j-research-core') using project(':research-core')
+            ['research-core', 'browser-api', 'browser-tools', 'browser-playwright', 'browser-search-analysis'].each { name ->
+                substitute module("com.aresstack:research4j-${name}") using project(":${name}")
+            }
         }
     }
     // Writing4j (Phase 4) liegt daneben, wenn es mitentwickelt wird.
