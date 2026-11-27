@@ -107,7 +107,7 @@ Podcast, Zusammenfassung.
    überschrieben werden.
 6. Zusammenfassungen lassen sich in der Liste einzeln löschen.
 
-Angelo hat die Lesarten 1 und 2 am 27.11.2026 um 21:20 MEZ mit dem Konzept genannt bekommen.
+Angelo hat die Lesarten 1 und 2 am 27.11.2026 gegen 21:10 MEZ mit dem Konzept genannt bekommen.
 
 ## Technik
 
