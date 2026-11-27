@@ -96,6 +96,9 @@ class ContentViewTest {
             window.add(page, java.awt.BorderLayout.CENTER);
             window.add(sidebar, java.awt.BorderLayout.EAST);
             AnalysisTabsScreenshotTest.write(window, Path.of(directory, "analysen-quelle-1280.png"), 640);
+            assertThat(sidebar.filterButton().isSelected()).isFalse();
+            sidebar.filter(true);
+            AnalysisTabsScreenshotTest.write(window, Path.of(directory, "analysen-quelle-filter-1280.png"), 640);
             return null;
         });
     }
