@@ -41,6 +41,9 @@ er, dort ist er der Sollwert).
 {"pageGuid":"page@…","action":{"name":"assertText","selector":"internal:role=status","text":"Gespeichert: Angelo","substring":false,"signals":[]}}
 ```
 
+Einzige Ergänzung zu Playwrights Format ist `stepId`, eine feste ID je Schritt. Fachliches (Given/When/Then,
+Variablen, Benutzer) verweist darüber auf die Aktion; Einfügen, Löschen, Verschieben und Bearbeiten ändern sie nicht.
+
 Warum `ActionInContext` und nicht Playwrights JSONL-Zeile: Die JSONL-Zeile ist aus `ActionInContext` abgeleitet
 (zusätzlich nur ein Locator-Objekt, das aus dem Selektor folgt). Wir speichern das Original und nichts doppelt. Kein
 eigenes Aktionsmodell, keine Umwandlung; unbekannte Felder späterer Playwright-Fassungen bleiben erhalten.
@@ -54,7 +57,9 @@ Playwright Core 1.62 (in playwright4j enthalten) hat einen Recorder-Programm-Mod
 `BrowserContext.enableRecorder` mit `recorderMode: "api"` öffnet kein Inspector-Fenster, sondern meldet jede Aktion als
 `recorderEvent` (`actionAdded`, `actionUpdated`, `signalAdded`) mit `ActionInContext`. Playwright erledigt dabei:
 
-- Locator-Wahl (Test-ID, Rolle, Label, Text, CSS nach Playwrights Rangfolge); Frames sind im Prototyp noch nicht geprüft
+- Locator-Wahl (Test-ID, Rolle, Label, Text, CSS nach Playwrights Rangfolge); in Frames steht der Frame-Pfad im Selektor
+  (`… >> internal:control=enter-frame >> …`, `buildFullSelector` in Core 1.62). Der Fehlerbericht
+  microsoft/playwright#34157 (Frame-Pfad fehlte im JSONL) betrifft 1.62 daher nicht; der Live-Test belegt es mit einem iFrame
 - Zusammenfassen der Eingaben: eine `fill`-Aktion je Feld (`shouldMergeAction`: gleiche Aktion UND gleicher Selektor).
   Der WD4J-Fehler in `mergeInputEvents()` (zwei Felder direkt nacheinander, das erste geht verloren) kann so nicht
   auftreten; der Live-Test prüft das.
