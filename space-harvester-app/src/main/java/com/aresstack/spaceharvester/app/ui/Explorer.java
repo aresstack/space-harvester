@@ -75,6 +75,8 @@ import java.util.function.Consumer;
 public final class Explorer {
 
     static final String LOADING = "Lädt …";
+    private static final String SEARCHING = "Wissensquellen werden durchsucht …";
+    private static final String MORE_HINT = " · weitere vorhanden, Titel genauer eingeben";
     static final String MORE = "Weitere laden …";
     private static final String TREE = "tree";
     private static final String MATCHES = "matches";
@@ -2194,6 +2196,8 @@ public final class Explorer {
             filterToAddress(runtime, id, text);
             return;
         }
+        // Eine Seitennummer findet die Seite zusätzlich zu Titeln mit dieser Zahl (Angelo, 27.11.2026).
+        List<String> pageIds = SearchView.pageIdAddresses(List.copyOf(shownSources), text);
         String needle = text.toLowerCase(Locale.ROOT);
         Map<String, Match> found = new LinkedHashMap<>();
         Enumeration<?> all = top.breadthFirstEnumeration();
@@ -2205,6 +2209,25 @@ public final class Explorer {
             }
         }
         show(found, true);
+        if (runtime != null && !pageIds.isEmpty()) {
+            Background.run(() -> resolveAll(runtime, pageIds), resolved -> {
+                if (id == filterRequest) {
+                    // Die Seite zur Nummer steht vorn, Titeltreffer folgen.
+                    Map<String, Match> first = matches(resolved);
+                    first.putAll(found);
+                    found.clear();
+                    found.putAll(first);
+                    // Läuft die Titelsuche noch, bleibt „durchsucht …“; ist sie fertig, gilt ihr Ergebnis samt Hinweis.
+                    String shown = note.getText();
+                    boolean pending = shown.equals(SEARCHING);
+                    int more = shown.indexOf(MORE_HINT);
+                    show(found, pending);
+                    if (!pending && more >= 0) {
+                        note.setText(note.getText() + shown.substring(more));
+                    }
+                }
+            }, error -> { });
+        }
         PageSearchQuery query;
         try {
             query = PageSearchQuery.of(null, List.of(), List.of(), text, null, null, null, null, null,
@@ -2254,10 +2277,7 @@ public final class Explorer {
             if (id != filterRequest) {
                 return;
             }
-            for (PageAddresses.Match match : resolution.matches()) {
-                found.putIfAbsent(match.sourceId() + "/" + match.pageId(), new Match(match.sourceId(),
-                        match.spaceKey(), match.pageId(), match.title(), where(match.sourceId(), match.spaceKey())));
-            }
+            found.putAll(matches(resolution));
             show(found, false);
             if (found.isEmpty()) {
                 note.setText("Keine Seite zu dieser Adresse" + (resolution.unavailableSources().isEmpty() ? ""
@@ -2269,6 +2289,33 @@ public final class Explorer {
                 note.setText("Adresse nicht auflösbar: " + error.getMessage());
             }
         });
+    }
+
+    /** Die Seiten zu mehreren Adressen; eine Adresse, die scheitert, fehlt nur. Im Hintergrund. */
+    private static List<PageAddresses.Match> resolveAll(AppRuntime runtime, List<String> addresses) {
+        List<PageAddresses.Match> found = new ArrayList<>();
+        for (String address : addresses) {
+            try {
+                found.addAll(runtime.workspace().resolveAddress(address).matches());
+            } catch (RuntimeException unavailable) {
+                // Nicht erreichbar: dann eben ohne diese Quelle.
+            }
+        }
+        return found;
+    }
+
+    /** Treffer der Adressauflösung als Zeilen; nur auf dem EDT ({@link #where} liest den Baum). */
+    private Map<String, Match> matches(PageAddresses.Resolution resolution) {
+        return matches(resolution.matches());
+    }
+
+    private Map<String, Match> matches(List<PageAddresses.Match> resolved) {
+        Map<String, Match> found = new LinkedHashMap<>();
+        for (PageAddresses.Match match : resolved) {
+            found.putIfAbsent(match.sourceId() + "/" + match.pageId(), new Match(match.sourceId(),
+                    match.spaceKey(), match.pageId(), match.title(), where(match.sourceId(), match.spaceKey())));
+        }
+        return found;
     }
 
     /** Die Titelsuche jeder Quelle ({@code PageNavigation.findByTitle}); eine Quelle, die scheitert, fehlt nur. */
@@ -2299,7 +2346,7 @@ public final class Explorer {
             }
             show(found, false);
             if (live.truncated() || found.size() > MATCH_LIMIT) {
-                note.setText(note.getText() + " · weitere vorhanden, Titel genauer eingeben");
+                note.setText(note.getText() + MORE_HINT);
             }
         }, error -> {
             if (id == filterRequest) {
@@ -2314,7 +2361,7 @@ public final class Explorer {
     private void show(Map<String, Match> found, boolean searching) {
         matchModel.clear();
         found.values().stream().limit(MATCH_LIMIT).forEach(matchModel::addElement);
-        note.setText(searching ? "Wissensquellen werden durchsucht …"
+        note.setText(searching ? SEARCHING
                 : found.isEmpty() ? "Kein Seitentitel passt" : Texts.count(Math.min(found.size(), MATCH_LIMIT),
                 "Seite", "Seiten"));
     }
