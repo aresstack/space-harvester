@@ -15,35 +15,27 @@ import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.PlaywrightException;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The engine connection of the chat browser on Playwright: the Firefox adapter of the Enterprise AI Client
  * ({@code BidiBrowserConnection}) carried over to Playwright. The page operations (page scripts, waiting rules,
- * real input) are in {@link PageOperations}; this connection keeps the tabs and their ids. Tabs are the pages of the
- * persistent context; their ids are local to this browser. Playwright is not thread-safe, so every call holds the
- * lock of its browser instance.
+ * real input) are in {@link PageOperations} and the tabs in {@link ChatTabs}; this connection adds the lock and
+ * the failure contract. Playwright is not thread-safe, so every call holds the lock of its browser instance.
  */
 final class PlaywrightChatConnection implements BrowserConnection {
 
     private final PlaywrightChatEngine.Instance instance;
     private final BrowserContext context;
     private final long navigationTimeoutMillis;
-    private final Map<Page, String> ids = new IdentityHashMap<>();
-    private final Map<String, Page> pages = new HashMap<>();
-    private int nextId;
+    /** The chat's tabs in the context, with their ids and pointer positions. */
+    private final ChatTabs tabs;
     private volatile boolean disconnected;
     /** Human variation of input, scrolling and reading; off unless the chat switched it on. */
     private volatile HumanMotion human = HumanMotion.off();
-    /** Last pointer position per tab, start of the next mouse path. */
-    private final Map<String, PageOperations.Pointer> pointers = new ConcurrentHashMap<>();
     /** The page operations, shared with the research driver; this connection adds tab ids and the lock. */
     private final PageOperations operations;
 
@@ -52,6 +44,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
         this.instance = instance;
         this.context = context;
         this.navigationTimeoutMillis = navigationTimeoutMillis;
+        this.tabs = new ChatTabs(context);
         this.operations = new PageOperations(new PageOperations.Guard() {
             @Override
             public void check() throws BrowserException {
@@ -75,12 +68,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
         synchronized (instance) {
             check();
             try {
-                List<RawTab> tabs = new ArrayList<>();
-                for (Page page : context.pages()) {
-                    String id = idOf(page);
-                    tabs.add(new RawTab(id, page.url(), title(id)));
-                }
-                return tabs;
+                return tabs.list();
             } catch (PlaywrightException e) {
                 throw classify(e);
             }
@@ -92,7 +80,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
         synchronized (instance) {
             check();
             try {
-                return idOf(context.newPage());
+                return tabs.create();
             } catch (PlaywrightException e) {
                 throw classify(e);
             }
@@ -104,7 +92,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
         synchronized (instance) {
             check();
             try {
-                page(contextId).bringToFront();
+                tabs.activate(contextId);
             } catch (PlaywrightException e) {
                 throw classify(e);
             }
@@ -116,11 +104,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
         synchronized (instance) {
             check();
             try {
-                Page page = page(contextId);
-                page.close();
-                pages.remove(contextId);
-                ids.remove(page);
-                pointers.remove(contextId);
+                tabs.close(contextId);
             } catch (PlaywrightException e) {
                 throw classify(e);
             }
@@ -131,7 +115,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
     public void navigate(String contextId, String url) throws BrowserException {
         synchronized (instance) {
             check();
-            operations.navigate(page(contextId), url, human, pointerOf(contextId));
+            operations.navigate(tabs.page(contextId), url, human, tabs.pointer(contextId));
         }
     }
 
@@ -143,15 +127,11 @@ final class PlaywrightChatConnection implements BrowserConnection {
         }
     }
 
-    private PageOperations.Pointer pointerOf(String contextId) {
-        return pointers.computeIfAbsent(contextId, id -> new PageOperations.Pointer());
-    }
-
     @Override
     public Map<String, String> navigateAll(Map<String, String> urlByContext) throws BrowserException {
         synchronized (instance) {
             check();
-            return operations.navigateAll(this::page, urlByContext, human, this::pointerOf);
+            return operations.navigateAll(tabs::page, urlByContext, human, tabs::pointer);
         }
     }
 
@@ -159,7 +139,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
     public RawPage read(String contextId) throws BrowserException {
         synchronized (instance) {
             check();
-            return operations.read(page(contextId));
+            return operations.read(tabs.page(contextId));
         }
     }
 
@@ -167,7 +147,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
     public List<RawLink> links(String contextId) throws BrowserException {
         synchronized (instance) {
             check();
-            return operations.links(page(contextId));
+            return operations.links(tabs.page(contextId));
         }
     }
 
@@ -175,7 +155,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
     public List<RawControl> controls(String contextId) throws BrowserException {
         synchronized (instance) {
             check();
-            return operations.controls(page(contextId));
+            return operations.controls(tabs.page(contextId));
         }
     }
 
@@ -184,7 +164,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
             throws BrowserException {
         synchronized (instance) {
             check();
-            return operations.act(page(contextId), ref, action, value, human, pointerOf(contextId));
+            return operations.act(tabs.page(contextId), ref, action, value, human, tabs.pointer(contextId));
         }
     }
 
@@ -192,7 +172,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
     public String search(String contextId, String query, List<String> engines) throws BrowserException {
         synchronized (instance) {
             check();
-            Page page = page(contextId);
+            Page page = tabs.page(contextId);
             // The search of the research browser (engine catalog, SERP extraction, consent, challenge) on this tab.
             // Which addresses the chat may open stays with the chat tools' access guard; the search engines are
             // the host's configured ones.
@@ -223,7 +203,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
             throws BrowserException {
         synchronized (instance) {
             check();
-            return operations.screenshot(page(contextId), marks, clipRef, maxBytes);
+            return operations.screenshot(tabs.page(contextId), marks, clipRef, maxBytes);
         }
     }
 
@@ -231,7 +211,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
     public RawDownload fetch(String contextId, String url, int maxBytes) throws BrowserException {
         synchronized (instance) {
             check();
-            return operations.fetch(page(contextId), url, maxBytes);
+            return operations.fetch(tabs.page(contextId), url, maxBytes);
         }
     }
 
@@ -239,7 +219,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
     public BrowserProbe probe(String contextId) throws BrowserException {
         synchronized (instance) {
             check();
-            return operations.probe(page(contextId));
+            return operations.probe(tabs.page(contextId));
         }
     }
 
@@ -247,7 +227,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
     public String documentToken(String contextId) throws BrowserException {
         synchronized (instance) {
             check();
-            return operations.documentToken(page(contextId));
+            return operations.documentToken(tabs.page(contextId));
         }
     }
 
@@ -255,33 +235,6 @@ final class PlaywrightChatConnection implements BrowserConnection {
     public void disconnect() {
         // The browser keeps running; only this connection ends.
         disconnected = true;
-    }
-
-    private String title(String contextId) {
-        try {
-            return page(contextId).title();
-        } catch (BrowserException | RuntimeException e) {
-            // A tab that is still loading or shows an error page has no readable title; the list stays usable.
-            return "";
-        }
-    }
-
-    private String idOf(Page page) {
-        String id = ids.get(page);
-        if (id == null) {
-            id = "tab-" + (++nextId);
-            ids.put(page, id);
-            pages.put(id, page);
-        }
-        return id;
-    }
-
-    private Page page(String contextId) throws BrowserException {
-        Page page = pages.get(contextId);
-        if (page == null || page.isClosed()) {
-            throw new BrowserException(BrowserException.Kind.INVALID_REQUEST, "Unbekannter Tab: " + contextId);
-        }
-        return page;
     }
 
     private void check() throws BrowserException {
