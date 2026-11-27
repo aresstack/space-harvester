@@ -253,8 +253,20 @@ final class PodcastControl<S> {
         return com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(MINIMIZED_KEY, 0) != 0;
     }
 
+    /**
+     * Alle Player der App (nur auf dem EDT): Minimieren gilt für alle, also zeigen auch die Knöpfe der anderen
+     * gleich den neuen Zustand, statt beim nächsten Klick das Gegenteil zu tun.
+     */
+    private static final java.util.Set<PodcastControl<?>> ALL =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+
     private void toggleMinimized() {
         com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(MINIMIZED_KEY, minimized() ? 0 : 1);
+        for (PodcastControl<?> other : List.copyOf(ALL)) {
+            if (other != this) {
+                other.showMinimized();
+            }
+        }
         applyMinimized();
     }
 
@@ -263,6 +275,14 @@ final class PodcastControl<S> {
      * der Leiste, ohne „Untertitel“ (der gehört zum Player); die Wiedergabe bleibt, wie sie ist.
      */
     private void applyMinimized() {
+        showMinimized();
+        if (timelineShown) {
+            events.accept(minimized() ? TimelineEvent.hide(timelineRow) : TimelineEvent.show(timelineRow));
+        }
+    }
+
+    /** Nur die Knöpfe auf den gemerkten Zustand; die Zeitleiste über der Suchleiste bleibt, wie sie ist. */
+    private void showMinimized() {
         boolean small = minimized();
         String tip = small ? EXPAND : MINIMIZE;
         minimizeToggle.setIcon(small ? com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronUp()
@@ -271,9 +291,6 @@ final class PodcastControl<S> {
         minimizeToggle.getAccessibleContext().setAccessibleName(tip);
         minimizeToggle.setVisible(timelineShown);
         subtitleToggle.setVisible(timelineShown && !small);
-        if (timelineShown) {
-            events.accept(small ? TimelineEvent.hide(timelineRow) : TimelineEvent.show(timelineRow));
-        }
     }
 
     com.aresstack.spaceharvester.app.ui.controls.SubtitleLine subtitle() {
@@ -384,7 +401,8 @@ final class PodcastControl<S> {
         applySubtitles();
         minimizeToggle.setName(labels.name() + ".podcastMinimize");
         minimizeToggle.addActionListener(event -> toggleMinimized());
-        applyMinimized();
+        showMinimized();
+        ALL.add(this);
         timelineRow.setName(labels.name() + ".podcastTimelineRow");
         transcriptCopy.setName(labels.name() + ".podcastTranscript");
         transcriptCopy.setVisible(false);

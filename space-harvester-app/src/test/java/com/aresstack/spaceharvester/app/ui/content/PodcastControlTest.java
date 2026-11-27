@@ -400,6 +400,15 @@ class PodcastControlTest {
                 assertTrue(events.getLast() instanceof TimelineEvent quiet && !quiet.getPayload().show());
                 assertEquals(PodcastControl.EXPAND, other.minimizeToggle().getToolTipText());
 
+                // Der andere, schon laufende Podcast zeigt den gemeinsamen Zustand ebenfalls (Codex #1617).
+                assertEquals(PodcastControl.EXPAND, other.minimizeToggle().getToolTipText());
+                ((javax.swing.AbstractButton) other.minimizeToggle()).doClick();
+                assertEquals(PodcastControl.MINIMIZE, minimize.getToolTipText());
+                assertTrue(events.getLast() instanceof TimelineEvent otherShown && otherShown.getPayload().show()
+                        && otherShown.getPayload().timeline() == other.timelineRow());
+                ((javax.swing.AbstractButton) other.minimizeToggle()).doClick();
+                assertEquals(PodcastControl.EXPAND, minimize.getToolTipText());
+
                 minimize.doClick();
                 assertTrue(events.getLast() instanceof TimelineEvent shown && shown.getPayload().show()
                         && shown.getPayload().timeline() == control.timelineRow());
