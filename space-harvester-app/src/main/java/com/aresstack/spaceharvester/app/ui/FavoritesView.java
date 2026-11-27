@@ -112,7 +112,7 @@ final class FavoritesView {
                 switch (tree.entryOf(value)) {
                     case Favorites.Folder folder -> {
                         setText(folder.name());
-                        setIcon(SidebarIcons.folder());
+                        setIcon(GroupMenu.folderIcon(SidebarIcons.folder(), folder.color()));
                     }
                     case Favorites.Bookmark bookmark -> {
                         Favorites.Favorite favorite = bookmark.favorite();
@@ -147,6 +147,7 @@ final class FavoritesView {
         });
         newFolder.addActionListener(e -> tree.createFolder());
         tree.folderItems((id, menu) -> {
+            menu.add(GroupMenu.colorMenu(favorites, id));
             javax.swing.JMenuItem fill = new javax.swing.JMenuItem(BasketResearchForm.TITLE + " …");
             fill.setToolTipText("Recherche im Wissensbestand legt passende Seiten als Favoriten in diesen Ordner");
             fill.addActionListener(e -> fillBasket(id));

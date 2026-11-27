@@ -462,6 +462,27 @@ public final class SearchView implements View {
         }
         table.setRowSorter(sorter);
         table.getColumnModel().getColumn(HitsModel.EXCERPT).setCellRenderer(excerpts);
+        // Ganz vorn der Stern (Angelo 27.11.2026): gefüllt als Favorit, in einer Gruppe in deren Farbe mit Streifen.
+        table.getColumnModel().getColumn(HitsModel.TITLE).setCellRenderer(new TitleRenderer());
+        table.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    hitMenu(e);
+                } else if (javax.swing.SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 1 && onStar(e)) {
+                    toggleFavorite(hitAt(e));
+                    e.consume();
+                }
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    hitMenu(e);
+                }
+            }
+        });
+        context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(table::repaint));
         table.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
             @Override
             public void mouseMoved(MouseEvent e) {
@@ -470,7 +491,7 @@ public final class SearchView implements View {
                         : java.awt.Cursor.getDefaultCursor());
                 // Bei einem Nachbarn nennt der Tooltip der Marke die Ausgangsseite (UX-Manager 21.11.2026).
                 String tip = mark ? model.rows.get(table.convertRowIndexToModel(table.rowAtPoint(e.getPoint())))
-                        .markTip() : null;
+                        .markTip() : onStar(e) ? GroupMenu.STAR_TIP : null;
                 table.setToolTipText(tip != null ? tip : ROW_TIP);
             }
         });
@@ -533,6 +554,113 @@ public final class SearchView implements View {
         Hit hit = model.rows.get(table.convertRowIndexToModel(table.rowAtPoint(e.getPoint())));
         reasons.text(HitReasons.HEADING, HitReasons.details(hit.reasons())).showAt(table, e.getX(), e.getY());
         return true;
+    }
+
+    /** Der Treffer unter der Maus oder {@code null}. */
+    private Hit hitAt(MouseEvent e) {
+        int row = table.rowAtPoint(e.getPoint());
+        return row < 0 ? null : model.rows.get(table.convertRowIndexToModel(row));
+    }
+
+    /** Ob die Maus auf dem Stern vorn im Titel steht. */
+    private boolean onStar(MouseEvent e) {
+        int row = table.rowAtPoint(e.getPoint());
+        int column = table.columnAtPoint(e.getPoint());
+        if (row < 0 || column < 0 || table.convertColumnIndexToModel(column) != HitsModel.TITLE) {
+            return false;
+        }
+        java.awt.Rectangle cell = table.getCellRect(row, column, false);
+        return e.getX() < cell.x + TitleRenderer.STAR_END;
+    }
+
+    /**
+     * Rechtsklick auf einen Treffer: auf dem Stern nur die Gruppen und „Neue Gruppe …“, sonst Öffnen, Favorit und
+     * „Gruppe zuordnen“ (Angelo 27.11.2026).
+     */
+    private void hitMenu(MouseEvent e) {
+        Hit hit = hitAt(e);
+        if (hit == null) {
+            return;
+        }
+        javax.swing.JPopupMenu menu = onStar(e) ? starMenu(hit) : hitMenu(hit);
+        menu.show(table, e.getX(), e.getY());
+    }
+
+    /** Rechtsklick auf den Stern eines Treffers. */
+    javax.swing.JPopupMenu starMenu(Hit hit) {
+        return GroupMenu.popup(table, context.favorites(), groupOf(hit), id -> assignGroup(hit, id));
+    }
+
+    /** Das Rechtsklick-Menü eines Treffers. */
+    javax.swing.JPopupMenu hitMenu(Hit hit) {
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        javax.swing.JMenuItem open = new javax.swing.JMenuItem("Öffnen");
+        open.addActionListener(e -> context.navigator().openPage(hit.sourceId(), hit.pageId()));
+        menu.add(open);
+        boolean favorite = isFavorite(hit);
+        javax.swing.JMenuItem star = new javax.swing.JMenuItem(favorite ? "Favorit entfernen" : "Als Favorit markieren",
+                favorite ? Glyph.STAR_FILLED : Glyph.STAR);
+        star.addActionListener(e -> toggleFavorite(hit));
+        menu.add(star);
+        menu.add(GroupMenu.submenu(table, context.favorites(), groupOf(hit), id -> assignGroup(hit, id)));
+        return menu;
+    }
+
+    private boolean isFavorite(Hit hit) {
+        return hit.spaceKey() != null && context.favorites().contains(hit.sourceId(), hit.spaceKey(), hit.pageId());
+    }
+
+    private String groupOf(Hit hit) {
+        return hit.spaceKey() == null ? null
+                : context.favorites().groupOf(hit.sourceId(), hit.spaceKey(), hit.pageId()).orElse(null);
+    }
+
+    private com.aresstack.spaceharvester.app.group.GroupColor colorOf(Hit hit) {
+        return hit.spaceKey() == null ? null
+                : context.favorites().colorOf(hit.sourceId(), hit.spaceKey(), hit.pageId()).orElse(null);
+    }
+
+    /** Stern am Treffer: derselbe Weg wie der Stern im Baum (Pfad aus der Position der Seite). */
+    void toggleFavorite(Hit hit) {
+        if (hit != null) {
+            GroupMenu.pageFavorite(context, hit.sourceId(), hit.spaceKey(), hit.pageId(), hit.title(),
+                    context.favorites()::toggle);
+        }
+    }
+
+    /** „Gruppe zuordnen“ am Treffer: Favorit in dieser Gruppe, aus einer anderen wandert er heraus. */
+    void assignGroup(Hit hit, String groupId) {
+        GroupMenu.pageFavorite(context, hit.sourceId(), hit.spaceKey(), hit.pageId(), hit.title(),
+                favorite -> context.favorites().assign(favorite, groupId));
+    }
+
+    /** Der Titel eines Treffers, vorn der Stern; in einer Gruppe deren Farbstreifen links. */
+    private final class TitleRenderer extends javax.swing.table.DefaultTableCellRenderer {
+
+        private static final int PAD = 3;
+        /** Bis hierher (vom linken Zellrand) reicht die Klickfläche des Sterns. */
+        static final int STAR_END = 2 * PAD + com.aresstack.spaceharvester.app.ui.controls.GroupStripe.WIDTH
+                + Glyph.STAR.getIconWidth() + PAD;
+
+        TitleRenderer() {
+            putClientProperty("html.disable", Boolean.TRUE);
+            setIconTextGap(6);
+        }
+
+        @Override
+        public java.awt.Component getTableCellRendererComponent(JTable owner, Object value, boolean selected,
+                                                                boolean focus, int row, int column) {
+            super.getTableCellRendererComponent(owner, value, selected, focus, row, column);
+            Hit hit = model.rows.get(owner.convertRowIndexToModel(row));
+            com.aresstack.spaceharvester.app.group.GroupColor color = colorOf(hit);
+            setIcon(GroupMenu.star(isFavorite(hit), color));
+            setBorder(color != null
+                    ? new com.aresstack.spaceharvester.app.ui.controls.GroupStripe(
+                            com.aresstack.spaceharvester.app.ui.controls.GroupColors.of(color), PAD)
+                    : BorderFactory.createEmptyBorder(0, 2 * PAD
+                            + com.aresstack.spaceharvester.app.ui.controls.GroupStripe.WIDTH, 0, 0));
+            return this;
+        }
     }
 
     /** Ob die Maus auf der Marke des Treffergrunds steht; dasselbe Maß wie beim Zeichnen. */
@@ -3125,6 +3253,8 @@ public final class SearchView implements View {
     static final class HitsModel extends AbstractTableModel {
 
         private static final String[] COLUMNS = {"Titel", "Quelle", "Space", "Auszug", "Geändert"};
+        /** Spalte des Titels, vorn mit dem Stern. */
+        static final int TITLE = 0;
         /** Spalte des Auszugs, vorn mit der Marke des Treffergrunds. */
         static final int EXCERPT = 3;
         List<Hit> rows = new ArrayList<>();
