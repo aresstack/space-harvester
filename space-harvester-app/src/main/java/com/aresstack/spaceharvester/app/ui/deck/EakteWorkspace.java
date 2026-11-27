@@ -322,6 +322,17 @@ public final class EakteWorkspace extends JPanel implements DeckBars.FootTools {
         return selected;
     }
 
+    /** Das Dokument, das die gewählte Sitzung gerade zeigt; {@code null} ohne. */
+    public com.aresstack.spaceharvester.application.extraction.DocumentRef shownDocument() {
+        EakteBrowser browser = selected == null ? null : browserOf.get(selected);
+        return browser == null ? null : browser.extraction().shown();
+    }
+
+    /** Die angeschlossene Dokumentanalyse (Fristen); {@code DocumentAnalysisProvider.NONE} ohne. */
+    public com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider analyses() {
+        return analyses;
+    }
+
     EakteBrowser browser(EakteSession session) {
         return browserOf.get(session);
     }

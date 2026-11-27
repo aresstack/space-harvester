@@ -15,7 +15,7 @@ import java.util.List;
  * Wie ein Analyseergebnis in der Extraktionsansicht erscheint: Zeilen (Abschnittsüberschrift oder Feld), Wörter und
  * Farben je Stand. Ohne Swing-Zustand, damit es sich ohne Fenster prüfen lässt. Farben stehen immer mit ihrem Wort.
  */
-final class ExtractionRows {
+public final class ExtractionRows {
 
     static final String NOT_FOUND_VALUE = "— nicht gefunden —";
 
@@ -126,6 +126,31 @@ final class ExtractionRows {
                     : "Analysiert: " + analysis.fieldCount() + " Informationen, davon "
                     + conflicts(analysis.count(FieldStatus.CONFLICT));
         };
+    }
+
+    /**
+     * Das Ergebnis als Text für den Chat: Stand und Hinweise, dann je Abschnitt die Felder mit Wert, Stand und Fundstelle, so wie
+     * die Tabelle sie zeigt.
+     */
+    public static String text(DocumentAnalysis analysis) {
+        StringBuilder text = new StringBuilder(status(analysis));
+        if (analysis != null) {
+            // Hinweise zum ganzen Ergebnis (abgeschnitten, ohne KI …): ohne sie hielte der Chat es für vollständig.
+            for (com.aresstack.spaceharvester.application.extraction.AnalysisNote note : analysis.notes()) {
+                text.append("\nHinweis: ").append(note.text().isEmpty() ? note.code().name() : note.text());
+            }
+        }
+        for (Row row : rows(analysis)) {
+            if (row.isHeading()) {
+                text.append("\n\n").append(row.heading()).append(':');
+                continue;
+            }
+            ExtractedField field = row.field();
+            String where = source(field.source());
+            text.append("\n- ").append(label(field)).append(": ").append(value(field)).append(" [")
+                    .append(word(field.status())).append(where.isEmpty() ? "" : " · " + where).append(']');
+        }
+        return text.toString();
     }
 
     private static String conflicts(long count) {
