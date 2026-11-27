@@ -98,9 +98,11 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
     jede Aktion jedes Mal, weil Space Harvester keine gemerkten Regeln hatte). Ablauf wie im EAC: eine Wolke je
     Werkzeugaufruf, beim ersten Browser-Aufruf „Browser wird gestartet“, danach die Karte „Browserrecherche“; die
     Antwortblase wartet unsichtbar hinter den Wolken und erscheint mit ihrem ersten Text.
-12. **Suche ohne Auswahl, Suchagent** (Nachtrag, Angelo 24.11.2026): Die App startet auf dem Suchreiter. Ein Klick
-    auf den Suchreiter (oder Strg+Zahl) hebt die Auswahl der Wissensquellen ganz auf, auch die globale; die Suche in
-    der Titelleiste lässt sie stehen. Wer die Suche ohne Auswahl verlässt, hat „Wissensquellen“ gewählt. Ohne Auswahl antwortet der Chat trotzdem: Er hat dann keine Bereichswerkzeuge (und
+12. **Suche ohne Auswahl, Suchagent** (Nachtrag, Angelo 24.11.2026): Die App startet in der Suche. Die Suche von
+    Hand (Strg+Zahl; bis 27.11.2026 ein Klick auf den Suchreiter, seither der zweite Klick auf den gezeigten Knopf
+    der Icon-Leiste, der ihn abwählt) hebt die Auswahl der Wissensquellen ganz auf, auch die globale; die Suche in
+    der Titelleiste lässt sie stehen. Einen Suchreiter gibt es nicht mehr: Ohne gewählten Knopf zeigt die Mitte die
+    Suche (Angelo, 27.11.2026). Wer die Suche ohne Auswahl verlässt, hat „Wissensquellen“ gewählt. Ohne Auswahl antwortet der Chat trotzdem: Er hat dann keine Bereichswerkzeuge (und
     keine langsame Suche im Bereich), nur die zugeschalteten (interne Suche samt `seite_lesen` ihrer Treffer,
     Websuche) und die Anhänge in der Frage; ohne jedes Werkzeug antwortet das Modell aus eigenem Wissen. Seine Chats
     liegen bei denen zu allen Wissensquellen. In der Suche, und ohne Auswahl, arbeitet der Chat als Suchagent: eigene
@@ -123,7 +125,7 @@ im Chat steht nur der Verweis. Der Chat soll außerdem beim Navigieren stehen bl
     Werkzeuge (keine eigenen Wolken mehr außer dem Browser), die Quellen, freigegebene Seiten und einen Balken über
     die Werkzeugrunden; sie platzt mit dem ersten Antworttext. Die Antwortblase wartet bis dahin unsichtbar (kein „…“).
     Über dem Eingabefeld stehen nur noch Aktionsknöpfe, Text und Anhänge. `treffer_auswerten` gibt es bei jeder
-    Frage mit Bereich oder interner Suche, nicht nur auf dem Suchreiter.
+    Frage mit Bereich oder interner Suche, nicht nur in der Suche.
 15. **Bereich für jede Quelle, auch ohne Katalog** (Nachtrag, Angelo 26.11.2026): Bei SharePoint antwortete der Chat
     trotz Auswahl im Baum, ihm lägen keine Wissensquellen vor, und erfand dann Inhalte. Ursache: Der Bereich kam nur
     aus dem Katalog (`Holdings.resolve`, ADR 0029). Ein SharePoint-Ordner steht dort nicht (gruppenbasierte Quellen
