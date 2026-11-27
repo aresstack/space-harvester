@@ -26,7 +26,7 @@ allprojects {
 // und werden per Composite Build eingebunden (settings.gradle, libs/README.md). Die Kopien dürfen hier nicht geändert
 // werden: check prüft jede gegen ihr Manifest libs/upstream/<bibliothek>.sha256.
 apply from: "$rootDir/gradle/upstream-copy.gradle"
-['knowledge4j', 'research4j', 'writing4j'].each { library ->
+gradle.aresstackLibraries.keySet().each { library ->
     def copyDir = file("libs/$library")
     registerUpstreamCopyCheck(name: "libs/$library", taskName: "verify${library.capitalize()}Copy",
             manifest: file("libs/upstream/${library}.sha256"), baseDir: copyDir,
