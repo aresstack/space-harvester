@@ -35,6 +35,12 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
 
     static final String CLOSE = "Reiter schließen (auch Mittelklick auf den Reiter)";
     static final String UNDO = "Letzte Änderung rückgängig machen";
+    static final String DELETE = "Artefakt löschen (bis zum nächsten Start im ▾-Menü wiederherstellbar)";
+    static final String DELETE_TITLE = com.aresstack.spaceharvester.app.ui.Texts.ARTIFACT_DELETE_TITLE;
+
+    static String deleteQuestion(String title) {
+        return com.aresstack.spaceharvester.app.ui.Texts.artifactDeleteQuestion(title);
+    }
     static final String EXPORT_AS = "Exportieren als %s (Ablage im Ausgabeordner)";
     static final String CLOSE_EXPORT = "Reiter schließen; der Auftrag läuft weiter (auch Mittelklick)";
     static final String NEW_EXPORT = "Export";
@@ -51,6 +57,12 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     private final com.aresstack.spaceharvester.app.ui.controls.FlatIconButton undo =
             new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(
                     com.aresstack.spaceharvester.app.ui.Glyph.UNDO, UNDO);
+    private final com.aresstack.spaceharvester.app.ui.controls.FlatIconButton delete =
+            new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(
+                    com.aresstack.spaceharvester.app.ui.Glyph.TRASH, DELETE);
+    /** Die „wirklich“-Rückfrage (Ja/Nein) vor dem Löschen; Tests antworten selbst. */
+    java.util.function.BiPredicate<String, String> confirm = (title, question) ->
+            com.aresstack.spaceharvester.app.ui.Dialogs.confirm(root, title, question);
     /** Die Formate des gewählten Artefakts für die untere Leiste: nur, was es kann (ADR 0045 §5). */
     private final JPanel documentBar = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0));
     private final JPanel graphicBar = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0));
@@ -106,8 +118,10 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         pills.setOpaque(false);
         actions.setOpaque(false);
         actions.add(undo);
+        actions.add(delete);
         actions.setVisible(false);
         undo.addActionListener(event -> undo());
+        delete.addActionListener(event -> deleteSelected());
         strip.add(pills, BorderLayout.CENTER);
         strip.add(actions, BorderLayout.EAST);
         strip.setOpaque(true);
@@ -374,6 +388,33 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         refreshUndo();
     }
 
+    /** Löscht das gewählte Artefakt nach „wirklich löschen?“ (ADR 0047); der Reiter schließt sich. */
+    void deleteSelected() {
+        ChatArtifact artifact = selected == null ? null : store.read(folder, chatId, selected);
+        if (artifact == null || !confirm.test(DELETE_TITLE, deleteQuestion(artifact.title()))) {
+            return;
+        }
+        ChatArtifactStore.WriteResult result = store.delete(folder, chatId, artifact.id());
+        if (result.success()) {
+            close(artifact.id());
+        }
+        status.accept(result.success() ? "Gelöscht: " + artifact.title() + " (bis zum nächsten Start im ▾-Menü "
+                + "wiederherstellbar)" : result.reason());
+    }
+
+    /** Die gelöschten Artefakte für das ▾-Menü (durchgestrichen, Klick stellt wieder her). */
+    List<ChatArtifact> deletedArtifacts() {
+        return folder == null ? List.of() : store.deleted(folder, chatId);
+    }
+
+    /** Stellt ein gelöschtes Artefakt wieder her und öffnet es. */
+    void restore(String artifactId) {
+        ChatArtifact restored = folder == null ? null : store.restore(folder, chatId, artifactId);
+        if (restored != null) {
+            open(restored.id());
+        }
+    }
+
     private void refreshUndo() {
         ChatArtifact artifact = selected == null ? null : store.read(folder, chatId, selected);
         undo.setEnabled(artifact != null && artifact.undoable());
@@ -424,6 +465,11 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     private void retitle(ChatArtifactStore.Event event) {
         Runnable update = () -> {
             if (chatId == null || !Objects.equals(store.owner(folder, chatId), event.owner())) {
+                return;
+            }
+            if (event.deleted()) {
+                // In einem anderen Chat desselben Projekts gelöscht: der Reiter geht auch hier zu.
+                close(event.artifact().id());
                 return;
             }
             if (event.artifact().id().equals(selected)) {

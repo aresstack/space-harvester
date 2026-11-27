@@ -1186,6 +1186,16 @@ public final class PageDetailPanel extends JPanel {
         standingTrailing.setVisible(false);
         // Die ?-Hilfe der Reiter steht unten rechts in der Ecke der Leiste, wie bei den Aufträgen (Angelo 27.11.2026).
         standingTrailing.add(Comic.row(standingHelp, glossaryHelp, graphHelp), BorderLayout.EAST);
+        // Die Reiter der Analysen einer Auswahl als Symbole, der Name im Tooltip (Angelo 27.11.2026).
+        java.util.Map<String, javax.swing.Icon> standingIcons = new java.util.LinkedHashMap<>();
+        standingIcons.put(StandingTab.TERMS, AnalysisTabIcons.terms());
+        standingIcons.put(StandingTab.STATEMENTS, AnalysisTabIcons.statements());
+        standingIcons.put(StandingTab.READING, AnalysisTabIcons.readFirst());
+        standingIcons.put(StandingTab.CONFLICTS, AnalysisTabIcons.conflicts());
+        standingIcons.put(StandingTab.GLOSSARY, AnalysisTabIcons.glossary());
+        standingIcons.put(StandingTab.GRAPH, AnalysisTabIcons.graph());
+        standingIcons.put(RELATIONS, AnalysisTabIcons.relations());
+        standing.tabs().icons(standingIcons);
         standingFoot = new TabFoot(standing.tabs().detachBar(), standingTrailing);
         deck.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
@@ -1366,7 +1376,8 @@ public final class PageDetailPanel extends JPanel {
         } else if (SOURCE_CARD.equals(pageCard) || wide && pageId == null) {
             more.setEnabled(false);
         }
-        if (artifactTabs != null && (export.selection() != null || !artifactTabs.artifacts().isEmpty())) {
+        if (artifactTabs != null && (export.selection() != null || !artifactTabs.artifacts().isEmpty()
+                || !artifactTabs.deletedArtifacts().isEmpty())) {
             more.setEnabled(true); // „Neuer Export“ und die Artefakte des Chats stehen in jedem Fall im Menü
         }
         heading.revalidate();
@@ -6457,7 +6468,20 @@ public final class PageDetailPanel extends JPanel {
                     ? ARTIFACT_GRAPHIC : ARTIFACT_DOCUMENT;
             menu.add(menuItem(kind + artifact.title(), ARTIFACT_TIP, true, () -> artifactTabs.open(artifact.id())));
         }
+        // Gelöschte bis zum nächsten Start, durchgestrichen wie gelöschte Chats; ein Klick stellt wieder her.
+        for (com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact artifact : artifactTabs.deletedArtifacts()) {
+            String kind = artifact.kind() == com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact.Kind.GRAPHIC
+                    ? ARTIFACT_GRAPHIC : ARTIFACT_DOCUMENT;
+            menu.add(menuItem("<html><s>" + escapeArtifactTitle(kind + artifact.title()) + "</s></html>",
+                    ARTIFACT_RESTORE_TIP, true, () -> artifactTabs.restore(artifact.id())));
+        }
     }
+
+    private static String escapeArtifactTitle(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    static final String ARTIFACT_RESTORE_TIP = "Gelöscht – Klick stellt das Artefakt wieder her";
 
     static final String NEW_EXPORT = "Neuer Export";
     static final String NEW_EXPORT_TIP = "Öffnet einen Export-Reiter für die Auswahl links";
