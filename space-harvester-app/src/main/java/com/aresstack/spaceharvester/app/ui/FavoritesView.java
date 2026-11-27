@@ -187,15 +187,15 @@ final class FavoritesView {
         if (chat.isEmpty()) {
             return;
         }
-        BasketResearchForm form = new BasketResearchForm();
-        book.notes(folderId).ifPresent(notes -> form.prefill(notes.fence(), notes.targetWords()));
+        BasketResearchForm form = new BasketResearchForm().withAi(BookFlow.aiAccess(context));
+        book.notes(folderId).ifPresent(form::prefill);
         var fence = form.ask(component, name);
         if (fence.isEmpty()) {
             return;
         }
         // Der Weidezaun bleibt am Ordner, damit „Buch schreiben …“ ihn vorab zeigt.
         BookFlow.rememberFence(context, folderId, fence.get(), book.notes(folderId).map(
-                com.aresstack.spaceharvester.app.research.BookNotes::targetWords).orElse(0));
+                com.aresstack.spaceharvester.app.research.BookNotes::targetWords).orElse(0), form);
         var workspace = context.runtime().workspace();
         int capacity = BookFlow.capacity(context);
         var basket = new com.aresstack.spaceharvester.app.research.FavoritesBasket(favorites, folderId,
