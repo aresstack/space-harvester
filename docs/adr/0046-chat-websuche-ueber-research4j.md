@@ -7,6 +7,11 @@
     Aber ich glaube, davon haben wir uns entfernt, oder? Weil wir hatten das ja aus Ask AI extrahieren wollen.“
   - Angelos Korrektur- und Implementierungsauftrag vom 27.11.2026, 18:37 MEZ (Abschnitte „Architekturziel“ bis
     „Abnahme“ geben ihn wieder).
+  - Angelos Vorgaben vom 27.11.2026: 18:39 MEZ (Firefox-Historiennavigation, Abschnitt 5), 18:46 MEZ (Browserstart
+    und Lebenszyklus in eine eigene Browser-Laufzeit) und 18:52/18:53 MEZ: „Ich kann aktuell nichts mehr
+    veröffentlichen. Das heißt, wir müssen die Repos ändern und den Code hier als eigenes Maven Gradle Project
+    einbinden.“ – „Das heißt auch, dass wir dieses Playwright4j Runtime erstmal vertagen und das hier als eigenes
+    Gradle-Projekt bauen. Wir machen kein neues Repo dafür. Wir können es nicht ausliefern.“
   - [research4j #1](https://github.com/aresstack/research4j/issues/1): Installed Firefox – persistent isolated
     profiles, research extension and host access policy (26.11.2026).
 - Bezüge:
@@ -46,12 +51,21 @@ Schichten:
 | Schicht | Inhalt |
 |---|---|
 | Space Harvester (Standard: Firefox), später Ask AI (Standard: Camoufox) | Konsumenten, wählen den Browser per Konfiguration |
-| Research4j | Recherchelogik · Browser-Werkzeuge · Browser-API |
+| Research4j | Recherchelogik · Browser-Werkzeuge · Browser-API, über austauschbare Ports, ohne Browser nutzbar |
+| Browser-Laufzeit (eigenes Gradle-Projekt in Space Harvester) | Erkennung, Startparameter, Profile, Workarounds wie BFCache, Prozesse, Aufräumen, GraalVM-Isolation; liefert die originalen Playwright-Objekte `Browser`, `BrowserContext`, `Page` ohne neue Abstraktion |
 | Playwright4j | einheitliche Playwright-Java-API |
 | Browser | Firefox (BiDi) · Camoufox (BiDi) · Chrome (CDP) · Edge (CDP) |
 
 Browser-API, Browser-Werkzeuge, Recherchelogik und konkrete Browserimplementierung sind sauber getrennt. Research4j
 hängt weder an Space Harvester noch an Ask AI.
+
+Browser-Laufzeit (Angelo, 18:46 und 18:53 MEZ): Browserstart und Lebenszyklus gehören nicht in Research4j. Sie
+kommen in eine eigene Browser-Laufzeit, die die originalen Playwright-Objekte liefert und keine neue Abstraktion
+einführt. Vorhandener Code wird dorthin verschoben, nicht neu gebaut. Weil derzeit nichts veröffentlicht werden
+kann (Grenzen von Maven Central für `com.aresstack` im laufenden Monat überschritten), wird die Laufzeit als eigenes
+Gradle-Projekt in Space Harvester gebaut, ohne neues Repo und ohne Auslieferung. Das ursprünglich vorgeschlagene
+Modul `playwright4j-runtime` im Repo von Playwright4j ist vertagt. Research4j wird ebenfalls ohne Release als
+Gradle-Projekt eingebunden.
 
 ## Zu berücksichtigende Arbeiten
 
@@ -104,6 +118,7 @@ Research4j-Fassung den installierten Firefox im Chat noch nicht starten kann und
   die eine Playwright-Implementierung.
 
 ### 4. GraalJS 21.3 bleibt, der Browser-Stapel wird getrennt
+- Die GraalVM-Isolation gehört zur Browser-Laufzeit (siehe Architekturziel).
 - GraalJS in Space Harvester wird nicht angehoben. Drei der vier Nutzer sind fremde Bibliotheken, und an einem hängt
   der Proxy am Dienstrechner. Was läuft, wird nicht ohne Fehler angefasst.
 - Der Browser-Stapel mit GraalVM 25 kommt nie in den Klassenpfad der App. Die GraalVM-Teile stehen nur im
@@ -135,7 +150,8 @@ Research4j-Fassung den installierten Firefox im Chat noch nicht starten kann und
   erfolgreich getestete Workaround wird dauerhaft übernommen: `browser.sessionhistory.max_total_viewers = 0`, wie
   für Camoufox schon vorhanden, auch für Standard-Firefox, bei normalen und persistenten Kontexten, an einer Stelle
   gekapselt, nur in anwendungseigenen Profilen, vorhandene Einstellungen bleiben erhalten. Kein neuer
-  Playwright4j-Release nötig. Der Live-Akzeptanztest mit Standard-Firefox wird wiederholt und bekommt eine dauerhafte
+  Playwright4j-Release nötig. Umgesetzt in research4j main `5f02deb` (`FirefoxSessionPrefs`); die Stelle wandert mit
+  dem Browserstart in die Browser-Laufzeit. Der Live-Akzeptanztest mit Standard-Firefox wird wiederholt und bekommt eine dauerhafte
   Regressionsabsicherung; #79 bleibt für eine Behebung mit BFCache offen.
 
 ### 6. Was für den Benutzer gleich bleibt
@@ -159,12 +175,15 @@ Reihenfolge nach Auftrag:
 1. ADR 0046 korrigieren.
 2. Bestehende Extraktion aus Ask AI auf Vollständigkeit prüfen.
 3. Research4j auf den aktuellen Stand der Browserfunktionalität aus Ask AI bringen.
-4. Die Unterstützung des installierten Standard-Firefox gemäß research4j #1 fertigstellen.
+4. Browserstart und Lebenszyklus aus Research4j und Ask AI in die Browser-Laufzeit verschieben (eigenes
+   Gradle-Projekt in Space Harvester) und dort die Unterstützung des installierten Standard-Firefox gemäß
+   research4j #1 fertigstellen.
 5. Die noch fehlenden Fähigkeiten aus dem bisherigen Browsermodul von Space Harvester verallgemeinert in Research4j
    integrieren.
 6. Die gemeinsame Browser-API und die Browser-Werkzeuge auf funktionale Gleichwertigkeit prüfen.
-7. Research4j veröffentlichen. Den Release-Lauf startet Angelo.
-8. Space Harvester auf Research4j umstellen.
+7. Research4j und die Browser-Laufzeit als Gradle-Projekte in Space Harvester einbinden, ohne Release (Einbindung
+   der Bibliotheken ohne Maven-Release, eigener Strang).
+8. Space Harvester auf Research4j umstellen, Standard Firefox, Edge und Chrome wählbar.
 9. Das bisherige Modul `enterprise-ai-browser` nach erfolgreicher Abnahme vollständig entfernen.
 
 ## Abnahme
@@ -192,6 +211,9 @@ Ehrlich festgehalten, weil es der Korrektur widerspricht und in den Schritten ob
 - Die Captcha-Messung Edge gegen Camoufox entfällt.
 
 ## Offen
+
+- Die Browser-Laufzeit liegt vorerst in Space Harvester. Ob sie später als `playwright4j-runtime` ins Repo von
+  Playwright4j wandert, damit Ask AI sie mitnutzt, entscheidet Angelo, sobald wieder veröffentlicht werden kann.
 
 - Ask AI nutzt perspektivisch ebenfalls Research4j ([askai #292](https://github.com/aresstack/askai/issues/292)) und
   bleibt während der Integration unverändert.
