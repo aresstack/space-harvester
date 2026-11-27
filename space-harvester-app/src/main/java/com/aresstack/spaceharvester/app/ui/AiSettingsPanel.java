@@ -1892,7 +1892,7 @@ final class AiSettingsPanel {
         step.addChangeListener(save);
         jump.addChangeListener(save);
         // Das langsamste Tempo steht vorn: an ihm erkennt „Erweitert“ die Zeile.
-        return Comic.row(Comic.text("Tempo"), min, Comic.text("bis"), max, Comic.text("%, Raster"), step,
+        return Comic.row(min, Comic.text("bis"), max, Comic.text("% Tempo, Raster"), step,
                 Comic.text("%, Sprung bis"), jump, Comic.text("Sätze"),
                 new HelpButton(Dialogs.CLOSE_SIZE, READ_ALOUD_DIAL_LABEL, READ_ALOUD_DIAL_HELP));
     }

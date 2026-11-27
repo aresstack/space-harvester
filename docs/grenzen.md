@@ -276,6 +276,9 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `LiveDictationSettings.MAX_FIRST_MILLIS` | `5_000` | fest | Obergrenze einer Einstellung | im Code belassen: Anlauf der Live-Spracheingabe, einstellbar bis hierher |
 | `LiveDictationSettings.MAX_STEP_MILLIS` | `10_000` | fest | Obergrenze einer Einstellung | im Code belassen: Takt der Live-Spracheingabe, einstellbar bis hierher |
 | `LiveDictationSettings.MAX_WINDOW_SECONDS` | `29` | fest | Externe Protokollgrenze | dokumentieren: Whisper sieht genau 30 s, das Live-Fenster bleibt darunter |
+| `ReadAloudRate.MAX_JUMP_SENTENCES` | `100` | fest | Obergrenze einer Einstellung | im Code belassen: weitester Sprung der Vorlese-Skala, einstellbar bis hierher (Erweitert › „Vorlesen – Regler“) |
+| `ReadAloudRate.MAX_PERCENT` | `(int) Math.round(SpeechRate.MAX * PERCENT)` | fest | Externe Grenze | dokumentieren: schnellstes Tempo, das das Zeitstrecken des Vorlese-Ablaufs kann (`SpeechRate.MAX`); einstellbar bis hierher |
+| `ReadAloudRate.MAX_STEP_PERCENT` | `50` | fest | Obergrenze einer Einstellung | im Code belassen: gröbstes Raster der Vorlese-Skala, einstellbar bis hierher |
 | `LocalFilesSourceAdapter.DEFAULT_MAX_FILE_MEGABYTES` | `20` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
 | `LocalFilesSourceAdapter.MAX_FILE_MEGABYTES` | `64` | fest | Bestandsgrenze | beseitigen |
 | `LocalFolderHierarchy.NAVIGATION_BATCH` | `200` | fest | Stapel-/Seitengröße | einstellbar |
