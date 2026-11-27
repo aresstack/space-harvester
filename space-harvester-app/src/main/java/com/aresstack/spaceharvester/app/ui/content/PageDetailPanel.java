@@ -645,6 +645,10 @@ public final class PageDetailPanel extends JPanel {
             });
         }
         areaPodcast.podcastEvents(context.events()::publish);
+        // Hat ein Favoritenordner ein Buch, zeigt die Leseansicht dessen neueste Auflage (Architekt 27.11.2026).
+        areaView.books(folderId -> context.settings() == null || context.settings().storage() == null ? null
+                : com.aresstack.spaceharvester.app.research.BookEditions.latest(
+                        context.settings().storage().dataDirectory(), folderId).orElse(null));
         this.sourceProperties = new SourcePropertiesView(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context::settings);
         sourceProperties.secretState((current, entry) -> com.aresstack.spaceharvester.app.ui.SecretState.of(current,
