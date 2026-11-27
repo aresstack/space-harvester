@@ -33,6 +33,11 @@ public final class PageBasketReader implements BasketReader {
     private final PendingReleases releases;
     private final PassageSegmentation segmentation;
     private int unreadable;
+    /**
+     * Die gelesenen Seiten mit ihrer Version beim Lesen, in der Reihenfolge des ersten Lesens (Stand der Quellen einer
+     * Auflage): so trägt die Auflage den Stand, aus dem das Buch entstand, auch wenn sich die Seite danach ändert.
+     */
+    private final java.util.Map<PageKey, String> read = new java.util.LinkedHashMap<>();
 
     PageBasketReader(PageStock stock, PendingReleases releases, PassageSegmentation segmentation) {
         this.stock = Objects.requireNonNull(stock, "stock");
@@ -49,6 +54,14 @@ public final class PageBasketReader implements BasketReader {
     /** Seiten, die sich nicht lesen oder nicht freigeben ließen. */
     synchronized int unreadable() {
         return unreadable;
+    }
+
+    /** Der Stand der gelesenen Seiten: je Seite Kennung und Version laut Ablage. */
+    List<BookEditions.Source> sources() {
+        synchronized (this) {
+            return read.entrySet().stream().map(entry -> new BookEditions.Source(entry.getKey().sourceId(),
+                    entry.getKey().pageId(), entry.getValue())).toList();
+        }
     }
 
     @Override
@@ -71,6 +84,10 @@ public final class PageBasketReader implements BasketReader {
             return List.of();
         }
         releases.add(page.spaceKey(), key);
+        String version = stock.version(key);
+        synchronized (this) {
+            read.putIfAbsent(key, version);
+        }
         SourceRef ref = PageRefs.of(key, page.title());
         Provenance provenance = Provenance.of(Classification.INTERNAL, ref);
         PageText text = page.reading() != null ? page.reading()

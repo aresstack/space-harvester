@@ -555,6 +555,8 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ChatKnowledge.MAX_HIT_CHARS` | `3_000` | fest | Invariante/Darstellung | im Code belassen: Vorschau einer Quelle in der Quellenliste der Oberfläche; an das Modell geht, was in die Anfrage passt (`ChatRoom`) |
 | `ChatPanel.MAX_NORMAL_EDITOR_HEIGHT` | `400` | fest | Invariante/Darstellung | im Code belassen |
 | `ChatPanel.PARALLEL_MAX` | `com.aresstack.spaceharvester.app.ui.ParallelChoice.CUSTOM_MAX` | fest | Parallelität | einstellbar |
+| `ChatPanel.QUOTE_CHIP_CHARS` | `28` | fest | Invariante/Darstellung | im Code belassen |
+| `ChatPanel.QUOTE_TOOLTIP_CHARS` | `240` | fest | Invariante/Darstellung | im Code belassen |
 | `ChatPanel.QUIET_ROUNDS_DEFAULT` | `3` | Vorgabe | Stillstand der Werkzeugrunden (askai `stagnationRounds`) | einstellbar (Menü am Dreieck des Chats) |
 | `ChatPanel.WEB_DELAY_MAX` | `10000` | fest | Timeout | einstellbar |
 | `ChatPanel.WEB_DELAY_SLIDER_MAX` | `2000` | fest | Timeout | einstellbar |

@@ -358,6 +358,18 @@ public final class ChatTurn {
                             Runnable begin, Runnable ended) {
     }
 
+    /** Schreibumgebung (Schalter „Schreiben“, ADR 0045): die Schreibwerkzeuge; sonst {@code null}. */
+    private volatile com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools writing;
+
+    /**
+     * Die Schreibwerkzeuge dieses Turns (Composer-Schalter „Schreiben“, ADR 0045): zusätzlich zu den übrigen
+     * Werkzeugen, mit ihren Regeln und der Gliederung des offenen Dokuments im Systemhinweis. Gilt nur mit Werkzeugen.
+     */
+    public ChatTurn writing(com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools writing) {
+        this.writing = writing;
+        return this;
+    }
+
     /**
      * Wissen per Werkzeug (ADR 0033): Die offene Seite geht im Volltext mit, alles andere im Bereich holt sich das
      * Modell über die Werkzeuge. Hat der Dienst Werkzeuge für dieses Modell schon abgelehnt, bleibt es bei der Suche.
@@ -603,7 +615,7 @@ public final class ChatTurn {
             web.begin().run();
         }
         if (custom != null) {
-            toolset = withModelTools(withWebSearch(custom));
+            toolset = withWriting(withModelTools(withWebSearch(custom)));
             onUi(() -> listener.context(ChatKnowledge.Context.EMPTY));
             round(conversation(withWebSearchRules(customSystem), question), 0);
         } else if (byTools) {
@@ -779,7 +791,7 @@ public final class ChatTurn {
                 running.cancel();
             }
         };
-        toolset = withModelTools(withWebSearch(withSubAgents(toolset)));
+        toolset = withWriting(withModelTools(withWebSearch(withSubAgents(toolset))));
         String openRef = null;
         ChatKnowledge.Excerpt open = null;
         int shown = 0;
@@ -931,7 +943,7 @@ public final class ChatTurn {
                     onUi(() -> listener.delta(unshown));
                 }
                 // Schaubilder der Werkzeuge stehen unter der Antwort; sie gingen nie durch das Chat-Modell.
-                String below = drainAppendix();
+                String below = drainAppendix() + writingFooter();
                 if (!below.isEmpty()) {
                     onUi(() -> listener.delta(below));
                 }
@@ -1816,13 +1828,30 @@ public final class ChatTurn {
         }
     }
 
-    /** Der Systemhinweis samt den Browser-Regeln, wenn die Websuche an ist. */
+    /** Der Systemhinweis samt den Browser-Regeln, wenn die Websuche an ist, und den Schreibregeln (ADR 0045). */
     private String withWebSearchRules(String system) {
+        String all = system;
         WebSearch web = webSearch;
-        if (web == null || web.rules() == null || web.rules().isBlank()) {
-            return system;
+        if (web != null && web.rules() != null && !web.rules().isBlank()) {
+            all = (all == null || all.isBlank() ? "" : all + "\n\n") + web.rules();
         }
-        return (system == null || system.isBlank() ? "" : system + "\n\n") + web.rules();
+        var tools = writing;
+        if (tools != null) {
+            all = (all == null || all.isBlank() ? "" : all + "\n\n") + tools.rules();
+        }
+        return all;
+    }
+
+    /** Die Werkzeuge {@code base} samt den Schreibwerkzeugen, wenn „Schreiben“ an ist. */
+    private ChatToolset withWriting(ChatToolset base) {
+        var tools = writing;
+        return tools == null ? base : tools.attach(base);
+    }
+
+    /** Die Zeilen mit den geschriebenen Dokumenten unter der Antwort; leer ohne Schreibumgebung. */
+    private String writingFooter() {
+        var tools = writing;
+        return tools == null ? "" : tools.footer();
     }
 
     /** Beendet die Websuche des Turns einmal, auf eigenem Thread (der Browser schließt). */

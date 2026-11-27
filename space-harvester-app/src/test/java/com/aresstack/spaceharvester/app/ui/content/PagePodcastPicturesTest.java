@@ -105,6 +105,50 @@ class PagePodcastPicturesTest {
                 .containsExactly("4-9", "20-31");
     }
 
+    @Test
+    void whatThePodcastNeverTellsIsGreyWithoutTheWhitespaceAround() {
+        String text = "Einleitung.\n\nAblauf: erst Prüfung.\n\nHistorie: angelegt.\n";
+        int ablauf = text.indexOf("Ablauf");
+        int historie = text.indexOf("Historie");
+
+        assertThat(PagePodcastPictures.gaps(text, List.of(new int[]{0, 11}, new int[]{ablauf, historie})))
+                .extracting(gap -> text.substring(gap[0], gap[1])).containsExactly("Historie: angelegt.");
+        // alles erzählt: nichts grau; nichts erzählt: alles grau außer Leerraum am Rand
+        assertThat(PagePodcastPictures.gaps(text, List.of(new int[]{0, text.length()}))).isEmpty();
+        assertThat(PagePodcastPictures.gaps(text, List.of())).extracting(gap -> text.substring(gap[0], gap[1]))
+                .containsExactly(text.strip());
+        // nur Leerraum zwischen zwei erzählten Stellen ist keine Lücke
+        assertThat(PagePodcastPictures.gaps(text, List.of(new int[]{0, 11}, new int[]{13, text.length()}))).isEmpty();
+    }
+
+    @Test
+    void theGreyComesAndGoesWithThePodcast() throws Exception {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                JTextPane text = new JTextPane();
+                text.setText("Der Nachtlauf Nordlicht startet um zwei.\nHistorie: angelegt von Erika Beispiel.");
+                PagePodcastPictures pictures = new PagePodcastPictures(text);
+
+                pictures.cover(java.util.Optional.of(List.of(new int[]{0, 40})));
+                assertThat(pictures.gaps()).isEqualTo(1);
+                // gelb liegt nur auf Erzähltem, daneben bleibt das Grau
+                pictures.mark(List.<int[]>of(new int[]{0, 40}));
+                assertThat(pictures.marked()).isEqualTo(1);
+                assertThat(pictures.gaps()).isEqualTo(1);
+
+                pictures.cover(java.util.Optional.empty());
+                assertThat(pictures.gaps()).isZero();
+                assertThat(text.getHighlighter().getHighlights()).hasSize(1);
+            } catch (Throwable e) {
+                failure.set(e);
+            }
+        });
+        if (failure.get() != null) {
+            throw new AssertionError(failure.get());
+        }
+    }
+
     private static PagePodcastPictures.Placed placed(int topic, int offset, String caption) {
         BufferedImage image = new BufferedImage(480, 270, BufferedImage.TYPE_INT_RGB);
         return new PagePodcastPictures.Placed(topic, offset, image, caption,

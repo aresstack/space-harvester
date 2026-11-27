@@ -93,6 +93,18 @@ final class PodcastControl<S> {
         }
 
         /**
+         * Wovon der ganze Podcast erzählt, in derselben Form wie {@link #focus}: Die Ansicht hinterlegt den Rest grau
+         * (Angelo 27.11.2026). Ohne eigene Antwort alle Stellen der {@code topics}. Liest Dateien, nie auf dem EDT.
+         */
+        default List<Integer> coverage(S subject, List<Integer> topics) {
+            List<Integer> covered = new ArrayList<>();
+            for (int topic : topics) {
+                covered.addAll(focus(subject, topic));
+            }
+            return covered;
+        }
+
+        /**
          * Der gesprochene Text des Podcasts, soweit er schon geschrieben ist; leer ohne. Liest Dateien, nie auf dem
          * EDT.
          */
@@ -284,6 +296,10 @@ final class PodcastControl<S> {
     private Consumer<ApplicationEvent<?>> events = event -> { };
     /** Bekommt die Stellen des laufenden Themas, leer ohne Thema oder nach dem Abspielen (Angelo 22.11.2026). */
     private Consumer<List<Integer>> follower = statements -> { };
+    /** Bekommt, wovon der ganze Podcast erzählt; leer ohne Podcast (Angelo 27.11.2026: Lücken grau). */
+    private Consumer<Optional<List<Integer>>> coverer = covered -> { };
+    /** Die Themen, zu denen die Abdeckung zuletzt gelesen wurde; {@code null} = noch keine. */
+    private List<Integer> coveredTopics;
     private Runnable stored = () -> { };
     /** Das Thema, dem die Ansicht gerade folgt; -1 = keinem. */
     private int followedTopic = -1;
@@ -505,6 +521,38 @@ final class PodcastControl<S> {
         this.follower = Objects.requireNonNull(follower, "follower");
     }
 
+    /**
+     * Wer erfährt, wovon der ganze Podcast erzählt (Angelo 27.11.2026: „was nicht abgedeckt war im Podcast“ hellgrau
+     * hinterlegen), in derselben Form wie die Stellen von {@link #follow}; leer, solange es zum Gezeigten keinen
+     * Podcast gibt. Kommt neu, sobald sich die Themen ändern.
+     */
+    void cover(Consumer<Optional<List<Integer>>> coverer) {
+        this.coverer = Objects.requireNonNull(coverer, "coverer");
+    }
+
+    /** Liest die Abdeckung neu, wenn sich die Themen des Podcasts geändert haben; ohne Podcast keine. */
+    private void coverAll(Podcast podcast) {
+        List<Integer> topics = podcast == null ? null
+                : podcast.parts().stream().map(Podcast.Part::topic).distinct().sorted().toList();
+        if (Objects.equals(topics, coveredTopics)) {
+            return;
+        }
+        coveredTopics = topics;
+        if (topics == null) {
+            coverer.accept(Optional.empty());
+            return;
+        }
+        int mine = generation;
+        Source<S> current = source;
+        S shown = summary;
+        runner.run(() -> current.coverage(shown, topics), covered -> {
+            if (mine == generation && topics.equals(coveredTopics)) {
+                coverer.accept(Optional.of(covered));
+            }
+        }, failure -> LOG.log(System.Logger.Level.INFO, "Podcast-Abdeckung nicht gelesen ({0})",
+                failure.getClass().getName()));
+    }
+
     /** Wer erfährt, dass der Core eine Stufe dieses Podcasts abgelegt hat (etwa ein fertiges Bild), auf dem EDT. */
     void stored(Runnable listener) {
         this.stored = Objects.requireNonNull(listener, "listener");
@@ -616,6 +664,7 @@ final class PodcastControl<S> {
         summary = shown;
         key = shownKey;
         last = null;
+        coverAll(null);
         transcriptCopy.setVisible(false);
         runningPicture = null;
         hiddenPicture = null;
@@ -754,6 +803,7 @@ final class PodcastControl<S> {
         stop();
         forget();
         last = null;
+        coverAll(null);
         runningPicture = null;
         loaded.clear();
         resumeAt = 0;
@@ -861,6 +911,7 @@ final class PodcastControl<S> {
 
     private void apply(Podcast podcast) {
         last = podcast;
+        coverAll(podcast);
         // Text gibt es, sobald Abschnitte geplant sind; ob schon einer geschrieben ist, zeigt erst das Lesen.
         transcriptCopy.setVisible(podcast != null && podcast.parts().stream().anyMatch(part -> part.segment() >= 0));
         long at = at();
