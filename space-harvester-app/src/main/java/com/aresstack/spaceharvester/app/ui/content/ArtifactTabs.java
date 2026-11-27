@@ -223,7 +223,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         String id = "E" + nextExport++;
         String title = (selection.title() == null || selection.title().isBlank() ? NEW_EXPORT : selection.title())
                 + (key == null ? "" : " · " + ExportPanel.exportTitle(key));
-        ClosableTab pill = new ClosableTab(ComposerIcons.export(), title, title, CLOSE_EXPORT, () -> closeExport(id));
+        ClosableTab pill = new ClosableTab(PageTabIcons.export(), title, title, CLOSE_EXPORT, () -> closeExport(id));
         pill.addActionListener(event -> selectExport(id));
         exports.put(id, new ExportTab(pill, panel));
         group.add(pill);

@@ -58,14 +58,53 @@ final class PageTabIcons {
         };
     }
 
-    /** Export: ein Fach mit Pfeil heraus nach oben (Ausgabe in den Ausgabeordner). */
+    /**
+     * Export und Schreiben: der Chemiekolben aus dem Enterprise AI Client ({@code SidebarIcons.flask}), unverändert
+     * übernommen (Angelo, 27.11.2026: „Das sieht mehr so nach Wissen aus“). Er steht am Reiter „Export“, an den
+     * Export-Reitern darin und am Schalter „Schreiben“ im Chat. Knöpfe, die eine Datei herausgeben (Antwort oder
+     * Diagramm exportieren, Hochladen), behalten den Pfeil aus dem Fach.
+     */
     static Icon export() {
-        return new StrokeIcon() {
+        return com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.flask();
+    }
+
+    /**
+     * Derselbe Kolben in der Schriftfarbe des Knopfs statt in seinem Blau: für den eingerasteten Schalter
+     * „Schreiben“, dessen Fläche selbst blau ist. Das Symbol wird nicht neu gezeichnet, sondern das des EAC
+     * umgefärbt.
+     */
+    static Icon exportInk() {
+        Icon flask = export();
+        return new Icon() {
             @Override
-            protected void paint(Graphics2D g2) {
-                g2.drawPolyline(new int[] {2, 2, 13, 13}, new int[] {9, 13, 13, 9}, 4);
-                g2.drawLine(7, 2, 7, 10);
-                g2.drawPolyline(new int[] {4, 7, 10}, new int[] {5, 2, 5}, 3);
+            public void paintIcon(java.awt.Component c, java.awt.Graphics graphics, int x, int y) {
+                Graphics2D g = (Graphics2D) graphics;
+                double scale = Math.max(1.0, g.getTransform().getScaleX());
+                int width = (int) Math.ceil(getIconWidth() * scale);
+                int height = (int) Math.ceil(getIconHeight() * scale);
+                java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(width, height,
+                        java.awt.image.BufferedImage.TYPE_INT_ARGB);
+                Graphics2D paint = image.createGraphics();
+                try {
+                    paint.scale(scale, scale);
+                    flask.paintIcon(c, paint, 0, 0);
+                    paint.setComposite(java.awt.AlphaComposite.SrcIn);
+                    paint.setColor(c == null ? java.awt.Color.WHITE : c.getForeground());
+                    paint.fillRect(0, 0, getIconWidth(), getIconHeight());
+                } finally {
+                    paint.dispose();
+                }
+                g.drawImage(image, x, y, getIconWidth(), getIconHeight(), null);
+            }
+
+            @Override
+            public int getIconWidth() {
+                return flask.getIconWidth();
+            }
+
+            @Override
+            public int getIconHeight() {
+                return flask.getIconHeight();
             }
         };
     }
