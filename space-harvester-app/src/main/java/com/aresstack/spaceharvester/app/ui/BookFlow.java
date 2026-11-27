@@ -139,7 +139,7 @@ final class BookFlow {
                 null);
         BookJob.Session session = BookJob.session(chat.get(), new WorkspacePageStock(workspace, null),
                 new FavoritesBasket(favorites, folderId, context::sourceTitle), folderId, name, fence.get(),
-                form.questions(), settings);
+                form.questions(), settings, parent -> workspace.childJobs(parent, settings.getCapacity(), name));
         sessions.put(folderId, session);
         workspace.startBook(name, BookJob.prepare(session, done -> SwingUtilities.invokeLater(() -> prepared(done))));
     }

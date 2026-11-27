@@ -186,6 +186,12 @@ public final class Texts {
      * ({@code VideoPresentations.FORMAT_PARAMETER}), heißt er „PDF erzeugen“.
      */
     public static String type(JobStatus status) {
+        String child = status.parameters() == null ? null
+                : status.parameters().get(com.aresstack.spaceharvester.application.jobs.ChildJobs.STEP_PARAMETER);
+        if (child != null && !child.isBlank()) {
+            // Unterauftrag unter einer Klammer (ChildJobs), etwa eine Quelle unter „Buch schreiben“: sein Titel.
+            return child;
+        }
         if (status.type() == JobType.UPDATE_SUMMARY) {
             // Unterauftrag der Zusammenfassung: sein Schritt, etwa „Teil 2 von 5“ oder „Zusammenführen 1 von 2“.
             String step = status.parameters().get(com.aresstack.spaceharvester.application.changelog.ChangeLog.STEP_PARAMETER);
