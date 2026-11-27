@@ -156,6 +156,16 @@ public final class ContentView implements View {
         }
     }
 
+    /** Der Speicher der Artefakte, derselbe wie der des Chats (für die Liste „Artefakte“ links, ADR 0047 §5). */
+    public com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore artifactStore() {
+        return detail.chat().artifactStore();
+    }
+
+    /** Öffnet ein Artefakt des Projekts in der Mitte (Klick in der Liste „Artefakte“ links). */
+    public void openArtifact(String artifactId) {
+        artifactTabs.open(artifactId);
+    }
+
     @Override
     public JComponent component() {
         return root;
