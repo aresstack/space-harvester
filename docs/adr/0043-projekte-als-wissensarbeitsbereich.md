@@ -58,7 +58,7 @@ Tätigkeiten im selben Arbeitsbereich.
 Bestandteile ohne Inhalt sind leer. Ein Projekt, in dem nur Favoriten gesammelt werden, ist ein vollständiges
 Projekt.
 
-### 3. Ablage und Standardprojekt „Allgemein“
+### 3. Ablage und Standardprojekt „AresStack“
 - Projekte gehören wie die Favoriten heute zum Bedienprofil der App (ADR 0034, Abschnitt 2), nicht zum Core und
   nicht in die Konfigurationsdatei. Jedes Projekt hat einen eigenen Ordner im Datenordner der App. Darin liegt je
   Bestandteil eine Datei mit Versionsfeld.
@@ -66,9 +66,11 @@ Projekt.
   - Es wird atomar geschrieben.
   - Eine unlesbare Datei kommt in Quarantäne und wird nie überschrieben.
   - Bei einer Umwandlung wird vorher einmalig gesichert.
-- **Die bisherige Favoritenliste wird zum Standardprojekt „Allgemein“.** Die heutige `favorites.json` wird beim
-  ersten Start einmalig gesichert und unverändert als Favoriten von „Allgemein“ übernommen, samt Ordnern. Nichts geht
-  verloren. „Allgemein“ lässt sich umbenennen, aber nicht löschen, solange es das einzige Projekt ist.
+- **Die bisherige Favoritenliste wird zum Standardprojekt „AresStack“.** Die heutige `favorites.json` wird beim
+  ersten Start einmalig gesichert und unverändert als Favoriten von „AresStack“ übernommen, samt Ordnern. Nichts geht
+  verloren. „AresStack“ lässt sich weder umbenennen noch löschen (Angelo, 27.11.2026, 16:27 MEZ: „Wir haben ein
+  Standard-Default-Projekt, das immer AresStack heißt. Und das kann man nicht ändern.“ Zuvor hieß es hier
+  „AresStack“ und war umbenennbar).
 - Läuft die App später mehrbenutzerfähig auf dem Server, gehören Projekte ihrem Besitzer. Die Ablage im Core ist
   dann wie bei Sammlungs-Zusammenfassungen nach ADR 0034 an den Besitzer gebunden.
 
@@ -81,7 +83,7 @@ Projekt.
 - **Innerhalb eines Projekts** bleibt ein Favorit einmalig. Dafür gilt die Identität aus Quelle, Space, Seite und
   Umfang (Abschnitt 4.2), wie bisher im ganzen Baum.
 - Der Stern im Seitenbaum und in der Leseansicht wirkt auf das **aktive Projekt**. Aktiv ist das Projekt, das in der
-  Favoritenansicht gewählt ist; ohne Wahl ist es „Allgemein“.
+  Favoritenansicht gewählt ist; ohne Wahl ist es „AresStack“.
   - Gefüllt ist der Stern, wenn die Seite im aktiven Projekt liegt.
   - Liegt sie nur in anderen Projekten, nennt der Tooltip diese Projekte.
 - Ein Favorit hat keine globale Einmaligkeit mehr. Alle Stellen, die bisher „ist Favorit?“ über alle Favoriten
@@ -165,7 +167,7 @@ Projekt.
 - Die KI-Freigabe wird unmittelbar vor jedem Senden geprüft.
 
 ### 8. Oberfläche
-- Die Favoritenansicht zeigt oben die Projekte, „Allgemein“ zuerst. Ein Projekt klappt zu seinem Favoritenbaum
+- Die Favoritenansicht zeigt oben die Projekte, „AresStack“ zuerst. Ein Projekt klappt zu seinem Favoritenbaum
   nach ADR 0034 auf.
 - Kontextmenü eines Projekts:
   - „Neues Projekt“
@@ -297,7 +299,7 @@ Der Nachtrag ergänzt die Abschnitte 1, 2, 3 und 8, ändert in Abschnitt 4.1, wa
 
 ### F2. Chats im Projekt
 - Ein Chat gehört zu genau einem Projekt, wie ein Tab zu einer Gruppe. Ein Chat ohne eigene Zuordnung gehört zum
-  Standardprojekt „Allgemein“ (Abschnitt 3) und verhält sich wie heute. Alle vorhandenen Chats sind damit ohne
+  Standardprojekt „AresStack“ (Abschnitt 3) und verhält sich wie heute. Alle vorhandenen Chats sind damit ohne
   Umwandlung Chats des Standardprojekts.
 - Die Zugehörigkeit steht am Chat selbst (ein Feld mit der Projekt-ID). Sie geht mit dem Chat in den Papierkorb und
   zurück. Fehlt das Feld oder verweist es auf ein Projekt, das es nicht mehr gibt, gehört der Chat zum
@@ -329,22 +331,26 @@ Der Nachtrag ergänzt die Abschnitte 1, 2, 3 und 8, ändert in Abschnitt 4.1, wa
 - Es gilt Abschnitt 3: je Projekt ein Ordner im Datenordner der App, darin je Bestandteil eine Datei mit
   Versionsfeld, atomar geschrieben, Quarantäne statt Überschreiben.
 - Vorgezogen wird nur, was die Chats brauchen: das Projekt mit ID, Name und Farbe, der Bestandteil „Artefakte“ und
-  das aktive Projekt. Das Standardprojekt „Allgemein“ gibt es dabei von Anfang an, mit fester ID und ohne Farbe. Die
-  Umwandlung der Favoritenliste in die Favoriten von „Allgemein“ (Paket P1) bleibt, wo sie ist, und benutzt später
-  dieselbe Projektablage.
+  das aktive Projekt. Das Standardprojekt „AresStack“ gibt es dabei von Anfang an, mit fester ID, festem Namen und
+  ohne Farbe. Die Umwandlung der Favoritenliste in die Favoriten von „AresStack“ (Paket P1) bleibt, wo sie ist, und
+  benutzt später dieselbe Projektablage.
 
 ### F5. Löschen eines Projekts
 - Nur nach „Projekt wirklich löschen?“ Ja/Nein. Die Frage nennt, wie viele Chats und Artefakte betroffen sind.
 - Die Chats bleiben erhalten und gehören danach zum Standardprojekt. Die Artefakte des Projekts gehen mit dem
   Projekt in den Papierkorb und lassen sich wie ein gelöschter Chat bis zum Neustart wiederherstellen.
-- Das Standardprojekt lässt sich nicht löschen. War das gelöschte Projekt aktiv, wird das Standardprojekt aktiv.
+- Das Standardprojekt lässt sich weder umbenennen noch löschen. War das gelöschte Projekt aktiv, wird das
+  Standardprojekt aktiv.
 
 ### F6. Aktives Projekt, global gewählt
 - Es gibt für die ganze App genau ein **aktives Projekt**, über alle Perspektiven hinweg. Ohne Wahl ist es das
   Standardprojekt. Die Wahl gehört zum Bedienprofil und bleibt über einen Neustart erhalten.
-- **Ort der Wahl:** unten in der Ecke beim Schriftzug „AresStack“. Im Standardprojekt steht dort der Schriftzug wie heute,
+- **Ort der Wahl:** unten in der Ecke beim Schriftzug „AresStack“. Im Standardprojekt steht dort der Schriftzug wie
+  heute,
   rechts daneben ein kleiner Pfeil nach oben. In jedem anderen Projekt stehen dort statt des Schriftzugs Name und
   Farbe des Projekts. Der Pfeil öffnet nach oben die Liste der Projekte mit „Neues Projekt“.
+- Der Schriftzug „AresStack“ ist damit der Name des Standardprojekts und steht nur dort. Die Jahreszahl des
+  Copyright-Vermerks daneben ist immer das laufende Jahr nach dem Datum des Rechners, nie eine feste Zahl.
 - Wer keine Projekte anlegt, merkt davon nichts außer dem Pfeil.
 - **Was das aktive Projekt bestimmt:**
   - Neue Chats gehören zum aktiven Projekt, in jeder Perspektive.
@@ -373,7 +379,7 @@ anderes Paket der Gruppe 2.
 - C1: `Selection.Root.page` im Core samt `Holdings.resolve`, Ausgaben und kanonischer Auswahl. `ChatPanel.onlyPage`
   wird darauf umgestellt.
 - C2: Typ `Materialstand` (PageKey, Revision, Fingerabdruck), nur Vertrag.
-- P1: Projektablage mit Standardprojekt „Allgemein“, Umwandlung von `favorites.json`, Sicherung, Quarantäne.
+- P1: Projektablage mit Standardprojekt „AresStack“, Umwandlung von `favorites.json`, Sicherung, Quarantäne.
 - P2: Favorit mit Umfang (`PAGE_ONLY`) und Einmaligkeit je Projekt, Stern auf das aktive Projekt.
 
 **Gruppe 2**
