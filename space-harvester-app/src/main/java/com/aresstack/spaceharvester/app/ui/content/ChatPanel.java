@@ -2307,16 +2307,27 @@ public final class ChatPanel extends JPanel {
      * einmal; die Eingabe bekommt den Fokus, damit gleich die Frage folgen kann.
      */
     void quote(String text) {
+        quote(text, null);
+    }
+
+    /**
+     * Wie {@link #quote(String)}, mit dem Bezug, woher der Ausschnitt stammt (ADR 0045 §7: Artefakt und Abschnitt):
+     * er steht als erste Zeile im Zitat, damit die KI gezielt dort ändert, und im Tooltip des Chips.
+     */
+    void quote(String text, String reference) {
         if (text == null || text.isBlank()) {
             return;
         }
-        String passage = text.strip();
+        String excerpt = text.strip();
+        String passage = reference == null || reference.isBlank() ? excerpt
+                : quoteReferenceLine(reference) + "\n" + excerpt;
         if (!quotes.contains(passage)) {
             quotes.add(passage);
-            String line = passage.replaceAll("\\s+", " ");
+            String line = excerpt.replaceAll("\\s+", " ");
             quoteChips.put(passage, addChip(new com.aresstack.spaceharvester.app.ui.controls.QuoteIcon(),
                     ellipsize(line, QUOTE_CHIP_CHARS),
-                    QUOTE + ": \u201E" + ellipsize(line, QUOTE_TOOLTIP_CHARS) + "\u201C", "Zitat entfernen", () -> {
+                    (reference == null || reference.isBlank() ? "" : reference.strip() + " · ")
+                            + QUOTE + ": \u201E" + ellipsize(line, QUOTE_TOOLTIP_CHARS) + "\u201C", "Zitat entfernen", () -> {
                         quotes.remove(passage);
                         quoteChips.remove(passage);
                     }));
@@ -2325,6 +2336,12 @@ public final class ChatPanel extends JPanel {
     }
 
     static final String QUOTE = "Zitat";
+
+    /** Die erste Zeile eines Zitats mit Bezug, so wie sie die Regeln der Schreibumgebung nennen. */
+    static String quoteReferenceLine(String reference) {
+        return "(" + com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools.QUOTE_REFERENCE + " "
+                + reference.strip() + ")";
+    }
     private static final int QUOTE_CHIP_CHARS = 28;
     private static final int QUOTE_TOOLTIP_CHARS = 240;
 
@@ -2369,8 +2386,8 @@ public final class ChatPanel extends JPanel {
                 }
 
                 @Override
-                public void quote(String text) {
-                    ChatPanel.this.quote(text);
+                public void quote(String text, String reference) {
+                    ChatPanel.this.quote(text, reference);
                 }
             };
 
@@ -2381,23 +2398,8 @@ public final class ChatPanel extends JPanel {
             return;
         }
         quotedSelection = selection;
-        Dimension size = quoteOverlay.getPreferredSize();
-        java.awt.Rectangle area = SwingUtilities.convertRectangle(selection.anchor(), selection.bounds(),
-                transcriptLayers);
-        int x = area.x + area.width / 2 - size.width / 2;
-        x = Math.max(QUOTE_OVERLAY_GAP, Math.min(x, transcriptLayers.getWidth() - size.width - QUOTE_OVERLAY_GAP));
-        int y = area.y - size.height - QUOTE_OVERLAY_GAP;
-        if (y < QUOTE_OVERLAY_GAP) {
-            y = area.y + area.height + QUOTE_OVERLAY_GAP;
-        }
-        // Reicht die Markierung über die ganze Höhe, bleibt der Knopf trotzdem im sichtbaren Verlauf.
-        y = Math.max(QUOTE_OVERLAY_GAP, Math.min(y, transcriptLayers.getHeight() - size.height - QUOTE_OVERLAY_GAP));
-        quoteOverlay.setBounds(x, y, size.width, size.height);
-        quoteOverlay.setVisible(true);
-        transcriptLayers.repaint();
+        quoteOverlay.place(selection.anchor(), selection.bounds(), transcriptLayers);
     }
-
-    private static final int QUOTE_OVERLAY_GAP = 6;
 
     private void hideQuoteOverlay() {
         quotedSelection = null;
@@ -2415,7 +2417,8 @@ public final class ChatPanel extends JPanel {
             return;
         }
         selection.clearHighlight();
-        quote(selection.selectedText());
+        quote(selection.selectedText(), com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.quoteReference(
+                selection.anchor()));
     }
 
     /**

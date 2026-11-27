@@ -45,6 +45,29 @@ public final class QuoteOverlayButton extends JButton {
         setSize(getPreferredSize());
     }
 
+    /** Abstand zur Markierung und zum Rand der Fläche. */
+    private static final int GAP = 6;
+
+    /**
+     * Zeigt den Knopf mittig über der Markierung {@code area} (in Koordinaten von {@code anchor}) auf der Fläche
+     * {@code host}, in der er liegt; passt es oben nicht hin, darunter. Er bleibt immer ganz in der Fläche, auch wenn
+     * die Markierung über die ganze Höhe reicht.
+     */
+    public void place(java.awt.Component anchor, java.awt.Rectangle area, java.awt.Container host) {
+        java.awt.Dimension size = getPreferredSize();
+        java.awt.Rectangle at = javax.swing.SwingUtilities.convertRectangle(anchor, area, host);
+        int x = at.x + at.width / 2 - size.width / 2;
+        x = Math.max(GAP, Math.min(x, host.getWidth() - size.width - GAP));
+        int y = at.y - size.height - GAP;
+        if (y < GAP) {
+            y = at.y + at.height + GAP;
+        }
+        y = Math.max(GAP, Math.min(y, host.getHeight() - size.height - GAP));
+        setBounds(x, y, size.width, size.height);
+        setVisible(true);
+        host.repaint();
+    }
+
     @Override
     protected void paintComponent(Graphics graphics) {
         Graphics2D g2 = ResearchUiPainter.prepare(graphics);

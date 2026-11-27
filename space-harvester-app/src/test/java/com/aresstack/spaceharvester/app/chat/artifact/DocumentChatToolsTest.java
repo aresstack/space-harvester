@@ -176,6 +176,13 @@ class DocumentChatToolsTest {
     }
 
     @Test
+    void aQuoteWithReferenceNamesTheSectionToChange() {
+        // ADR 0045 §7: das Zitat aus dem Dokument trägt Artefakt und Abschnitt; die Regeln sagen, was das heißt.
+        assertThat(tools.rules()).contains("(" + DocumentChatTools.QUOTE_REFERENCE + " Dokument D")
+                .contains("ändere nur dort");
+    }
+
+    @Test
     void graphicsAreOwnArtifactsEmbeddedByReference() {
         List<String> drawn = new ArrayList<>();
         DocumentChatTools withDrawing = new DocumentChatTools(store, folder, chatId, focus::get,
