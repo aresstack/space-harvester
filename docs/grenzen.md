@@ -173,6 +173,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `BscwWebDavKnowledgeSource.MAX_BATCH` | `500` | fest | Stapel-/Seitengröße | einstellbar |
 | `BscwWebDavKnowledgeSource.NAVIGATION_BATCH` | `200` | fest | Stapel-/Seitengröße | einstellbar |
 | `BscwWebDavTransport.MAX_METADATA_BYTES` | `16 * 1024 * 1024` | fest | Speicher-/Ressourcenbudget | einstellbar |
+| `BscwWebDavTransport.MAX_PAGE_REDIRECTS` | `5` | fest | Protokollgrenze | dokumentieren, berücksichtigen: Weiterleitungen der BSCW-Schnellsuche (Startordner → Suchordner, real zwei), nur auf demselben Server |
 | `CacheFreshness.MAX_AGE` | `Duration.ofDays(365)` | fest | Cache-Aufbewahrung | einstellbar |
 | `CandidateSelectionStrategy.SMALL_BATCH` | `10` | fest | Stapel-/Seitengröße | einstellbar |
 | `CertificatePackage.MAX_NAME` | `60` | fest | Invariante/Darstellung | im Code belassen |
