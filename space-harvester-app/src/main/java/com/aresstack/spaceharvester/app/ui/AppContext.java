@@ -127,6 +127,13 @@ public final class AppContext {
         default void openSource(String sourceId, String title) {
         }
 
+        /**
+         * „Neue Auflage erzeugen“ des Buchs am Favoritenordner (Architekt 27.11.2026), etwa aus der Leseansicht; ohne
+         * eigene Umsetzung nichts.
+         */
+        default void newBookEdition(String folderId) {
+        }
+
         /** Zeigt eine Quelle unter Quellen zum Bearbeiten; ohne eigene Umsetzung nur die Quellen. */
         default void editSource(String sourceId) {
             show(Section.SOURCES);

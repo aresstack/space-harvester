@@ -684,6 +684,22 @@ public final class PageDetailPanel extends JPanel {
         areaView.books(folderId -> context.settings() == null || context.settings().storage() == null ? null
                 : com.aresstack.spaceharvester.app.research.BookEditions.latest(
                         context.settings().storage().dataDirectory(), folderId).orElse(null));
+        // Geänderte Seiten seit der Auflage: gemerkter Stand gegen den jetzigen in der Ablage (kein Abfragen; die
+        // Ansicht prüft nur, wenn eine Quelle eine Änderung meldet oder der Ordner neu gezeigt wird).
+        areaView.staleness(shown -> {
+            var runtime = context.runtime();
+            if (runtime == null) {
+                return false;
+            }
+            var stock = new com.aresstack.spaceharvester.app.research.WorkspacePageStock(runtime.workspace(), null);
+            return com.aresstack.spaceharvester.app.research.BookEditions.stale(shown, source -> stock.version(
+                    new com.aresstack.spaceharvester.application.snapshot.PageKey(source.sourceId(), source.pageId())));
+        });
+        areaView.onNewEdition(folderId -> {
+            if (context.navigator() != null) {
+                context.navigator().newBookEdition(folderId);
+            }
+        });
         this.sourceProperties = new SourcePropertiesView(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context::settings);
         sourceProperties.secretState((current, entry) -> com.aresstack.spaceharvester.app.ui.SecretState.of(current,

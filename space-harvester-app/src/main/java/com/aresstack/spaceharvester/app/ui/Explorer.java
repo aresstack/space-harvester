@@ -723,6 +723,11 @@ public final class Explorer {
         }
     }
 
+    /** „Neue Auflage erzeugen“ des Buchs am Favoritenordner. */
+    public void newBookEdition(String folderId) {
+        favorites.newEdition(folderId);
+    }
+
     public Explorer(AppContext context) {
         this.context = context;
         this.favorites = new FavoritesView(context, this::selectedItem, sourceId -> reveal(sourceId, null));

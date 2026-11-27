@@ -61,4 +61,18 @@ class BookEditionsTest {
         assertTrue(Files.isRegularFile(BookEditions.directory(data, "ordner-4").resolve("auflage-0001.json")));
         assertEquals("# Buch", BookEditions.latest(data, "ordner-4").orElseThrow().book());
     }
+
+    @Test
+    void anEditionIsStaleOnlyWhenAReadPageHasANewerKnownVersion() throws Exception {
+        assertTrue(!BookEditions.exists(data, "ordner-3"));
+        BookEditions.Edition edition = BookEditions.add(data, "ordner-3", Instant.parse("2026-11-27T10:00:00Z"),
+                "# Buch", "", List.of(new BookEditions.Source("wiki", "1", "v1"),
+                        new BookEditions.Source("wiki", "2", null)));
+        assertTrue(BookEditions.exists(data, "ordner-3"));
+
+        assertTrue(!BookEditions.stale(edition, source -> "1".equals(source.pageId()) ? "v1" : "v9"));
+        assertTrue(!BookEditions.stale(edition, source -> null));
+        assertTrue(BookEditions.stale(edition, source -> "1".equals(source.pageId()) ? "v2" : null));
+        assertTrue(!BookEditions.stale(null, source -> "v2"));
+    }
 }

@@ -122,6 +122,38 @@ public final class BookEditions {
         }
     }
 
+    /**
+     * Ob sich eine Seite der Auflage seither geändert hat (Architekt 27.11.2026: „Neue Auflage erzeugen“ bei geändertem
+     * Quellenstand). Verglichen wird der beim Lesen gemerkte Stand mit dem jetzigen; eine Seite ohne gemerkten oder
+     * ohne jetzigen Stand zählt nicht, weil daraus keine Änderung folgt.
+     */
+    public static boolean stale(Edition edition, java.util.function.Function<Source, String> currentVersion) {
+        if (edition == null) {
+            return false;
+        }
+        Objects.requireNonNull(currentVersion, "currentVersion");
+        for (Source source : edition.sources()) {
+            if (source.version() == null) {
+                continue;
+            }
+            String now;
+            try {
+                now = currentVersion.apply(source);
+            } catch (RuntimeException unknown) {
+                now = null;
+            }
+            if (now != null && !now.equals(source.version())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Ob der Ordner schon eine Auflage hat; liest nur die Dateinamen. */
+    public static boolean exists(Path dataDirectory, String folderId) {
+        return dataDirectory != null && folderId != null && !files(directory(dataDirectory, folderId)).isEmpty();
+    }
+
     /** Die neueste lesbare Auflage; leer ohne Buch. */
     public static Optional<Edition> latest(Path dataDirectory, String folderId) {
         if (dataDirectory == null || folderId == null) {
