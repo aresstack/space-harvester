@@ -16,7 +16,7 @@
 
 ## Ausgangslage
 
-Geprüft im Code am 27.11.2026:
+Geprüft im Code am 27.11.2026, Stand vor #1633:
 
 - Die Websuche im Chat nutzt das Modul `enterprise-ai-browser`, eine unveränderte Kopie aus dem Enterprise AI
   Client. Es steuert ein installiertes Firefox und reicht 13 Werkzeuge an den Chat: Tabs, Öffnen, Lesen, Links,
@@ -74,6 +74,12 @@ Der Chat geht nur noch über Research4j ins Web. Das Modul `enterprise-ai-browse
 Abnahme, wenn alle bisherigen Browser-Werkzeuge vollständig und funktional gleichwertig übernommen sind; nichts wird
 weggelassen oder vereinfacht. Es gibt eine Browserimplementierung, keine zweite daneben.
 
+Zwischenzeit: Das Modul ist mit #1633 schon entfernt (siehe „Stand vor der Korrektur“). Es wird nicht
+zurückgebaut (Angelo, 27.11.2026, 18:32 MEZ: „Wozu willst du das jetzt bitte wieder zurückbauen […]?“). Bis
+Schritt 8 läuft der Chat auf dem Stand von #1633; Firefox als Standard kommt mit Schritt 8, weil die heutige
+Research4j-Fassung den installierten Firefox im Chat noch nicht starten kann und dafür eine Veröffentlichung
+(Schritt 7) nötig ist.
+
 ### 2. Die fehlenden Fähigkeiten kommen in die Bibliothek, nicht in die App
 - Intranet: Research4j bekommt einen **Zugriffs-Port**. Er beantwortet für eine Adresse: erlaubt, fragen oder
   verboten. Die Vorgabe der Bibliothek bleibt „nur öffentliche Adressen“. Space Harvester füllt den Port mit seinen
@@ -112,16 +118,19 @@ weggelassen oder vereinfacht. Es gibt eine Browserimplementierung, keine zweite 
   Microsoft Edge. Die konkrete Browserimplementierung ist austauschbar; Research4j trifft keine anwendungsspezifische
   Browserentscheidung. Die Auswahl erfolgt durch die Konfiguration der konsumierenden Anwendung.
 - Space Harvester verwendet als Standard den lokal installierten Mozilla Firefox (vom Host gewählte Programmdatei,
-  sonst die üblichen Installationsorte), mit eigenem dauerhaftem Profil der App, nie dem normalen Profil des
+  research4j #1; gestartet wie in Ask AI über den Kanal `moz-firefox`), mit eigenem dauerhaftem Profil der App, nie dem normalen Profil des
   Benutzers. Gründe nach Auftrag: Firefox nutzt schon die bisherige Browserimplementierung von Space Harvester;
   Firefox lief ursprünglich auch in Ask AI, bevor dort auf Camoufox umgestellt wurde; Playwright4j unterstützt
   Firefox über WebDriver BiDi; die Anbindung von Standard-Firefox an Research4j ist praktisch getestet; auf dem
   dienstlichen Rechner lässt sich Camoufox nicht eigenständig nachinstallieren.
 - Camoufox bleibt Teil der unterstützten Browser von Research4j; Space Harvester setzt ihn nicht voraus. Edge und
   Chrome sind wählbar, aber nie Standard.
-- Aus research4j #1: `ResearchAddon` und `AddonBridge` werden wiederverwendet, Installationsfehler werden
-  ausdrücklich gemeldet; Zugriffsregeln vom Host für Intranet, Weiterleitungen und Anfragen mit Default-Deny, ohne
-  pauschale Freigabe privater Netze im Betrieb.
+- Die Abnahmekriterien von research4j #1 gelten vollständig: keine Abhängigkeit von Datenordnern von Ask AI und kein
+  normales Benutzerprofil; `ResearchAddon` und `AddonBridge` werden wiederverwendet, mit Bridge-Konfiguration je
+  Sitzung und deterministischem Aufräumen, Installationsfehler werden ausdrücklich gemeldet; Zugriffsregeln vom Host
+  für Intranet, Weiterleitungen und Anfragen mit Default-Deny, ohne pauschale Freigabe privater Netze im Betrieb;
+  Tests gegen Standard-Firefox für Navigation, DOM-Auszug, Suche, Anmeldung und Sitzung, Profiltrennung,
+  Lebenszyklus der Erweiterung, Abbruch und sauberes Beenden; Ask AI bleibt unberührt.
 - Firefox-Historiennavigation (playwright4j #79, Angelo 27.11.2026, 18:39 MEZ): Der am 26.11.2026 mit Standard-Firefox
   erfolgreich getestete Workaround wird dauerhaft übernommen: `browser.sessionhistory.max_total_viewers = 0`, wie
   für Camoufox schon vorhanden, auch für Standard-Firefox, bei normalen und persistenten Kontexten, an einer Stelle
@@ -154,7 +163,7 @@ Reihenfolge nach Auftrag:
 5. Die noch fehlenden Fähigkeiten aus dem bisherigen Browsermodul von Space Harvester verallgemeinert in Research4j
    integrieren.
 6. Die gemeinsame Browser-API und die Browser-Werkzeuge auf funktionale Gleichwertigkeit prüfen.
-7. Research4j veröffentlichen.
+7. Research4j veröffentlichen. Den Release-Lauf startet Angelo.
 8. Space Harvester auf Research4j umstellen.
 9. Das bisherige Modul `enterprise-ai-browser` nach erfolgreicher Abnahme vollständig entfernen.
 
@@ -177,11 +186,12 @@ Ehrlich festgehalten, weil es der Korrektur widerspricht und in den Schritten ob
   gebaute Chat-Engine auf Playwright (`PlaywrightChatEngine` u. a.) neben der vorhandenen Implementierung aus Ask AI.
   Das ist eine zweite, redundante Browserimplementierung und wird in Schritt 5 durch die Erweiterung der einen
   Implementierung ersetzt. Der Firefox-Kanal (main `703eed2`) hängt ebenfalls an dieser Chat-Engine.
-- Space Harvester (#1633, develop) nutzt diese Chat-Engine mit Edge als Vorgabe und hat `enterprise-ai-browser`
-  bereits entfernt, also vor der Abnahme. Schritt 8 stellt auf die korrigierte Fassung mit Firefox als Standard um.
+- Space Harvester (#1633) nutzt diese Chat-Engine mit Edge als Vorgabe und hat `enterprise-ai-browser` bereits
+  entfernt, also vor der Abnahme. #1633 ist auf develop und auf main: Das latest öffnet im Chat schon Edge, das alte
+  Modul fehlt dort. Schritt 8 stellt auf die korrigierte Fassung mit Firefox als Standard um.
 - Die Captcha-Messung Edge gegen Camoufox entfällt.
 
 ## Offen
 
-- Ob Ask AI denselben Werkzeugsatz aus Research4j übernimmt, entscheidet Angelo getrennt; Ask AI wird durch dieses
-  ADR nicht geändert ([askai #292](https://github.com/aresstack/askai/issues/292)).
+- Ask AI nutzt perspektivisch ebenfalls Research4j ([askai #292](https://github.com/aresstack/askai/issues/292)) und
+  bleibt während der Integration unverändert.
