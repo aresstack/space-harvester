@@ -151,7 +151,8 @@ class StandingTabTest {
         StatusQuoView base = view();
         StandingTab none = new Fixture(new StatusQuoView(List.of(), List.of(), List.of(), Map.of(), Map.of(),
                 List.of())).shownTab();
-        assertThat(none.placeholder()).isEqualTo("Keine analysierten Aussagen in der Auswahl");
+        assertThat(none.placeholder()).isEqualTo("Keine analysierten Aussagen in der Auswahl. "
+                + StandingTab.HOW_TO_ANALYZE);
         assertThat(none.staleChip().isVisible()).isFalse();
         none.tabs().select(StandingTab.CONFLICTS);
         assertThat(none.conflictPlaceholder()).isEqualTo("Keine möglichen Widersprüche");
@@ -198,7 +199,8 @@ class StandingTabTest {
         assertThat(lines(tab)).isEmpty();
         assertThat(fixture.status.get()).isEqualTo("4 Aussagen-Analysen gelöscht · Keine analysierten Aussagen in "
                 + "der Auswahl");
-        assertThat(tab.placeholder()).isEqualTo("Keine analysierten Aussagen in der Auswahl");
+        assertThat(tab.placeholder()).isEqualTo("Keine analysierten Aussagen in der Auswahl. "
+                + StandingTab.HOW_TO_ANALYZE);
 
         // Nichts mehr da: kein Neulesen, eine Zeile dazu.
         fixture.deleted = 0;

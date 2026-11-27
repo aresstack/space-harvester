@@ -94,6 +94,18 @@ class ContentViewTest {
         });
     }
 
+    /** Zählt die sichtbaren ?-Knöpfe unter einer Komponente. */
+    private static int shownHelp(java.awt.Component component) {
+        int found = component instanceof com.aresstack.spaceharvester.app.ui.controls.HelpButton
+                && component.isVisible() ? 1 : 0;
+        if (component instanceof java.awt.Container container && component.isVisible()) {
+            for (java.awt.Component child : container.getComponents()) {
+                found += shownHelp(child);
+            }
+        }
+        return found;
+    }
+
     @AfterEach
     void close() throws Exception {
         if (context != null) {
@@ -154,7 +166,9 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.standingFoot());
-        assertThat(onEdt(() -> detail.standingFoot().trailing().isVisible())).isFalse();
+        // Rechts in der Ecke steht dann nur die ?-Hilfe des Reiters, nicht die Checkbox des Ordners.
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.standingFoot())))
+                .isFalse();
         // Für den Fehlerfall, versteckt hinter dem Dreieck: die Kennzahlen des Knotens neu aufbauen.
         assertThat(onEdt(() -> detail.moreButton().isEnabled())).isTrue();
         assertThat(onEdt(() -> allMenuEntries(detail)))
@@ -458,6 +472,8 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.selectedTab())).isEqualTo("Stand");
+        // Die ?-Hilfe steht unten rechts in der Leiste der Reiter, nicht mehr oben (Angelo 27.11.2026).
+        assertThat(onEdt(() -> shownHelp(detail.footTools()))).isEqualTo(1);
         // Fachglossar: seine Werkzeuge oben rechts, der Papierkorb des Stands nicht; Stand in der Statuszeile getrennt.
         onEdt(() -> {
             detail.standing().tabs().select("Fachglossar");
