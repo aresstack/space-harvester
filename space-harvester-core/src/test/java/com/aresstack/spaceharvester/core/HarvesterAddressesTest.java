@@ -98,6 +98,18 @@ class HarvesterAddressesTest {
     }
 
     @Test
+    void aPageNumberAsBookmarkFindsAPageNotYetInStock() {
+        // Die Suche fragt eine Seitennummer je Quelle als Lesezeichen (Angelo, 27.11.2026); ohne Bestand live.
+        try (Harvester harvester = harvester(Harvester.builder())) {
+            assertThat(harvester.addresses().resolve(harvester.caller(), "space-harvester://wiki/page/102").matches())
+                    .extracting(PageAddresses.Match::pageId, PageAddresses.Match::title)
+                    .containsExactly(tuple("102", "Prüfung & Abnahme"));
+            assertThat(harvester.addresses().resolve(harvester.caller(), "space-harvester://wiki/page/999")
+                    .matches()).isEmpty();
+        }
+    }
+
+    @Test
     void bookmarksAndResourceIdsOfTheSourceResolve() {
         try (Harvester harvester = harvester(Harvester.builder())) {
             String resourceId = harvester.pages().page(harvester.caller(), "wiki", "102", false).header().metadata()
