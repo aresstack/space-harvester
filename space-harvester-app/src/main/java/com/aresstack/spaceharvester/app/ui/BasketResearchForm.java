@@ -116,7 +116,12 @@ final class BasketResearchForm {
     BasketResearchForm prefill(BookNotes notes) {
         prefill(notes.fence(), notes.targetWords());
         if (notes.lengthAmount() > 0) {
-            length.value(notes.lengthAmount(), LengthField.Unit.parse(notes.lengthUnit()));
+            LengthField.Unit unit = LengthField.Unit.parse(notes.lengthUnit());
+            length.value(notes.lengthAmount(), unit);
+            if (unit == LengthField.Unit.PAGES && notes.targetWords() > 0) {
+                // Die Umrechnung dieses Buchs, nicht die zuletzt bei einem anderen Buch gemerkte.
+                length.wordsPerPage(Math.round((float) notes.targetWords() / notes.lengthAmount()));
+            }
         }
         ideas.setText(notes.ideas());
         questions.setText(String.join("\n", notes.questions()));

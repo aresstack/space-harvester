@@ -99,9 +99,22 @@ public class LengthField extends JPanel {
         revalidate();
     }
 
-    /** Die eingegebene Zahl in der gewählten Einheit. */
+    /** Die eingegebene Zahl in der gewählten Einheit, auch wenn sie gerade erst getippt und noch nicht bestätigt ist. */
     public int amount() {
-        return ((Number) amount.getValue()).intValue();
+        return ((Number) committed(amount).getValue()).intValue();
+    }
+
+    /**
+     * Übernimmt getippten Text, bevor der Wert gelesen wird: Der Startknopf nimmt dem Feld den Fokus nicht, also käme
+     * sonst der vorige Wert an. Unlesbarer Text bleibt beim vorigen Wert.
+     */
+    private static JSpinner committed(JSpinner spinner) {
+        try {
+            spinner.commitEdit();
+        } catch (java.text.ParseException unreadable) {
+            // vorigen Wert behalten
+        }
+        return spinner;
     }
 
     public Unit unit() {
@@ -110,7 +123,7 @@ public class LengthField extends JPanel {
 
     /** Die Wörter je Seite, mit denen umgerechnet wird. */
     public int wordsPerPage() {
-        return ((Number) perPage.getValue()).intValue();
+        return ((Number) committed(perPage).getValue()).intValue();
     }
 
     /** Die Länge in Wörtern; 0 = keine Vorgabe. */
@@ -123,6 +136,12 @@ public class LengthField extends JPanel {
     public void value(int amount, Unit unit) {
         this.unit.setSelectedItem(unit == null ? Unit.WORDS : unit);
         this.amount.setValue(Math.max(0, amount));
+        update();
+    }
+
+    /** Setzt die Wörter je Seite (mindestens 1). */
+    public void wordsPerPage(int words) {
+        perPage.setValue(Math.max(1, words));
         update();
     }
 

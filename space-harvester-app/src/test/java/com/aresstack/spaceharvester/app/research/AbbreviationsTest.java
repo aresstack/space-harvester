@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,18 +23,23 @@ class AbbreviationsTest {
 
     @Test
     void nurBestaetigteEintraegeMitErlaeuterungLoesenAuf() {
-        Map<String, List<GlossaryAccess.Entry>> glossary = Map.of(
-                "OGR", List.of(entry("OGR", ReviewStatus.CONFIRMED, "Obstgehölzregister des Kreises")),
-                "KMV", List.of(entry("Kompostmietenverordnung (KMV)", ReviewStatus.CONFIRMED,
-                        "Regeln für Kompostmieten auf Gemeinschaftsflächen.")),
-                "WZB", List.of(entry("WZB", ReviewStatus.PROPOSED, "Wurzelbereich")),
-                "LKS", List.of(entry("LKS", ReviewStatus.CONFIRMED, " ")));
+        // Die echte Begriffssuche fände „Kompostmietenverordnung (KMV)“ unter „KMV“ nicht; deshalb ohne Suchwort.
+        List<GlossaryAccess.Entry> glossary = List.of(
+                entry("Kompostmietenverordnung (KMV)", ReviewStatus.CONFIRMED,
+                        "Regeln für Kompostmieten auf Gemeinschaftsflächen."),
+                entry("OGR", ReviewStatus.CONFIRMED, "Obstgehölzregister des Kreises"),
+                entry("WZB", ReviewStatus.PROPOSED, "Wurzelbereich"),
+                entry("LKS", ReviewStatus.CONFIRMED, " "));
+        int[] calls = {0};
         GlossaryAccess access = (GlossaryAccess) java.lang.reflect.Proxy.newProxyInstance(
                 GlossaryAccess.class.getClassLoader(), new Class<?>[] {GlossaryAccess.class}, (proxy, method, args) -> {
                     if (method.getName().equals("search")) {
                         GlossaryAccess.Search search = (GlossaryAccess.Search) args[0];
                         assertThat(search.status()).isEqualTo(ReviewStatus.CONFIRMED);
-                        return new GlossaryAccess.Page(glossary.getOrDefault(search.q(), List.of()), null, true);
+                        assertThat(search.q()).isNull();
+                        calls[0]++;
+                        return new GlossaryAccess.Page(glossary.stream()
+                                .filter(e -> e.status() == search.status()).toList(), null, true);
                     }
                     throw new UnsupportedOperationException(method.getName());
                 });
@@ -47,6 +51,7 @@ class AbbreviationsTest {
                 "OGR = Obstgehölzregister des Kreises",
                 "KMV = Kompostmietenverordnung – Regeln für Kompostmieten auf Gemeinschaftsflächen.");
         assertThat(result.unresolved()).containsExactly("WZB", "LKS", "XYZ");
+        assertThat(calls[0]).as("das Glossar wird einmal gelesen, nicht je Abkürzung").isEqualTo(1);
     }
 
     @Test

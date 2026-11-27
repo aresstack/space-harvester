@@ -93,33 +93,46 @@ public final class Abbreviations {
 
     /**
      * Nachschlagen im Fachglossar ({@link GlossaryAccess#search}, nur bestätigte Einträge): die Erläuterung des Eintrags,
-     * der die Abkürzung selbst ist, sonst „Langform – Erläuterung“ des Eintrags, der sie in Klammern nennt. Ein Fehler
-     * des Glossars heißt „nicht aufgelöst“.
+     * der die Abkürzung selbst ist, sonst „Langform – Erläuterung“ des Eintrags, der sie in Klammern nennt (im Begriff
+     * oder im Wortlaut der Fundstelle). Die Begriffssuche findet „Langform (ABK)“ unter „ABK“ nicht, weil sie nur
+     * Wortanfänge des Begriffs vergleicht; deshalb liest die Funktion beim ersten Aufruf einmal alle bestätigten
+     * Einträge seitenweise und schlägt danach darin nach. Ein Fehler des Glossars heißt „nicht aufgelöst“.
      */
     public static Function<String, Optional<String>> glossary(GlossaryAccess glossary) {
         Objects.requireNonNull(glossary, "glossary");
+        List<GlossaryAccess.Entry> confirmed = new ArrayList<>();
+        boolean[] loaded = {false};
         return acronym -> {
             try {
-                String cursor = null;
-                Optional<String> named = Optional.empty();
-                do {
-                    GlossaryAccess.Page page = glossary.search(new GlossaryAccess.Search(acronym,
-                            ReviewStatus.CONFIRMED, null, null, null, null, GlossaryAccess.MAX_LIMIT, cursor));
-                    for (GlossaryAccess.Entry entry : page.entries()) {
-                        Optional<String> meaning = meaning(entry, acronym);
-                        if (meaning.isPresent() && entry.term().strip().equalsIgnoreCase(acronym)) {
-                            return meaning;
-                        }
-                        if (named.isEmpty()) {
-                            named = meaning;
-                        }
+                synchronized (confirmed) {
+                    if (!loaded[0]) {
+                        String cursor = null;
+                        do {
+                            GlossaryAccess.Page page = glossary.search(new GlossaryAccess.Search(null,
+                                    ReviewStatus.CONFIRMED, null, null, null, null, GlossaryAccess.MAX_LIMIT, cursor));
+                            confirmed.addAll(page.entries());
+                            cursor = page.nextCursor();
+                        } while (cursor != null);
+                        loaded[0] = true;
                     }
-                    cursor = page.nextCursor();
-                } while (cursor != null);
-                return named;
+                }
             } catch (RuntimeException unavailable) {
+                synchronized (confirmed) {
+                    confirmed.clear();
+                }
                 return Optional.empty();
             }
+            Optional<String> named = Optional.empty();
+            for (GlossaryAccess.Entry entry : confirmed) {
+                Optional<String> meaning = meaning(entry, acronym);
+                if (meaning.isPresent() && entry.term().strip().equalsIgnoreCase(acronym)) {
+                    return meaning;
+                }
+                if (named.isEmpty()) {
+                    named = meaning;
+                }
+            }
+            return named;
         };
     }
 

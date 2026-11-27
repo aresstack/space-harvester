@@ -33,7 +33,8 @@ class BasketResearchFormTest {
 
         assertThat(form.length.amount()).isEqualTo(5);
         assertThat(form.length.unit()).isEqualTo(com.aresstack.spaceharvester.app.ui.controls.LengthField.Unit.PAGES);
-        assertThat(form.targetWords()).isEqualTo(5 * form.length.wordsPerPage());
+        assertThat(form.length.wordsPerPage()).as("die Umrechnung dieses Buchs").isEqualTo(400);
+        assertThat(form.targetWords()).isEqualTo(2000);
         assertThat(new BasketResearchForm().targetWords()).as("Korb füllen kennt keine Länge").isZero();
     }
 

@@ -32,6 +32,16 @@ class LengthFieldTest {
     }
 
     @Test
+    void typedTextCountsEvenWithoutLeavingTheField() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            LengthField field = new LengthField(400);
+            javax.swing.JSpinner spinner = (javax.swing.JSpinner) field.getComponent(0);
+            ((javax.swing.JSpinner.DefaultEditor) spinner.getEditor()).getTextField().setText("1200");
+            assertThat(field.words()).isEqualTo(1200);
+        });
+    }
+
+    @Test
     void unknownUnitNamesFallBackToWords() {
         assertThat(LengthField.Unit.parse("PAGES")).isEqualTo(LengthField.Unit.PAGES);
         assertThat(LengthField.Unit.parse("")).isEqualTo(LengthField.Unit.WORDS);

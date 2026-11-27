@@ -130,11 +130,17 @@ public final class BookFieldFill {
                     : failed.getMessage());
             return;
         }
+        boolean late;
         synchronized (this) {
             // Eine sofort beendete Anfrage (etwa ohne Netz) kommt nicht mehr in die Liste der laufenden.
-            if (task[0] != null && !ended.contains(field)) {
+            late = cancelled && task[0] != null && !ended.contains(field);
+            if (!late && task[0] != null && !ended.contains(field)) {
                 running.add(task[0]);
             }
+        }
+        if (late) {
+            // Abgebrochen, während diese Anfrage gerade anlief: sie hätte cancel() nicht mehr gesehen.
+            task[0].cancel();
         }
     }
 
