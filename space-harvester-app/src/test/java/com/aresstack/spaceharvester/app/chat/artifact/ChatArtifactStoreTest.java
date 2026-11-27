@@ -171,6 +171,25 @@ class ChatArtifactStoreTest {
     }
 
     @Test
+    void aJustDeletedArtifactStaysInTheTrashAndItsIdIsNeverGivenAgain() {
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        ChatRecord chat = chat(chats);
+        store.createDocument(folder, chat.id(), "Notiz", "# Notiz", ChatArtifact.Origin.AI);
+        store.createDocument(folder, chat.id(), "Brief", "# Brief", ChatArtifact.Origin.AI);
+        // Ohne vorheriges Auflisten gelöscht: der Papierkorb des letzten Laufs nimmt es nicht mit.
+        assertThat(store.delete(folder, chat.id(), "D2").success()).isTrue();
+        assertThat(store.deleted(folder, chat.id())).extracting(ChatArtifact::id).containsExactly("D2");
+
+        // Nach dem Neustart ist es endgültig weg, seine Kennung bleibt vergeben.
+        ChatArtifactStore.newRun();
+        assertThat(store.list(folder, chat.id())).extracting(ChatArtifact::id).containsExactly("D1");
+        assertThat(store.deleted(folder, chat.id())).isEmpty();
+        assertThat(store.createDocument(folder, chat.id(), "Neu", "", ChatArtifact.Origin.AI).id()).isEqualTo("D3");
+    }
+
+    @Test
     void anEmbeddedGraphicOfAnotherChatIsCopiedAlongAndAFailedMoveCanBeRetried() throws Exception {
         ChatStore chats = chats();
         Path folder = chats.folder(node);

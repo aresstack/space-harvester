@@ -21,6 +21,46 @@ class ArtifactTabsTest {
     Path home;
 
     @Test
+    void anArtifactIsDeletedAfterAskingAndComesBackFromTheTrash() throws Exception {
+        // ADR 0047: Löschen am Artefakt nach „wirklich löschen?“; bis zum nächsten Start wiederherstellbar.
+        ChatStore chats = new ChatStore(() -> home.resolve("chats"));
+        ChatNode node = new ChatNode("wiki", null, null);
+        ChatRecord chat = ChatRecord.fresh(1).plus(ChatRecord.Message.user("Schreib", 1), 1);
+        chats.save(node, chat);
+        Path folder = chats.folder(node);
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.createDocument(folder, chat.id(), "Gartenfibel", "# Gartenfibel", ChatArtifact.Origin.AI);
+        ArtifactTabs[] tabs = new ArtifactTabs[1];
+        java.util.List<String> asked = new java.util.ArrayList<>();
+        boolean[] answer = {false};
+        SwingUtilities.invokeAndWait(() -> {
+            tabs[0] = new ArtifactTabs(store, new JLabel("Seite"));
+            tabs[0].confirm = (title, question) -> {
+                asked.add(question);
+                return answer[0];
+            };
+            tabs[0].chat(folder, chat.id());
+            tabs[0].open("D1");
+            tabs[0].deleteSelected();
+        });
+        assertThat(asked).containsExactly(ArtifactTabs.deleteQuestion("Gartenfibel"));
+        assertThat(tabs[0].artifacts()).as("Nein lässt es stehen").hasSize(1);
+
+        answer[0] = true;
+        SwingUtilities.invokeAndWait(() -> tabs[0].deleteSelected());
+        assertThat(tabs[0].artifacts()).isEmpty();
+        assertThat(tabs[0].openIds()).as("der Reiter geht zu").isEmpty();
+        assertThat(tabs[0].deletedArtifacts()).extracting(ChatArtifact::id).containsExactly("D1");
+        assertThat(store.createDocument(folder, chat.id(), "Brief", "", ChatArtifact.Origin.AI).id())
+                .as("die Kennung im Papierkorb wird nicht neu vergeben").isEqualTo("D2");
+
+        SwingUtilities.invokeAndWait(() -> tabs[0].restore("D1"));
+        assertThat(tabs[0].artifacts()).extracting(ChatArtifact::id).containsExactly("D1", "D2");
+        assertThat(tabs[0].openIds()).containsExactly("D1");
+        assertThat(tabs[0].deletedArtifacts()).isEmpty();
+    }
+
+    @Test
     void artifactsOpenAsTabsHighlightTheLastChangeAndAreRememberedPerChat() throws Exception {
         ChatStore chats = new ChatStore(() -> home.resolve("chats"));
         ChatNode node = new ChatNode("wiki", null, null);
