@@ -205,7 +205,7 @@ final class FavoritesView {
                 new com.aresstack.spaceharvester.app.research.WorkspacePageStock(workspace, null), basket, name,
                 fence.get(), SearchView.LIMIT,
                 com.aresstack.research4j.basket.BasketResearch.Settings.defaults("de", capacity, capacity));
-        workspace.startBasketResearch(task);
+        workspace.startBasketResearch(name, task);
     }
 
 

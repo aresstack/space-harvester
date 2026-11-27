@@ -2382,28 +2382,37 @@ public final class Workspace {
      * „Korb füllen“ (Buchfunktion Phase 3, Arbeitszweig): startet den Auftrag auf Klick des Benutzers, vor jedem
      * wartenden Hintergrund. Der Auftrag selbst kommt aus {@code app.research.BasketResearchJob}.
      */
-    public JobStatus startBasketResearch(com.aresstack.spaceharvester.application.jobs.JobTask task) {
-        return startBookFunction(JobType.RESEARCH, task);
+    public JobStatus startBasketResearch(String folderName,
+                                         com.aresstack.spaceharvester.application.jobs.JobTask task) {
+        return startBookFunction(JobType.RESEARCH, folderName, task);
     }
 
     /**
      * „Buch schreiben“ (Buchfunktion Phase 4, Arbeitszweig): Vorbereiten oder Schreiben auf Klick des Benutzers, vor
      * jedem wartenden Hintergrund. Die Aufträge kommen aus {@code app.research.BookJob}.
      */
-    public JobStatus startBook(com.aresstack.spaceharvester.application.jobs.JobTask task) {
-        return startBookFunction(JobType.BOOK, task);
+    public JobStatus startBook(String folderName, com.aresstack.spaceharvester.application.jobs.JobTask task) {
+        return startBookFunction(JobType.BOOK, folderName, task);
     }
 
-    private JobStatus startBookFunction(JobType type, com.aresstack.spaceharvester.application.jobs.JobTask task) {
+    /** Der Bereich eines Auftrags der Buchfunktion ist sein Favoritenordner, in der Auftragsliste unter „Bereich“. */
+    private JobStatus startBookFunction(JobType type, String folderName,
+                                        com.aresstack.spaceharvester.application.jobs.JobTask task) {
         JobStatus status = harvester.jobs().submitInteractive(type,
                 com.aresstack.spaceharvester.application.jobs.Jobs.ALL_SOURCES, null, null, caller.jobOwner(),
-                java.util.Map.of(), task);
+                com.aresstack.spaceharvester.application.jobs.JobArea.with(java.util.Map.of(),
+                        folderName == null || folderName.isBlank() ? null : "Ordner „" + folderName + "“"), task);
         activities.remember(status.id());
         return status;
     }
 
     public AiChat aiChat() {
         return harvester.aiChat();
+    }
+
+    /** Der Chat mit Modell, Tokenlänge und Nachdenken der Zeile {@code use} ({@code Harvester#aiChat(ModelUse)}). */
+    public AiChat aiChat(com.aresstack.spaceharvester.ai.AiServiceSettings.ModelUse use) {
+        return harvester.aiChat(use);
     }
 
     // ------------------------------------------------------------------ Abgleich
