@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.observe.Subscription;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.util.List;
 import java.util.Map;
@@ -65,6 +66,57 @@ public final class PageRecomputation {
     public Enrichments.Run recompute(String owner, PageSnapshot snapshot, String processorId,
                                      Consumer<JobState> state) {
         return execute(owner, snapshot, TASK, state, context -> recompute(snapshot, processorId, context));
+    }
+
+    /**
+     * Die Prozessoren aus {@code processorIds}, die diese Seite ohne Netz rechnen können, in Ausführungsreihenfolge;
+     * unbekannte entfallen. Grundlage der selbsttätigen Neuberechnung beim Öffnen: Sie stößt nie einen Netzaufruf an,
+     * Netz-Prozessoren rechnet nur der ausdrückliche Klick.
+     */
+    public List<String> localProcessors(PageKey key, java.util.Collection<String> processorIds) {
+        Objects.requireNonNull(key, "key");
+        return enrichments.processorIds().stream().filter(processorIds::contains)
+                .filter(id -> !enrichments.network(key, id)).toList();
+    }
+
+    /**
+     * Rechnet veraltete Analysen der Seite, die die Leseansicht braucht, als derselbe Auftrag wie der Knopf
+     * ({@link #recompute(String, PageSnapshot, String, Consumer)}), nur für die Prozessoren aus
+     * {@link #localProcessors}: also ohne Netz. Sichtbar und abbrechbar in der Auftragsliste.
+     *
+     * @return {@code null}, wenn keiner davon ohne Netz rechnet; dann entsteht kein Auftrag
+     * @throws JobCancelledException wie {@link #recompute(String, PageSnapshot, String, Consumer)}
+     */
+    public Enrichments.Run recomputeLocal(String owner, PageSnapshot snapshot, java.util.Collection<String> processorIds,
+                                          Consumer<JobState> state) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        List<String> ids = localProcessors(snapshot.key(), processorIds);
+        // Abschnitte eines lokalen Originals rechnet DocumentEnrichments mit allen veralteten Dokument-Prozessoren,
+        // auch denen über das Netz (Codex #1619): die bleiben dem Klick.
+        if (com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.recognizes(snapshot.payload())
+                && localDocuments != null) {
+            List<String> documents = enrichments.documentProcessorIds();
+            ids = ids.stream().filter(id -> !documents.contains(id)).toList();
+        }
+        if (ids.isEmpty()) {
+            return null;
+        }
+        List<String> chosen = ids;
+        return execute(owner, snapshot, TASK, state, context -> {
+            int computed = 0;
+            int current = 0;
+            int failed = 0;
+            for (String id : chosen) {
+                Enrichments.Run part = recompute(snapshot, id, context);
+                if (!part.supported()) {
+                    continue;
+                }
+                computed += part.computed();
+                current += part.current();
+                failed += part.failed();
+            }
+            return new Enrichments.Run(true, computed, current, failed);
+        });
     }
 
     /** Execute an explicitly requested page analysis in the same interactive job lifecycle. */

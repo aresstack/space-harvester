@@ -1152,6 +1152,28 @@ public final class Workspace {
         return harvester.pageRecomputation().recompute(caller.jobOwner(), page.snapshot(), processor, state);
     }
 
+    /**
+     * Rechnet veraltete Analysen, die die Leseansicht braucht, selbsttätig beim Öffnen neu: derselbe Auftrag wie
+     * {@link #recomputeEnrichments} (Auftragsliste, abbrechbar), aber nur aus der gespeicherten Seite und nur für
+     * Prozessoren, die ohne Netz rechnen. Ohne sync-Freigabe oder ohne solchen Prozessor geschieht nichts.
+     *
+     * @param processorIds die veralteten Analysen, etwa {@code acronyms} und {@code passages}
+     * @return der Lauf oder {@code null}, wenn kein Auftrag entstand
+     * @throws com.aresstack.spaceharvester.application.jobs.JobCancelledException wenn der Auftrag abgebrochen wurde
+     */
+    public Enrichments.Run recomputeStaleLocally(String sourceId, String pageId,
+                                                 java.util.Collection<String> processorIds,
+                                                 java.util.function.Consumer<
+                                                         com.aresstack.spaceharvester.application.jobs.JobState> state) {
+        // Nur die gespeicherte Seite: kein Abruf und keine Prüfung bei der Quelle.
+        DeliveredPage page = cachedPage(sourceId, pageId).orElse(null);
+        if (page == null || !access.permits(caller,
+                ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC)) {
+            return null;
+        }
+        return harvester.pageRecomputation().recomputeLocal(caller.jobOwner(), page.snapshot(), processorIds, state);
+    }
+
     /** Gespeicherte Bilder und Beschreibungen einer gelieferten Seite ({@code GET …/images}); beschreibt nichts. */
     public PageImages images(DeliveredPage page) {
         return harvester.imageAnalysis().read(page.snapshot());
