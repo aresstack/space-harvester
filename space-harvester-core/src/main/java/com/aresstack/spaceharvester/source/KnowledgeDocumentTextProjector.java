@@ -28,7 +28,7 @@ public final class KnowledgeDocumentTextProjector implements PageTextProjector {
         if (portable.isPresent()) {
             String text = portable.get().text();
             return text.isBlank() ? Optional.empty() : Optional.of(new PageText(
-                    "portable-local-document/v1", text, List.of()));
+                    "portable-local-document/v1", text, PageText.markdownSections(text), true));
         }
         if (com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider.SOURCE_TEXT_FORMAT.equals(snapshot.payload().nativeFormat())) {
             String code = new String(snapshot.payload().bytes(), StandardCharsets.UTF_8);
@@ -45,6 +45,8 @@ public final class KnowledgeDocumentTextProjector implements PageTextProjector {
             return Optional.empty();
         }
         String text = new String(snapshot.payload().bytes(), StandardCharsets.UTF_8);
-        return text.isBlank() ? Optional.empty() : Optional.of(new PageText(SCHEMA, text, List.of()));
+        // Überschriften des leichten Markdowns gliedern den Text wie die einer Confluence-Seite.
+        return text.isBlank() ? Optional.empty() : Optional.of(new PageText(SCHEMA, text,
+                PageText.markdownSections(text), true));
     }
 }

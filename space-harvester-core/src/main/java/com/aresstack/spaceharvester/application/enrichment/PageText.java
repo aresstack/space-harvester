@@ -15,8 +15,45 @@ import java.util.Objects;
  *                    das Schema und damit {@link #inputSha256()}
  * @param text        Text mit {@code \n} zwischen Blöcken
  * @param sections    Abschnitte in Textreihenfolge, je Überschrift einer
+ * @param sectionsFromText ob die Abschnitte allein aus dem Text folgen (etwa Markdown-Überschriften,
+ *                    {@link #markdownSections}); dann bestimmt der Text sie schon und sie zählen nicht eigens in
+ *                    {@link #inputSha256()}. So ändert das Erkennen der Überschriften den Stand bestehender Ergebnisse
+ *                    nicht.
  */
-public record PageText(String schema, String text, List<Section> sections) {
+public record PageText(String schema, String text, List<Section> sections, boolean sectionsFromText) {
+
+    public PageText(String schema, String text, List<Section> sections) {
+        this(schema, text, sections, false);
+    }
+
+    /**
+     * Die Abschnitte eines Markdown-Texts: je Überschrift {@code #} bis {@code ######} am Zeilenanfang einer, bis zur
+     * nächsten Überschrift gleicher oder höherer Ebene.
+     */
+    public static List<Section> markdownSections(String markdown) {
+        java.util.regex.Matcher heading = MARKDOWN_HEADING.matcher(markdown);
+        List<int[]> found = new java.util.ArrayList<>();
+        List<String> titles = new java.util.ArrayList<>();
+        while (heading.find()) {
+            found.add(new int[] {heading.start(), heading.group(1).length()});
+            titles.add(heading.group(2).strip());
+        }
+        List<Section> sections = new java.util.ArrayList<>();
+        for (int i = 0; i < found.size(); i++) {
+            int end = markdown.length();
+            for (int next = i + 1; next < found.size(); next++) {
+                if (found.get(next)[1] <= found.get(i)[1]) {
+                    end = found.get(next)[0];
+                    break;
+                }
+            }
+            sections.add(new Section(titles.get(i), found.get(i)[1], found.get(i)[0], end));
+        }
+        return List.copyOf(sections);
+    }
+
+    private static final java.util.regex.Pattern MARKDOWN_HEADING =
+            java.util.regex.Pattern.compile("(?m)^(#{1,6})[ \\t]+(.+?)[ \\t#]*$");
 
     public PageText {
         Objects.requireNonNull(schema, "schema");
@@ -35,7 +72,7 @@ public record PageText(String schema, String text, List<Section> sections) {
      */
     public String inputSha256() {
         StringBuilder input = new StringBuilder(schema).append('\n');
-        for (Section section : sections) {
+        for (Section section : sectionsFromText ? List.<Section>of() : sections) {
             // Überschriften stehen im Text; Ebene und Grenzen genügen, um die Gliederung festzulegen.
             input.append(section.level()).append(',').append(section.start()).append(',').append(section.end())
                     .append(';');
