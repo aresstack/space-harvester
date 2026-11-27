@@ -46,7 +46,7 @@ public final class PillTabs extends JPanel {
     public PillTabs tab(String name, JComponent content) {
         ComposerToggleButton button = new ComposerToggleButton(null, name, null);
         button.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        button.addActionListener(e -> select(name));
+        button.addActionListener(e -> clicked(name));
         group.add(button);
         buttons.put(name, button);
         bar.add(button);
@@ -179,6 +179,36 @@ public final class PillTabs extends JPanel {
         }
     }
 
+    /**
+     * Ein Klick des Benutzers auf einen Reiter. Der zweite Klick auf den gewählten, dunkel gezeigten Reiter geht an
+     * {@link #onAgain}, wenn jemand ihn haben will (etwa: die Mitte gibt den Reiter frei); sonst wählt er wie bisher.
+     */
+    private void clicked(String name) {
+        if (again != null && selectionShown && name.equals(current)) {
+            again.accept(name);
+            return;
+        }
+        select(name);
+        if (name.equals(current)) {
+            clicks.forEach(observer -> observer.accept(name));
+        }
+    }
+
+    /** Der zweite Klick auf den gewählten Reiter ({@link #clicked}); ohne Empfänger wählt er den Reiter erneut. */
+    public void onAgain(Consumer<String> again) {
+        this.again = again;
+    }
+
+    /** Beobachter der Wahl von Hand (nicht der Wahl aus dem Code); gerufen nach {@link #onSelect}. */
+    public void alsoOnClick(Consumer<String> observer) {
+        clicks.add(java.util.Objects.requireNonNull(observer, "observer"));
+    }
+
+    private Consumer<String> again;
+    private final java.util.List<Consumer<String>> clicks = new java.util.ArrayList<>();
+    /** Ob die Knöpfe ihre Auswahl gerade zeigen ({@link #showSelection}). */
+    private boolean selectionShown = true;
+
     public void select(String name) {
         ComposerToggleButton button = buttons.get(name);
         if (button != null && button.isVisible()) {
@@ -210,6 +240,7 @@ public final class PillTabs extends JPanel {
      * ({@link #selected()}) bleibt dabei erhalten und kommt mit {@code true} wieder.
      */
     public void showSelection(boolean shown) {
+        selectionShown = shown;
         if (!shown) {
             group.clearSelection();
             return;
@@ -317,7 +348,7 @@ public final class PillTabs extends JPanel {
             java.awt.Dimension natural = button.getPreferredSize();
             int side = Math.max(natural.width, natural.height);
             button.setPreferredSize(new java.awt.Dimension(side, side));
-            button.addActionListener(e -> select(name));
+            button.addActionListener(e -> clicked(name));
             group.add(button);
             buttons.put(name, button);
             strip.add(button);

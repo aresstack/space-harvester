@@ -461,7 +461,7 @@ public final class MainWindow implements AppContext.Navigator {
         frame.setVisible(true);
         WindowPlacement.maximizeIfRemembered(frame);
         WindowPlacement.track(frame);
-        // Die App startet auf dem Suchreiter, ohne Auswahl, mit dem Chat als Suchagent (Angelo, 24.11.2026).
+        // Die App startet in der Suche, ohne Auswahl, mit dem Chat als Suchagent (Angelo, 24.11.2026).
         openSearchTab();
         return frame;
     }
@@ -533,11 +533,8 @@ public final class MainWindow implements AppContext.Navigator {
         // Die Reiter der Seitenansicht schalten die Mitte um: ein Klick zeigt Inhalte, auch aus einem anderen Bereich.
         JComponent tabBar = content.tabBar();
         tabBar.setBorder(BorderFactory.createEmptyBorder(0, TAB_GAP, 0, 0));
-        for (Component tab : tabBar.getComponents()) {
-            if (tab instanceof javax.swing.AbstractButton button) {
-                button.addActionListener(e -> show(AppContext.Section.CONTENT));
-            }
-        }
+        // Ein zweiter Klick auf den gezeigten Reiter wählt ihn ab: Ohne Auswahl zeigt die Mitte die Suche.
+        content.onTabClick(() -> show(AppContext.Section.CONTENT), this::openSearchTab);
         icons.add(tabBar);
         // Der Titel steht in der Mitte der linken Gruppe und ist ihr einziger kürzbarer Teil (HeaderLayout). Er ist
         // zugleich der Umschalter der Perspektiven (#1141); rechts daneben steht die Navigation der gewählten.
@@ -810,11 +807,25 @@ public final class MainWindow implements AppContext.Navigator {
                 section.title() + " (Strg+" + number + ")");
         button.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         button.getAccessibleContext().setAccessibleName(section.title());
-        button.addActionListener(e -> showByHand(section));
+        button.addActionListener(e -> clicked(section));
         return button;
     }
 
-    /** Ein Bereich, den der Benutzer selbst wählt (Knopf oder Strg+Zahl): der Suchreiter hebt die Auswahl auf. */
+    /**
+     * Ein Klick auf einen Bereichsknopf (Angelo, 27.11.2026): Der zweite Klick auf den gezeigten Bereich wählt ihn ab.
+     * Ohne Auswahl zeigt die Mitte die Suche; die Einstellungen über einer anderen Perspektive geben diese wieder frei.
+     */
+    private void clicked(AppContext.Section section) {
+        if (settingsOver != null && section == AppContext.Section.SETTINGS) {
+            leaveSettings();
+        } else if (section == current && settingsOver == null && perspectives.isCurrent(Perspectives.HARVESTER)) {
+            openSearchTab();
+        } else {
+            showByHand(section);
+        }
+    }
+
+    /** Ein Bereich, den der Benutzer selbst wählt (Knopf oder Strg+Zahl): die Suche von Hand hebt die Auswahl auf. */
     private void showByHand(AppContext.Section section) {
         if (section == AppContext.Section.SEARCH) {
             openSearchTab();
@@ -824,7 +835,7 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /**
-     * Der Suchreiter von Hand (Angelo, 24.11.2026): Die Auswahl der Wissensquellen verschwindet ganz, auch die globale;
+     * Die Suche von Hand (Strg+Zahl oder Abwählen des gezeigten Knopfs; Angelo, 24.11. und 27.11.2026): Die Auswahl der Wissensquellen verschwindet ganz, auch die globale;
      * gesucht wird überall, und der Chat arbeitet ohne Bereich nur mit den zugeschalteten Suchen, ohne die langsame
      * Suche im Bereich. Die Suche in der Titelleiste lässt die Auswahl dagegen stehen.
      */
@@ -1249,7 +1260,7 @@ public final class MainWindow implements AppContext.Navigator {
         if (changed && section == AppContext.Section.SEARCH && !history.restoring()) {
             history.preview();
             content.refreshHistoryNavigation();
-            // Gesucht wird in dem, was links gewählt ist; nur der Suchreiter von Hand hebt die Auswahl auf.
+            // Gesucht wird in dem, was links gewählt ist; nur die Suche von Hand hebt die Auswahl auf.
             searchView.scope(explorer.scopes());
         }
         // Keine zweite Leiste: Die Quellenkarten bzw. die Bereiche der Einstellungen ersetzen im Drawer den Explorer,
