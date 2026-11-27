@@ -987,6 +987,18 @@ public final class PageDetailPanel extends JPanel {
         browse.addActionListener(e -> browse());
         bookmark.addActionListener(e -> copyBookmark());
         star.addActionListener(e -> toggleFavorite());
+        // Rechtsklick auf den Stern: nur die Gruppen und „Neue Gruppe …“ (Angelo 27.11.2026).
+        star.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent e) {
+                starMenu(e);
+            }
+
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent e) {
+                starMenu(e);
+            }
+        });
         context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(this::updateStar));
         harvest.addActionListener(e -> harvestAssets());
         saveAsset.addActionListener(e -> saveAsset());
@@ -1157,17 +1169,37 @@ public final class PageDetailPanel extends JPanel {
 
     /** Setzt den Favoriten der gezeigten Seite oder nimmt ihn zurück (Pfad aus der geladenen Position). */
     private void toggleFavorite() {
+        com.aresstack.spaceharvester.app.ui.Favorites.Favorite favorite = shownFavorite();
+        if (favorite != null) {
+            // Derselbe Weg wie der Stern im Baum (ADR 0034): Pfad aus der Position, Zielordner aus der Favoritenansicht.
+            context.favorites().toggle(favorite);
+        }
+    }
+
+    /** Der Favorit der gezeigten Seite mit ihrem Pfad, oder {@code null} ohne Seite oder Space. */
+    private com.aresstack.spaceharvester.app.ui.Favorites.Favorite shownFavorite() {
         if (page == null || sourceId == null || pageId == null) {
-            return;
+            return null;
         }
         String spaceKey = shownPosition != null && shownPosition.spaceKey() != null ? shownPosition.spaceKey()
                 : page.header().metadata().partitionKey();
         if (spaceKey == null) {
+            return null;
+        }
+        return com.aresstack.spaceharvester.app.ui.Favorites.Favorite.page(sourceId, spaceKey, pageId,
+                page.header().metadata().title(), shownPosition, sourceTitle(sourceId));
+    }
+
+    /** Rechtsklick auf den Stern: die Gruppen der Favoriten; die Wahl macht die Seite zum Favoriten darin. */
+    private void starMenu(java.awt.event.MouseEvent e) {
+        com.aresstack.spaceharvester.app.ui.Favorites.Favorite favorite = e.isPopupTrigger() ? shownFavorite() : null;
+        if (favorite == null) {
             return;
         }
-        // Derselbe Weg wie der Stern im Baum (ADR 0034): Pfad aus der Position, Zielordner aus der Favoritenansicht.
-        context.favorites().toggle(com.aresstack.spaceharvester.app.ui.Favorites.Favorite.page(sourceId, spaceKey,
-                pageId, page.header().metadata().title(), shownPosition, sourceTitle(sourceId)));
+        var favorites = context.favorites();
+        String current = favorites.groupOf(favorite.sourceId(), favorite.spaceKey(), favorite.pageId()).orElse(null);
+        com.aresstack.spaceharvester.app.ui.GroupMenu.popup(star, favorites, current,
+                id -> favorites.assign(favorite, id)).show(star, e.getX(), e.getY());
     }
 
     private String sourceTitle(String id) {
@@ -1181,9 +1213,9 @@ public final class PageDetailPanel extends JPanel {
                 ? shownPosition.spaceKey() : page.header().metadata().partitionKey();
         boolean favorite = spaceKey != null && context.favorites().contains(sourceId, spaceKey, pageId);
         star.setEnabled(shown && spaceKey != null);
-        star.setIcon(favorite ? com.aresstack.spaceharvester.app.ui.Glyph.STAR_FILLED
-                : com.aresstack.spaceharvester.app.ui.Glyph.STAR);
-        star.setToolTipText(favorite ? "Favorit entfernen" : "Als Favorit markieren");
+        star.setIcon(com.aresstack.spaceharvester.app.ui.GroupMenu.star(favorite, favorite
+                ? context.favorites().colorOf(sourceId, spaceKey, pageId).orElse(null) : null));
+        star.setToolTipText((favorite ? "Favorit entfernen" : "Als Favorit markieren") + " · Rechtsklick: Gruppe zuordnen");
         star.getAccessibleContext().setAccessibleName(favorite ? "Favorit entfernen" : "Als Favorit markieren");
     }
 
