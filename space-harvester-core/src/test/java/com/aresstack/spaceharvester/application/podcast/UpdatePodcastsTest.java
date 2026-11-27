@@ -384,6 +384,32 @@ class UpdatePodcastsTest {
     }
 
     @Test
+    void deletingAPodcastRemovesOnlyItAndTellsTheObserversWithoutMakingItAgain() throws Exception {
+        // ADR 0047: lokales Artefakt löschen; die Zusammenfassung bleibt, nichts entsteht von selbst neu.
+        FakeModel model = new FakeModel();
+        UpdatePodcasts podcasts = podcasts(model, new FakeSpeech(voice -> false));
+        UpdateSummary summary = summary("Das Projekt Nordlicht hat eine neue Startseite.");
+        // Ein anderes Update (ein Podcast desselben Bereichs ersetzte den ersten ohnehin).
+        UpdateSummary base = summary("Das Projekt Nordlicht hat ein Glossar.");
+        UpdateSummary other = new UpdateSummary(base.sourceId(), "u-2", base.spaceKey(), base.text(),
+                base.statements(), base.model(), base.createdAt(), 0, false);
+        podcasts.start(caller, summary);
+        podcasts.start(caller, other);
+        AtomicInteger notified = new AtomicInteger();
+        podcasts.subscribe(UpdatePodcasts.key(summary), notified::incrementAndGet);
+        int calls = model.inputs.size();
+
+        assertThat(podcasts.deletable(summary)).isTrue();
+        assertThat(podcasts.delete(summary)).isTrue();
+
+        assertThat(podcasts.podcast(summary)).isEmpty();
+        assertThat(podcasts.podcast(other)).as("nur dieser eine").isPresent();
+        assertThat(notified.get()).isEqualTo(1);
+        assertThat(model.inputs).as("kein neuer Lauf").hasSize(calls);
+        assertThat(podcasts.delete(summary)).as("schon weg").isFalse();
+    }
+
+    @Test
     void renewingAPodcastDrawsPlanTextAudioAndPicturesAgain() throws Exception {
         FakeModel model = new FakeModel();
         UpdatePodcasts podcasts = podcasts(model, new FakeSpeech(voice -> false));
