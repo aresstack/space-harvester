@@ -169,6 +169,13 @@ class DocumentChatToolsTest {
             + "<rect width=\"40\" height=\"20\" fill=\"#8c8\"/></svg>";
 
     @Test
+    void aWishForAGraphicMakesAGraphicNotADocument() {
+        // Angelo 27.11.2026: „Ich wollte eine Grafik erstellen, er hat mir nur ein neues Dokument erstellt.“
+        assertThat(tools.rules()).contains("legst du eine Grafik an, kein Dokument")
+                .doesNotContain("  grafik_anlegen").doesNotContain("     ");
+    }
+
+    @Test
     void graphicsAreOwnArtifactsEmbeddedByReference() {
         List<String> drawn = new ArrayList<>();
         DocumentChatTools withDrawing = new DocumentChatTools(store, folder, chatId, focus::get,

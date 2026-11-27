@@ -57,7 +57,10 @@ public final class DocumentChatTools {
             nie anfassen.
             - Abschnittskennungen (a1, a2, …) und Dokumentkennungen (D1, …) stammen aus den Werkzeugen; nie raten.
             - abschnitt_ersetzen ersetzt nur den Text unter der Überschrift; die Überschrift ändert ueberschrift_aendern.
-            - Grafiken für ein Dokument: grafik_zeichnen (Thema und Inhalt, gezeichnet vom Bildmodell) oder             grafik_anlegen (du lieferst das SVG selbst), danach grafik_einbinden in den passenden Abschnitt. Ein SVG             nie in den Text eines Abschnitts schreiben.
+            - Möchte der Benutzer eine Grafik (Bild, Schaubild, Diagramm, Skizze, Plan), legst du eine Grafik an, \
+            kein Dokument: grafik_zeichnen (Thema und Inhalt, gezeichnet vom Bildmodell) oder grafik_anlegen (du \
+            lieferst das SVG selbst). Ein Dokument nur, wenn er auch Text haben möchte; dann die Grafik mit \
+            grafik_einbinden in den passenden Abschnitt. Ein SVG nie in den Text eines Abschnitts schreiben.
             - Antworte am Ende kurz, was du im Dokument getan hast; wiederhole das Dokument nicht in der Antwort.""";
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
