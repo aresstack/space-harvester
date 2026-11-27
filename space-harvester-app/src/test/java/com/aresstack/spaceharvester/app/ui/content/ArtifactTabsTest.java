@@ -32,12 +32,17 @@ class ArtifactTabsTest {
                 ChatArtifact.Origin.AI);
 
         ArtifactTabs[] tabs = new ArtifactTabs[1];
+        int[] revealed = new int[1];
         SwingUtilities.invokeAndWait(() -> {
             tabs[0] = new ArtifactTabs(store, new JLabel("Seite"));
+            tabs[0].reveal(() -> revealed[0]++);
             tabs[0].chat(folder, chat.id());
             tabs[0].open("d1");
         });
         {
+            assertThat(revealed[0]).as("Öffnen holt die Export-Ansicht nach vorn").isEqualTo(1);
+            assertThat(tabs[0].artifacts()).extracting(ChatArtifact::id).as("für das Menü „Weitere Aktionen“")
+                    .containsExactly("D1");
             assertThat(tabs[0].openIds()).containsExactly("D1");
             assertThat(tabs[0].focus()).isEqualTo("D1");
             assertThat(tabs[0].selectedView().sectionOrder()).containsExactly("a1", "a2");

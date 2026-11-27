@@ -438,8 +438,7 @@ public final class ChatPanel extends JPanel {
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(8, 12, 12, 12));
 
-        store = new ChatStore(() -> context.settings() == null ? null
-                : context.settings().storage().dataDirectory().resolve(ChatStore.FOLDER));
+        store = new ChatStore(context::chatsDirectory);
         artifacts = new com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore(store);
         JLabel heading = new JLabel("Chat:");
         heading.setFont(Comic.semiBold(16f));
