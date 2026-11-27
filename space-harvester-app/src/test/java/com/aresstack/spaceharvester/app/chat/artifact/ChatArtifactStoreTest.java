@@ -164,8 +164,17 @@ class ChatArtifactStoreTest {
         store.createDocument(folder, staying.id(), "Deins", "# Deins", ChatArtifact.Origin.AI);
         assertThat(mine.chatId()).isEqualTo(moving.id());
 
+        List<ChatArtifactStore.Event> events = new ArrayList<>();
+        store.addListener(events::add);
         java.util.Map<String, String> renamed = store.moveToProject(folder, moving.id(), "p1");
         assertThat(renamed).containsOnly(java.util.Map.entry("D1", "D1"));
+        // Beide Besitzer erfahren es: fort im alten Projekt, neu im neuen (etwa die Liste „Artefakte“ links).
+        assertThat(events).extracting(ChatArtifactStore.Event::owner, ChatArtifactStore.Event::deleted)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(standard, true),
+                        org.assertj.core.groups.Tuple.tuple(p1, false));
+        // Ein neuer, noch nicht gespeicherter Chat ohne Artefakte bleibt trotzdem im gewählten Projekt.
+        store.moveToProject(folder, "neu", "p1");
+        assertThat(store.owner(folder, "neu")).isEqualTo(p1);
         assertThat(ChatArtifactStore.listIn(p1)).extracting(ChatArtifact::title).containsExactly("Meins");
         assertThat(ChatArtifactStore.listIn(standard)).extracting(ChatArtifact::title).containsExactly("Deins");
     }
