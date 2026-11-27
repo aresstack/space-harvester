@@ -1204,6 +1204,19 @@ public final class Workspace {
         return images;
     }
 
+    /**
+     * Ein Bild aus einem Chat-Anhang vom Vision-Modell lesen lassen (Text, Beschriftungen, Whiteboard); gestreamt, nie
+     * auf dem EDT. Keine Quelle, also keine Quellenfreigabe; nichts wird gespeichert.
+     */
+    public String describeAttachmentImage(byte[] image, String mediaType, String instruction) {
+        return harvester.imageAnalysis().describeAttachment(image, mediaType, instruction);
+    }
+
+    /** Das eingestellte Vision-Modell, leer ohne Modell. */
+    public Optional<String> visionModel() {
+        return harvester.imageAnalysis().visionModel();
+    }
+
     /** Ob das Vision-Modell geladen ist und sofort antwortet (bei Ollama laut {@code /api/ps}). */
     public boolean visionModelLoaded() {
         return harvester.imageAnalysis().modelLoaded();
