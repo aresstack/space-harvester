@@ -2188,11 +2188,18 @@ public final class ChatPanel extends JPanel {
         editor.setEditable(false);
         status.setText(com.aresstack.spaceharvester.app.chat.AttachmentImages.anyImage(files) && images != null
                 && images.model() != null ? READING_IMAGES_STATUS : READING_ATTACHMENTS_STATUS);
+        // Die Frage gehört dem Chat, in dem sie gestellt wurde: Wechselt der Benutzer währenddessen den Chat (oder
+        // löscht ihn), geht sie nicht in einen anderen.
+        String startedChat = chat.id();
         Thread reading = new Thread(() -> {
             String asked = withAttachments(text, files, room, images);
             SwingUtilities.invokeLater(() -> {
                 readingAttachments = false;
                 editor.setEditable(true);
+                if (!startedChat.equals(chat.id())) {
+                    status.setText(CHAT_CHANGED_WHILE_READING);
+                    return;
+                }
                 status.setText(" ");
                 sendAsked(asked);
             });
@@ -2203,6 +2210,8 @@ public final class ChatPanel extends JPanel {
 
     static final String READING_ATTACHMENTS_STATUS = "Anhänge werden gelesen …";
     static final String READING_IMAGES_STATUS = "Bild wird vom Vision-Modell gelesen …";
+    static final String CHAT_CHANGED_WHILE_READING = "Nicht gesendet: Der Chat wurde gewechselt, während die Anhänge "
+            + "gelesen wurden";
     /** Bildangaben im Bild ohne Vision-Modell: wohin der Benutzer gehen muss. */
     static final String NO_VISION_MODEL = "(Bild: Kein Vision-Modell eingestellt – Einstellungen › KI-Dienst › Modelle "
             + "› „Vision-Modell“, etwa gemma)";

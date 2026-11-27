@@ -188,7 +188,7 @@ public class PageImageAnalysis {
      * Ein Bild, das der Benutzer selbst mitgibt (Chat-Anhang): Es gehört zu keiner Seite und keiner Quelle, also gilt
      * keine Quellenfreigabe, und nichts wird abgelegt. {@code instruction} ist der Prompt des Aufrufers; die Antwort
      * kommt gestreamt vom eingestellten Vision-Modell ({@link ImageDescriber#describe(byte[], String, String)}) und
-     * hat Vorrang vor dem Hintergrundlauf.
+     * hat Vorrang vor dem Hintergrundlauf; es gilt die Grenze gleichzeitiger Anfragen ({@code ai.parallel}).
      *
      * @throws ImageDescriptionException {@code NOT_CONFIGURED} ohne Vision-Modell
      */
@@ -198,7 +198,8 @@ public class PageImageAnalysis {
                 ImageDescriptionException.Reason.NOT_CONFIGURED, "Kein Vision-Modell eingestellt", null));
         try (ModelPriority.Interactive ignored = priority.interactive()) {
             prepare(model);
-            return model.describe(image, mediaType, instruction);
+            // Dieselbe Grenze gleichzeitiger Anfragen wie jede Bildbeschreibung (ai.parallel).
+            return assets.describeAttachment(image, mediaType, instruction);
         }
     }
 

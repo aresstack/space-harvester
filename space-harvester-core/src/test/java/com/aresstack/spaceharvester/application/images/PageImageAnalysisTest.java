@@ -589,6 +589,91 @@ class PageImageAnalysisTest {
     }
 
     /**
+     * Chat-Anhang (Angelo 27.11.2026): keine Quelle, keine Freigabe, nichts abgelegt; mehrere Bilder zugleich halten
+     * die Grenze gleichzeitiger Anfragen ({@code ai.parallel}) ein und warten statt abzulehnen.
+     */
+    @Test
+    void chatAttachmentsWaitForTheSharedLimitOfTheVisionModel() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger running = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger peak = new java.util.concurrent.atomic.AtomicInteger();
+        List<String> prompts = new java.util.concurrent.CopyOnWriteArrayList<>();
+        ImageDescriber vision = new ImageDescriber() {
+            @Override
+            public String id() {
+                return "fake-vision";
+            }
+
+            @Override
+            public String modelVersion() {
+                return "gemma";
+            }
+
+            @Override
+            public String describe(byte[] image, String mediaType) {
+                return describe(image, mediaType, null);
+            }
+
+            @Override
+            public String describe(byte[] image, String mediaType, String instruction) {
+                peak.accumulateAndGet(running.incrementAndGet(), Math::max);
+                try {
+                    Thread.sleep(40);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                running.decrementAndGet();
+                prompts.add(instruction);
+                return "Text " + image.length;
+            }
+
+            @Override
+            public boolean mayDescribe(String sourceId) {
+                return false;
+            }
+
+            @Override
+            public int parallel() {
+                return 1;
+            }
+        };
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of();
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return Optional.empty();
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(directory), 10_000_000, Clock.systemUTC(), vision,
+                null);
+        PageImageAnalysis analysis = new PageImageAnalysis(assets, new Enrichments(PROJECTOR,
+                List.of(new ImageProcessor(() -> vision)), new InMemoryEnrichmentStore(), Clock.systemUTC()),
+                Clock.systemUTC());
+
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(3);
+        try {
+            List<java.util.concurrent.Future<String>> answers = new java.util.ArrayList<>();
+            for (int i = 1; i <= 3; i++) {
+                byte[] image = new byte[i];
+                answers.add(pool.submit(() -> analysis.describeAttachment(image, "image/png", "Was steht da?")));
+            }
+            List<String> texts = new java.util.ArrayList<>();
+            for (java.util.concurrent.Future<String> answer : answers) {
+                texts.add(answer.get(10, java.util.concurrent.TimeUnit.SECONDS));
+            }
+            assertThat(texts).containsExactly("Text 1", "Text 2", "Text 3");
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(peak.get()).isEqualTo(1);
+        assertThat(prompts).containsOnly("Was steht da?");
+        assertThat(analysis.visionModel()).contains("gemma");
+    }
+
+    /**
      * Echttest des automatischen Laufs gegen ein Ollama auf diesem Rechner (nur HTTP-API, erfundene Bilder): zwei
      * freigegebene Seiten mit je einem Bild, eine nicht freigegebene, Obergrenze 1 je Lauf. Läuft nur mit
      * {@code OLLAMA_PROBE_IMAGES} (Basis-URL, etwa {@code http://localhost:11434}) und optional
