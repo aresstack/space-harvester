@@ -306,6 +306,15 @@ public class Enrichments {
         return List.copyOf(processors.keySet());
     }
 
+    /**
+     * Ob der Prozessor für diese Seite über das Netz rechnet ({@link EnrichmentProcessor#background(PageKey)}), etwa
+     * Absätze mit Embedding-Modell einer freigegebenen Quelle; für einen unbekannten Prozessor {@code false}.
+     */
+    public boolean network(PageKey key, String processorId) {
+        EnrichmentProcessor processor = processors.get(processorId);
+        return processor != null && processor.background(key);
+    }
+
     /** Only local processors that explicitly track dependencies on other stored pages. */
     public List<String> dependentProcessorIds(String sourceId) {
         return processors.values().stream()

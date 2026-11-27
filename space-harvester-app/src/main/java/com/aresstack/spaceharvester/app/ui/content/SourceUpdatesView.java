@@ -294,6 +294,8 @@ final class SourceUpdatesView extends JPanel {
 
         reportBody.setLayout(new BoxLayout(reportBody, BoxLayout.Y_AXIS));
         summaryReport = new SummaryReport(reportBody, summaryHost());
+        // Wovon der ganze Podcast nie erzählt, steht grau da (Angelo 27.11.2026).
+        podcast.cover(summaryReport::cover);
         reportBody.setOpaque(false);
         report.setOpaque(false);
         report.add(reportBody, BorderLayout.NORTH);
@@ -1494,6 +1496,16 @@ final class SourceUpdatesView extends JPanel {
     /** Gelb markierte Teile (für Tests). */
     List<String> podcastMarked() {
         return summaryReport.marked();
+    }
+
+    /** Grau hinterlegte Teile, von denen der Podcast nie erzählt (für Tests). */
+    List<String> podcastGaps() {
+        return summaryReport.gaps();
+    }
+
+    /** Wovon der ganze Podcast erzählt, wie es der Knopf meldet (für Tests). */
+    void coverPodcast(java.util.Optional<List<Integer>> statements) {
+        summaryReport.cover(statements);
     }
 
     /** So breit steht ein Bild in der Podcast-Ansicht rechts neben der Seitenzeile. */
