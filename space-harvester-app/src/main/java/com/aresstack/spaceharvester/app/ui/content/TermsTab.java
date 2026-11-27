@@ -210,6 +210,10 @@ final class TermsTab extends JPanel {
     private final JPanel relationLines = new JPanel();
     private final JLabel hint = Comic.muted(" ");
     private Consumer<List<Span>> onJump = spans -> { };
+    /** Klick auf den Stand, wenn die Analyse nicht aktuell ist; {@code null}: der Stand ist nur Anzeige. */
+    private Runnable onRecompute;
+    /** Tooltip des Stands, wenn er zugleich der Knopf zum Neuberechnen ist (Begriffe und Absätze gleich). */
+    static final String RECOMPUTE_TIP = "Klick berechnet die Analysen dieser Seite neu";
     private Consumer<TermQueries.Occurrence> onOpen = occurrence -> { };
     private PageAcronyms shown;
     private PageTerms shownTerms;
@@ -405,6 +409,11 @@ final class TermsTab extends JPanel {
         onJump = Objects.requireNonNull(listener, "listener");
     }
 
+    /** {@code action} läuft beim Klick auf den Stand, solange die Analyse der Seite nicht aktuell ist. */
+    void onRecompute(Runnable action) {
+        onRecompute = Objects.requireNonNull(action, "action");
+    }
+
     /** Zeigt nur die Akronyme der Seite; Bezeichner bleiben offen. */
     void show(PageAcronyms acronyms) {
         show(acronyms, null);
@@ -419,7 +428,10 @@ final class TermsTab extends JPanel {
         shown = acronyms;
         shownTerms = terms;
         PageAcronyms.State current = acronyms == null ? PageAcronyms.State.MISSING : acronyms.state();
-        head.status(stateText(current), stateColor(current));
+        // Ohne Seite (acronyms null) gibt es nichts neu zu berechnen; sonst ist jeder Stand außer „Aktuell“ ein Knopf.
+        boolean clickable = acronyms != null && current != PageAcronyms.State.CURRENT && onRecompute != null;
+        head.status(stateText(current), stateColor(current), clickable ? RECOMPUTE_TIP : null,
+                clickable ? onRecompute : null);
         // Nur ein aktuelles Ergebnis hat Begriffe und Fundstellen; veraltet oder fehlgeschlagen zählt nichts.
         boolean any = current == PageAcronyms.State.CURRENT;
         acronymCount.setText(any ? String.valueOf(acronyms.acronyms().size()) : NOT_YET);
@@ -1171,11 +1183,12 @@ final class TermsTab extends JPanel {
     static String hint(PageAcronyms acronyms, int visible, boolean filtered, String kind) {
         PageAcronyms.State state = acronyms == null ? PageAcronyms.State.MISSING : acronyms.state();
         return switch (state) {
-            case MISSING -> "Noch keine Analyse für diese Seite. Sie entsteht nach dem nächsten Abgleich oder über "
-                    + "„Analyse neu berechnen“ unter Text.";
-            case STALE -> "Die Analyse passt nicht mehr zum angezeigten Text; „Analyse neu berechnen“ unter Text "
-                    + "zeigt die Begriffe wieder.";
-            case FAILED -> "Die letzte Analyse ist fehlgeschlagen; „Analyse neu berechnen“ unter Text startet sie neu.";
+            case MISSING -> "Noch keine Analyse für diese Seite. Ein Klick auf „Nicht durchgeführt“ oben rechts "
+                    + "berechnet sie.";
+            case STALE -> "Die Analyse passt nicht mehr zum angezeigten Text; ein Klick auf „Veraltet“ oben rechts "
+                    + "berechnet sie neu.";
+            case FAILED -> "Die letzte Analyse ist fehlgeschlagen; ein Klick auf „Fehlgeschlagen“ oben rechts "
+                    + "startet sie neu.";
             case CURRENT -> visible == 0 && !filtered ? "Auf dieser Seite wurden keine " + plural(kind) + " erkannt."
                     : visible == 0 && filtered ? noMatch(kind) : " ";
         };
@@ -1206,6 +1219,10 @@ final class TermsTab extends JPanel {
 
     String stateLabel() {
         return head.statusText();
+    }
+
+    TabHeader header() {
+        return head;
     }
 
     List<CountTile> countTiles() {

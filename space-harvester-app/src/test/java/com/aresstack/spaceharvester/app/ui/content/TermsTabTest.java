@@ -425,8 +425,28 @@ class TermsTabTest {
         });
         assertThat(seen.get(0)).isEqualTo("Veraltet");
         assertThat(seen.get(1)).isEqualTo(TermsTab.NOT_YET);
-        assertThat(seen.get(2)).contains("Analyse neu berechnen");
+        assertThat(seen.get(2)).contains("Klick auf „Veraltet“");
         assertThat(seen.get(3)).isEqualTo("true");
+    }
+
+    @Test
+    void theStaleBadgeIsTheRecomputeButton() throws Exception {
+        List<Integer> clicks = new ArrayList<>();
+        List<Boolean> clickable = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermsTab terms = new TermsTab();
+            terms.onRecompute(() -> clicks.add(1));
+            terms.show(new PageAcronyms(PageAcronyms.State.STALE, RESULT, List.of(), List.of()));
+            clickable.add(terms.header().statusClickable());
+            terms.header().clickStatus();
+            terms.show(new PageAcronyms(PageAcronyms.State.CURRENT, RESULT, List.of(), List.of()));
+            clickable.add(terms.header().statusClickable());
+            terms.header().clickStatus();
+            terms.show(null);
+            clickable.add(terms.header().statusClickable());
+        });
+        assertThat(clickable).containsExactly(true, false, false);
+        assertThat(clicks).as("nur „Veraltet“ rechnet neu").hasSize(1);
     }
 
     @Test

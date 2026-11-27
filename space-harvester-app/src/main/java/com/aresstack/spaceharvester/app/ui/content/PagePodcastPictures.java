@@ -65,6 +65,10 @@ final class PagePodcastPictures {
     private final List<JLabel> labels = new ArrayList<>();
     private final List<Object> marks = new ArrayList<>();
     private final DefaultHighlighter.DefaultHighlightPainter painter = new DefaultHighlighter.DefaultHighlightPainter(MARK);
+    /** Die grauen Lücken: Text, von dem der ganze Podcast nie erzählt (Angelo 27.11.2026). */
+    private final List<Object> gaps = new ArrayList<>();
+    private final DefaultHighlighter.DefaultHighlightPainter gapPainter =
+            new DefaultHighlighter.DefaultHighlightPainter(Comic.PODCAST_GAP);
     /** Der rechte Innenabstand des Texts ohne Bildspalte; {@code -1}, solange keine Spalte steht. */
     private int baseRight = -1;
     /** Der untere Innenabstand ohne Bilder, die über das Textende hinausragen; {@code -1}, solange keine Spalte steht. */
@@ -147,6 +151,75 @@ final class PagePodcastPictures {
             Rectangle at = rectangle(first);
             JTextComponentScroll.toTop(text, at);
         }
+    }
+
+    /**
+     * Hinterlegt hellgrau, was außerhalb dieser Stellen steht, also wovon der ganze Podcast nie erzählt (Angelo
+     * 27.11.2026: „damit man sofort sehen kann, was nicht abgedeckt war im Podcast“); leer nimmt das Grau weg. Das Gelb
+     * der laufenden Stelle liegt nie auf Grau, denn es markiert nur erzählte Stellen.
+     */
+    void cover(java.util.Optional<List<int[]>> covered) {
+        for (Object gap : gaps) {
+            text.getHighlighter().removeHighlight(gap);
+        }
+        gaps.clear();
+        if (covered.isEmpty()) {
+            return;
+        }
+        String all;
+        try {
+            all = text.getDocument().getText(0, text.getDocument().getLength());
+        } catch (BadLocationException e) {
+            return;
+        }
+        for (int[] gap : gaps(all, covered.get())) {
+            try {
+                gaps.add(text.getHighlighter().addHighlight(gap[0], gap[1], gapPainter));
+            } catch (BadLocationException e) {
+                // eine Stelle außerhalb des Texts bleibt ohne Grau
+            }
+        }
+    }
+
+    /** Wie viele graue Lücken dastehen. */
+    int gaps() {
+        return gaps.size();
+    }
+
+    /**
+     * Die Stellen von {@code all}, die außerhalb aller {@code covered} liegen, als {@code [start, end)} in
+     * Textreihenfolge; Leerraum am Rand einer Lücke bleibt weiß, eine Lücke nur aus Leerraum entfällt.
+     */
+    static List<int[]> gaps(String all, List<int[]> covered) {
+        boolean[] told = new boolean[all.length()];
+        for (int[] span : covered) {
+            int start = Math.max(0, Math.min(span[0], all.length()));
+            int end = Math.max(start, Math.min(span[1], all.length()));
+            java.util.Arrays.fill(told, start, end, true);
+        }
+        List<int[]> gaps = new ArrayList<>();
+        int i = 0;
+        while (i < all.length()) {
+            if (told[i]) {
+                i++;
+                continue;
+            }
+            int start = i;
+            while (i < all.length() && !told[i]) {
+                i++;
+            }
+            int end = i;
+            while (start < end && Character.isWhitespace(all.charAt(start))) {
+                start++;
+            }
+            while (end > start && Character.isWhitespace(all.charAt(end - 1))) {
+                end--;
+            }
+            if (end > start) {
+                gaps.add(new int[]{start, end});
+            }
+        }
+        return gaps;
     }
 
     /** Öffnet das Bild von Thema {@code topic}, wie es der Podcast tut; {@code false} ohne Bild. */

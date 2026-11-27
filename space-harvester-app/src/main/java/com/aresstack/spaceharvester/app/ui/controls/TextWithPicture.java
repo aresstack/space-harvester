@@ -182,6 +182,11 @@ public final class TextWithPicture extends JPanel {
         return mark != null;
     }
 
+    /** Die Farbe der Hinterlegung, {@code null} ohne. */
+    public Color highlightColor() {
+        return mark;
+    }
+
     private void remark() {
         unmark.forEach(Runnable::run);
         unmark.clear();

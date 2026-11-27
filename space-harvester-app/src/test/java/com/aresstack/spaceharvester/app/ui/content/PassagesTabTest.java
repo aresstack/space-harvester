@@ -96,15 +96,16 @@ class PassagesTabTest {
     }
 
     @Test
-    void theRecomputeButtonFollowsAcronymsAndPassages() {
-        assertThat(PageDetailPanel.recomputeOffered(com.aresstack.spaceharvester.application.enrichment.PageAcronyms
-                .State.CURRENT, PagePassages.State.STALE)).isTrue();
-        assertThat(PageDetailPanel.recomputeOffered(com.aresstack.spaceharvester.application.enrichment.PageAcronyms
-                .State.CURRENT, PagePassages.State.FAILED)).isTrue();
-        assertThat(PageDetailPanel.recomputeOffered(com.aresstack.spaceharvester.application.enrichment.PageAcronyms
-                .State.CURRENT, PagePassages.State.CURRENT)).isFalse();
-        assertThat(PageDetailPanel.recomputeOffered(com.aresstack.spaceharvester.application.enrichment.PageAcronyms
-                .State.STALE, PagePassages.State.CURRENT)).isTrue();
+    void theStaleAnalysesOfTheReaderAreRecomputedWithoutAClick() {
+        // Angelo 27.11.2026: Braucht die Leseansicht eine veraltete Analyse, rechnet ein Auftrag sie von selbst neu.
+        assertThat(PageDetailPanel.staleAnalyses(com.aresstack.spaceharvester.application.enrichment.PageAcronyms
+                .State.CURRENT, null, PagePassages.State.STALE)).containsExactly("passages");
+        assertThat(PageDetailPanel.staleAnalyses(com.aresstack.spaceharvester.application.enrichment.PageAcronyms
+                .State.STALE, com.aresstack.spaceharvester.application.terms.PageTerms.State.STALE,
+                PagePassages.State.CURRENT)).containsExactly("acronyms", "terms");
+        assertThat(PageDetailPanel.staleAnalyses(com.aresstack.spaceharvester.application.enrichment.PageAcronyms
+                .State.CURRENT, com.aresstack.spaceharvester.application.terms.PageTerms.State.CURRENT,
+                PagePassages.State.CURRENT)).isEmpty();
     }
 
     @Test
