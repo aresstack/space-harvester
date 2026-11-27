@@ -270,7 +270,7 @@ class AreaSummaryViewTest {
             boolean[] changed = {false};
             List<String> started = new java.util.ArrayList<>();
             view.books(id -> edition);
-            view.staleness(shown -> changed[0]);
+            view.staleness((folderId, shown) -> changed[0]);
             view.onNewEdition(started::add);
 
             view.folder(folder("ordner-buch", Root.space("wiki", "BAU")));

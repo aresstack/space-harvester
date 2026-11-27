@@ -258,7 +258,7 @@ final class AreaSummaryView extends JPanel {
     private BookEditions.Edition edition;
     private java.util.function.Function<String, BookEditions.Edition> books = folderId -> null;
     /** Ob sich Seiten der gezeigten Auflage seither geändert haben; läuft im Hintergrund. */
-    private java.util.function.Predicate<BookEditions.Edition> staleness = shown -> false;
+    private java.util.function.BiPredicate<String, BookEditions.Edition> staleness = (folderId, shown) -> false;
     /** Ob sich Seiten der gezeigten Auflage seither geändert haben. */
     private boolean bookStale;
     /** Startet „Neue Auflage erzeugen“ für die Ordner-ID. */
@@ -557,13 +557,13 @@ final class AreaSummaryView extends JPanel {
         }
         int mine = ++generation;
         java.util.function.Function<String, BookEditions.Edition> bookOf = books;
-        java.util.function.Predicate<BookEditions.Edition> staleOf = staleness;
+        java.util.function.BiPredicate<String, BookEditions.Edition> staleOf = staleness;
         boolean running = runningJob != null;
         runner.run(() -> {
             BookEditions.Edition book = mode == Mode.READ && of.folder() != null
                     ? bookOf.apply(of.folder().folderId()) : null;
             return new Loaded(current.area(of), current.available(), running ? current.partial(of) : null, book,
-                    book != null && staleOf.test(book));
+                    book != null && staleOf.test(of.folder().folderId(), book));
         }, found -> {
             if (mine != generation || !Objects.equals(of, target)) {
                 return;
@@ -610,10 +610,10 @@ final class AreaSummaryView extends JPanel {
         }
         int mine = ++generation;
         java.util.function.Function<String, BookEditions.Edition> bookOf = books;
-        java.util.function.Predicate<BookEditions.Edition> staleOf = staleness;
+        java.util.function.BiPredicate<String, BookEditions.Edition> staleOf = staleness;
         String folderId = of.folder().folderId();
         runner.run(() -> java.util.Optional.ofNullable(bookOf.apply(folderId))
-                .map(book -> java.util.Map.entry(book, staleOf.test(book))), found -> {
+                .map(book -> java.util.Map.entry(book, staleOf.test(folderId, book))), found -> {
             if (mine != generation || !Objects.equals(of, target) || found.isEmpty()) {
                 return;
             }
@@ -638,7 +638,7 @@ final class AreaSummaryView extends JPanel {
     }
 
     /** Prüft im Hintergrund, ob sich Seiten einer Auflage seither geändert haben. */
-    void staleness(java.util.function.Predicate<BookEditions.Edition> changed) {
+    void staleness(java.util.function.BiPredicate<String, BookEditions.Edition> changed) {
         staleness = Objects.requireNonNull(changed, "changed");
     }
 

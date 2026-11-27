@@ -71,13 +71,22 @@ public final class BookEditions {
     public record Source(String sourceId, String pageId, String version) {
     }
 
-    /** Eine Auflage. */
-    public record Edition(int number, Instant createdAt, String book, String report, List<Source> sources) {
+    /**
+     * Eine Auflage. {@code members} sind die Seiten des Ordners beim Schreiben (ohne Stand), {@code null} bei Auflagen,
+     * die sie noch nicht kannten; daran erkennt {@link #stale} hinzugekommene und entfernte Seiten (ADR 0044 §4).
+     */
+    public record Edition(int number, Instant createdAt, String book, String report, List<Source> sources,
+                          List<Source> members) {
 
         public Edition {
             book = book == null ? "" : book;
             report = report == null ? "" : report;
             sources = sources == null ? List.of() : List.copyOf(sources);
+            members = members == null ? null : List.copyOf(members);
+        }
+
+        public Edition(int number, Instant createdAt, String book, String report, List<Source> sources) {
+            this(number, createdAt, book, report, sources, null);
         }
     }
 
@@ -94,11 +103,17 @@ public final class BookEditions {
      */
     public static Edition add(Path dataDirectory, String folderId, Instant createdAt, String book, String report,
                               List<Source> sources) throws IOException {
+        return add(dataDirectory, folderId, createdAt, book, report, sources, null);
+    }
+
+    /** Wie {@link #add(Path, String, Instant, String, String, List)}, mit den Seiten des Ordners beim Schreiben. */
+    public static Edition add(Path dataDirectory, String folderId, Instant createdAt, String book, String report,
+                              List<Source> sources, List<Source> members) throws IOException {
         Path directory = directory(dataDirectory, folderId);
         Files.createDirectories(directory);
         for (int number = highest(directory) + 1; ; number++) {
             Edition edition = new Edition(number, Objects.requireNonNull(createdAt, "createdAt"), book, report,
-                    sources);
+                    sources, members);
             Path target = directory.resolve(String.format(java.util.Locale.ROOT, "auflage-%04d.json", number));
             try {
                 Files.writeString(target, JSON.writeValueAsString(edition), StandardCharsets.UTF_8,
@@ -123,15 +138,22 @@ public final class BookEditions {
     }
 
     /**
-     * Ob sich eine Seite der Auflage seither geändert hat (Architekt 27.11.2026: „Neue Auflage erzeugen“ bei geändertem
-     * Quellenstand). Verglichen wird der beim Lesen gemerkte Stand mit dem jetzigen; eine Seite ohne gemerkten oder
-     * ohne jetzigen Stand zählt nicht, weil daraus keine Änderung folgt.
+     * Ob der Quellenstand seither abweicht (ADR 0044 §4): eine Seite des Ordners hinzugekommen oder entfernt, oder eine
+     * gelesene Seite in neuer Version. Verglichen wird der beim Lesen gemerkte Stand mit dem jetzigen; eine Seite ohne
+     * gemerkten oder ohne jetzigen Stand zählt nicht, weil daraus keine Änderung folgt. Die Seiten des Ordners zählen
+     * nur, wenn die Auflage sie kennt.
+     *
+     * @param members die jetzigen Seiten des Ordners (Stand egal), {@code null}, wenn unbekannt
      */
-    public static boolean stale(Edition edition, java.util.function.Function<Source, String> currentVersion) {
+    public static boolean stale(Edition edition, java.util.Collection<Source> members,
+                                java.util.function.Function<Source, String> currentVersion) {
         if (edition == null) {
             return false;
         }
         Objects.requireNonNull(currentVersion, "currentVersion");
+        if (edition.members() != null && members != null && !pages(edition.members()).equals(pages(members))) {
+            return true;
+        }
         for (Source source : edition.sources()) {
             if (source.version() == null) {
                 continue;
@@ -147,6 +169,14 @@ public final class BookEditions {
             }
         }
         return false;
+    }
+
+    private static java.util.Set<List<String>> pages(java.util.Collection<Source> sources) {
+        java.util.Set<List<String>> pages = new java.util.HashSet<>();
+        for (Source source : sources) {
+            pages.add(List.of(String.valueOf(source.sourceId()), String.valueOf(source.pageId())));
+        }
+        return pages;
     }
 
     /** Ob der Ordner schon eine Auflage hat; liest nur die Dateinamen. */
