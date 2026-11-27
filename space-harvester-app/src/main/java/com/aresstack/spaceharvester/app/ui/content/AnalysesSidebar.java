@@ -51,11 +51,7 @@ public final class AnalysesSidebar extends JPanel {
         JLabel title = new JLabel(TITLE);
         title.setFont(Comic.semiBold(14f));
         title.setForeground(Comic.TEXT);
-        JPanel head = new JPanel(new BorderLayout(8, 0));
-        head.setOpaque(false);
-        head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(0, 12, 0, 8)));
-        head.setPreferredSize(new Dimension(0, ChatSidebar.HEAD_HEIGHT));
+        JPanel head = new com.aresstack.spaceharvester.app.ui.controls.HeadBar(new BorderLayout(8, 0), 12, 8);
         head.add(title, BorderLayout.CENTER);
         JPanel centered = new JPanel(new java.awt.GridBagLayout());
         centered.setOpaque(false);

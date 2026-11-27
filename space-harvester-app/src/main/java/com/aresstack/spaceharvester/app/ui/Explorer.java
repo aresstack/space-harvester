@@ -1049,8 +1049,12 @@ public final class Explorer {
         JPanel viewRow = new JPanel(new BorderLayout());
         viewRow.setOpaque(false);
         viewRow.add(selectAll, BorderLayout.WEST);
-        viewRow.add(view, BorderLayout.EAST);
-        title.add(viewRow, BorderLayout.NORTH);
+        // Senkrecht mittig in der Kopfleiste, in seiner eigenen Höhe.
+        JPanel viewHolder = new JPanel(new java.awt.GridBagLayout());
+        viewHolder.setOpaque(false);
+        viewHolder.add(view);
+        viewRow.add(viewHolder, BorderLayout.EAST);
+        title.add(viewRow, BorderLayout.CENTER);
         artifacts.onNote(text -> {
             if (artifactsShown()) {
                 note.setText(text);

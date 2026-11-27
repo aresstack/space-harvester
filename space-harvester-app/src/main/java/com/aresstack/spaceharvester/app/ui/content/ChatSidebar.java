@@ -29,7 +29,7 @@ public final class ChatSidebar extends JPanel {
     /** Schmaler wird die offene Leiste nicht: darunter passt die Eingabe nicht mehr. */
     public static final int MIN_WIDTH = 320;
     /** Höhe der Kopfzeile samt Linie: dieselbe wie die Kopfzeile der Seitenansicht daneben. */
-    public static final int HEAD_HEIGHT = 35;
+    public static final int HEAD_HEIGHT = com.aresstack.spaceharvester.app.ui.controls.HeadBar.HEIGHT;
 
     private final ChatPanel chat;
     /**
@@ -51,11 +51,7 @@ public final class ChatSidebar extends JPanel {
                     moreMenu(), more);
             menu.show(more, more.getWidth() - menu.getPreferredSize().width, more.getHeight());
         });
-        JPanel head = new JPanel(new BorderLayout(8, 0));
-        head.setOpaque(false);
-        head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(0, 12, 0, 8)));
-        head.setPreferredSize(new java.awt.Dimension(0, HEAD_HEIGHT));
+        JPanel head = new com.aresstack.spaceharvester.app.ui.controls.HeadBar(new BorderLayout(8, 0), 12, 8);
         head.add(chat.header(), BorderLayout.CENTER);
         // Senkrecht mittig in der Kopfzeile statt oben angeklebt (Angelo 24.11.2026).
         JPanel centered = new JPanel(new java.awt.GridBagLayout());

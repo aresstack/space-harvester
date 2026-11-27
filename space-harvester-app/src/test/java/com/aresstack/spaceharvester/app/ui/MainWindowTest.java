@@ -742,6 +742,55 @@ class MainWindowTest {
     }
 
     @Test
+    void theHeadBarsOfLeftMiddleAndRightEndOnOneLine() throws Exception {
+        // Angelo 27.11.2026: Die Kopfleisten links, in der Mitte und rechts sind gleich hoch, die Linie darunter läuft
+        // auf einer Höhe durch. Alle sind dieselbe Klasse (HeadBar), die die Höhe allein festlegt.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            surface.setSize(1400, 820);
+            for (AppContext.Section section : List.of(AppContext.Section.SEARCH, AppContext.Section.CONTENT)) {
+                window.show(section);
+                for (Runnable side : List.<Runnable>of(() -> window.chatOpen(true), () -> window.jobsOpen(true),
+                        () -> window.analysesOpen(true))) {
+                    side.run();
+                    layout(surface);
+                    layout(surface);
+                    List<com.aresstack.spaceharvester.app.ui.controls.HeadBar> bars = find(surface,
+                            com.aresstack.spaceharvester.app.ui.controls.HeadBar.class).stream()
+                            .filter(MainWindowTest::shownInTree).toList();
+                    assertThat(bars).as("links, Mitte, rechts in %s", section).hasSizeGreaterThanOrEqualTo(3);
+                    assertThat(bars).allSatisfy(bar -> {
+                        assertThat(bar.getHeight())
+                                .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.HeadBar.HEIGHT);
+                        assertThat(SwingUtilities.convertPoint(bar, 0, bar.getHeight(), surface).y)
+                                .isEqualTo(SwingUtilities.convertPoint(bars.get(0), 0, bars.get(0).getHeight(),
+                                        surface).y);
+                    });
+                }
+            }
+            window.chatOpen(true);
+            window.chatOpen(false);
+        });
+    }
+
+    /** Ob das Bauteil und alle seine Vorfahren sichtbar sind und es eine Fläche hat (ohne Fenster gemessen). */
+    private static boolean shownInTree(java.awt.Component component) {
+        for (java.awt.Component up = component; up != null; up = up.getParent()) {
+            if (!up.isVisible()) {
+                return false;
+            }
+        }
+        return component.getWidth() > 0 && component.getHeight() > 0;
+    }
+
+    @Test
     void theSearchTabByHandClearsTheSelectionAndLeavingItSelectsAllSources() throws Exception {
         // Angelo 24.11.2026: Der Suchreiter von Hand hebt die Auswahl auf, die Suche in der Titelleiste nicht; wer die
         // Suche ohne Auswahl verlässt, hat „Wissensquellen“ gewählt.

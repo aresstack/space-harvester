@@ -378,7 +378,8 @@ public final class ActivitiesView implements View {
         globalRow.add(global);
         globalRow.add(hint);
         tools = globalRow;
-        JPanel listHead = new JPanel();
+        // Dieselbe Kopfleiste wie überall (HeadBar): gleiche Höhe, Linie darunter (Angelo 22.11. und 27.11.2026).
+        JPanel listHead = new com.aresstack.spaceharvester.app.ui.controls.HeadBar(null, 10, 6);
         // Reicht die Breite nicht (Leiste an ihrer Mindestbreite), weicht der Besen; „Fertige löschen“ steht
         // dann im Menü hinter dem Dreieck.
         int fullTools = listTools.getPreferredSize().width;
@@ -387,12 +388,6 @@ public final class ActivitiesView implements View {
         deleteFinished.setVisible(true);
         listHead.setLayout(new HeadLayout(listTitle, listTools, saved,
                 tight -> deleteFinished.setVisible(!tight)));
-        listHead.setOpaque(false);
-        // Dieselbe Kopfzeile wie der Chat und die Seitenansicht: gleiche Höhe, Linie darunter (Angelo 22.11.2026).
-        listHead.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(0, 10, 0, 6)));
-        listHead.setPreferredSize(new java.awt.Dimension(0,
-                com.aresstack.spaceharvester.app.ui.content.ChatSidebar.HEAD_HEIGHT));
         listHead.add(listTitle);
         listHead.add(listTools);
         updateGlobalButtons(List.of());

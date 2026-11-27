@@ -575,7 +575,9 @@ public final class MainWindow implements AppContext.Navigator {
         side.setBackground(Comic.SURFACE);
         // Unten ohne Rand: Die Fußleiste des Explorers (SideFoot) steht bündig auf einer Linie mit der Leiste mit der
         // Lupe unter der Arbeitsfläche, gleich hoch (Comic.FOOT_HEIGHT).
-        side.setBorder(BorderFactory.createEmptyBorder(10, 12, 0, 10));
+        // Oben ohne Rand: Die Kopfleiste des Explorers (HeadBar) steht auf einer Linie mit der der Mitte und der der
+        // rechten Leiste (Angelo 27.11.2026); die Schubladen bringen ihren Abstand selbst mit.
+        side.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 10));
         side.setMinimumSize(new Dimension(0, 0));
         side.add(explorer.component(), EXPLORER);
         side.add(bottomGap(sources.drawer()), AppContext.Section.SOURCES.name());
@@ -1809,12 +1811,12 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /**
-     * Gibt einer Schublade der linken Leiste den unteren Rand, den die Leiste selbst nicht mehr hat. Ohne Hülle: Die
+     * Gibt einer Schublade der linken Leiste den oberen und unteren Rand, den die Leiste selbst nicht mehr hat. Ohne Hülle: Die
      * Schublade bleibt direktes Kind der Leiste.
      */
     private static JComponent bottomGap(JComponent drawer) {
         drawer.setBorder(BorderFactory.createCompoundBorder(drawer.getBorder(),
-                BorderFactory.createEmptyBorder(0, 0, 10, 0)));
+                BorderFactory.createEmptyBorder(10, 0, 10, 0)));
         return drawer;
     }
 

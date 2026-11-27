@@ -114,10 +114,10 @@ public final class ContentView implements View {
             }
         });
 
-        JPanel top = new JPanel(new BorderLayout(12, 0));
+        // Dieselbe Kopfleiste wie die Suche und die Seitenleisten (HeadBar): eine Höhe, eine Linie.
+        JPanel top = new com.aresstack.spaceharvester.app.ui.controls.HeadBar(new BorderLayout(12, 0), 12, 12);
         top.setBackground(Comic.SURFACE);
-        top.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(4, 12, 4, 12)));
+        top.setOpaque(true);
         // Eine Zeile statt zwei (Angelo, 16.11.2026): links, wo die Seite liegt, mittig ihre Überschrift, rechts Stern
         // und das Dreieck mit den weiteren Aktionen. Die Überschrift kürzt sich mit „…“, wenn der Platz nicht reicht.
         historyHeader = locationHeader();

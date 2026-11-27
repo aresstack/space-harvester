@@ -20,7 +20,7 @@ import java.util.Objects;
  * Überschrift „Wissensquellen“ im Explorer, und meldet das ({@link #onSelect}); {@link #selected(boolean) false} hebt
  * die Markierung wieder auf, etwa wenn darunter ein Eintrag gewählt wird (Angelo, 23.11.2026). Nur auf dem EDT.
  */
-public final class SelectableHeading extends JPanel {
+public final class SelectableHeading extends HeadBar {
 
     private final JLabel title = new JLabel(" ");
     private final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
@@ -28,12 +28,9 @@ public final class SelectableHeading extends JPanel {
     private Runnable onSelect = () -> { };
 
     public SelectableHeading(String text) {
-        super(new BorderLayout(12, 0));
-        setOpaque(false);
+        // Dieselbe Kopfleiste wie über dem Lesebereich und den Seitenleisten (HeadBar).
+        super(new BorderLayout(12, 0), 12, 12);
         setBackground(Comic.YELLOW);
-        // Wie die Zeile der Bereichsanzeige über dem Lesebereich (ContentView): Linie unten, 4/12 px Innenabstand.
-        setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(4, 12, 4, 12)));
         title.setFont(Comic.semiBold(15f));
         title.setForeground(Comic.INK);
         title(text);
