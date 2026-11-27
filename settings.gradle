@@ -67,3 +67,24 @@ include 'space-harvester-app'
 // Vergleichstests gegen den Enterprise AI Client (ADR 0012, docs/PARITY.md, #193): neutrales Dokumentmodell für
 // DOCX, PDF und Markdown, ParityReport für den Live-Lauf; hängt nur am Core, nichts hängt davon ab.
 include 'parity-tests'
+
+// Arbeitszweig der Bibliotheksintegration (ADR-Aufteilung Ask AI, Reihenfolge 5): Knowledge4j und Research4j sind noch
+// nicht veröffentlicht und kommen per Composite Build aus Nachbarverzeichnissen. Die Eigenschaft nennt den Ordner, in
+// dem beide liegen: -Paresstack.libs=.. (Kommandozeile) oder aresstack.libs=.. in der eigenen gradle.properties.
+// Ohne sie gelten die veröffentlichten Versionen. Dieser Zweig geht nicht nach develop, bevor sie veröffentlicht sind.
+def aresstackLibs = providers.gradleProperty('aresstack.libs').getOrNull()
+if (aresstackLibs != null) {
+    def libs = file(aresstackLibs)
+    includeBuild(new File(libs, 'knowledge4j')) {
+        dependencySubstitution {
+            ['knowledge-api', 'knowledge-model', 'knowledge-model-support', 'knowledge-file-support'].each { name ->
+                substitute module("com.aresstack:knowledge4j-${name}") using project(":${name}")
+            }
+        }
+    }
+    includeBuild(new File(libs, 'research4j')) {
+        dependencySubstitution {
+            substitute module('com.aresstack:research4j-research-core') using project(':research-core')
+        }
+    }
+}

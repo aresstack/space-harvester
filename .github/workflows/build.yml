@@ -2,7 +2,8 @@ name: Build
 
 on:
   push:
-    branches: [main, develop]
+    # Arbeitszweig der Bibliotheksintegration: baut mit Knowledge4j und Research4j per Composite Build (siehe unten).
+    branches: [main, develop, claude/project-thread-kcf5hj]
   pull_request:
 
 permissions:
@@ -20,14 +21,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Bewusst ohne Secrets: Tests laufen gegen Fake-Confluence und temporäre Verzeichnisse (#15).
+    # Arbeitszweig: Space Harvester liegt neben den unveröffentlichten Bibliotheken, die per Composite Build eingebunden
+    # werden (settings.gradle, -Paresstack.libs); feste Commits, damit der Lauf reproduzierbar ist.
+    defaults:
+      run:
+        working-directory: space-harvester
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: space-harvester
+      - uses: actions/checkout@v4
+        with:
+          repository: aresstack/knowledge4j
+          ref: 230a6237b3d8011991db56e17a2d5262abb30bc8
+          path: knowledge4j
+      - uses: actions/checkout@v4
+        with:
+          repository: aresstack/research4j
+          ref: 8d861fdbfe71fbade5ea464890cf8b214951a7d6
+          path: research4j
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew build --console=plain
+      - run: ./gradlew build --console=plain -Paresstack.libs=..
       # Kopien in enterprise-ai-sources, comic-controls, enterprise-ai-keepass und enterprise-ai-browser gegen den festgehaltenen Upstream-Commit prüfen (siehe UPSTREAM.md)
       - run: enterprise-ai-sources/sync-from-upstream.sh verify
       - run: comic-controls/sync-from-upstream.sh verify
@@ -45,15 +63,15 @@ jobs:
         with:
           name: test-reports
           path: |
-            space-harvester-*/build/reports/tests/
-            space-harvester-*/build/test-results/
-            enterprise-ai-sources/build/reports/tests/
-            enterprise-ai-sources/build/test-results/
-            nlp-parser/build/reports/tests/
-            nlp-parser/build/test-results/
-            nlp-model-training/build/reports/tests/
-            nlp-model-training/build/test-results/
-            space-harvester-app/build/app-jar-check/screenshots/
-            parity-tests/build/test-results/
-            parity-tests/build/reports/parity/
+            space-harvester/space-harvester-*/build/reports/tests/
+            space-harvester/space-harvester-*/build/test-results/
+            space-harvester/enterprise-ai-sources/build/reports/tests/
+            space-harvester/enterprise-ai-sources/build/test-results/
+            space-harvester/nlp-parser/build/reports/tests/
+            space-harvester/nlp-parser/build/test-results/
+            space-harvester/nlp-model-training/build/reports/tests/
+            space-harvester/nlp-model-training/build/test-results/
+            space-harvester/space-harvester-app/build/app-jar-check/screenshots/
+            space-harvester/parity-tests/build/test-results/
+            space-harvester/parity-tests/build/reports/parity/
           if-no-files-found: ignore

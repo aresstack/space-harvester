@@ -119,13 +119,23 @@ public interface AiChat {
      * @param model           Modellname wie konfiguriert
      * @param reasoningEffort Denkaufwand des Modells ({@code low}, {@code medium}, {@code high}) oder {@code null}
      * @param tools           Werkzeuge, die das Modell aufrufen darf; leer: keine
+     * @param temperature     Temperatur der Antwort; {@code null}: die des Dienstes
+     * @param maxTokens       Ausgabelimit der Antwort; {@code null}: das des Dienstes
      */
-    record Request(List<Message> messages, String model, String reasoningEffort, List<Tool> tools) {
+    record Request(List<Message> messages, String model, String reasoningEffort, List<Tool> tools, Double temperature,
+                   Integer maxTokens) {
 
         public Request {
             messages = List.copyOf(Objects.requireNonNull(messages, "messages"));
             Objects.requireNonNull(model, "model");
             tools = tools == null ? List.of() : List.copyOf(tools);
+            if (maxTokens != null && maxTokens < 1) {
+                throw new IllegalArgumentException("maxTokens");
+            }
+        }
+
+        public Request(List<Message> messages, String model, String reasoningEffort, List<Tool> tools) {
+            this(messages, model, reasoningEffort, tools, null, null);
         }
 
         public Request(List<Message> messages, String model, String reasoningEffort) {
