@@ -332,6 +332,9 @@ gruppieren kann innerhalb eines Projekts.“ Daraus folgen zwei Ebenen:
 ### F3. Artefakte gehören dem Projekt
 - Ein Artefakt der Schreibumgebung (ADR 0045) hat genau einen Besitzer: im Standardprojekt den Chat, in jedem
   anderen Projekt das Projekt. Im Standardprojekt teilen Chats ihre Artefakte also nicht, wie heute.
+- Ausnahme seit dem 27.11.2026 ([ADR 0044](0044-buch-als-ueberblick-eines-ordners.md), Nachtrag N4): Ein
+  geschriebenes Buch hat keinen Chat als Besitzer, weil es an einem Ordner entsteht. Im Standardprojekt liegt es an
+  diesem Ordner und ist für jeden Chat sichtbar, in jedem anderen Projekt gehört es dem Projekt.
 - Alle Chats eines Projekts sehen, öffnen und bearbeiten dessen Artefakte. Die Werkzeuge der KI arbeiten in einem
   Projekt-Chat auf den Artefakten des Projekts.
 - Kommt ein Chat mit eigenen Artefakten in ein Projekt, ziehen sie ins Projekt um. Verweise zwischen Artefakten

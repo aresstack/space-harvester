@@ -34,6 +34,10 @@ die Bildgenerierung (`DiagramComposer`, Zeilen „Bildgenerierung – Plan“ un
 > Geändert am 27.11.2026 durch [ADR 0043](0043-projekte-als-wissensarbeitsbereich.md), Nachtrag „Chats und Artefakte
 > im Projekt“, Abschnitt F3: Gehört der Chat zu einem Projekt, ist das Projekt der Besitzer der Artefakte, und alle
 > Chats des Projekts arbeiten darauf. Ohne Projekt gilt dieser Abschnitt unverändert.
+>
+> Ergänzt am 27.11.2026 durch [ADR 0044](0044-buch-als-ueberblick-eines-ordners.md), Nachtrag N1 und N4: Ein
+> geschriebenes Buch ist ein Dokument-Artefakt ohne Chat als Besitzer. Im Standardprojekt liegt es an seinem Ordner
+> und ist für jeden Chat sichtbar, in jedem anderen Projekt gehört es dem Projekt.
 
 Ein Chat kann beliebig viele Artefakte haben. Es gibt zwei Arten: **Dokument** (Markdown) und **Grafik** (SVG). Jedes
 Artefakt hat eine feste Kennung, einen Titel und eine Folge von Revisionen. Jede Änderung, ob von der KI oder vom
