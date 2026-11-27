@@ -242,8 +242,6 @@ final class SourceUpdatesView extends JPanel {
             followPodcast(statements);
             onFollow.accept(statements);
         });
-        // Wovon der ganze Podcast nie erzählt, steht grau da (Angelo 27.11.2026).
-        podcast.cover(covered -> summaryReport.cover(covered));
         if (mode == Mode.CHANGES) {
             // Das Bild des Kapitels steht neben der ersten Seite seines Themas und geht von dort im Betrachter auf.
             podcast.cue(new PodcastControl.Cue() {
@@ -296,6 +294,8 @@ final class SourceUpdatesView extends JPanel {
 
         reportBody.setLayout(new BoxLayout(reportBody, BoxLayout.Y_AXIS));
         summaryReport = new SummaryReport(reportBody, summaryHost());
+        // Wovon der ganze Podcast nie erzählt, steht grau da (Angelo 27.11.2026).
+        podcast.cover(summaryReport::cover);
         reportBody.setOpaque(false);
         report.setOpaque(false);
         report.add(reportBody, BorderLayout.NORTH);
