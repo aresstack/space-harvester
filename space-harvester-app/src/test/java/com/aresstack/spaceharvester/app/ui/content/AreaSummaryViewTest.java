@@ -213,6 +213,28 @@ class AreaSummaryViewTest {
         assertThat(listen.summary()).isEqualTo(actions.stored);
     }
 
+    /** Angelo: „Teilergebnisse sofort“. Fertige Teile stehen gleich da, ohne Schleier; das Ende ersetzt sie. */
+    @Test
+    void finishedPartsShowAtOnceWithoutTheVeilAndTheEndReplacesThem() throws Exception {
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        view.folder(folder("ordner-teile", Root.space("wiki", "BAU")));
+        assertThat(view.busy()).isTrue();
+
+        actions.partialNow = overview("selection-teile");
+        view.reload();
+        assertThat(view.busy()).as("vorläufiger Stand: kein Schleier").isFalse();
+        assertThat(view.summary()).isNull();
+        assertThat(String.join("\n", view.texts())).contains(AreaSummaryView.PARTIAL, "Ablage");
+
+        actions.partialNow = null;
+        actions.stored = overview("selection-teile");
+        shared.jobs.forEach(listener -> listener.changed(SourceUpdatesViewTest.FakeActions.job("job-area-1",
+                JobState.COMPLETED)));
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(view.summary()).isEqualTo(actions.stored);
+        assertThat(String.join("\n", view.texts())).doesNotContain(AreaSummaryView.PARTIAL);
+    }
+
     @Test
     void anEmptyFolderSaysSoWithoutAskingTheModel() {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
@@ -275,6 +297,7 @@ class AreaSummaryViewTest {
     private final class FakeArea implements AreaSummaryView.Actions {
 
         UpdateSummary stored;
+        UpdateSummary partialNow;
         boolean available = true;
         boolean failEmpty;
         RuntimeException failWith;
@@ -290,6 +313,11 @@ class AreaSummaryViewTest {
         @Override
         public boolean available() {
             return available;
+        }
+
+        @Override
+        public UpdateSummary partial(AreaSummaryView.Target target) {
+            return partialNow;
         }
 
         @Override

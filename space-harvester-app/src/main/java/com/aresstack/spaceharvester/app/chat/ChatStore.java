@@ -31,6 +31,9 @@ public final class ChatStore {
     private static final String SUFFIX = ".json";
     /** Ein gelöschter Chat bis zum nächsten Start der App: wiederherstellbar, nicht in den Listen. */
     private static final String DELETED = SUFFIX + ".deleted";
+    /** Der Ordner der Artefakte eines Chats neben seiner Datei (ADR 0045); geht mit dem Chat in den Papierkorb. */
+    private static final String ARTIFACTS = ".artefakte";
+    private static final String ARTIFACTS_DELETED = ARTIFACTS + ".deleted";
     /** Die Chat-Ordner, deren Gelöschte dieser Programmlauf schon endgültig entfernt hat (einmal je Start). */
     private static final java.util.Set<Path> PURGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private static final Pattern ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
@@ -65,6 +68,16 @@ public final class ChatStore {
         Path absolute = base.toAbsolutePath().normalize();
         Path directory = absolute.resolve(folder).normalize();
         return directory.startsWith(absolute) ? directory : null;
+    }
+
+    /**
+     * Der Ordner der Artefakte eines Chats (ADR 0045) neben seiner Datei; {@code null} ohne Datenordner oder bei
+     * ungültiger Kennung. Der Ordner muss nicht existieren.
+     */
+    public Path artifacts(Path folder, String chatId) {
+        Path directory = resolve(folder);
+        return directory == null || chatId == null || !ID.matcher(chatId).matches() ? null
+                : directory.resolve(chatId + ARTIFACTS);
     }
 
     /** Die Chats des Bereichs, zuletzt geänderte zuerst; leer ohne Ordner. */
@@ -143,7 +156,12 @@ public final class ChatStore {
             return;
         }
         if (record.isEmpty()) {
-            delete(folder, record.id());
+            // Nur die Datei: Artefakte eines Chats gehen nur mit dem ausdrücklichen Löschen des Chats.
+            try {
+                Files.deleteIfExists(directory.resolve(record.id() + SUFFIX));
+            } catch (IOException e) {
+                LOG.log(System.Logger.Level.WARNING, "Chat nicht gelöscht: " + e.getClass().getSimpleName());
+            }
             return;
         }
         Path target = directory.resolve(record.id() + SUFFIX);
@@ -176,6 +194,7 @@ public final class ChatStore {
         } catch (IOException e) {
             LOG.log(System.Logger.Level.WARNING, "Chat nicht gelöscht: " + e.getClass().getSimpleName());
         }
+        deleteTree(directory.resolve(chatId + ARTIFACTS));
     }
 
     /**
@@ -195,6 +214,7 @@ public final class ChatStore {
         }
         try {
             Files.move(file, directory.resolve(chatId + DELETED), StandardCopyOption.REPLACE_EXISTING);
+            moveTree(directory.resolve(chatId + ARTIFACTS), directory.resolve(chatId + ARTIFACTS_DELETED));
         } catch (IOException e) {
             LOG.log(System.Logger.Level.WARNING, "Chat nicht gelöscht: " + e.getClass().getSimpleName());
         }
@@ -213,6 +233,7 @@ public final class ChatStore {
         try {
             Path file = directory.resolve(chatId + SUFFIX);
             Files.move(deleted, file, StandardCopyOption.REPLACE_EXISTING);
+            moveTree(directory.resolve(chatId + ARTIFACTS_DELETED), directory.resolve(chatId + ARTIFACTS));
             return read(file, chatId);
         } catch (IOException e) {
             LOG.log(System.Logger.Level.WARNING, "Chat nicht wiederhergestellt: " + e.getClass().getSimpleName());
@@ -258,6 +279,9 @@ public final class ChatStore {
                 }
             }
         }
+        for (String suffix : new String[] {ARTIFACTS, ARTIFACTS_DELETED}) {
+            artifactTrees(base, suffix).forEach(ChatStore::deleteTree);
+        }
         return ids;
     }
 
@@ -273,6 +297,41 @@ public final class ChatStore {
             } catch (IOException e) {
                 LOG.log(System.Logger.Level.WARNING, "Gelöschter Chat nicht entfernt: " + e.getClass().getSimpleName());
             }
+        }
+        artifactTrees(base, ARTIFACTS_DELETED).forEach(ChatStore::deleteTree);
+    }
+
+    /** Die Artefakt-Ordner mit {@code suffix} in den Bereichsordnern (eine Ebene tiefer als die Chat-Dateien). */
+    private static List<Path> artifactTrees(Path base, String suffix) {
+        List<Path> trees = new ArrayList<>();
+        try (java.util.stream.Stream<Path> walk = Files.walk(base, 4)) {
+            walk.filter(Files::isDirectory).filter(path -> {
+                String name = path.getFileName().toString();
+                return name.endsWith(suffix) && ID.matcher(name.substring(0, name.length() - suffix.length())).matches();
+            }).forEach(trees::add);
+        } catch (IOException | java.io.UncheckedIOException e) {
+            LOG.log(System.Logger.Level.WARNING, "Chat-Ordner nicht lesbar: " + e.getClass().getSimpleName());
+        }
+        return trees;
+    }
+
+    private static void moveTree(Path from, Path to) throws IOException {
+        if (Files.isDirectory(from)) {
+            deleteTree(to);
+            Files.move(from, to, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static void deleteTree(Path tree) {
+        if (!Files.isDirectory(tree)) {
+            return;
+        }
+        try (java.util.stream.Stream<Path> walk = Files.walk(tree)) {
+            for (Path path : walk.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(path);
+            }
+        } catch (IOException | java.io.UncheckedIOException e) {
+            LOG.log(System.Logger.Level.WARNING, "Artefakte nicht gelöscht: " + e.getClass().getSimpleName());
         }
     }
 
