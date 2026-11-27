@@ -660,6 +660,9 @@ public final class ChatPanel extends JPanel {
         levelBar.setMaximumSize(new Dimension(64, 6));
         levelBar.setVisible(false);
         attach.addActionListener(e -> chooseAttachments());
+        // Dateien aus dem Explorer hineinziehen oder Bilder per Strg+V einfügen: derselbe Weg wie die Büroklammer.
+        com.aresstack.spaceharvester.app.ui.controls.FileDrop.install(files -> files.forEach(this::attach), editor,
+                this);
         send.addActionListener(e -> send());
         // Enger Abstand: bei 320 px Leistenbreite müssen beide Symbole neben „Senden“ passen.
         JPanel west = new JPanel(new FlowLayout(FlowLayout.LEFT, 3, 0));
@@ -2163,12 +2166,56 @@ public final class ChatPanel extends JPanel {
             turn.cancel();
             return;
         }
+        if (readingAttachments) {
+            return;
+        }
         String text = editor.getText().strip();
         if (text.isEmpty() || !send.isEnabled()) {
             return;
         }
-        // Anhänge einmal lesen; ihr Text zählt zum Platz der Anfrage.
-        String asked = withAttachments(text);
+        if (attachments.isEmpty()) {
+            sendAsked(text);
+            return;
+        }
+        // Anhänge einmal lesen, nicht auf dem EDT: ein Bild liest das Vision-Modell, das dauert. Ihr Text zählt zum
+        // Platz der Anfrage.
+        List<Path> files = List.copyOf(attachments);
+        int room = roomBeside(text);
+        AppRuntime runtime = context.runtime();
+        AttachmentImageReading images = runtime == null ? null : new AttachmentImageReading(
+                runtime.workspace().visionModel().orElse(null), runtime.workspace()::describeAttachmentImage);
+        readingAttachments = true;
+        editor.setEditable(false);
+        status.setText(com.aresstack.spaceharvester.app.chat.AttachmentImages.anyImage(files) && images != null
+                && images.model() != null ? READING_IMAGES_STATUS : READING_ATTACHMENTS_STATUS);
+        Thread reading = new Thread(() -> {
+            String asked = withAttachments(text, files, room, images);
+            SwingUtilities.invokeLater(() -> {
+                readingAttachments = false;
+                editor.setEditable(true);
+                status.setText(" ");
+                sendAsked(asked);
+            });
+        }, "chat-anhaenge");
+        reading.setDaemon(true);
+        reading.start();
+    }
+
+    static final String READING_ATTACHMENTS_STATUS = "Anhänge werden gelesen …";
+    static final String READING_IMAGES_STATUS = "Bild wird vom Vision-Modell gelesen …";
+    /** Bildangaben im Bild ohne Vision-Modell: wohin der Benutzer gehen muss. */
+    static final String NO_VISION_MODEL = "(Bild: Kein Vision-Modell eingestellt – Einstellungen › KI-Dienst › Modelle "
+            + "› „Vision-Modell“, etwa gemma)";
+
+    /** Solange die Anhänge gelesen werden, sendet Enter nichts zweites. */
+    private boolean readingAttachments;
+
+    /** Vision-Modell und Leser für Bildanhänge; {@code model} ist {@code null} ohne Vision-Modell. */
+    record AttachmentImageReading(String model, com.aresstack.spaceharvester.app.chat.AttachmentImages.Reader reader) {
+    }
+
+    /** Die Frage samt gelesener Anhänge geht hinaus (Perspektive oder Wissen). */
+    private void sendAsked(String asked) {
         ToolScope custom = currentToolScope(asked);
         if (custom != null) {
             submit(asked, null, custom.area(), ChatTurn.Kind.QUESTION, custom);
@@ -2387,14 +2434,12 @@ public final class ChatPanel extends JPanel {
      * werden gleichzeitig gelesen, höchstens „Parallele Dateien“ auf einmal (Angelo 24.11.2026); die Reihenfolge der
      * Chips bleibt.
      */
-    private String withAttachments(String text) {
-        if (attachments.isEmpty()) {
+    static String withAttachments(String text, List<Path> files, int room, AttachmentImageReading images) {
+        if (files.isEmpty()) {
             return text;
         }
-        List<Path> files = List.copyOf(attachments);
         String[] contents = new String[files.size()];
         // Die Anhänge teilen sich, was neben Verlauf und Frage in die Anfrage passt.
-        int room = roomBeside(text);
         int each = room == ChatRoom.UNLIMITED ? room : room / files.size();
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(
                 Math.min(parallel("files", FILES_DEFAULT), files.size()), work -> {
@@ -2406,7 +2451,7 @@ public final class ChatPanel extends JPanel {
             List<java.util.concurrent.Future<?>> running = new ArrayList<>();
             for (int i = 0; i < files.size(); i++) {
                 int index = i;
-                running.add(pool.submit(() -> contents[index] = attachmentText(files.get(index), each)));
+                running.add(pool.submit(() -> contents[index] = attachmentText(files.get(index), each, text, images)));
             }
             for (java.util.concurrent.Future<?> future : running) {
                 try {
@@ -2432,13 +2477,35 @@ public final class ChatPanel extends JPanel {
     private static final String UNREADABLE = "(nicht als Text lesbar)";
 
     /**
+     * Ein Bild liest das Vision-Modell ab (Angelo 27.11.2026); scheitert es, steht der Grund da, damit das Chat-Modell
+     * ihn nennen kann statt zu raten.
+     */
+    private static String imageText(Path file, int room, String question, AttachmentImageReading images) {
+        if (images == null || images.model() == null) {
+            return NO_VISION_MODEL;
+        }
+        try {
+            return ChatKnowledge.excerpt(com.aresstack.spaceharvester.app.chat.AttachmentImages.read(file, question,
+                    images.model(), images.reader()), room);
+        } catch (java.io.IOException unreadable) {
+            return "(Bild nicht lesbar: " + unreadable.getMessage() + ")";
+        } catch (RuntimeException failed) {
+            return "(Bild: Das Vision-Modell " + images.model() + " hat nicht geantwortet: "
+                    + (failed.getMessage() == null ? failed.getClass().getSimpleName() : failed.getMessage()) + ")";
+        }
+    }
+
+    /**
      * Der Text einer angehängten Datei, so weit er in die Anfrage passt ({@code room}, {@link ChatRoom}; früher fest
      * 12.000 Zeichen); was nicht passt, steht als gekürzt da.
      */
-    private static String attachmentText(Path file, int room) {
+    private static String attachmentText(Path file, int room, String question, AttachmentImageReading images) {
         try {
             // Dokumente (PDF, Word, Excel …) wie die Vorschau im Command Deck über den Tika-Adapter des Core.
             String name = file.getFileName() == null ? "" : file.getFileName().toString();
+            if (com.aresstack.spaceharvester.app.chat.AttachmentImages.isImage(name)) {
+                return imageText(file, room, question, images);
+            }
             String content = com.aresstack.spaceharvester.app.deck.DocumentPreviewStore.isDocument(name)
                     ? new com.aresstack.spaceharvester.app.deck.DocumentPreviewStore().load(file.toString()).text()
                     : Files.readString(file, StandardCharsets.UTF_8);

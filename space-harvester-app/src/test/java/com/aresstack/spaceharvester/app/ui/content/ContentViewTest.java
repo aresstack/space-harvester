@@ -702,8 +702,9 @@ class ContentViewTest {
             chat.send();
             return null;
         });
+        // Anhänge werden außerhalb des EDT gelesen; danach meldet die Statuszeile das fehlende Modell.
+        await(() -> ChatPanel.NO_CHAT_MODEL.equals(chat.status()));
         assertThat(onEdt(chat::bubbles)).isZero();
-        assertThat(onEdt(chat::status)).isEqualTo(ChatPanel.NO_CHAT_MODEL);
         assertThat(onEdt(chat::attachments)).hasSize(1);
         assertThat(onEdt(() -> ((javax.swing.text.JTextComponent) chat.editor()).getText()))
                 .isEqualTo("Was steht im Handbuch?");
