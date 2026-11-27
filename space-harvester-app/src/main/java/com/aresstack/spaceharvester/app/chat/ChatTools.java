@@ -519,14 +519,18 @@ public final class ChatTools {
             PageMetadata metadata = page.header().metadata();
             return new Page(metadata.title() == null ? key.pageId() : metadata.title(),
                     metadata.url() == null ? null : metadata.url().toString(),
-                    text == null ? "" : text.text().strip(), metadata.partitionKey());
+                    text == null ? "" : text.text().strip(), metadata.partitionKey(), text);
         } catch (RuntimeException notLocal) {
             return null;
         }
     }
 
-    /** @param spaceKey Space laut Kopfdaten (Partition), {@code null}, wenn die Quelle keine nennt */
-    public record Page(String title, String location, String text, String spaceKey) {
+    /**
+     * @param spaceKey Space laut Kopfdaten (Partition), {@code null}, wenn die Quelle keine nennt
+     * @param reading  der Lesetext mit seinen Abschnitten (Überschriften), ungekürzt; {@code null} ohne Lesetext. Die
+     *                 Buchfunktion zerlegt ihn in Passagen mit Überschriften (app.research).
+     */
+    public record Page(String title, String location, String text, String spaceKey, PageText reading) {
     }
 
     // ------------------------------------------------------------------ Liste

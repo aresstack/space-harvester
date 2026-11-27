@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.research;
 
+import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 
@@ -19,8 +20,14 @@ public interface PageStock {
      *
      * @param spaceKey Space laut Kopfdaten; {@code null}, wenn die Quelle keinen nennt
      * @param location Adresse der Seite bei der Quelle; {@code null}, wenn unbekannt
+     * @param reading  der Lesetext mit Abschnitten (Überschriften) für die Passagen der Buchfunktion; {@code null},
+     *                 wenn die Quelle keinen liefert (dann gilt {@code text} ohne Überschriften)
      */
-    record Page(PageKey key, String title, String text, String spaceKey, String location) {
+    record Page(PageKey key, String title, String text, String spaceKey, String location, PageText reading) {
+
+        public Page(PageKey key, String title, String text, String spaceKey, String location) {
+            this(key, title, text, spaceKey, location, null);
+        }
     }
 
     /** Eine Unterseite, wie die Navigation der Quelle sie nennt. */

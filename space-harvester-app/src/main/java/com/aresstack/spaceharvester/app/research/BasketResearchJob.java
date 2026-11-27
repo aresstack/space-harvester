@@ -12,9 +12,7 @@ import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 
-import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * „Korb füllen“ als Auftrag: Research4j füllt einen Favoritenordner über den Bestand. Läuft nur auf Klick, nie beim
@@ -62,31 +60,9 @@ public final class BasketResearchJob {
         });
     }
 
-    /**
-     * Fortschritt über alle Schritte jeder Runde, nicht nur über das Lesen: Planen und Prüfen am Weidezaun sind
-     * Modellarbeit und brauchen oft am längsten. Zählte nur das Lesen, stand die Anzeige danach auf 99 %, während das
-     * Modell noch prüfte (Test des Produktverantwortlichen am 27.11.). Jeder Schritt meldet seine Menge beim Start
-     * als gefunden und jedes erledigte Stück als bearbeitet; die Phase nennt, was gerade läuft.
-     */
+    /** Fortschritt über alle Schritte jeder Runde ({@link StepProgress}): Planen, Suchen, Lesen, Prüfen. */
     static ProgressListener progress(JobContext context) {
-        Map<String, Long> reported = new ConcurrentHashMap<>();
-        return (step, done, total) -> {
-            if (done == 0) {
-                reported.put(step, 0L);
-                context.discovered(total);
-                context.phase("Korb füllen", phaseOf(step));
-                return;
-            }
-            long[] delta = new long[1];
-            reported.compute(step, (name, last) -> {
-                long before = last == null ? 0 : last;
-                delta[0] = Math.max(0, done - before);
-                return Math.max(before, done);
-            });
-            if (delta[0] > 0) {
-                context.processed(delta[0]);
-            }
-        };
+        return new StepProgress(context, "Korb füllen", BasketResearchJob::phaseOf)::step;
     }
 
     static String phaseOf(String step) {

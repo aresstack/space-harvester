@@ -49,7 +49,8 @@ public final class WorkspacePageStock implements PageStock {
     public Optional<Page> page(PageKey key) {
         ChatTools.Page page = ChatTools.fetchedPage(workspace, key);
         return page == null ? Optional.empty()
-                : Optional.of(new Page(key, page.title(), page.text(), page.spaceKey(), page.location()));
+                : Optional.of(new Page(key, page.title(), page.text(), page.spaceKey(), page.location(),
+                        page.reading()));
     }
 
     @Override

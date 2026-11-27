@@ -166,6 +166,7 @@ public final class Texts {
             case READING_PREFETCH -> "Lese-Ansichten vorladen";
             case DOCUMENT_ANALYSIS -> "Dokument analysieren";
             case RESEARCH -> "Korb füllen";
+            case BOOK -> "Buch schreiben";
             case BACKGROUND -> "Hintergrund";
         };
     }
