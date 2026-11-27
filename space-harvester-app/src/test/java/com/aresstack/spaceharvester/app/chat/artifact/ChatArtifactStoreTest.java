@@ -32,6 +32,45 @@ class ChatArtifactStoreTest {
     }
 
     @Test
+    void aBookBelongsToItsFolderAndEveryChatThatSharesItCanEditIt() throws Exception {
+        // Angelo 27.11.: Bücher sind Artefakte; im Standardprojekt am Favoritenordner, für jeden Chat sichtbar.
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        Path books = home.resolve("books").resolve("Garten.artefakte");
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.shared((chatFolder, chatId) -> folder.equals(chatFolder) ? List.of(books) : List.of());
+        List<ChatArtifactStore.Event> events = new ArrayList<>();
+        store.addListener(events::add);
+
+        ChatArtifact book = store.createBook(books, "Garten – 1. Auflage", "# Boden\n\nLocker.",
+                ChatArtifact.Origin.AI);
+        assertThat(book.id()).isEqualTo("B1");
+        assertThat(store.createBook(books, "Garten – 2. Auflage", "", ChatArtifact.Origin.AI).id()).isEqualTo("B2");
+        assertThat(ChatArtifactStore.listIn(books)).extracting(ChatArtifact::id).containsExactly("B1", "B2");
+        assertThat(store.readIn(books, "b1").title()).isEqualTo("Garten – 1. Auflage");
+        assertThat(events.get(0).owner()).isEqualTo(books);
+        assertThat(events.get(0).chatId()).isNull();
+
+        // Ein Chat des Ordners sieht das Buch neben seinen eigenen Artefakten und bearbeitet es dort, wo es liegt.
+        ChatRecord chat = chat(chats);
+        store.createDocument(folder, chat.id(), "Notiz", "# Notiz\n\nGießen.", ChatArtifact.Origin.AI);
+        assertThat(store.list(folder, chat.id())).extracting(ChatArtifact::id).containsExactly("B1", "B2", "D1");
+        assertThat(store.owners(folder, chat.id())).containsExactly(chats.artifacts(folder, chat.id()), books);
+        String section = book.document().sections().get(0).id();
+        ChatArtifactStore.WriteResult edited = store.edit(folder, chat.id(), "B1", ChatArtifactStore.ANY,
+                ChatArtifact.Origin.AI, "nachgebessert", document -> document.replaceSection(section, "# Boden\n\nTief lockern."));
+        assertThat(edited.success()).as(edited.reason()).isTrue();
+        assertThat(store.readIn(books, "B1").revision()).isEqualTo(2);
+        assertThat(Files.exists(chats.artifacts(folder, chat.id()).resolve("B1" + ChatArtifactStore.SUFFIX)))
+                .as("keine Kopie beim Chat").isFalse();
+        assertThat(events.get(events.size() - 1).owner()).isEqualTo(books);
+
+        // Ohne Chat (Exportansicht) geht das Buch ebenfalls auf.
+        assertThat(store.read(folder, null, "B2")).isNotNull();
+        assertThat(store.ownerOf(folder, chat.id(), "D1")).isEqualTo(chats.artifacts(folder, chat.id()));
+    }
+
+    @Test
     void inAProjectTheArtifactsBelongToTheProjectAndAChatBringsItsOwnAlong() throws Exception {
         // ADR 0043, F3: im Projekt besitzt das Projekt die Artefakte, alle Chats des Projekts arbeiten darauf.
         ChatStore chats = chats();

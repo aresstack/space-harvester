@@ -45,7 +45,9 @@ public final class ChatArtifactStore {
     private static final String TABS = "offen.txt";
 
     private static final System.Logger LOG = System.getLogger(ChatArtifactStore.class.getName());
-    private static final Pattern ID = Pattern.compile("([DG])(\\d{1,6})");
+    private static final Pattern ID = Pattern.compile("([DGB])(\\d{1,6})");
+    /** Die Kennung eines Buchs (ADR 0044): B1, B2 … – ein Dokument, das einem Ordner gehört, nicht einem Chat. */
+    public static final String BOOK = "B";
     private static final ObjectMapper JSON = JsonMapper.builder().build();
     /** Ein Schloss für alle Instanzen: Ansicht und Werkzeuge dürfen sich nie überschreiben. */
     private static final Object LOCK = new Object();
@@ -78,6 +80,8 @@ public final class ChatArtifactStore {
     private volatile java.util.function.Function<String, Path> projectArtifacts = projectId -> null;
     /** Das Projekt der Chats, die gerade offen sind (auch ein noch nicht gespeicherter); sonst steht es im Chat. */
     private final Map<String, String> projectOf = new ConcurrentHashMap<>();
+    /** Weitere Besitzer, deren Artefakte ein Chat sieht und bearbeitet (Bücher seines Ordners im Standardprojekt). */
+    private volatile java.util.function.BiFunction<Path, String, List<Path>> shared = (folder, chatId) -> List.of();
 
     public ChatArtifactStore(ChatStore chats) {
         this.chats = chats;
@@ -86,6 +90,42 @@ public final class ChatArtifactStore {
     /** Wo die Artefakte eines Projekts liegen (F3); {@code null} heißt: die Chats besitzen sie selbst. */
     public void projects(java.util.function.Function<String, Path> projectArtifacts) {
         this.projectArtifacts = projectArtifacts == null ? projectId -> null : projectArtifacts;
+    }
+
+    /**
+     * Weitere Besitzer eines Chats (Bücher am Favoritenordner, Angelo 27.11.): ihre Artefakte erscheinen in der Liste
+     * des Chats, lassen sich öffnen und von der KI bearbeiten; gespeichert wird jedes dort, wo es liegt.
+     * {@code chatId} darf {@code null} sein (Ansicht ohne Chat).
+     */
+    public void shared(java.util.function.BiFunction<Path, String, List<Path>> owners) {
+        this.shared = owners == null ? (folder, chatId) -> List.of() : owners;
+    }
+
+    /** Alle Besitzer, deren Artefakte der Chat sieht: zuerst sein eigener, dann die geteilten. */
+    public List<Path> owners(Path folder, String chatId) {
+        java.util.LinkedHashSet<Path> all = new java.util.LinkedHashSet<>();
+        Path own = owner(folder, chatId);
+        if (own != null) {
+            all.add(own);
+        }
+        List<Path> more = shared.apply(folder, chatId);
+        if (more != null) {
+            more.stream().filter(java.util.Objects::nonNull).forEach(all::add);
+        }
+        return List.copyOf(all);
+    }
+
+    /** Der Besitzer, bei dem das Artefakt liegt; für ein noch nicht vorhandenes der eigene des Chats. */
+    public Path ownerOf(Path folder, String chatId, String artifactId) {
+        String id = artifactId == null ? null : artifactId.strip().toUpperCase(java.util.Locale.ROOT);
+        if (id != null && ID.matcher(id).matches()) {
+            for (Path candidate : owners(folder, chatId)) {
+                if (Files.isRegularFile(candidate.resolve(id + SUFFIX))) {
+                    return candidate;
+                }
+            }
+        }
+        return owner(folder, chatId);
     }
 
     /** Meldet das Projekt eines offenen Chats, auch bevor er gespeichert ist ({@code null} = Standardprojekt). */
@@ -220,11 +260,17 @@ public final class ChatArtifactStore {
     /** Die Artefakte des Chats in der Reihenfolge ihres Anlegens; leer ohne Ordner. */
     public List<ChatArtifact> list(Path folder, String chatId) {
         synchronized (LOCK) {
-            return listIn(owner(folder, chatId));
+            List<ChatArtifact> all = new ArrayList<>();
+            for (Path directory : owners(folder, chatId)) {
+                all.addAll(listIn(directory));
+            }
+            all.sort(Comparator.comparingLong(ChatArtifact::createdAt).thenComparing(ChatArtifact::id));
+            return all;
         }
     }
 
-    private static List<ChatArtifact> listIn(Path directory) {
+    /** Die Artefakte eines Besitzers (Projekt-, Chat- oder Buchordner) in der Reihenfolge ihres Anlegens. */
+    public static List<ChatArtifact> listIn(Path directory) {
         synchronized (LOCK) {
             List<ChatArtifact> artifacts = new ArrayList<>();
             if (directory == null || !Files.isDirectory(directory)) {
@@ -298,6 +344,40 @@ public final class ChatArtifactStore {
         return create(folder, chatId, ChatArtifact.Kind.DOCUMENT, title, origin, changed, document, "");
     }
 
+    /**
+     * Legt ein Buch an (ADR 0044, Angelo 27.11.): ein Dokument mit Kennung B…, das dem Ordner {@code owner} gehört,
+     * ohne Chat. Jeder Chat, der diesen Besitzer sieht ({@link #owners}), kann es öffnen und bearbeiten.
+     */
+    public ChatArtifact createBook(Path owner, String title, String markdown, ChatArtifact.Origin origin) {
+        if (owner == null) {
+            return null;
+        }
+        SectionDocument document = SectionDocument.parse(markdown == null ? "" : markdown);
+        List<String> changed = document.sections().stream().map(SectionDocument.Section::id).toList();
+        ChatArtifact created;
+        synchronized (LOCK) {
+            created = newArtifact(listIn(owner), BOOK, ChatArtifact.Kind.DOCUMENT, title, origin, changed, document,
+                    "");
+            if (!write(owner, created)) {
+                return null;
+            }
+        }
+        notify(new Event(null, null, owner, created, changed));
+        return created;
+    }
+
+    /** Ein Artefakt eines Besitzers oder {@code null}. */
+    public ChatArtifact readIn(Path owner, String artifactId) {
+        String id = artifactId == null ? null : artifactId.strip().toUpperCase(java.util.Locale.ROOT);
+        if (owner == null || id == null || !ID.matcher(id).matches()) {
+            return null;
+        }
+        synchronized (LOCK) {
+            Path file = owner.resolve(id + SUFFIX);
+            return Files.isRegularFile(file) ? read(file) : null;
+        }
+    }
+
     /** Legt eine Grafik an; {@code null} ohne Datenordner. */
     public ChatArtifact createGraphic(Path folder, String chatId, String title, String svg,
                                       ChatArtifact.Origin origin) {
@@ -316,23 +396,30 @@ public final class ChatArtifactStore {
                 return null;
             }
             String prefix = kind == ChatArtifact.Kind.GRAPHIC ? "G" : "D";
-            int next = 1;
-            for (ChatArtifact existing : list(folder, chatId)) {
-                Matcher match = ID.matcher(existing.id());
-                if (match.matches() && match.group(1).equals(prefix)) {
-                    next = Math.max(next, Integer.parseInt(match.group(2)) + 1);
-                }
-            }
-            long now = System.currentTimeMillis();
-            ChatArtifact.Revision first = new ChatArtifact.Revision(1, 0, now, origin, "angelegt", changed,
-                    document, svg);
-            created = new ChatArtifact(prefix + next, kind, title, now, List.of(first));
+            created = newArtifact(list(folder, chatId), prefix, kind, title, origin, changed, document, svg);
             if (!write(directory, created)) {
                 return null;
             }
         }
         notify(folder, chatId, created, changed);
         return created;
+    }
+
+    /** Ein neues Artefakt mit der nächsten freien Kennung zum Präfix unter {@code existing}. */
+    private static ChatArtifact newArtifact(List<ChatArtifact> existing, String prefix, ChatArtifact.Kind kind,
+                                            String title, ChatArtifact.Origin origin, List<String> changed,
+                                            SectionDocument document, String svg) {
+        int next = 1;
+        for (ChatArtifact each : existing) {
+            Matcher match = ID.matcher(each.id());
+            if (match.matches() && match.group(1).equals(prefix)) {
+                next = Math.max(next, Integer.parseInt(match.group(2)) + 1);
+            }
+        }
+        long now = System.currentTimeMillis();
+        ChatArtifact.Revision first = new ChatArtifact.Revision(1, 0, now, origin, "angelegt", changed, document,
+                svg);
+        return new ChatArtifact(prefix + next, kind, title, now, List.of(first));
     }
 
     /**
@@ -468,7 +555,7 @@ public final class ChatArtifactStore {
 
     private WriteResult store(Path folder, String chatId, ChatArtifact current, ChatArtifact next,
                               List<String> changed) {
-        Path directory = owner(folder, chatId);
+        Path directory = ownerOf(folder, chatId, next.id());
         if (directory == null || !write(directory, next)) {
             return WriteResult.failed(current, "Das Artefakt konnte nicht gespeichert werden.");
         }
@@ -476,7 +563,10 @@ public final class ChatArtifactStore {
     }
 
     private void notify(Path folder, String chatId, ChatArtifact artifact, List<String> changed) {
-        Event event = new Event(folder, chatId, owner(folder, chatId), artifact, changed);
+        notify(new Event(folder, chatId, ownerOf(folder, chatId, artifact.id()), artifact, changed));
+    }
+
+    private void notify(Event event) {
         for (Consumer<Event> listener : listeners) {
             try {
                 listener.accept(event);
@@ -505,7 +595,7 @@ public final class ChatArtifactStore {
             return null;
         }
         String id = artifactId.strip().toUpperCase(java.util.Locale.ROOT);
-        Path directory = owner(folder, chatId);
+        Path directory = ownerOf(folder, chatId, id);
         return directory == null || !ID.matcher(id).matches() ? null : directory.resolve(id + SUFFIX);
     }
 

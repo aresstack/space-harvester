@@ -163,7 +163,8 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
 
     @Override
     public void open(String artifactId) {
-        if (chatId == null || artifactId == null) {
+        // Ohne Chat gehen die Artefakte geteilter Besitzer (Bücher des Ordners) trotzdem auf.
+        if (folder == null || artifactId == null) {
             return;
         }
         String id = artifactId.strip().toUpperCase(java.util.Locale.ROOT);
@@ -182,7 +183,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
 
     /** Alle Artefakte des offenen Chats (für das Menü „Weitere Aktionen“), auch die ohne offenen Reiter. */
     List<ChatArtifact> artifacts() {
-        return folder == null || chatId == null ? List.of() : store.list(folder, chatId);
+        return folder == null ? List.of() : store.list(folder, chatId);
     }
 
     @Override
@@ -423,7 +424,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     /** Ein umbenanntes Artefakt bekommt seinen neuen Titel auch am Reiter. */
     private void retitle(ChatArtifactStore.Event event) {
         Runnable update = () -> {
-            if (chatId == null || !Objects.equals(store.owner(folder, chatId), event.owner())) {
+            if (folder == null || !store.owners(folder, chatId).contains(event.owner())) {
                 return;
             }
             if (event.artifact().id().equals(selected)) {
