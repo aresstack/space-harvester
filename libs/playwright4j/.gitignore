@@ -1,0 +1,14 @@
+.gradle/
+build/
+out/
+.idea/
+*.iml
+.DS_Store
+
+# Local/temporary artifacts and anything that could carry secrets
+.tmp/
+*.log
+.env
+gradle.properties
+playwright4j-driver.log
+playwright4j-launchserver.log
