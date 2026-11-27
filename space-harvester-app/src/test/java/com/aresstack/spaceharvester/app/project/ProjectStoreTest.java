@@ -67,6 +67,22 @@ class ProjectStoreTest {
     }
 
     @Test
+    void theLinkTargetIsStoredAndTheDefaultHasNone() {
+        ProjectStore store = store();
+        Project project = store.create("Mit Ziel", null);
+        assertThat(project.link()).isNull();
+        store.relink(project.id(), "https://beispiel.invalid/projekt");
+        Project web = new ProjectStore(() -> home.resolve(ProjectStore.FOLDER)).resolve(project.id());
+        assertThat(web.link()).isEqualTo("https://beispiel.invalid/projekt");
+        assertThat(web.linksToWebsite()).isTrue();
+
+        Project folder = store.relink(project.id(), "C:\\Ablage\\Aufgaben");
+        assertThat(folder.linksToWebsite()).isFalse();
+        assertThat(store.relink(project.id(), " ").link()).isNull();
+        assertThat(store.relink(Project.DEFAULT_ID, "https://beispiel.invalid").link()).isNull();
+    }
+
+    @Test
     void unknownIdsAndUnknownColorsFallBackInsteadOfFailing() throws Exception {
         ProjectStore store = store();
         assertThat(store.resolve("gibt-es-nicht").isDefault()).isTrue();

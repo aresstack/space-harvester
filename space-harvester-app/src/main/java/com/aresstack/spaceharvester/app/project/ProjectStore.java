@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
 
 /**
  * Die Projekte im Datenordner der App (ADR 0043, Abschnitt 3 und Nachtrag F4): je Projekt ein Ordner
- * {@code projekte/<id>/}, darin {@code projekt.json} mit Versionsfeld, Name und Farbe. Atomar geschrieben, eine
+ * {@code projekte/<id>/}, darin {@code projekt.json} mit Versionsfeld, Name, Farbe und Link-Ziel. Atomar geschrieben, eine
  * unlesbare Datei kommt in Quarantäne und das Projekt fehlt, bis jemand sie repariert; überschrieben wird sie nie.
  *
  * <p>Das Standardprojekt „AresStack“ gibt es immer, ohne Datei; es lässt sich weder umbenennen noch umfärben noch
@@ -179,6 +179,18 @@ public final class ProjectStore {
         return recolored;
     }
 
+    /** Setzt das Link-Ziel ({@code null} oder leer entfernt es); beim Standardprojekt unverändert. */
+    public synchronized Project relink(String projectId, String link) {
+        Project project = existing(projectId);
+        if (project == null || project.isDefault()) {
+            return project;
+        }
+        Project relinked = project.withLink(link);
+        write(relinked);
+        changed();
+        return relinked;
+    }
+
     /**
      * Löscht ein Projekt vorläufig (F5): Sein Ordner samt Bestandteilen geht in den Papierkorb, bis zum nächsten Start
      * mit {@link #restore} zurückzuholen. Die Chats bleiben unangetastet; da ihre Projekt-ID ins Leere zeigt, gehören
@@ -317,6 +329,9 @@ public final class ProjectStore {
         if (project.color() != null) {
             content.put("color", project.color().key());
         }
+        if (project.link() != null) {
+            content.put("link", project.link());
+        }
         try {
             ProfileFiles.writeAtomic(folder.resolve(FILE), JSON.writeValueAsString(content));
         } catch (IOException | RuntimeException e) {
@@ -336,13 +351,16 @@ public final class ProjectStore {
                 throw new IllegalStateException("Kennung passt nicht zum Ordner");
             }
             JsonNode name = json.get("name");
-            JsonNode color = json.get("color");
-            return new Project(id, name == null || name.isNull() ? null : name.asString(),
-                    ProjectColor.of(color == null || color.isNull() ? null : color.asString()));
+            return new Project(id, text(json, "name"), ProjectColor.of(text(json, "color")), text(json, "link"));
         } catch (IOException | RuntimeException e) {
             quarantine(file, e);
             return null;
         }
+    }
+
+    private static String text(JsonNode json, String field) {
+        JsonNode value = json.get(field);
+        return value == null || value.isNull() ? null : value.asString();
     }
 
     private static void quarantine(Path file, Exception cause) {
