@@ -1,4 +1,4 @@
-# upstream https://github.com/aresstack/research4j.git f17f46d4d14551cdc9eac9b3b1fc2bb85e1954c5
+# upstream https://github.com/aresstack/research4j.git d0caceff38362932cfcfe470483277368521c59a
 51b332c97f18977459a53e680970e822e6ea8cfbb12b5fd63ea88ad65eb9c2d4  LICENSE
 937339c9e1720893d622f5214c52236fb54e663061c0960d5073a18bbefe55bd  README.md
 c354aa95ed6eb93322424fc037a54af7965b13e33d5cb60480e41ac3657855bb  agent-model-runtime-api/build.gradle
@@ -598,7 +598,7 @@ c046ec4b5ed266496ab7a6282347999021fc945b2970f10abdbfb6576038811f  research-agent
 0d4aad06f0e5f97a163f706a36699095b5cdb7a8a393b96ebb7f2e39cd9445ca  research-agent-runtime/src/main/java/com/aresstack/askai/research/runtime/search/LegacyBrowserSearchStrategyFactory.java
 0ddf3c69e784ce9f4ddac2cf3b5378dd83965c27c34ff68daa4e31c8db6e56a1  research-agent-runtime/src/main/java/com/aresstack/askai/research/runtime/search/ResearchSearchStrategyFactory.java
 5f436c50acdced6717d9be4ec9c5e0685c7b77dbf8137ee018b887a764dce109  research-agent-runtime/src/main/java/com/aresstack/askai/research/runtime/search/SearchBrowserRedirectResolver.java
-da5a43958c88405b8bcadda977dcff8fdb4afc4dab5a45a3e896703697b133fe  research-agent-runtime/src/main/java/com/aresstack/askai/research/runtime/search/SearchBrowserWebSearch.java
+a4fcad1d4389dfa4fc26c29f07623e68d4ed704ceb18130bf031e99d9071c93d  research-agent-runtime/src/main/java/com/aresstack/askai/research/runtime/search/SearchBrowserWebSearch.java
 bfc9d28ef971d99486209074470b47e95f8e676ffa014f7c2f557fec02c7838e  research-agent-runtime/src/main/java/com/aresstack/askai/research/runtime/search/SearchBudgetGate.java
 ce998abe3c892dd4142cfe16d5eab2d581952342b99fec969c23f19d6419e62b  research-agent-runtime/src/main/java/com/aresstack/askai/research/runtime/search/SearchDiscovery.java
 6baa91dbf1523be4e4f075506b1dff07da6e619d1a5005dfc11e6c6e20888b08  research-agent-runtime/src/main/java/com/aresstack/askai/research/runtime/search/SearchRunExecutor.java
@@ -830,7 +830,7 @@ a53e5b519cc59eb925379bd2faf1bfc2125547ed8d0346f6cd62a0f2d84aa47b  research-agent
 1be80569aca70aa9676c0275406d86d3eaef89ea625ffcc655caa717d6e37114  research-agent-runtime/src/test/java/com/aresstack/askai/research/runtime/search/HostSnapshotContractTest.java
 73874865e4449af1753fe3e76cdd4bbad758a18f26aa6655e4a046dd2bb243cd  research-agent-runtime/src/test/java/com/aresstack/askai/research/runtime/search/LayoutProfileStoreWiringTest.java
 a9a5a48eb3f04d066f3dcb22d268f1526105cce496046931c564f0727befbe4e  research-agent-runtime/src/test/java/com/aresstack/askai/research/runtime/search/SearchBrowserWebSearchLiveTest.java
-d8f726d2436b58a08f949f3633ff452567d8dda83c28a43c43116e92024d0074  research-agent-runtime/src/test/java/com/aresstack/askai/research/runtime/search/SearchBrowserWebSearchTest.java
+c8d10e15ad57e304729137b08158c13d120f24f833883e395b0c6a73d50eeae7  research-agent-runtime/src/test/java/com/aresstack/askai/research/runtime/search/SearchBrowserWebSearchTest.java
 1b28fbabe841606e8ce294b75b00a2fee8a7ff5ee067ba4dd8bbbf89efa8744c  research-agent-runtime/src/test/java/com/aresstack/askai/research/runtime/search/SearchRunExecutorTest.java
 ef6ccfab1f5fa27f8ab8ece2aa5f9edcdf71f59c795e0d5a99e854581988bc54  research-agent-runtime/src/test/java/com/aresstack/askai/research/runtime/search/SearchStrategyConfigurationLoaderTest.java
 da17aec413fbcc6a5e4a90e990e87b83e6d2f6d6c81e5888b6ff753d74f485ea  research-agent-runtime/src/test/java/com/aresstack/askai/research/runtime/search/SearchUrlNormalizerTest.java

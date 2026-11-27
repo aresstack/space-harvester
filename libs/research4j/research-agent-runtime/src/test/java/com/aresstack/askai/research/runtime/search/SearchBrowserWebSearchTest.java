@@ -81,4 +81,22 @@ public class SearchBrowserWebSearchTest {
         assertEquals("Keine Treffer.", SearchBrowserWebSearch.render(InitialSearchResult.empty(
                 Collections.<String>emptyList()), url -> false));
     }
+
+    @Test
+    public void thePageEngineBrowserTakesPagesAndPauseFromTheChatsTable() {
+        String page = "https://portal.example/suche?q={query}&a=1,2";
+        BrowserSearchEngineSelection table = new BrowserSearchEngineSelection(Arrays.asList(
+                new BrowserSearchEngineSelection.Entry(page, true, 4, 2500, 0, Collections.<String>emptyList(),
+                        Collections.<String>emptyList()),
+                new BrowserSearchEngineSelection.Entry("duckduckgo", true, 2, 0, 1,
+                        Collections.<String>emptyList(), Collections.<String>emptyList())),
+                EngineAcquisitionMode.FIRST_USABLE);
+
+        com.aresstack.askai.browser.search.LegacyBrowserSearchSettings settings = SearchBrowserWebSearch.withTable(
+                com.aresstack.askai.browser.search.LegacyBrowserSearchDefaults.create(), table);
+
+        assertEquals(4, settings.navigation.engineSelection.resultPagesFor(page));
+        assertEquals(2500, settings.navigation.engineSelection.delayMillisFor(page));
+        assertEquals(2, settings.navigation.engineSelection.resultPagesFor("duckduckgo"));
+    }
 }

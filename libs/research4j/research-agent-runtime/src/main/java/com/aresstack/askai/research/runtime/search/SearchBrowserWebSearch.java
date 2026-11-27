@@ -4,6 +4,7 @@ import com.aresstack.askai.browser.playwright.BrowserLauncher;
 import com.aresstack.askai.browser.playwright.PlaywrightBrowserRuntime;
 import com.aresstack.askai.browser.playwright.SearchBrowser;
 import com.aresstack.askai.browser.search.LegacyBrowserSearchSettings;
+import com.aresstack.askai.browser.search.LegacyBrowserSearchSettingsCodec;
 import com.aresstack.askai.browser.search.SearchResultCandidate;
 import com.aresstack.askai.browser.search.analysis.UnavailableStructuredInferencePort;
 import com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog;
@@ -15,6 +16,7 @@ import com.aresstack.enterpriseai.browser.api.BrowserException;
 import com.aresstack.enterpriseai.browser.api.WebSearchPort;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -34,7 +36,8 @@ import java.util.regex.Pattern;
  * <p>The host gives each chat its engine table ({@code selections}), for example one per browser profile. A row may
  * name a search page of the host's own ({@link BrowserSearchEngineCatalog#isSearchPage}), such as an intranet portal.
  * The browser policy of the chat ({@code refused}) leaves out every engine whose pages it refuses and every hit it
- * refuses. One search at a time; both browsers start on first use and again after they ended.</p>
+ * refuses. One search at a time; both browsers start on first use and again after they ended. The page-engine browser
+ * searches with the chat's table (pages and pause per row) and starts anew when that table changed.</p>
  */
 public final class SearchBrowserWebSearch implements WebSearchPort, AutoCloseable {
 
@@ -46,9 +49,18 @@ public final class SearchBrowserWebSearch implements WebSearchPort, AutoCloseabl
     private final Supplier<LegacyBrowserSearchSettings> settings;
     private final Function<ChatConversationId, BrowserSearchEngineSelection> selections;
     private final GoogleSearchForEngineTable google;
+    /** One search at a time. */
+    private final Object searching = new Object();
+    /**
+     * Guards the two browsers only, never held while a search waits: the search's parallel lanes start and use the
+     * browsers from worker threads.
+     */
+    private final Object browsers = new Object();
     private SearchBrowser searchBrowser;
     private PlaywrightBrowserRuntime pages;
-    private boolean closed;
+    /** The settings the page-engine browser runs with ({@link LegacyBrowserSearchSettingsCodec#digest}). */
+    private String pagesSettings;
+    private volatile boolean closed;
 
     /**
      * @param launcher   the host's browser runtime both search browsers start from (throw-away profiles)
@@ -71,13 +83,22 @@ public final class SearchBrowserWebSearch implements WebSearchPort, AutoCloseabl
     }
 
     @Override
-    public synchronized String search(ChatConversationId chat, String query, List<String> engines,
-                                      Predicate<String> refused) throws BrowserException {
+    public String search(ChatConversationId chat, String query, List<String> engines,
+                         Predicate<String> refused) throws BrowserException {
+        synchronized (searching) {
+            return searchNow(chat, query, engines, refused);
+        }
+    }
+
+    private String searchNow(ChatConversationId chat, String query, List<String> engines,
+                             Predicate<String> refused) throws BrowserException {
         if (closed) {
             throw new BrowserException(BrowserException.Kind.BROWSER_CLOSED, "Die Websuche ist beendet");
         }
-        LegacyBrowserSearchSettings current = settings.get();
-        BrowserSearchEngineSelection selection = admitted(selections.apply(chat), engines, refused);
+        BrowserSearchEngineSelection table = selections.apply(chat);
+        LegacyBrowserSearchSettings current = withTable(settings.get(), table);
+        BrowserSearchEngineSelection selection = admitted(table, engines, refused);
+        pollParkedChallenge();
         BrowserEnginesSearchStrategy strategy = new BrowserEnginesSearchStrategy(selection,
                 current.navigation.minimumUsableResults, google.forSelection(selection),
                 LegacyBrowserSearchStrategyFactory.createDefault(pages(current), current, System::currentTimeMillis,
@@ -94,6 +115,40 @@ public final class SearchBrowserWebSearch implements WebSearchPort, AutoCloseabl
             throw new BrowserException(BrowserException.Kind.FAILED, "Websuche fehlgeschlagen: " + e.getMessage(), e);
         }
         return render(result, refused);
+    }
+
+    /**
+     * {@code base} with the chat's engine table, so the page-engine browser takes pages and pause from its rows
+     * ({@code null}: {@code base} as it is).
+     */
+    static LegacyBrowserSearchSettings withTable(LegacyBrowserSearchSettings base,
+                                                 BrowserSearchEngineSelection table) {
+        if (table == null) {
+            return base;
+        }
+        Map<String, String> values = LegacyBrowserSearchSettingsCodec.toValues(base);
+        values.put("navigation.engines", table.encodeEntries());
+        values.put("navigation.engineAcquisitionMode", table.getMode().name());
+        return LegacyBrowserSearchSettingsCodec.fromValues(values).settings;
+    }
+
+    /**
+     * Asks the page-engine browser about a parked challenge before the next search: a solved or closed one frees its
+     * engine again (the search itself never asks).
+     */
+    private void pollParkedChallenge() {
+        PlaywrightBrowserRuntime running;
+        synchronized (browsers) {
+            running = pages;
+        }
+        if (running == null || !running.isAlive()) {
+            return;
+        }
+        try {
+            running.call("web_challenge_status", Collections.<String, Object>emptyMap());
+        } catch (com.aresstack.askai.browser.BrowserException | RuntimeException e) {
+            // The search starts the browser anew when it is gone; nothing else depends on the poll.
+        }
     }
 
     /**
@@ -176,11 +231,13 @@ public final class SearchBrowserWebSearch implements WebSearchPort, AutoCloseabl
     }
 
     /** AskAI's search browser (Google), created on first use. */
-    private synchronized SearchBrowser searchBrowser() {
-        if (searchBrowser == null) {
-            searchBrowser = new SearchBrowser(launcher, headless);
+    private SearchBrowser searchBrowser() {
+        synchronized (browsers) {
+            if (searchBrowser == null) {
+                searchBrowser = new SearchBrowser(launcher, headless);
+            }
+            return searchBrowser;
         }
-        return searchBrowser;
     }
 
     /** The search browser of the other engines (the research browser's engine search), started when needed. */
@@ -206,13 +263,19 @@ public final class SearchBrowserWebSearch implements WebSearchPort, AutoCloseabl
 
     private PlaywrightBrowserRuntime runtime(LegacyBrowserSearchSettings current)
             throws ToolInvoker.EndpointUnavailable {
-        synchronized (this) {
+        synchronized (browsers) {
+            String wanted = LegacyBrowserSearchSettingsCodec.digest(current);
+            if (pages != null && pages.isAlive() && !wanted.equals(pagesSettings)) {
+                pages.close(); // another table (profile or edited row): start with its pages and pauses
+                pages = null;
+            }
             if (pages == null || !pages.isAlive()) {
                 try {
                     // Private networks allowed: the host's own search pages may be intranet portals. Which
                     // addresses a chat may see stays with its browser policy (refused engines and hits).
                     pages = PlaywrightBrowserRuntime.start(new PlaywrightBrowserRuntime.Options(launcher,
                             headless.getAsBoolean(), true, null, current, false));
+                    pagesSettings = wanted;
                 } catch (PlaywrightBrowserRuntime.StartFailure failed) {
                     throw new ToolInvoker.EndpointUnavailable("Suchbrowser startet nicht: " + failed.readiness());
                 }
@@ -222,15 +285,17 @@ public final class SearchBrowserWebSearch implements WebSearchPort, AutoCloseabl
     }
 
     @Override
-    public synchronized void close() {
+    public void close() {
         closed = true;
-        if (pages != null) {
-            pages.close();
-            pages = null;
-        }
-        if (searchBrowser != null) {
-            searchBrowser.close();
-            searchBrowser = null;
+        synchronized (browsers) {
+            if (pages != null) {
+                pages.close();
+                pages = null;
+            }
+            if (searchBrowser != null) {
+                searchBrowser.close();
+                searchBrowser = null;
+            }
         }
     }
 }
