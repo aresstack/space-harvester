@@ -20,6 +20,7 @@ final class StepProgress {
     private final String title;
     private final Function<String, String> phaseOf;
     private final Map<String, Long> reported = new ConcurrentHashMap<>();
+    private final Map<String, Long> totals = new ConcurrentHashMap<>();
 
     /** @param phaseOf verständlicher Name eines Schritts für die Auftragsliste */
     StepProgress(JobContext context, String title, Function<String, String> phaseOf) {
@@ -28,21 +29,31 @@ final class StepProgress {
         this.phaseOf = Objects.requireNonNull(phaseOf, "phaseOf");
     }
 
-    void step(String step, long done, long total) {
-        if (done == 0) {
+    /**
+     * Ein Stand {@code done} von {@code total} des Schritts {@code step}, aus beliebigem Thread. Der erste Stand eines
+     * Schritts meldet seine Menge und die Phase, auch wenn er nicht mit 0 beginnt (das Sieb meldet erst den ersten
+     * fertigen Aufruf), ein Stand 0 eine neue Runde; wächst die Menge, kommt nur der Zuwachs dazu. Erledigt zählt nie über die Menge hinaus. Vorher
+     * fehlte die Menge des Siebs, und die Anzeige stand bei „306/88“ in der Phase „Quellen beschreiben“ (Angelo
+     * 27.11.).
+     */
+    synchronized void step(String step, long done, long total) {
+        long size = Math.max(0, total);
+        Long known = totals.get(step);
+        if (known == null || done == 0) {
+            // Neuer Schritt oder neue Runde desselben Schritts (Research4j sucht in Runden).
+            totals.put(step, size);
             reported.put(step, 0L);
-            context.discovered(total);
+            context.discovered(size);
             context.phase(title, phaseOf.apply(step));
-            return;
+        } else if (size > known) {
+            totals.put(step, size);
+            context.discovered(size - known);
         }
-        long[] delta = new long[1];
-        reported.compute(step, (name, last) -> {
-            long before = last == null ? 0 : last;
-            delta[0] = Math.max(0, done - before);
-            return Math.max(before, done);
-        });
-        if (delta[0] > 0) {
-            context.processed(delta[0]);
+        long capped = Math.min(Math.max(0, done), totals.get(step));
+        long before = reported.getOrDefault(step, 0L);
+        if (capped > before) {
+            reported.put(step, capped);
+            context.processed(capped - before);
         }
     }
 }
