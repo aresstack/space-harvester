@@ -20,6 +20,8 @@ import javax.net.ssl.X509TrustManager;
 final class BscwWebDavTransport {
 
     private static final int MAX_METADATA_BYTES = 16 * 1024 * 1024;
+    /** So vielen Weiterleitungen folgt eine Seite der Weboberfläche höchstens (die Suche braucht zwei). */
+    static final int MAX_PAGE_REDIRECTS = 5;
 
     private final URI root;
     private final ConfiguredSecrets secrets;
@@ -184,7 +186,75 @@ final class BscwWebDavTransport {
 
     private RoutedWebDavHttp.Result exchange(URI resource, String method, int depth, int limit, String range)
             throws KnowledgeSourceException {
-        URI target = checked(resource);
+        Map<String, String> extra = new LinkedHashMap<>();
+        if (depth >= 0) {
+            extra.put("Depth", Integer.toString(depth));
+        }
+        if (range != null) {
+            extra.put("Range", range);
+        }
+        return send(checked(resource), method, extra, null, limit, range != null);
+    }
+
+    /**
+     * Eine Seite der Weboberfläche (Ordner oder Suchergebnis) als HTML, mit den Zugangsdaten der Quelle. Weiterleitungen
+     * folgt der Abruf nur auf demselben Server unter {@code /sec/bscw.cgi} (siehe {@link #checkedPage}).
+     */
+    byte[] page(URI page) throws KnowledgeSourceException {
+        return follow(checkedPage(page), send(checkedPage(page), "GET", html(), null, MAX_METADATA_BYTES, false));
+    }
+
+    /**
+     * Schickt ein Formular der Weboberfläche ({@code application/x-www-form-urlencoded}) an {@code target} und liefert
+     * die Seite, auf die BSCW danach weiterleitet (bei der Suche der Suchordner mit den Treffern).
+     */
+    byte[] submit(URI target, String form) throws KnowledgeSourceException {
+        URI checked = checkedPage(target);
+        Map<String, String> headers = html();
+        headers.put("Content-Type", "application/x-www-form-urlencoded");
+        return follow(checked, send(checked, "POST", headers, form.getBytes(StandardCharsets.UTF_8),
+                MAX_METADATA_BYTES, false));
+    }
+
+    private byte[] follow(URI current, RoutedWebDavHttp.Result response) throws KnowledgeSourceException {
+        for (int hop = 0; ; hop++) {
+            if (response.status() == 200) {
+                return response.body();
+            }
+            boolean redirect = response.status() == 301 || response.status() == 302 || response.status() == 303
+                    || response.status() == 307 || response.status() == 308;
+            if (!redirect || hop >= MAX_PAGE_REDIRECTS) {
+                throw status(response.status());
+            }
+            current = checkedPage(redirectTarget(current, response.location()));
+            response = send(current, "GET", html(), null, MAX_METADATA_BYTES, false);
+        }
+    }
+
+    private static Map<String, String> html() {
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Accept", "text/html");
+        return headers;
+    }
+
+    /**
+     * Wie {@link #checked}, aber für Seiten der Weboberfläche: Eine Abfrage ({@code ?op=…}) ist erlaubt, der Pfad muss
+     * {@code /sec/bscw.cgi} sein oder darunter liegen.
+     */
+    URI checkedPage(URI page) throws KnowledgeSourceException {
+        if (page == null || !root.getScheme().equalsIgnoreCase(page.getScheme())
+                || !root.getHost().equalsIgnoreCase(page.getHost())
+                || root.getPort() != page.getPort() || page.getRawUserInfo() != null
+                || page.getRawFragment() != null || page.normalize().getRawPath() == null
+                || !(page.normalize().getRawPath().startsWith("/sec/bscw.cgi/")
+                || page.normalize().getRawPath().equals("/sec/bscw.cgi"))) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Page is outside the BSCW server");
+        }
+        return page.normalize();
+    }
+
+    private RoutedWebDavHttp.Result send(URI target, String method, Map<String, String> extra, byte[] body, int limit,
+                                         boolean limited) throws KnowledgeSourceException {
         try (SecretMaterial secret = secrets.resolve(secretRef)) {
             if (!secret.hasPrincipal()) {
                 throw new KnowledgeSourceException(Kind.ACCESS_DENIED, "BSCW username missing");
@@ -199,15 +269,10 @@ final class BscwWebDavTransport {
             if (userAgent != null) {
                 headers.put("User-Agent", userAgent);
             }
-            if (depth >= 0) {
-                headers.put("Depth", Integer.toString(depth));
-            }
-            if (range != null) {
-                headers.put("Range", range);
-            }
-            RoutedWebDavHttp.Result response = range == null
-                    ? http.exchange(target, method, headers)
-                    : http.exchange(target, method, headers, limit);
+            headers.putAll(extra);
+            RoutedWebDavHttp.Result response = body != null ? http.exchange(target, method, headers, body, limit)
+                    : limited ? http.exchange(target, method, headers, limit)
+                    : http.exchange(target, method, headers);
             if (response.body().length > limit) {
                 throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, "BSCW WebDAV response too large");
             }

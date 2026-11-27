@@ -442,8 +442,24 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             if (port instanceof SearchableKnowledgeSource searchable) {
                 int depth = Math.min(Math.max(limit * 4, 100), Math.max(limit, TITLE_SEARCH_DEPTH));
                 Map<String, PageNode> found = new LinkedHashMap<>();
+                if (port instanceof KnownTitleLookup known) {
+                    // BSCW: Schon beim Aufklappen gesehene Einträge zuerst, mit ihrer Art (Ordner oder Datei); die
+                    // Online-Suche ergänzt, was noch nie aufgeklappt wurde.
+                    for (SourcePartition partition : port.partitions()) {
+                        if (!spaces.permits(partition.key())) {
+                            continue;
+                        }
+                        for (KnowledgeResource resource : known.knownTitles(term, limit)) {
+                            PageMetadata metadata = pageMetadata(resource, partition.key());
+                            if (found.size() < limit) {
+                                found.putIfAbsent(metadata.pageId(), pageNode(metadata));
+                            }
+                        }
+                    }
+                }
                 for (SourceSearchHit hit : searchable.search(new SourceQuery(term, depth)
-                        .withIncludedPartitions(spaces.only()).withExcludedPartitions(spaces.excluded()))) {
+                        .withIncludedPartitions(spaces.only()).withExcludedPartitions(spaces.excluded())
+                        .withTitleOnly(port instanceof KnownTitleLookup))) {
                     if (found.size() < limit && contains(hit.title(), needle)) {
                         found.putIfAbsent(nativeId(hit.resourceId()),
                                 new PageNode(nativeId(hit.resourceId()), hit.title(), null, null));

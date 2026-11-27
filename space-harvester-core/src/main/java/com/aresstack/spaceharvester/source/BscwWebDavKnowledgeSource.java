@@ -68,7 +68,8 @@ import org.xml.sax.SAXException;
 final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionListingSource,
         ResourceMetadataSource, StoredContentSource, SourceConnectionVerifier, PageNavigationSource, PageViewSource,
         ResourceNodeKindSource, SourceMediaRange, KnownTitleLookup,
-        VirtualNavigationRootSource, OriginalFileSource {
+        VirtualNavigationRootSource, OriginalFileSource,
+        com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource {
 
     static final String STORED_FORMAT = "file";
     private static final String FOLDER_FORMAT = "bscw-folder";
@@ -203,6 +204,51 @@ final class BscwWebDavKnowledgeSource implements KnowledgeSourcePort, PartitionL
                 }
             }
         }
+    }
+
+    /** Ob die Online-Suche nur im Dokumentinhalt sucht ({@code options.searchContentOnly}, Vorgabe an). */
+    private volatile boolean searchContentOnly = true;
+
+    /** Stellt ein, ob die Online-Suche nur im Dokumentinhalt sucht oder auch in Name, Beschreibung und Tags. */
+    BscwWebDavKnowledgeSource searchContentOnly(boolean value) {
+        this.searchContentOnly = value;
+        return this;
+    }
+
+    /**
+     * Die Schnellsuche der BSCW-Weboberfläche im Startordner der Quelle (Angelo 27.11.2026, Mitschnitte der Suche):
+     * Formular-Token aus der Ordnerseite, dann {@code operation=op_qsearch} an den Startordner; BSCW leitet auf seinen
+     * Suchordner mit den Treffern weiter. Jeder Treffer ist eine Objektnummer, also die WebDAV-Adresse
+     * {@code /sec/bscw.cgi/<Nummer>}, unter der die Quelle das Dokument lädt. Wie bei Confluence sind die Treffer nur
+     * Kandidaten zum Laden; Kopfdaten und Rechte prüft der Aufrufer. Mit {@link SourceQuery#titleOnly()} (Titelsuche)
+     * sucht BSCW auch in Namen, sonst je nach {@code options.searchContentOnly} nur im Inhalt.
+     */
+    @Override
+    public List<com.aresstack.enterpriseai.source.api.SourceSearchHit> search(
+            com.aresstack.enterpriseai.source.api.SourceQuery query) throws KnowledgeSourceException {
+        String text = query.text() == null ? "" : query.text().strip();
+        if (text.isEmpty() || query.limit() < 1) {
+            return List.of();
+        }
+        String token = BscwSearchPage.token(new String(transport.page(root), StandardCharsets.UTF_8));
+        String mode = searchContentOnly && !query.titleOnly() ? BscwSearchPage.MODE_CONTENT : BscwSearchPage.MODE_ALL;
+        StringBuilder form = new StringBuilder("operation=op_qsearch");
+        if (token != null) {
+            form.append("&bscw_v_post=").append(formValue(token));
+        }
+        form.append("&query=").append(formValue(text)).append("&qstype=BscwSearch&qsmode=").append(mode);
+        String results = new String(transport.submit(root, form.toString()), StandardCharsets.UTF_8);
+        List<com.aresstack.enterpriseai.source.api.SourceSearchHit> hits = new ArrayList<>();
+        for (BscwSearchPage.Hit hit : BscwSearchPage.hits(results, query.limit())) {
+            URI uri = normalize(transport.resolve("/sec/bscw.cgi/" + hit.objectId()));
+            hits.add(new com.aresstack.enterpriseai.source.api.SourceSearchHit(idOf(uri), hit.name(),
+                    String.join(" / ", hit.folders()), KnowledgeRevision.unknown(), uri, sourceId.value()));
+        }
+        return List.copyOf(hits);
+    }
+
+    private static String formValue(String value) {
+        return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     @Override

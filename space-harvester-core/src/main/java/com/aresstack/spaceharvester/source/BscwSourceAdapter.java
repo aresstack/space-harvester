@@ -12,6 +12,8 @@ import java.util.List;
 public final class BscwSourceAdapter implements SourceAdapter {
 
     public static final String TYPE = "bscw";
+    /** Option: Online-Suche nur im Dokumentinhalt ({@code true}, Vorgabe) oder auch in Name, Beschreibung und Tags. */
+    static final String SEARCH_CONTENT_ONLY = "searchContentOnly";
 
     private static final int DEFAULT_DEPTH = 20;
     private static final int MAX_DEPTH = 50;
@@ -85,7 +87,11 @@ public final class BscwSourceAdapter implements SourceAdapter {
                         SourceField.Kind.NUMBER, false, true, Integer.toString(DEFAULT_DEPTH)),
                 new SourceField("maxFileMegabytes", "Maximale Dateigroesse (MiB)",
                         "Einzelne Downloads auf die zulässige Dateigröße begrenzen.",
-                        SourceField.Kind.NUMBER, false, true, Integer.toString(DEFAULT_FILE_MEGABYTES)));
+                        SourceField.Kind.NUMBER, false, true, Integer.toString(DEFAULT_FILE_MEGABYTES)),
+                new SourceField(SEARCH_CONTENT_ONLY, "Online-Suche nur im Dokumentinhalt",
+                        "Die Suche fragt BSCW nur nach dem Inhalt der Dokumente; aus, sucht sie auch in Namen, "
+                                + "Beschreibungen und Tags.",
+                        SourceField.Kind.FLAG, false, true, "true"));
     }
 
     @Override
@@ -127,7 +133,8 @@ public final class BscwSourceAdapter implements SourceAdapter {
             problems.add("options.title ist nicht erlaubt; verwende title");
         }
         for (String option : config.options().keySet()) {
-            if (!List.of("rootUrl", "maxDepth", "maxFileMegabytes", "chunkMegabytes").contains(option)) {
+            if (!List.of("rootUrl", "maxDepth", "maxFileMegabytes", "chunkMegabytes", SEARCH_CONTENT_ONLY)
+                    .contains(option)) {
                 problems.add("Unbekannte BSCW-Option: " + option);
             }
         }
@@ -144,6 +151,11 @@ public final class BscwSourceAdapter implements SourceAdapter {
         validateNumber(config, problems, "maxDepth", DEFAULT_DEPTH, MAX_DEPTH);
         validateNumber(config, problems, "maxFileMegabytes", DEFAULT_FILE_MEGABYTES, MAX_FILE_MEGABYTES);
         validateNumber(config, problems, "chunkMegabytes", DEFAULT_CHUNK_MEGABYTES, MAX_FILE_MEGABYTES);
+        String contentOnly = config.options().get(SEARCH_CONTENT_ONLY);
+        if (contentOnly != null && !"true".equalsIgnoreCase(contentOnly.strip())
+                && !"false".equalsIgnoreCase(contentOnly.strip())) {
+            problems.add("options." + SEARCH_CONTENT_ONLY + " muss true oder false sein");
+        }
         return problems;
     }
 
@@ -165,7 +177,9 @@ public final class BscwSourceAdapter implements SourceAdapter {
         // Ein Stück je Abruf passt immer in die Antwortgrenze des Transports (maxFileMegabytes).
         int chunk = Math.min(number(config, "chunkMegabytes", DEFAULT_CHUNK_MEGABYTES) * 1024 * 1024, maxBytes);
         BscwWebDavKnowledgeSource port = new BscwWebDavKnowledgeSource(SourceAddress.of(config.id()), root,
-                transport, depth, documents, chunk, retry);
+                transport, depth, documents, chunk, retry)
+                .searchContentOnly(!"false".equalsIgnoreCase(
+                        config.options().getOrDefault(SEARCH_CONTENT_ONLY, "true").strip()));
         return new OpenedSource(port, null);
     }
 
