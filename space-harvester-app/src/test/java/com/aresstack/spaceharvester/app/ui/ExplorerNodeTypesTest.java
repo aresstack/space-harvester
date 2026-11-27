@@ -39,7 +39,7 @@ class ExplorerNodeTypesTest {
             true, Kind.GROUP);
 
     private static final List<String> PAGE_MENU = List.of("Öffnen", Explorer.INDEX, Explorer.PAGE_ONLY,
-            Explorer.EXCLUDE, Explorer.FAVORITE, Explorer.REFRESH, Explorer.ANALYZE, Explorer.ANALYZE_PAGE,
+            Explorer.EXCLUDE, Explorer.FAVORITE, GroupMenu.ASSIGN, Explorer.REFRESH, Explorer.ANALYZE, Explorer.ANALYZE_PAGE,
             Explorer.CHECK, Explorer.CHECK_PAGE);
 
     @TempDir
@@ -114,9 +114,9 @@ class ExplorerNodeTypesTest {
     void theContextMenuIsTheSameForPagesAndFoldersInEveryDepth() throws Exception {
         assertThat(labels(PAGE)).containsExactlyElementsOf(PAGE_MENU);
         assertThat(labels(FOLDER)).containsExactlyElementsOf(PAGE_MENU);
-        assertThat(labels(SPACE)).containsExactly(Explorer.INDEX, Explorer.EXCLUDE, Explorer.FAVORITE,
+        assertThat(labels(SPACE)).containsExactly(Explorer.INDEX, Explorer.EXCLUDE, Explorer.FAVORITE, GroupMenu.ASSIGN,
                 Explorer.REFRESH, Explorer.ANALYZE, Explorer.CHECK);
-        assertThat(labels(SOURCE)).containsExactly(Explorer.INDEX, Explorer.FAVORITE, Explorer.REFRESH,
+        assertThat(labels(SOURCE)).containsExactly(Explorer.INDEX, Explorer.FAVORITE, GroupMenu.ASSIGN, Explorer.REFRESH,
                 Explorer.RENAME, Explorer.ANALYZE, Explorer.CHECK);
         assertThat(labels(GROUP)).containsExactly("Öffnen");
         assertThat(labels(new Explorer.MoreItem("c"))).isEmpty();

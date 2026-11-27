@@ -1017,6 +1017,18 @@ public final class PageDetailPanel extends JPanel {
         browse.addActionListener(e -> browse());
         bookmark.addActionListener(e -> copyBookmark());
         star.addActionListener(e -> toggleFavorite());
+        // Rechtsklick auf den Stern: nur die Gruppen und „Neue Gruppe …“ (Angelo 27.11.2026).
+        star.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent e) {
+                starMenu(e);
+            }
+
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent e) {
+                starMenu(e);
+            }
+        });
         context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(this::updateStar));
         harvest.addActionListener(e -> harvestAssets());
         saveAsset.addActionListener(e -> saveAsset());
@@ -1187,17 +1199,37 @@ public final class PageDetailPanel extends JPanel {
 
     /** Setzt den Favoriten der gezeigten Seite oder nimmt ihn zurück (Pfad aus der geladenen Position). */
     private void toggleFavorite() {
+        com.aresstack.spaceharvester.app.ui.Favorites.Favorite favorite = shownFavorite();
+        if (favorite != null) {
+            // Derselbe Weg wie der Stern im Baum (ADR 0034): Pfad aus der Position, Zielordner aus der Favoritenansicht.
+            context.favorites().toggle(favorite);
+        }
+    }
+
+    /** Der Favorit der gezeigten Seite mit ihrem Pfad, oder {@code null} ohne Seite oder Space. */
+    private com.aresstack.spaceharvester.app.ui.Favorites.Favorite shownFavorite() {
         if (page == null || sourceId == null || pageId == null) {
-            return;
+            return null;
         }
         String spaceKey = shownPosition != null && shownPosition.spaceKey() != null ? shownPosition.spaceKey()
                 : page.header().metadata().partitionKey();
         if (spaceKey == null) {
+            return null;
+        }
+        return com.aresstack.spaceharvester.app.ui.Favorites.Favorite.page(sourceId, spaceKey, pageId,
+                page.header().metadata().title(), shownPosition, sourceTitle(sourceId));
+    }
+
+    /** Rechtsklick auf den Stern: die Gruppen der Favoriten; die Wahl macht die Seite zum Favoriten darin. */
+    private void starMenu(java.awt.event.MouseEvent e) {
+        com.aresstack.spaceharvester.app.ui.Favorites.Favorite favorite = e.isPopupTrigger() ? shownFavorite() : null;
+        if (favorite == null) {
             return;
         }
-        // Derselbe Weg wie der Stern im Baum (ADR 0034): Pfad aus der Position, Zielordner aus der Favoritenansicht.
-        context.favorites().toggle(com.aresstack.spaceharvester.app.ui.Favorites.Favorite.page(sourceId, spaceKey,
-                pageId, page.header().metadata().title(), shownPosition, sourceTitle(sourceId)));
+        var favorites = context.favorites();
+        String current = favorites.groupOf(favorite.sourceId(), favorite.spaceKey(), favorite.pageId()).orElse(null);
+        com.aresstack.spaceharvester.app.ui.GroupMenu.popup(star, favorites, current,
+                id -> favorites.assign(favorite, id)).show(star, e.getX(), e.getY());
     }
 
     private String sourceTitle(String id) {
@@ -1211,9 +1243,9 @@ public final class PageDetailPanel extends JPanel {
                 ? shownPosition.spaceKey() : page.header().metadata().partitionKey();
         boolean favorite = spaceKey != null && context.favorites().contains(sourceId, spaceKey, pageId);
         star.setEnabled(shown && spaceKey != null);
-        star.setIcon(favorite ? com.aresstack.spaceharvester.app.ui.Glyph.STAR_FILLED
-                : com.aresstack.spaceharvester.app.ui.Glyph.STAR);
-        star.setToolTipText(favorite ? "Favorit entfernen" : "Als Favorit markieren");
+        star.setIcon(com.aresstack.spaceharvester.app.ui.GroupMenu.star(favorite, favorite
+                ? context.favorites().colorOf(sourceId, spaceKey, pageId).orElse(null) : null));
+        star.setToolTipText((favorite ? "Favorit entfernen" : "Als Favorit markieren") + " · Rechtsklick: Gruppe zuordnen");
         star.getAccessibleContext().setAccessibleName(favorite ? "Favorit entfernen" : "Als Favorit markieren");
     }
 
@@ -6285,7 +6317,8 @@ public final class PageDetailPanel extends JPanel {
 
     /**
      * Zur Seite „Lesezeichen kopieren“ und „Im Browser öffnen“, mit Podcast auch „Transkript speichern …“; auf der
-     * Quellenseite „Zusammenfassung speichern …“ und „Transkript speichern …“ (Angelo 22.11.2026). Je Eintrag so
+     * Quellenseite „Zusammenfassung speichern …“ und „Transkript speichern …“ (Angelo 22.11.2026). Wo das Transkript
+     * steht, stehen auch „Als WAV exportieren …“ und „Als Video exportieren …“ (Angelo 27.11.2026). Je Eintrag so
      * wählbar wie die Aktion gerade gilt.
      */
     javax.swing.JPopupMenu moreMenu() {
@@ -6304,6 +6337,7 @@ public final class PageDetailPanel extends JPanel {
         if (sourceMenuShown() && areaShown()) {
             menu.add(menuItem(SAVE_TRANSCRIPT, "Der gesprochene Text des Podcasts als Textdatei",
                     areaPodcast.podcast().hasTranscript(), () -> saveTranscript(areaPodcast.podcast())));
+            addPodcastExports(menu, areaPodcast.podcast());
             addPodcastSettings(menu);
             return menu;
         }
@@ -6311,6 +6345,7 @@ public final class PageDetailPanel extends JPanel {
             // Der Podcast steht in der Podcast-Ansicht, seine Einträge also auch.
             menu.add(menuItem(SAVE_TRANSCRIPT, "Der gesprochene Text des Podcasts als Textdatei",
                     sourceChanges.podcast().hasTranscript(), () -> saveTranscript(sourceChanges.podcast())));
+            addPodcastExports(menu, sourceChanges.podcast());
             menu.add(menuItem(RENEW_PODCAST, RENEW_PODCAST_TIP, sourceChanges.podcastRenewable(),
                     sourceChanges::renewPodcast));
             addPodcastSettings(menu);
@@ -6322,8 +6357,52 @@ public final class PageDetailPanel extends JPanel {
         if (PAGE.equals(pageCard) && pagePodcast.hasTranscript()) {
             menu.add(menuItem(SAVE_TRANSCRIPT, "Der gesprochene Text des Podcasts als Textdatei", true,
                     () -> saveTranscript(pagePodcast)));
+            addPodcastExports(menu, pagePodcast);
         }
         return menu;
+    }
+
+    static final String EXPORT_WAV = "Als WAV exportieren …";
+    static final String EXPORT_VIDEO = "Als Video exportieren …";
+    static final String EXPORT_WAITING = "Erst möglich, wenn alle Abschnitte des Podcasts vertont sind";
+
+    /**
+     * „Als WAV exportieren …“, „Als Video exportieren …“ (die Bilder als Diashow, zeitlich passend zum Ton) und darunter
+     * die „Video-Einstellungen“ (Angelo 27.11.2026). Wählbar, sobald jeder Abschnitt sein Audio hat.
+     */
+    private void addPodcastExports(javax.swing.JPopupMenu menu, PodcastControl<?> podcast) {
+        boolean ready = podcast.exportable() != null;
+        menu.add(menuItem(EXPORT_WAV, ready ? "Der Ton des Podcasts als eine WAV-Datei" : EXPORT_WAITING, ready,
+                () -> exportPodcast(podcast, com.aresstack.spaceharvester.app.podcast.PodcastExport.Format.WAV)));
+        menu.add(menuItem(EXPORT_VIDEO, ready ? "Der Podcast mit seinen Bildern als Video (MP4), zeitlich passend "
+                + "zum Ton" : EXPORT_WAITING, ready,
+                () -> exportPodcast(podcast, com.aresstack.spaceharvester.app.podcast.PodcastExport.Format.VIDEO)));
+        menu.add(PodcastVideoSettings.menu(this, text -> tabStatus(tabs.selected(), text)));
+    }
+
+    /**
+     * Fragt nach der Datei und startet den Export als Auftrag: er läuft auf der lokalen Spur, zeigt seinen Fortschritt
+     * in der Auftragsliste und lässt sich dort abbrechen.
+     */
+    private void exportPodcast(PodcastControl<?> control,
+                               com.aresstack.spaceharvester.app.podcast.PodcastExport.Format format) {
+        com.aresstack.spaceharvester.application.podcast.Podcast podcast = control.exportable();
+        com.aresstack.spaceharvester.app.runtime.AppRuntime runtime = context.runtime();
+        if (podcast == null || runtime == null) {
+            return;
+        }
+        String name = title.getText();
+        java.nio.file.Path target = saveTarget.apply("Podcast " + safeName(name) + "." + format.extension());
+        if (target == null) {
+            return;
+        }
+        com.aresstack.spaceharvester.app.podcast.PodcastVideo.Options options = PodcastVideoSettings.options();
+        java.nio.file.Path file = target.toAbsolutePath();
+        runtime.workspace().startPodcastExport(name, java.util.Map.of(
+                        com.aresstack.spaceharvester.app.podcast.PodcastExport.FILE_PARAMETER, file.toString(),
+                        com.aresstack.spaceharvester.app.podcast.PodcastExport.FORMAT_PARAMETER, format.name()),
+                com.aresstack.spaceharvester.app.podcast.PodcastExport.task(podcast, file, format, options));
+        tabStatus(tabs.selected(), format.label() + " wird exportiert, Fortschritt unter Aufträge: " + file);
     }
 
     /**

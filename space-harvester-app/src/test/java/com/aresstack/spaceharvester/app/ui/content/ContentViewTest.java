@@ -558,10 +558,12 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().sourceChanges().isVisible())).as("„Text“: die Updates").isTrue();
         assertThat(onEdt(() -> view.detail().sourceChanges().tools().isVisible())).isTrue();
         assertThat(onEdt(() -> view.detail().sourceView().tools().isVisible())).isFalse();
-        // Podcast-Ansicht: Transkript und „Podcast neu erstellen“ hinter dem Dreieck, ohne Podcast gesperrt; neben der
+        // Podcast-Ansicht: Transkript, WAV, Video und „Podcast neu erstellen“ hinter dem Dreieck, ohne Podcast gesperrt; neben der
         // Lupe der Platz für „Transkript kopieren“, ohne Podcast bleibt der Knopf weg.
         assertThat(onEdt(() -> menuEntries(view.detail()))).containsExactly(
-                PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", PageDetailPanel.RENEW_PODCAST + " (gesperrt)", "—",
+                PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", PageDetailPanel.EXPORT_WAV + " (gesperrt)",
+                PageDetailPanel.EXPORT_VIDEO + " (gesperrt)", PodcastVideoSettings.MENU,
+                PageDetailPanel.RENEW_PODCAST + " (gesperrt)", "—",
                 PODCAST_TEXTS, PODCAST_PICTURES, "—", MODEL_ROWS[0], MODEL_ROWS[1], MODEL_ROWS[2], MODEL_ROWS[3]);
         assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(
                 view.detail().sourceChanges().podcast().transcriptCopy(), view.tools()))).isTrue();
@@ -959,7 +961,9 @@ class ContentViewTest {
             assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(view.detail().scopeToggles().get(2),
                     view.tools()))).isTrue();
             assertThat(onEdt(() -> menuEntries(view.detail())))
-                    .containsExactly(PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)", "—", PODCAST_TEXTS,
+                    .containsExactly(PageDetailPanel.SAVE_TRANSCRIPT + " (gesperrt)",
+                            PageDetailPanel.EXPORT_WAV + " (gesperrt)", PageDetailPanel.EXPORT_VIDEO + " (gesperrt)",
+                            PodcastVideoSettings.MENU, "—", PODCAST_TEXTS,
                             PODCAST_PICTURES, "—", MODEL_ROWS[0], MODEL_ROWS[1], MODEL_ROWS[2], MODEL_ROWS[3]);
 
             // Eine andere Wurzel behält die Wahl (global, nicht je Seite).

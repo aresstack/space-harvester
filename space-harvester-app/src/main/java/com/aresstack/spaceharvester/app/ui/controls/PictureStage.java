@@ -203,44 +203,56 @@ public final class PictureStage extends JPanel {
             g2.dispose();
         }
 
-        /** Wo das Bild auf der Fläche steht: mittig, im Seitenverhältnis; leer ohne Platz. */
         java.awt.Rectangle sheet(Picture picture) {
-            double scale = scale(picture);
-            int width = (int) Math.round(picture.width() * scale);
-            int height = (int) Math.round(picture.height() * scale);
-            return new java.awt.Rectangle((getWidth() - width) / 2, (getHeight() - height) / 2, width, height);
-        }
-
-        private double scale(Picture picture) {
-            double scale = Math.max(0, Math.min(getWidth() / picture.width(), getHeight() / picture.height()));
-            // Ein kleines Seitenbild wird nicht aufgeblasen; ein Schaubild füllt die Fläche.
-            return picture.vector() == null ? Math.min(scale, 1.0) : scale;
+            return PictureStage.sheet(picture, getWidth(), getHeight());
         }
 
         private void paint(Graphics2D g2, Picture picture, float alpha) {
-            double scale = scale(picture);
-            if (scale <= 0) {
-                return;
-            }
-            java.awt.Rectangle sheet = sheet(picture);
-            int x = sheet.x;
-            int y = sheet.y;
-            int width = sheet.width;
-            int height = sheet.height;
-            Graphics2D layer = (Graphics2D) g2.create();
-            layer.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, Math.max(0f, Math.min(1f, alpha))));
-            layer.setColor(Color.WHITE);
-            layer.fillRect(x, y, width, height);
-            if (picture.vector() != null) {
-                Graphics2D drawing = (Graphics2D) layer.create(x, y, width, height);
-                picture.vector().paint(drawing, scale);
-                drawing.dispose();
-            } else {
-                layer.drawImage(picture.image(), x, y, width, height, null);
-            }
-            layer.setColor(Comic.LINE);
-            layer.drawRect(x, y, width - 1, height - 1);
-            layer.dispose();
+            PictureStage.paint(g2, picture, alpha, getWidth(), getHeight());
         }
+    }
+
+    /**
+     * Wo das Bild auf einer Fläche von {@code width} × {@code height} steht: mittig, im Seitenverhältnis; leer ohne
+     * Platz. Dieselbe Rechnung für die Bühne und für die Bilder eines Podcast-Videos.
+     */
+    public static java.awt.Rectangle sheet(Picture picture, int width, int height) {
+        double scale = scale(picture, width, height);
+        int sheetWidth = (int) Math.round(picture.width() * scale);
+        int sheetHeight = (int) Math.round(picture.height() * scale);
+        return new java.awt.Rectangle((width - sheetWidth) / 2, (height - sheetHeight) / 2, sheetWidth, sheetHeight);
+    }
+
+    private static double scale(Picture picture, int width, int height) {
+        double scale = Math.max(0, Math.min(width / picture.width(), height / picture.height()));
+        // Ein kleines Seitenbild wird nicht aufgeblasen; ein Schaubild füllt die Fläche.
+        return picture.vector() == null ? Math.min(scale, 1.0) : scale;
+    }
+
+    /**
+     * Malt das Bild auf eine Fläche von {@code width} × {@code height}: weiß hinterlegt wie ein Blatt, mit dünnem Rand,
+     * mittig im Seitenverhältnis ({@link #sheet}), mit der Deckkraft {@code alpha}. Die Bühne malt so, und das
+     * Podcast-Video malt seine Bilder genauso.
+     */
+    public static void paint(Graphics2D g2, Picture picture, float alpha, int width, int height) {
+        double scale = scale(picture, width, height);
+        if (scale <= 0) {
+            return;
+        }
+        java.awt.Rectangle sheet = sheet(picture, width, height);
+        Graphics2D layer = (Graphics2D) g2.create();
+        layer.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, Math.max(0f, Math.min(1f, alpha))));
+        layer.setColor(Color.WHITE);
+        layer.fillRect(sheet.x, sheet.y, sheet.width, sheet.height);
+        if (picture.vector() != null) {
+            Graphics2D drawing = (Graphics2D) layer.create(sheet.x, sheet.y, sheet.width, sheet.height);
+            picture.vector().paint(drawing, scale);
+            drawing.dispose();
+        } else {
+            layer.drawImage(picture.image(), sheet.x, sheet.y, sheet.width, sheet.height, null);
+        }
+        layer.setColor(Comic.LINE);
+        layer.drawRect(sheet.x, sheet.y, sheet.width - 1, sheet.height - 1);
+        layer.dispose();
     }
 }

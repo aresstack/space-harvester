@@ -86,6 +86,8 @@ dependencies {
     implementation libs.poi.ooxml
     // Embed VLC in Swing; keep libVLC native installation optional at runtime.
     implementation 'uk.co.caprica:vlcj:4.8.2'
+    // Podcast als Video (Diashow mit Ton): H.264/MP4 in reinem Java wie die Aufnahme in Ask AI (askai-java8)
+    implementation 'org.jcodec:jcodec-javase:0.2.5'
     // Use the Java 21 Whisper inference library with the guarded 30-second decoder of 0.3.2.
     implementation 'com.aresstack:directml-inference:0.3.2'
     // Reuse the published Ask AI Java DSP/VAD pipeline, without Silero or an ONNX runtime.
@@ -164,7 +166,9 @@ tasks.named('test') {
     systemProperty 'space-harvester.system-functions', systemFunctions.absolutePath
     doFirst { systemFunctions.delete() }
     // Die App-Tests rendern PDFs mit Systemschriften und bauen viele Swing-Oberflächen; 512 MB (Vorgabe) reichen nicht mehr.
-    maxHeapSize = '1g'
+    // Auch 1 GB reichte am 27.11.2026 nicht mehr: AttachmentViewerPanelTest rendert eine PDF-Seite bis zur Pixelgrenze
+    // (40 Mio. Pixel, rund 160 MB) und lief nach den übrigen Tests derselben JVM in OutOfMemoryError (develop wechselnd rot).
+    maxHeapSize = '2g'
     // Echttest des Chats mit Werkzeugen (ADR 0033) gegen einen Ollama-Server, nur auf Anfrage:
     // -PchatLiveOllama=http://localhost:11434 [-PchatLiveModel=gemma4:12b] [-PchatLiveNoToolsModel=qwen2.5-coder:1.5b-base]
     ['chatLiveOllama', 'chatLiveModel', 'chatLiveNoToolsModel'].each { name ->
