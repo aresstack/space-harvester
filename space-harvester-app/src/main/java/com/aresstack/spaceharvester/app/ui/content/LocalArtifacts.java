@@ -270,6 +270,9 @@ final class LocalArtifacts {
     void renew(Item item) {
         ExportPanel.Selection current = selection;
         if (current != null && item.deletable()) {
+            if (item.kind() == Kind.SUMMARY) {
+                AreaSummaryView.deletedByUser(current, false);
+            }
             worker.accept(() -> actions.renew(current, item));
         }
     }
@@ -278,6 +281,10 @@ final class LocalArtifacts {
         ExportPanel.Selection current = selection;
         if (current == null || !item.deletable() || !confirm.test(DELETE_TITLE, deleteQuestion(item.name()))) {
             return;
+        }
+        // Ein gelöschter Überblick entsteht beim nächsten Öffnen nicht von selbst neu.
+        if (item.kind() == Kind.SUMMARY) {
+            AreaSummaryView.deletedByUser(current, true);
         }
         worker.accept(() -> actions.delete(current, item));
     }

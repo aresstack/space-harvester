@@ -178,6 +178,20 @@ class AreaSummaryViewTest {
         assertThat(actions.summarized).containsExactly("ordner:ordner-c|null|false");
     }
 
+    @Test
+    void aSummaryTheUserDeletedNeverStartsByItselfAgainOnlyAClickBringsItBack() {
+        // ADR 0047 §5a: „Löschen“ unter „Aus dieser Seite erzeugt“; gilt über Neustarts (Zustand der Anwendung).
+        ExportPanel.Selection.Collection folder = folder("ordner-geloescht", Root.space("wiki", "BAU"));
+        AreaSummaryView.deletedByUser(folder, true);
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        view.folder(folder);
+        assertThat(actions.summarized).isEmpty();
+        assertThat(view.summarizeOffered()).isTrue();
+
+        AreaSummaryView.deletedByUser(folder, false);
+        assertThat(AreaSummaryView.deletedByUser(AreaSummaryView.Target.of(folder))).isFalse();
+    }
+
     /**
      * Angelo 27.11.2026: Der Ring verschwand, der Auftrag lief weiter, das fertige Ergebnis erschien nicht. Der laufende
      * Überblick gehört zum Ordner: wer weg- und zurückwechselt oder die andere Ansicht öffnet, sieht den Ring wieder, und
