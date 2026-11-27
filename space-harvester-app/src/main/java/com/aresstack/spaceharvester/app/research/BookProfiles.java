@@ -24,10 +24,22 @@ public final class BookProfiles implements ProfileMemory {
     private static final System.Logger LOG = System.getLogger(BookProfiles.class.getName());
     private static final ObjectMapper JSON = JsonMapper.builder().build();
 
+    /**
+     * Ein Gedächtnis je Datei, für alle Läufe desselben Ordners in dieser App: zwei Vorbereitungen nebeneinander
+     * schreiben so nie gegenseitig ihre Steckbriefe weg.
+     */
+    private static final Map<Path, BookProfiles> SHARED = new java.util.concurrent.ConcurrentHashMap<>();
+
     private final Path file;
     private final Map<String, String> kept;
 
-    public BookProfiles(Path dataDirectory, String folderId) {
+    /** Das gemeinsame Gedächtnis des Ordners. */
+    public static BookProfiles of(Path dataDirectory, String folderId) {
+        BookProfiles fresh = new BookProfiles(dataDirectory, folderId);
+        return SHARED.computeIfAbsent(fresh.file.toAbsolutePath().normalize(), path -> fresh);
+    }
+
+    BookProfiles(Path dataDirectory, String folderId) {
         Path notes = BookNotes.file(dataDirectory, folderId);
         String name = notes.getFileName().toString();
         this.file = notes.resolveSibling(name.substring(0, name.length() - ".json".length()) + ".profiles.json");

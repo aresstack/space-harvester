@@ -49,8 +49,14 @@ final class BookFlow {
     BookFlow(AppContext context, Component parent) {
         this.context = Objects.requireNonNull(context, "context");
         this.parent = Objects.requireNonNull(parent, "parent");
-        if (context.runtime() != null) {
-            context.runtime().workspace().bookResumer(this::resume);
+        // Der Dienst startet meist erst nach den Ansichten und kann neu starten: nach jedem Start neu anmelden.
+        registerResumer(context);
+        context.onChange(this::registerResumer);
+    }
+
+    private void registerResumer(AppContext current) {
+        if (current.runtime() != null) {
+            current.runtime().workspace().bookResumer(this::resume);
         }
     }
 
@@ -217,7 +223,7 @@ final class BookFlow {
         Path data = dataDirectory(context);
         if (data != null) {
             // Fertige Quellensteckbriefe bleiben am Ordner: ein neuer Start fragt nur die übrigen ab (Angelo 27.11.2026).
-            settings.withProfileMemory(new BookProfiles(data, folderId));
+            settings.withProfileMemory(BookProfiles.of(data, folderId));
         }
         BookJob.Session session = BookJob.session(chat, new WorkspacePageStock(workspace, null),
                 new FavoritesBasket(favorites, folderId, context::sourceTitle), folderId, name, fence,
@@ -269,7 +275,7 @@ final class BookFlow {
         Path output = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings
                 .defaultOutputDirectory() : context.settings().outputDirectory();
         CornerstoneSurvey.Chosen chosen = view.chosen(session.prepared().basketHints());
-        context.runtime().workspace().startBook(session.folderName(), BookJob.write(session, chosen, output,
+        context.runtime().workspace().startBook(session.folderId(), session.folderName(), BookJob.write(session, chosen, output,
                 PageDetailPanel.safeName(session.folderName()),
                 book -> SwingUtilities.invokeLater(() -> written(session, book))));
     }

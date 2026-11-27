@@ -51,4 +51,17 @@ class BookProfilesTest {
         profiles.remember("a1", "{}");
         assertEquals("{}", new BookProfiles(data, "ordner-1").recall("a1"));
     }
+
+    @Test
+    void twoRunsOfTheSameFolderShareOneMemorySoNeitherWritesTheOtherAway() {
+        BookProfiles first = BookProfiles.of(data, "ordner-3");
+        BookProfiles second = BookProfiles.of(data, "ordner-3");
+        first.remember("a1", "{}");
+        second.remember("b2", "{}");
+
+        assertTrue(first == second);
+        BookProfiles afterRestart = new BookProfiles(data, "ordner-3");
+        assertEquals("{}", afterRestart.recall("a1"));
+        assertEquals("{}", afterRestart.recall("b2"));
+    }
 }
