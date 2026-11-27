@@ -43,6 +43,7 @@ class BasketResearchFormScreenshotTest {
             form.mission.setText("Wie pflegt man eine Streuobstwiese über das Jahr, und was bringt sie der Artenvielfalt?");
             form.included.setText("Obstbaumschnitt\nMahd");
             form.excluded.setText("Gewerblicher Obstbau");
+            form.length.value(12, com.aresstack.spaceharvester.app.ui.controls.LengthField.Unit.PAGES);
         });
         SwingUtilities.invokeLater(() -> form.ask(owner[0], "Streuobst"));
         JDialog dialog = waitForDialog();

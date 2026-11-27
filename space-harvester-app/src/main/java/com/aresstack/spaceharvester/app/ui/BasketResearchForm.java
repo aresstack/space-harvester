@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.app.research.BookFieldFill;
 import com.aresstack.spaceharvester.app.research.BookFields;
 import com.aresstack.spaceharvester.app.research.BookNotes;
 import com.aresstack.spaceharvester.app.runtime.GlossaryAccess;
+import com.aresstack.spaceharvester.app.ui.controls.LengthField;
 
 import javax.swing.JButton;
 import javax.swing.JComponent;
@@ -80,8 +81,16 @@ final class BasketResearchForm {
     final JTextArea excluded = area(4);
     private final JButton advanced = Comic.disclosure("Erweitert",
             "Rand des Themas, was ausdrücklich dazugehört und was ausgeschlossen ist");
-    /** Nur beim Buch: gewünschte Länge in Wörtern, leer = nach den Belegen. */
-    final javax.swing.JTextField length = new javax.swing.JTextField(8);
+    /**
+     * Wörter je DIN-A4-Seite, mit denen „Seiten“ umgerechnet werden, solange der Leser nichts anderes einstellt: eine
+     * einseitig beschriebene Seite Fließtext in 11 bis 12 Punkt. Die Zahl im Feld ist änderbar und bleibt gemerkt.
+     */
+    static final int DEFAULT_WORDS_PER_PAGE = 400;
+    static final String WORDS_PER_PAGE_KEY = "book.words-per-page";
+    /** Nur beim Buch: gewünschte Länge als Zahl mit Einheit (Wörter oder Seiten), intern Wörter; 0 = nach den Belegen. */
+    final LengthField length =
+            new LengthField(
+                    WindowSizes.recallInt(WORDS_PER_PAGE_KEY, DEFAULT_WORDS_PER_PAGE));
     private final boolean book;
 
     BasketResearchForm() {
@@ -106,6 +115,9 @@ final class BasketResearchForm {
     /** Setzt alles vorab, was am Ordner gespeichert ist: Weidezaun, Länge, Stichpunkte und Fragen. */
     BasketResearchForm prefill(BookNotes notes) {
         prefill(notes.fence(), notes.targetWords());
+        if (notes.lengthAmount() > 0) {
+            length.value(notes.lengthAmount(), LengthField.Unit.parse(notes.lengthUnit()));
+        }
         ideas.setText(notes.ideas());
         questions.setText(String.join("\n", notes.questions()));
         return this;
@@ -117,7 +129,7 @@ final class BasketResearchForm {
         edge.setText(fence.getEdge());
         included.setText(String.join("\n", fence.getIncluded()));
         excluded.setText(String.join("\n", fence.getExcluded()));
-        length.setText(targetWords > 0 ? Integer.toString(targetWords) : "");
+        length.value(Math.max(0, targetWords), LengthField.Unit.WORDS);
         return this;
     }
 
@@ -129,16 +141,15 @@ final class BasketResearchForm {
         boolean start = Dialogs.formOverlaySized(parent, (book ? BOOK_TITLE : TITLE) + " – " + folderName,
                 body(folderName), book ? BOOK_ACTION : ACTION, book ? BOOK_SIZE_KEY : SIZE_KEY, SCREEN_SHARE);
         cancelFill();
+        if (start && book && length.unit() == LengthField.Unit.PAGES) {
+            WindowSizes.rememberInt(WORDS_PER_PAGE_KEY, length.wordsPerPage());
+        }
         return start ? fence() : Optional.empty();
     }
 
-    /** Die gewünschte Länge in Wörtern; 0, wenn leer oder keine Zahl (dann nach den Belegen). */
+    /** Die gewünschte Länge in Wörtern; 0 = keine Vorgabe (dann nach den Belegen). */
     int targetWords() {
-        try {
-            return Math.max(0, Integer.parseInt(length.getText().strip().replace(".", "")));
-        } catch (NumberFormatException none) {
-            return 0;
-        }
+        return book ? length.words() : 0;
     }
 
     JComponent body(String folderName) {
@@ -174,12 +185,8 @@ final class BasketResearchForm {
         inner = add(more, inner, label("Ausgeschlossen (eine Angabe je Zeile)"), 0);
         inner = add(more, inner, field(excluded), 1);
         if (book) {
-            inner = add(more, inner, label("Länge in Wörtern (leer: so lang, wie die Belege tragen)"), 0);
-            Comic.style(length);
-            JPanel short_ = new JPanel(new BorderLayout());
-            short_.setOpaque(false);
-            short_.add(length, BorderLayout.WEST);
-            add(more, inner, short_, 0);
+            inner = add(more, inner, label("Länge"), 0);
+            add(more, inner, length, 0);
         }
         more.setVisible(false);
         GridBagConstraints place = constraints(row, 0);

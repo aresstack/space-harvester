@@ -90,8 +90,8 @@ final class BookFlow {
         }
         BookNotes notes = BookNotes.load(data, folderId).map(old -> old.withFence(fence, targetWords))
                 .orElseGet(() -> BookNotes.of(fence, targetWords));
-        save(data, folderId, notes.withIdeas(form.ideas(), form.questions().isEmpty() && !form.isBook()
-                ? notes.questions() : form.questions()));
+        BookNotes updated = notes.withIdeas(form.ideas(), form.isBook() ? form.questions() : notes.questions());
+        save(data, folderId, form.isBook() ? updated.withLength(form.length.amount(), form.length.unit().name()) : updated);
     }
 
     /** Was der KI-Knopf des Formulars braucht; leer ohne KI-Dienst oder Chat-Modell (dann sagt der Knopf das). */

@@ -27,6 +27,17 @@ class BasketResearchFormTest {
     }
 
     @Test
+    void dieLaengeKommtAlsZahlMitEinheitZurueckUndZaehltIntern() {
+        BasketResearchForm form = BasketResearchForm.book().prefill(
+                com.aresstack.spaceharvester.app.research.BookNotes.of(Fence.of("M"), 2000).withLength(5, "PAGES"));
+
+        assertThat(form.length.amount()).isEqualTo(5);
+        assertThat(form.length.unit()).isEqualTo(com.aresstack.spaceharvester.app.ui.controls.LengthField.Unit.PAGES);
+        assertThat(form.targetWords()).isEqualTo(5 * form.length.wordsPerPage());
+        assertThat(new BasketResearchForm().targetWords()).as("Korb füllen kennt keine Länge").isZero();
+    }
+
+    @Test
     void ohneAuftragStartetNichts() {
         BasketResearchForm form = new BasketResearchForm();
         form.excluded.setText("Vereinsfeste");
