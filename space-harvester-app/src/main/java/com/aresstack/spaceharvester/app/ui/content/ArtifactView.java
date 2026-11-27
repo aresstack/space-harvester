@@ -141,7 +141,7 @@ final class ArtifactView extends JPanel {
 
     private void changed(ChatArtifactStore.Event event) {
         // Ein Projekt teilt seine Artefakte mit allen seinen Chats (ADR 0043, F3): maßgeblich ist der Besitzer.
-        if (!java.util.Objects.equals(owner, event.owner())) {
+        if (!java.util.Objects.equals(owner, event.owner()) || event.deleted()) {
             return;
         }
         if (!artifactId.equals(event.artifact().id())) {
