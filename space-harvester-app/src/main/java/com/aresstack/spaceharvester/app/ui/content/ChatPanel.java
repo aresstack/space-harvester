@@ -156,6 +156,11 @@ public final class ChatPanel extends JPanel {
             + "freigegebenen Wissensquellen durchsuchen, wie die Suchleiste";
     static final String APP_SEARCH_ON = "Interne Suche ist an: Der Assistent durchsucht alle für die KI freigegebenen "
             + "Wissensquellen (Klick: aus)";
+    /** Schalter „Schreiben“ (ADR 0045): die KI arbeitet abschnittsweise an Dokumenten des Chats. */
+    static final String WRITE_LABEL = "Schreiben";
+    static final String WRITE_OFF = "Schreiben einschalten: Der Assistent legt Dokumente dieses Chats an und "
+            + "überarbeitet sie Abschnitt für Abschnitt; sie erscheinen in der Mitte";
+    static final String WRITE_ON = "Schreiben ist an: Der Assistent arbeitet an den Dokumenten dieses Chats (Klick: aus)";
     static final String WEB_LABEL = "Websuche";
     static final String WEB = "Websuche für diesen Chat einschalten: Der Assistent sucht mit einem eigenen Firefox im "
             + "Web und im Intranet";
@@ -278,7 +283,25 @@ public final class ChatPanel extends JPanel {
     private final List<JobStatus> jobOutcomes = new ArrayList<>();
     private AssistantMarkdownMessage answering;
     /** Antworten rendert der Chat als Markdown wie der EAC (AssistantMarkdownMessage, MarkdownMessageView). */
-    private final DesktopLinkOpener linkOpener = DesktopLinkOpener.systemDefault();
+    /** Links in Antworten; „artefakt:D1“ öffnet das Artefakt als Reiter in der Mitte (ADR 0045). */
+    private final DesktopLinkOpener linkOpener = url -> {
+        if (url != null && url.startsWith(com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools.LINK_SCHEME)) {
+            this.artifactHost.open(url.substring(
+                    com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools.LINK_SCHEME.length()));
+        } else {
+            DesktopLinkOpener.systemDefault().open(url);
+        }
+    };
+    /** Die Artefakte der Chats (ADR 0045); derselbe Speicher für Ansicht und Werkzeuge. */
+    private final com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore artifacts;
+    /** Wo die Artefakte erscheinen (die Mitte); ohne Arbeitsfläche geschieht nichts. */
+    private volatile ArtifactHost artifactHost = ArtifactHost.NONE;
+    /**
+     * Für welchen Chat die Mitte zuletzt Artefakte zeigt (Ordner und Kennung); die Schreibwerkzeuge eines laufenden
+     * Zugs lesen das aus ihrem Faden.
+     */
+    private volatile Path artifactFolder;
+    private volatile String artifactChat;
     private MermaidImageRenderer mermaid;
     /** Die Auftragskennungen des zuletzt hier gestarteten Downloads, bis der Auftrag endet. */
     private final Set<String> watchedJobs = new HashSet<>();
@@ -338,6 +361,10 @@ public final class ChatPanel extends JPanel {
     private JPanel footerWest;
     private JPanel footerEast;
     private final ComposerButton web = ComposerButton.iconButton(ChatIcons.globe(), WEB);
+    /** Schalter „Schreiben“ (ADR 0045), Vorgabe aus, jederzeit mitten im Chat umschaltbar. */
+    private final ComposerButton write = ComposerButton.iconButton(ComposerIcons.pencil(), WRITE_OFF);
+    private final java.awt.Component writeGap = Box.createHorizontalStrut(4);
+    private boolean writeOn;
     private final ComposerButton appSearch = ComposerButton.iconButton(
             com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.openBook(), APP_SEARCH_OFF);
     /** Ob die interne Suche an ist; gilt für die nächsten Fragen, bis man sie ausschaltet. */
@@ -413,6 +440,7 @@ public final class ChatPanel extends JPanel {
 
         store = new ChatStore(() -> context.settings() == null ? null
                 : context.settings().storage().dataDirectory().resolve(ChatStore.FOLDER));
+        artifacts = new com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore(store);
         JLabel heading = new JLabel("Chat:");
         heading.setFont(Comic.semiBold(16f));
         heading.setForeground(Comic.INK);
@@ -666,6 +694,8 @@ public final class ChatPanel extends JPanel {
         effort.addActionListener(e -> showEffortMenu());
         appSearch.getAccessibleContext().setAccessibleName(APP_SEARCH_LABEL);
         appSearch.addActionListener(e -> appSearch(!appSearchOn));
+        write.getAccessibleContext().setAccessibleName(WRITE_LABEL);
+        write.addActionListener(e -> writing(!writeOn));
         web.getAccessibleContext().setAccessibleName(WEB_LABEL);
         web.addActionListener(e -> webSearch(!webOn));
         webBudget.setPreferredSize(new Dimension(14, 28));
@@ -702,6 +732,8 @@ public final class ChatPanel extends JPanel {
         east.add(Box.createHorizontalGlue());
         east.add(levelBar);
         east.add(Box.createHorizontalStrut(4));
+        east.add(write);
+        east.add(writeGap);
         east.add(appSearch);
         east.add(appSearchGap);
         east.add(web);
@@ -1721,6 +1753,80 @@ public final class ChatPanel extends JPanel {
         webBudget.setVisible(stage < 3);
         appSearch.setVisible(stage < 3);
         appSearchGap.setVisible(stage < 3);
+        write.setVisible(stage < 3);
+        writeGap.setVisible(stage < 3);
+    }
+
+    /** Schaltet die Schreibumgebung (ADR 0045): an ist der Knopf eingerastet; gilt ab der nächsten Frage. */
+    void writing(boolean on) {
+        writeOn = on;
+        write.setEmphasized(on);
+        write.setToolTipText(on ? WRITE_ON : WRITE_OFF);
+    }
+
+    boolean writingOn() {
+        return writeOn;
+    }
+
+    /**
+     * Wo die Artefakte des Chats erscheinen (ADR 0045, Abschnitt 5): die Mitte zeigt sie als Reiter. Sie erfährt, wenn
+     * ein anderer Chat offen ist, und öffnet Artefakte auf Klick oder wenn die KI sie ändert.
+     */
+    public interface ArtifactHost {
+        ArtifactHost NONE = new ArtifactHost() {
+            @Override
+            public void chat(Path folder, String chatId) {
+            }
+
+            @Override
+            public void open(String artifactId) {
+            }
+
+            @Override
+            public String focus() {
+                return null;
+            }
+        };
+
+        /** Der offene Chat; {@code folder} ist {@code null}, solange er nicht gespeichert ist. */
+        void chat(Path folder, String chatId);
+
+        /** Öffnet ein Artefakt des offenen Chats als Reiter und zeigt ihn. */
+        void open(String artifactId);
+
+        /** Das gerade gezeigte Artefakt oder {@code null}. */
+        String focus();
+    }
+
+    /** Setzt die Mitte, in der die Artefakte erscheinen, und meldet ihr den offenen Chat. */
+    public void artifactHost(ArtifactHost host) {
+        artifactHost = host == null ? ArtifactHost.NONE : host;
+        artifactFolder = null;
+        artifactChat = null;
+        announceArtifactChat();
+    }
+
+    /** Der Speicher der Artefakte (für die Mitte). */
+    public com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore artifactStore() {
+        return artifacts;
+    }
+
+    /** Ob {@code host} noch die Mitte ist und den Chat {@code chatId} im Ordner {@code folder} zeigt. */
+    boolean showsArtifactsOf(ArtifactHost host, Path folder, String chatId) {
+        return host == artifactHost && java.util.Objects.equals(artifactFolder, folder)
+                && java.util.Objects.equals(artifactChat, chatId);
+    }
+
+    /** Meldet der Mitte einen Wechsel des offenen Chats (neuer, geladener oder erstmals gespeicherter Chat). */
+    private void announceArtifactChat() {
+        if (artifacts == null) {
+            return;
+        }
+        if (!java.util.Objects.equals(artifactFolder, home) || !java.util.Objects.equals(artifactChat, chat.id())) {
+            artifactFolder = home;
+            artifactChat = chat.id();
+            artifactHost.chat(home, chat.id());
+        }
     }
 
     /** Schaltet die interne Suche: an ist der Knopf eingerastet. */
@@ -2684,6 +2790,19 @@ public final class ChatPanel extends JPanel {
             listener.webCard = card;
             listener.browserTools = web.tools();
         }
+        // Schreibumgebung (Composer-Schalter „Schreiben“, ADR 0045): die Schreibwerkzeuge auf den Artefakten des Chats.
+        if (writeOn) {
+            // Fokus und Öffnen gelten nur, solange die Mitte noch den Chat dieses Zugs zeigt (Chatwechsel im Lauf).
+            ArtifactHost host = artifactHost;
+            String turnChat = target.id();
+            turn.writing(new com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools(artifacts, targetNode,
+                    turnChat, () -> showsArtifactsOf(host, targetNode, turnChat) ? host.focus() : null,
+                    changed -> SwingUtilities.invokeLater(() -> {
+                        if (showsArtifactsOf(host, targetNode, turnChat)) {
+                            host.open(changed.id());
+                        }
+                    })));
+        }
         listener.turn = turn;
         send.setText(STOP);
         send.setIcon(ComposerIcons.stop());
@@ -3644,6 +3763,7 @@ public final class ChatPanel extends JPanel {
     }
 
     private void showChatName() {
+        announceArtifactChat();
         chatName.setText(com.aresstack.spaceharvester.app.chat.ChatExport.displayTitle(chat));
         titleAi.setEnabled(!chat.isEmpty() && !titlePending && turn == null);
         chats.setEnabled(true);

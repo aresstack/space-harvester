@@ -21,7 +21,8 @@ public record SectionDocument(List<Section> sections, long nextId) {
     public record Section(String id, int level, String heading, String text) {
         public Section {
             heading = heading == null ? "" : heading.strip();
-            text = text == null ? "" : text.strip();
+            // Nur leere Randzeilen und Leerraum am Ende fallen weg; Einrückung (Codeblock) bleibt.
+            text = text == null ? "" : LEADING_BLANK_LINES.matcher(text).replaceFirst("").stripTrailing();
         }
 
         /** Grob gezählte Wörter des Texts (ohne Überschrift). */
@@ -54,8 +55,11 @@ public record SectionDocument(List<Section> sections, long nextId) {
     public record Change(SectionDocument document, List<String> touched) {
     }
 
-    private static final Pattern HEADING = Pattern.compile("^ {0,3}(#{1,6})[ \\t]+(.*?)[ \\t]*#*[ \\t]*$");
-    private static final Pattern FENCE = Pattern.compile("^ {0,3}(`{3,}|~{3,}).*$");
+    // Schließende # nur nach Leerraum, damit „# C#“ seine Raute behält.
+    private static final Pattern HEADING = Pattern.compile("^ {0,3}(#{1,6})[ \\t]+(.*?)(?:[ \\t]+#+)?[ \\t]*$");
+    private static final Pattern LEADING_BLANK_LINES = Pattern.compile("^(?:[ \\t]*\\R)+");
+    private static final Pattern FENCE = Pattern.compile("^ {0,3}(`{3,}|~{3,})(.*)$");
+    private static final Pattern REFERENCE_DEFINITION = Pattern.compile("^ {0,3}\\[[^\\]]+]:[ \\t]*\\S.*$");
     private static final String PREFIX = "a";
 
     public SectionDocument {
@@ -83,6 +87,50 @@ public record SectionDocument(List<Section> sections, long nextId) {
 
     public int words() {
         return sections.stream().mapToInt(Section::words).sum();
+    }
+
+    /**
+     * Die Linkdefinitionen ({@code [ref]: https://…}) aller Abschnitte außerhalb von Codeblöcken, damit ein Abschnitt,
+     * der für sich gezeigt wird, auch Verweise auf Definitionen in anderen Abschnitten auflöst.
+     */
+    public List<String> referenceDefinitions() {
+        List<String> definitions = new ArrayList<>();
+        for (Section section : sections) {
+            Fences fences = new Fences();
+            for (String line : lines(section.text())) {
+                if (!fences.inside(line) && REFERENCE_DEFINITION.matcher(line).matches()) {
+                    definitions.add(line.strip());
+                }
+            }
+        }
+        return definitions;
+    }
+
+    /**
+     * Verfolgt Codeblöcke Zeile für Zeile: Ein Block endet erst an einer Zaunzeile aus demselben Zeichen, mindestens
+     * so lang wie die öffnende und ohne weiteren Text dahinter (CommonMark).
+     */
+    private static final class Fences {
+        private char marker;
+        private int length;
+
+        /** Ob {@code line} in einem Codeblock liegt; die öffnende und die schließende Zaunzeile zählen dazu. */
+        boolean inside(String line) {
+            Matcher fence = FENCE.matcher(line);
+            if (length == 0) {
+                if (fence.matches()) {
+                    marker = fence.group(1).charAt(0);
+                    length = fence.group(1).length();
+                    return true;
+                }
+                return false;
+            }
+            if (fence.matches() && fence.group(1).charAt(0) == marker && fence.group(1).length() >= length
+                    && fence.group(2).isBlank()) {
+                length = 0;
+            }
+            return true;
+        }
     }
 
     /** Der Abschnitt mit dieser Kennung, sonst eine Meldung mit den vorhandenen Kennungen. */
@@ -136,10 +184,8 @@ public record SectionDocument(List<Section> sections, long nextId) {
             throw new SectionException("Die Textstelle kommt in Abschnitt " + old.id() + " " + count
                     + "-mal vor. Mehr Umgebung angeben, damit sie eindeutig ist.");
         }
-        String text = old.text().replace(search, replacement == null ? "" : replacement);
-        List<Section> list = new ArrayList<>(sections);
-        list.set(index, new Section(old.id(), old.level(), old.heading(), text));
-        return new Change(new SectionDocument(list, nextId), List.of(old.id()));
+        // Wie beim Ersetzen des Texts: neue Überschriften in der Ersetzung werden eigene Abschnitte.
+        return split(old.text().replace(search, replacement == null ? "" : replacement), index, old);
     }
 
     /**
@@ -213,19 +259,9 @@ public record SectionDocument(List<Section> sections, long nextId) {
         int level = head == null ? 0 : head.level();
         String heading = head == null ? "" : head.heading();
         String id = head == null ? null : head.id();
-        boolean fenced = false;
-        String fence = "";
+        Fences fences = new Fences();
         for (String line : lines(body)) {
-            Matcher fenceLine = FENCE.matcher(line);
-            if (fenceLine.matches()) {
-                String marker = fenceLine.group(1);
-                if (!fenced) {
-                    fenced = true;
-                    fence = marker.substring(0, 3);
-                } else if (marker.startsWith(fence)) {
-                    fenced = false;
-                }
-            }
+            boolean fenced = fences.inside(line);
             Matcher match = fenced ? null : HEADING.matcher(line);
             if (match != null && match.matches()) {
                 if (id != null || !text.toString().isBlank()) {
