@@ -85,10 +85,13 @@ public final class Explorer {
     /** Die Hälften der Wippe im Kopf (ADR 0047 §5, Angelo 27.11.2026). */
     static final String SOURCES_TAB = "Wissensquellen";
     static final String ARTIFACTS_TAB = "Artefakte";
-    static final String ARTIFACTS_TIP = "Die Dokumente, Grafiken und Bücher des aktiven Projekts";
+    static final String ARTIFACTS_TIP = "Artefakte: die Dokumente, Grafiken und Bücher des aktiven Projekts";
+    /** Die mittlere Hälfte des Umschalters (Angelo 27.11.2026): die Favoriten als Liste, bisher der Stern unten. */
+    static final String FAVORITES_TAB = "Favoriten";
+    static final String SOURCES_TIP = "Wissensquellen · ein weiterer Klick wählt alle";
+    static final String FAVORITES_TIP = "Favoriten: nur die markierten Quellen, Spaces und Seiten";
     static final String FAVORITE = "Favorit";
     static final String UNFAVORITE = "Favorit entfernen";
-    static final String ONLY_FAVORITES = "Nur Favoriten zeigen";
     static final String STAR_TIP = "Favorit setzen oder entfernen · Rechtsklick: Gruppe zuordnen";
     /** Am Zustandspunkt (Angelo, 16.11.2026): beim Darüberfahren Kreispfeile, der Klick holt den Knoten samt Teilbaum nach. */
     static final String REFRESH_TIP = "Klick: Änderungen aus der Quelle nachholen";
@@ -96,7 +99,6 @@ public final class Explorer {
     static final String REFRESH_ALL_TITLE = "Alles aktualisieren?";
     static final String REFRESH_ALL_QUESTION = "Wirklich alle Wissensquellen aktualisieren? Für jeden Space jeder "
             + "Wissensquelle startet sofort ein eigener Auftrag, der die Änderungen nachholt.";
-    static final String ALL_NODES = "Alle Knoten zeigen";
     private static final int MATCH_LIMIT = 50;
     private static final int BATCH = 100;
     private static final int ACTION_WIDTH = 30;
@@ -559,9 +561,7 @@ public final class Explorer {
     /** Ob beim Drücken auf „Wissensquellen“ diese Hälfte schon gewählt war: dann wählt der Klick alles, wie bisher. */
     private boolean sourcesBeforePress;
     /** Rechts neben den Kopfknöpfen: die Spalte der Sterne bleibt frei. */
-    private final java.awt.Component actionGap =
-            javax.swing.Box.createRigidArea(new java.awt.Dimension(ACTION_WIDTH, RoundHover.SIZE));
-    /** Rechts neben der Überschrift, tut dasselbe wie der Klick auf sie: zeigt, dass man hier wählen kann. */
+    /** Links in der Zeile des Umschalters: wählt alle Wissensquellen. */
     private final IconButton selectAll = new IconButton(Glyph.SELECT_ALL, ALL_TIP);
     /** Rechts von „Alles auswählen“: das Bestandszeichen über alle Quellen, in der Spalte der Zeilen. */
     private final JLabel allBadge = new JLabel();
@@ -590,10 +590,9 @@ public final class Explorer {
     private final JLabel note = Comic.muted(" ");
     private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alles zuklappen");
     private final IconButton showCurrent = new IconButton(Glyph.CROSSHAIR, "Aktuelles Dokument im Baum zeigen");
-    /** Unten rechts (Angelo, 13.11.2026): Umriss = alle Knoten, gefüllt = nur die Favoriten als Liste mit Pfad. */
-    private final IconButton favoritesOnly = new IconButton(Glyph.STAR, ONLY_FAVORITES);
     /** Unten unter „Artefakte“: nach Art gruppieren (Angelo 27.11.2026), global gemerkt. */
     private final IconButton groupByKind = new IconButton(Glyph.TABLE, ArtifactList.GROUP_BY_KIND);
+    /** Ob die Hälfte „Favoriten“ gilt: nur die Favoriten als Liste mit Pfad; bleibt unter „Artefakte“ gemerkt. */
     private boolean onlyFavorites;
     /** Die Favoritenansicht an Stelle des Baums (ADR 0034, 2a); im Konstruktor angelegt, sie fragt den Baum. */
     private final FavoritesView favorites;
@@ -972,8 +971,7 @@ public final class Explorer {
         // Die Überschrift ist anklickbar: sie wählt alle Wissensquellen; dann ist der ganze Kopf samt Filterfeld
         // gelb hinterlegt, als ein Feld (Angelo, 16.11.2026).
         JPanel title = head.title();
-        // Rechtsbündig wie die Symbole der Zeilen (Angelo, 16.11.2026): „Alles auswählen“, dann das Bestandszeichen
-        // über der Spalte der Bestandszeichen; rechts davon bleibt die Spalte der Sterne frei.
+        // Das Bestandszeichen aller Quellen steht unten rechts in der Fußleiste (Angelo, 27.11.2026).
         allBadge.setHorizontalAlignment(JLabel.CENTER);
         allBadge.setPreferredSize(new java.awt.Dimension(BADGE_WIDTH, RoundHover.SIZE));
         // Beim Darüberfahren Kreispfeile; der Klick aktualisiert nach Rückfrage alle Quellen (Angelo, 16.11.2026).
@@ -998,7 +996,6 @@ public final class Explorer {
                 }
             }
         });
-        head.actions(selectAll, allBadge, actionGap);
         selectAll.addActionListener(e -> selectAll());
         heading.setToolTipText(ALL_TIP);
         Cursors.set(heading, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
@@ -1024,8 +1021,12 @@ public final class Explorer {
         title.addMouseListener(chooseAll);
         // Die Wippe steht an Stelle der Überschrift; ein Klick auf das schon gewählte „Wissensquellen“ wählt wie
         // bisher die Überschrift alle Wissensquellen.
-        view.segment(SOURCES_TAB).segment(ARTIFACTS_TAB);
-        view.button(SOURCES_TAB).setToolTipText(ALL_TIP);
+        // Drei Hälften nur mit Symbolen (Angelo 27.11.2026): der Kolben für das Wissen, der Stern für die Favoriten
+        // (bisher unten rechts) und der Würfel für die Artefakte; der Name steht im Tooltip.
+        view.segment(SOURCES_TAB, com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.flask())
+                .segment(FAVORITES_TAB, Glyph.STAR).segment(ARTIFACTS_TAB, SwitchIcons.artifacts());
+        view.button(SOURCES_TAB).setToolTipText(SOURCES_TIP);
+        view.button(FAVORITES_TAB).setToolTipText(FAVORITES_TIP);
         view.button(ARTIFACTS_TAB).setToolTipText(ARTIFACTS_TIP);
         view.button(SOURCES_TAB).addMouseListener(new MouseAdapter() {
             @Override
@@ -1039,11 +1040,17 @@ public final class Explorer {
             }
             sourcesBeforePress = false;
         });
-        view.onSelect(tab -> showArtifacts(ARTIFACTS_TAB.equals(tab)));
-        // Eine eigene Zeile über den Kopfknöpfen, so breit wie die Leiste: Beide Hälften bleiben auch in der
-        // schmalsten Seitenleiste sichtbar und anklickbar; die Knöpfe stehen darunter rechts.
+        view.onSelect(this::showView);
+        // Eine eigene Zeile über den Kopfknöpfen. Der Umschalter steht rechtsbündig, zur Mitte des Fensters hin wie
+        // der der Aufträge auf der anderen Seite (Angelo 27.11.2026): Man schaltet oft um.
         title.remove(heading);
-        title.add(view, BorderLayout.NORTH);
+        // Neben der Überschrift stehen keine Symbole mehr: „Alles auswählen“ steht links in dieser Zeile, das
+        // Bestandszeichen („alles aktualisieren“) unten rechts, wo früher der Stern war.
+        JPanel viewRow = new JPanel(new BorderLayout());
+        viewRow.setOpaque(false);
+        viewRow.add(selectAll, BorderLayout.WEST);
+        viewRow.add(view, BorderLayout.EAST);
+        title.add(viewRow, BorderLayout.NORTH);
         artifacts.onNote(text -> {
             if (artifactsShown()) {
                 note.setText(text);
@@ -1057,7 +1064,6 @@ public final class Explorer {
         showCurrent.addActionListener(e -> showCurrent());
         // Hinweise nur beim Titelfilter und bei Fehlern; die Anzahl der Wissensquellen sieht man im Baum.
         note.setBorder(BorderFactory.createEmptyBorder(2, 6, 0, 0));
-        favoritesOnly.addActionListener(e -> showOnlyFavorites(!onlyFavorites));
         groupByKind.setVisible(false);
         groupByKind.setSelected(artifacts.grouped());
         groupByKind.addActionListener(e -> {
@@ -1069,8 +1075,7 @@ public final class Explorer {
         // Die gemeinsame Fußleiste aller Seitenleisten, so hoch wie die Leiste mit der Lupe daneben.
         root.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(
                 com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, showCurrent,
-                        favorites.newFolderButton(), groupByKind), note,
-                favoritesOnly), BorderLayout.SOUTH);
+                        favorites.newFolderButton(), groupByKind), note, allBadge), BorderLayout.SOUTH);
         context.onChange(ignored -> refreshSources());
         refreshSources();
     }
@@ -1103,7 +1108,7 @@ public final class Explorer {
         if (target == null) {
             return;
         }
-        showArtifacts(false);
+        view.select(SOURCES_TAB);
         cards.show(deck, TREE);
         // Fehler bis 23.11.2026: Beim Zuklappen wanderte die Auswahl auf den zugeklappten Vorfahren; der
         // Auswahl-Listener (nur der Umfang war stumm) zeigte dessen Ansicht in der Mitte, die meldete keine Seite mehr,
@@ -2816,36 +2821,50 @@ public final class Explorer {
     }
 
     /**
-     * Wechselt zwischen dem Baum der Wissensquellen und der Liste der Artefakte (ADR 0047 §5). Unter „Artefakte“ gelten
-     * Filterfeld und Fußleiste der Liste; die Knöpfe des Baums sind dann ausgeblendet.
+     * Wechselt zwischen dem Baum der Wissensquellen (oder den Favoriten) und der Liste der Artefakte (ADR 0047 §5).
+     * Zurück von den Artefakten steht wieder, was davor stand.
      */
     void showArtifacts(boolean shown) {
-        if (shown != ARTIFACTS_TAB.equals(view.selected())) {
-            view.select(shown ? ARTIFACTS_TAB : SOURCES_TAB);
-            return;
+        if (shown != artifactsShown()) {
+            view.select(shown ? ARTIFACTS_TAB : onlyFavorites ? FAVORITES_TAB : SOURCES_TAB);
         }
-        for (JComponent part : new JComponent[] {selectAll, allBadge, collapseAll, showCurrent, favoritesOnly}) {
+    }
+
+    /**
+     * Die gewählte Hälfte des Umschalters. Unter „Artefakte“ gelten Filterfeld und Fußleiste der Liste; die Knöpfe des
+     * Baums sind dann ausgeblendet.
+     */
+    private void showView(String tab) {
+        boolean shown = ARTIFACTS_TAB.equals(tab);
+        if (!shown) {
+            onlyFavorites = FAVORITES_TAB.equals(tab);
+        }
+        for (JComponent part : new JComponent[] {selectAll, collapseAll, showCurrent}) {
             part.setVisible(!shown);
         }
-        actionGap.setVisible(!shown);
+        // „Alles aktualisieren“ gehört zum Baum der Wissensquellen, nicht zu Favoriten oder Artefakten.
+        allBadge.setVisible(SOURCES_TAB.equals(tab));
         groupByKind.setVisible(shown);
         favorites.newFolderButton().setVisible(!shown && onlyFavorites);
         head.setOpaque(!shown && global);
         head.repaint();
-        artifactsListener.accept(shown);
+        if (shown != artifactsFront) {
+            artifactsFront = shown;
+            artifactsListener.accept(shown);
+        }
+        note.setText(" ");
         if (shown) {
-            note.setText(" ");
             cards.show(deck, ARTIFACTS);
             artifacts.reload();
             artifacts.filter(filter.getText().trim());
         } else {
-            note.setText(" ");
             runFilter();
-            if (filter.getText().trim().isEmpty()) {
-                showOnlyFavorites(onlyFavorites);
-            }
+            favoritesShown();
         }
     }
+
+    /** Ob der Beobachter ({@link #onArtifactsShown}) die Artefakte zuletzt als gezeigt gemeldet bekam. */
+    private boolean artifactsFront;
 
     /** Ob links gerade die Artefakte stehen. */
     boolean artifactsShown() {
@@ -2906,17 +2925,19 @@ public final class Explorer {
         return artifacts;
     }
 
-    /** Umschalter unten rechts: nur die Favoriten als Liste (Stern gefüllt) oder der ganze Baum (Umriss). */
+    /** Die Hälfte „Favoriten“ (nur die Favoriten als Liste) oder „Wissensquellen“ (der ganze Baum). */
     void showOnlyFavorites(boolean only) {
-        onlyFavorites = only;
-        favoritesOnly.setIcon(only ? Glyph.STAR_FILLED : Glyph.STAR);
-        favoritesOnly.setToolTipText(only ? ALL_NODES : ONLY_FAVORITES);
-        favoritesOnly.getAccessibleContext().setAccessibleName(only ? ALL_NODES : ONLY_FAVORITES);
-        favorites.newFolderButton().setVisible(only);
+        view.select(only ? FAVORITES_TAB : SOURCES_TAB);
+    }
+
+    /** Zeigt Baum oder Favoriten nach {@link #onlyFavorites}; ein Titelfilter behält seine Trefferliste. */
+    private void favoritesShown() {
+        favorites.newFolderButton().setVisible(onlyFavorites);
         favoritesChanged();
         if (filter.getText().trim().isEmpty()) {
-            cards.show(deck, only ? FAVORITES : TREE);
-            note.setText(only && favorites.isEmpty() ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
+            cards.show(deck, onlyFavorites ? FAVORITES : TREE);
+            note.setText(onlyFavorites && favorites.isEmpty()
+                    ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
         }
     }
 
@@ -2951,8 +2972,9 @@ public final class Explorer {
         return favorites;
     }
 
-    IconButton favoritesButton() {
-        return favoritesOnly;
+    /** Für Tests: die Hälfte „Favoriten“ des Umschalters. */
+    javax.swing.JToggleButton favoritesButton() {
+        return view.button(FAVORITES_TAB);
     }
 
     private void popup(MouseEvent event) {
