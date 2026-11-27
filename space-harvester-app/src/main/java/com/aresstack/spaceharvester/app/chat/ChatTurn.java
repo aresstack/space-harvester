@@ -459,6 +459,17 @@ public final class ChatTurn {
     private ChatTools.TermLookup termLookup;
 
     /**
+     * Die Auswertungsmodelle für Seiten des Bereichs ({@value ChatTools#STATEMENTS}, {@value ChatTools#PODCAST});
+     * ohne Aufruf bietet der Turn sie nicht an.
+     */
+    public ChatTurn pageModels(ChatTools.PageModels models) {
+        this.pageModels = models;
+        return this;
+    }
+
+    private ChatTools.PageModels pageModels;
+
+    /**
      * Schalter „Interne Suche“ im Composer (Angelo 23.11.2026): {@code sources} liefert die Wissensquellen, die die
      * globale Suche des Modells durchsuchen darf (die für die KI freigegebenen); {@code null} lässt das Werkzeug weg.
      */
@@ -715,6 +726,9 @@ public final class ChatTurn {
                         : LiveArea.of(workspace), liveRoots));
         if (termLookup != null) {
             running.termLookup(termLookup);
+        }
+        if (pageModels != null) {
+            running.pageModels(pageModels);
         }
         if (appSources != null) {
             running.appSearch(appSources, explicitAppSources);
