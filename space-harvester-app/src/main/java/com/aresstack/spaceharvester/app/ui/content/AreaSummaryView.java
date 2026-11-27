@@ -319,6 +319,8 @@ final class AreaSummaryView extends JPanel {
         busy.onCancel(this::cancel);
         if (mode == Mode.LISTEN) {
             podcast.follow(this::follow);
+            // Wovon der ganze Podcast nie erzählt, steht grau da (Angelo 27.11.2026).
+            podcast.cover(summaryReport::cover);
             podcast.cue(new PodcastControl.Cue() {
                 @Override
                 public boolean open(int topic) {

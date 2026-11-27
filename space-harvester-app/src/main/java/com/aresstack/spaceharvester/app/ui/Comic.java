@@ -74,6 +74,11 @@ public final class Comic {
     public static final Color CHANGE_CHANGED = new Color(0xDCEBFB);
     /** Markierung eines entfernten Absatzes in der Leseansicht (rot, durchgestrichen). */
     public static final Color CHANGE_REMOVED = new Color(0xFADBD8);
+    /**
+     * Hinterlegung dessen, wovon der ganze Podcast nie erzählt (Angelo 27.11.2026: „hellgrau hinterlegt …, damit man
+     * sofort sehen kann, was nicht abgedeckt war im Podcast“); das Gelb der laufenden Stelle liegt nie darauf.
+     */
+    public static final Color PODCAST_GAP = new Color(0xE6E8EB);
     /** Stand einer Aussage (ADR 0032): „gilt“ grün. Jede Marke trägt dazu ihr Wort, nie nur die Farbe. */
     public static final Color STANDING_CURRENT = new Color(0x2E7D4F);
     /** Stand „geplant“: blau. */

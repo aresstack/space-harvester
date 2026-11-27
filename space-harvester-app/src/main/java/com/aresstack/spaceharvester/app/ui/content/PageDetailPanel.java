@@ -270,6 +270,8 @@ public final class PageDetailPanel extends JPanel {
     private int pagePictureLoads;
     /** Die Stellen, von denen der Seiten-Podcast gerade erzählt; nach einem Neuaufbau des Lesetexts wieder gelb. */
     private List<int[]> pageSpans = List.of();
+    /** Wovon der ganze Seiten-Podcast erzählt; leer ohne Podcast. Der Rest des Texts ist grau (Angelo 27.11.2026). */
+    private Optional<List<int[]>> pageCoverage = Optional.empty();
 
     /** Wofür der Erklär-Podcast entsteht: eine Seite samt Unterseiten. */
     record PodcastPage(String sourceId, String pageId) {
@@ -706,6 +708,10 @@ public final class PageDetailPanel extends JPanel {
         pagePodcast.follow(spans -> {
             pageSpans = spans(spans);
             pagePictures.mark(pageSpans);
+        });
+        pagePodcast.cover(covered -> {
+            pageCoverage = covered.map(PageDetailPanel::spans);
+            pagePictures.cover(pageCoverage);
         });
         pagePodcast.cue(new PodcastControl.Cue() {
             @Override
@@ -3497,6 +3503,7 @@ public final class PageDetailPanel extends JPanel {
         loadVerbs();
         acronymDetail.setText(" ");
         pagePictures.mark(List.of());
+        pagePictures.cover(Optional.empty());
         pagePictures.show(List.of());
         if (document == null) {
             reader.setText("");
@@ -3510,6 +3517,7 @@ public final class PageDetailPanel extends JPanel {
             pageSpans = List.of();
         }
         pagePictures.mark(pageSpans);
+        pagePictures.cover(pageCoverage);
         loadPagePictures();
         readerPage.contentChanged();
         // Die Wolken der Leseansicht zählen wiederholte Überschriften im jetzt gezeigten Klartext.
@@ -6425,6 +6433,16 @@ public final class PageDetailPanel extends JPanel {
                     pairs.add(span.start());
                     pairs.add(span.end());
                 }
+                return pairs;
+            }
+
+            @Override
+            public List<Integer> coverage(PodcastPage page, List<Integer> topics) {
+                List<Integer> pairs = new ArrayList<>();
+                workspace.pagePodcastCoverage(page.sourceId(), page.pageId()).orElse(List.of()).forEach(span -> {
+                    pairs.add(span.start());
+                    pairs.add(span.end());
+                });
                 return pairs;
             }
         };
