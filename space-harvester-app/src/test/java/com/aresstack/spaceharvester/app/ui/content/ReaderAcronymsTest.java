@@ -352,15 +352,16 @@ class ReaderAcronymsTest {
             foot.setSize(900, 40);
             layoutAll(foot);
             java.util.Set<Integer> rows = new java.util.HashSet<>();
-            for (String name : panel.analysisTabs().names()) {
-                javax.swing.AbstractButton tab = panel.analysisTabs().button(name);
+            for (String name : panel.analysisRow().tabs().names()) {
+                javax.swing.AbstractButton tab = panel.analysisRow().tabs().button(name);
                 assertThat(javax.swing.SwingUtilities.isDescendingFrom(tab, foot)).isTrue();
                 assertThat(javax.swing.SwingUtilities.isDescendingFrom(tab, panel)).isFalse();
                 rows.add(javax.swing.SwingUtilities.convertPoint(tab.getParent(), tab.getLocation(), foot).y);
             }
             javax.swing.JCheckBox box = panel.subpages().box();
-            assertThat(box.getParent()).isSameAs(foot);
-            assertThat(box.getX() + box.getWidth()).isEqualTo(foot.getWidth());
+            // Rechts in derselben Leiste, neben der ?-Hilfe des gewählten Reiters.
+            assertThat(javax.swing.SwingUtilities.isDescendingFrom(box, foot)).isTrue();
+            assertThat(box.getParent()).isSameAs(foot.trailing());
             return rows.size() + "/" + panel.analysisTabs().names().size();
         })).isEqualTo("1/7");
         assertThat(onEdt(() -> panel.analysisView().createIcon().getAccessibleContext().getAccessibleName()))

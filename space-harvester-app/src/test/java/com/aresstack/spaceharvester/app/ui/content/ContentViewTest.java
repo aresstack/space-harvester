@@ -71,7 +71,7 @@ class ContentViewTest {
         view = onEdt(() -> new ContentView(context));
     }
 
-    /** Bild für die Abnahme: Quelle links gewählt, „Analysen“ zeigt die drei Unterreiter des Stands. */
+    /** Bild für die Abnahme: Quelle links gewählt, die Analysen stehen als Seitenleiste rechts neben der Mitte. */
     @Test
     void renderSourceAnalyses() throws Exception {
         String directory = System.getenv("SCREENSHOTS_DIR");
@@ -89,7 +89,13 @@ class ContentViewTest {
             page.add(view.tabBar(), java.awt.BorderLayout.NORTH);
             page.add(view.component(), java.awt.BorderLayout.CENTER);
             page.add(detail.footTools(), java.awt.BorderLayout.SOUTH);
-            AnalysisTabsScreenshotTest.write(page, Path.of(directory, "analysen-quelle-1280.png"), 640);
+            AnalysesSidebar sidebar = view.analysesSidebar();
+            sidebar.setBorder(javax.swing.BorderFactory.createMatteBorder(0, 1, 0, 0, com.aresstack.spaceharvester.app.ui.Comic.LINE));
+            javax.swing.JPanel window = new javax.swing.JPanel(new java.awt.BorderLayout());
+            window.setBackground(com.aresstack.spaceharvester.app.ui.Comic.SURFACE);
+            window.add(page, java.awt.BorderLayout.CENTER);
+            window.add(sidebar, java.awt.BorderLayout.EAST);
+            AnalysisTabsScreenshotTest.write(window, Path.of(directory, "analysen-quelle-1280.png"), 640);
             return null;
         });
     }
@@ -136,11 +142,11 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.folderSubfolders().isSelected())).isTrue();
         assertThat(onEdt(() -> detail.folderSubfolders().isEnabled())).isTrue();
         // Unter „Analysen“ trägt die Leiste die Unterreiter des Stands (Angelo 24.11.2026), die Checkbox rechts daneben.
-        assertThat(onEdt(() -> detail.analysesFoot().getComponent(0))).isSameAs(detail.standingFoot());
-        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.standingFoot())))
+        assertThat(onEdt(() -> detail.analysesFoot().getComponent(0))).isSameAs(detail.analysisFoot());
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.analysisFoot())))
                 .isTrue();
-        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.standing().tabs().button("Aussagen"),
-                detail.standingFoot()))).as("Reiterzeile unten, nicht mehr über dem Inhalt").isTrue();
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.analysisRow().tabs().button("Aussagen"),
+                detail.analysisFoot()))).as("Reiterzeile unten, nicht mehr über dem Inhalt").isTrue();
         assertThat(onEdt(() -> detail.export().selection().roots(null)))
                 .containsExactly(notes.root(), handbook.root()); // Baumreihenfolge: Unterordner zuerst angelegt
 
@@ -165,9 +171,9 @@ class ContentViewTest {
             view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
         });
-        assertThat(onEdt(() -> detail.analysesFoot().getComponent(0))).isSameAs(detail.standingFoot());
+        assertThat(onEdt(() -> detail.analysesFoot().getComponent(0))).isSameAs(detail.analysisFoot());
         // Rechts in der Ecke steht dann nur die ?-Hilfe des Reiters, nicht die Checkbox des Ordners.
-        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.standingFoot())))
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.analysisFoot())))
                 .isFalse();
         // Für den Fehlerfall, versteckt hinter dem Dreieck der Seitenleiste: die Kennzahlen des Knotens neu aufbauen.
         assertThat(onEdt(() -> detail.analysesMenu().stream().map(javax.swing.JMenuItem::getText).toList()))
@@ -465,10 +471,12 @@ class ContentViewTest {
                 "Zuerst lesen", "Mögliche Widersprüche", "Fachglossar", "Graph", "Beziehungen");
         assertThat(onEdt(() -> detail.standing().tabs().selected())).isEqualTo("Begriffe");
         // Die Reiter zeigen Symbole, der Name steht im Tooltip (Angelo 27.11.2026).
-        assertThat(onEdt(() -> detail.standing().tabs().names().stream()
-                .map(name -> detail.standing().tabs().button(name))
+        assertThat(onEdt(() -> detail.analysisRow().tabs().names())).as("eine Reiterzeile für jede Ebene")
+                .isEqualTo(onEdt(() -> detail.standing().tabs().names()));
+        assertThat(onEdt(() -> detail.analysisRow().tabs().names().stream()
+                .map(name -> detail.analysisRow().tabs().button(name))
                 .allMatch(button -> button.getIcon() != null && button.getText() == null))).isTrue();
-        assertThat(onEdt(() -> detail.standing().tabs().button("Zuerst lesen").getToolTipText()))
+        assertThat(onEdt(() -> detail.analysisRow().tabs().button("Zuerst lesen").getToolTipText()))
                 .isEqualTo("Zuerst lesen");
         assertThat(onEdt(() -> detail.overviewTerms().showsSelection())).isTrue();
         assertThat(onEdt(() -> detail.overviewTerms().title())).isEqualTo("Begriffe in handbuch");
@@ -844,6 +852,7 @@ class ContentViewTest {
         List<String> pages = context.runtime().workspace().liveMetadata("handbuch", space, null, 10).entries().stream()
                 .map(entry -> entry.page().pageId()).toList();
         onEdt(() -> {
+            detail.analysesShown(false);
             detail.analysisTabs().select("Verweise");
             view.openPage("handbuch", pages.get(0));
             return null;

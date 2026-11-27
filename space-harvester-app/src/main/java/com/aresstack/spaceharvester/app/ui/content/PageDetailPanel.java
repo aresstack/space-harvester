@@ -439,16 +439,21 @@ public final class PageDetailPanel extends JPanel {
      */
     private final java.awt.CardLayout analysesCards = new java.awt.CardLayout();
     private final JPanel analyses = new JPanel(analysesCards);
-    /** Die Reiter der gezeigten Analysen unten in der Seitenleiste: {@link #analysisFoot} oder {@link #standingFoot}. */
+    /** Die Reiter der gezeigten Analysen unten in der Seitenleiste ({@link #analysisFoot}). */
     private final JPanel analysesFoot = new JPanel(new BorderLayout());
+    /** Die eine Reiterzeile der Analysen für Seite und obere Knoten; die Ebene liefert nur ihre Ansichten. */
+    private AnalysisTabRow analysisRow;
     private boolean analysesOpen;
     /** Klappt die Seitenleiste mit den Analysen auf; ohne Hauptfenster (Tests) gelten sie sofort als gezeigt. */
     private Runnable openAnalyses = () -> analysesShown(true);
     private static final String ANALYSES_PAGE = "page";
     private static final String ANALYSES_NONE = "none";
     static final String NO_ANALYSES = "Wähle links eine Seite oder einen Bereich, um die Analysen dazu zu sehen.";
-    /** Die Unterreiter von „Analysen“ einer Seite mit „mit Unterseiten“ rechts, in der unteren Leiste. */
-    private final TabFoot analysisFoot;
+    /**
+     * Die Reiter der Analysen jeder Ebene in der unteren Leiste der Seitenleiste; rechts „mit Unterseiten“ und die
+     * ?-Hilfe des gewählten Reiters.
+     */
+    private TabFoot analysisFoot;
     /** Die Unterreiter von „Begriffe“ (Akronyme, Bezeichner, Verben, Beziehungen) neben denen von „Analysen“. */
     /** Die Unterreiter von „Erweitert“ einer Seite bzw. ohne Seite, in der unteren Leiste. */
     private final TabFoot advancedFoot;
@@ -460,11 +465,7 @@ public final class PageDetailPanel extends JPanel {
      */
     private final JCheckBox folderSubfolders = Subpages.checkBox();
     private final TabFoot folderFoot = new TabFoot(javax.swing.Box.createHorizontalBox(), folderSubfolders);
-    /**
-     * Die Unterreiter von „Analysen“ ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner) in der unteren Leiste, wie
-     * auf einer Seite (Angelo 24.11.2026); rechts steht am Ordner „mit Unterseiten“.
-     */
-    private TabFoot standingFoot;
+    /** Rechts in {@link #analysisFoot}: „mit Unterseiten“ der Seite oder des Ordners, daneben die ?-Hilfe. */
     private final JPanel standingTrailing = new JPanel(new BorderLayout());
     /** Der gewählte Ordner, sonst {@code null}; seine Stellung zeigt {@link #folderSubfolders}. */
     private ExportPanel.Selection.Collection folder;
@@ -939,18 +940,7 @@ public final class PageDetailPanel extends JPanel {
         analysisActions.add(storeField);
         analysisActions.add(analysisView.proposeIcon());
         analysisActions.add(analysisView.createIcon());
-        // In der Seitenleiste ist kein Platz für sieben Wörter: die Reiter als Symbole wie bei den Analysen der
-        // Auswahl, der Name im Tooltip. Die Reiter eines Programms (Kontrollfluss …) behalten ihren Text.
-        java.util.Map<String, Icon> analysisIcons = new java.util.LinkedHashMap<>();
-        analysisIcons.put(PASSAGES, AnalysisTabIcons.passages());
-        analysisIcons.put(TERMS, AnalysisTabIcons.terms());
-        analysisIcons.put(REFERENCES, AnalysisTabIcons.references());
-        analysisIcons.put(IMAGES, AnalysisTabIcons.images());
-        analysisIcons.put(STATEMENTS, AnalysisTabIcons.statements());
-        analysisIcons.put(GRAPH, AnalysisTabIcons.graph());
-        analysisIcons.put(RELATIONS, AnalysisTabIcons.relations());
-        analysisTabs.icons(analysisIcons);
-        analysisFoot = new TabFoot(analysisTabs.detachBar(), subpages.box());
+        analysisTabs.detachBar();
         terms.selectableKinds();
         storeField.onChange(this::switchStore);
         originalContent.setOpaque(false);
@@ -1193,20 +1183,30 @@ public final class PageDetailPanel extends JPanel {
         glossaryHelp.setVisible(false);
         graphHelp.setVisible(false);
         standingTrailing.setOpaque(false);
-        standingTrailing.setVisible(false);
         // Die ?-Hilfe der Reiter steht unten rechts in der Ecke der Leiste, wie bei den Aufträgen (Angelo 27.11.2026).
-        standingTrailing.add(Comic.row(standingHelp, glossaryHelp, graphHelp), BorderLayout.EAST);
-        // Die Reiter der Analysen einer Auswahl als Symbole, der Name im Tooltip (Angelo 27.11.2026).
-        java.util.Map<String, javax.swing.Icon> standingIcons = new java.util.LinkedHashMap<>();
-        standingIcons.put(StandingTab.TERMS, AnalysisTabIcons.terms());
-        standingIcons.put(StandingTab.STATEMENTS, AnalysisTabIcons.statements());
-        standingIcons.put(StandingTab.READING, AnalysisTabIcons.readFirst());
-        standingIcons.put(StandingTab.CONFLICTS, AnalysisTabIcons.conflicts());
-        standingIcons.put(StandingTab.GLOSSARY, AnalysisTabIcons.glossary());
-        standingIcons.put(StandingTab.GRAPH, AnalysisTabIcons.graph());
-        standingIcons.put(RELATIONS, AnalysisTabIcons.relations());
-        standing.tabs().icons(standingIcons);
-        standingFoot = new TabFoot(standing.tabs().detachBar(), standingTrailing);
+        standingTrailing.add(subpages.box(), BorderLayout.WEST);
+        standingTrailing.add(Comic.row(statementsHelp, standingHelp, glossaryHelp, graphHelp), BorderLayout.EAST);
+        // Eine Reiterzeile für jede Ebene (Angelo 27.11.2026): alle Reiter in einer Reihenfolge, je Name ein Symbol,
+        // der Name im Tooltip. Gleiche Reiter stehen an derselben Stelle, ob Seite oder oberer Knoten; Reiter eines
+        // Programms (Kontrollfluss …) kommen dahinter und behalten ihren Text.
+        java.util.Map<String, Icon> analysisIcons = new java.util.LinkedHashMap<>();
+        analysisIcons.put(PASSAGES, AnalysisTabIcons.passages());
+        analysisIcons.put(TERMS, AnalysisTabIcons.terms());
+        analysisIcons.put(REFERENCES, AnalysisTabIcons.references());
+        analysisIcons.put(IMAGES, AnalysisTabIcons.images());
+        analysisIcons.put(STATEMENTS, AnalysisTabIcons.statements());
+        analysisIcons.put(StandingTab.READING, AnalysisTabIcons.readFirst());
+        analysisIcons.put(StandingTab.CONFLICTS, AnalysisTabIcons.conflicts());
+        analysisIcons.put(StandingTab.GLOSSARY, AnalysisTabIcons.glossary());
+        analysisIcons.put(GRAPH, AnalysisTabIcons.graph());
+        analysisIcons.put(RELATIONS, AnalysisTabIcons.relations());
+        analysisRow = new AnalysisTabRow(analysisIcons);
+        analysisRow.follow(analysisTabs);
+        analysisRow.follow(standing.tabs());
+        standing.onConflicts(found -> analysisRow.mark(StandingTab.CONFLICTS, found == 0 ? null : String.valueOf(found)));
+        standing.tabs().detachBar();
+        analysisFoot = new TabFoot(analysisRow.bar(), standingTrailing);
+        analysesFoot.add(analysisFoot, BorderLayout.CENTER);
         analyses.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
         deck.add(sourceView, SOURCE_CARD);
@@ -1238,7 +1238,8 @@ public final class PageDetailPanel extends JPanel {
         searchPrograms.setVisible(false);
         cancelProgramSearch();
         pendingProgramFocus = null;
-        subpages.box().setVisible(true);
+        programShown = false;
+        subpagesShown();
         // Der Graph verlässt die Seite vor den Unterseiten: Deren Abmeldung soll für die alte Seite nichts mehr laden.
         graphView.page(null);
         subpages.page(null, null, null, null);
@@ -1591,6 +1592,13 @@ public final class PageDetailPanel extends JPanel {
         }
     }
 
+    /** Ob die gezeigte Seite ein Programm ist: dann gibt es „mit Unterseiten“ nicht. */
+    private boolean programShown;
+
+    private void subpagesShown() {
+        subpages.box().setVisible(!wide && PAGE.equals(pageCard) && !programShown);
+    }
+
     private boolean standingShown() {
         return analysesOpen && wide;
     }
@@ -1607,7 +1615,7 @@ public final class PageDetailPanel extends JPanel {
 
     /** Die Aktionen der Analysen einer Seite für die Kopfzeile der Seitenleiste. */
     JComponent analysesActions() {
-        return Comic.row(analysisActions, statementsHelp);
+        return analysisActions;
     }
 
     /** Was die Seitenleiste mit den Analysen aufklappt (das Hauptfenster); etwa wenn ein Sprung dorthin führt. */
@@ -1651,7 +1659,11 @@ public final class PageDetailPanel extends JPanel {
      */
     private void showProgramAnalysis(PageSnapshot snapshot) {
         boolean program = programAnalysisTabs.show(snapshot, views);
-        subpages.box().setVisible(!program);
+        programShown = program;
+        subpagesShown();
+        if (analysisRow != null) {
+            analysisRow.refresh();
+        }
         recomputeProgram.setVisible(program);
         recomputeBusiness.setVisible(program && com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot).isPresent());
         searchPrograms.setVisible(snapshot.metadata().attributes().containsKey("ftp.path")
@@ -1699,8 +1711,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Für Tests: der Fuß der breiten Ebene mit „mit Unterseiten“ eines Ordners. */
-    TabFoot standingFoot() {
-        return standingFoot;
+    AnalysisTabRow analysisRow() {
+        return analysisRow;
     }
 
     TabFoot folderFoot() {
@@ -3602,7 +3614,7 @@ public final class PageDetailPanel extends JPanel {
     /** Setzt in {@link #footTools}, was zum Reiter {@code selected} gehört; nichts, wenn er keine Werkzeuge hat. */
     private void updateFootTools(String selected) {
         // Viewer und Transkript gibt es nur zu einer gezeigten Seite; jeder Wechsel räumt sie ab (closeOriginalFile).
-        boolean standingFootShown = analysesOpen && wide && standingFoot != null;
+        boolean standingFootShown = analysesOpen && wide && analysisFoot != null;
         if (EXPORT.equals(selected)) {
             JComponent bar = artifactTabs == null ? null : artifactTabs.footBar();
             bar = bar == null ? export.formatBar() : bar;
@@ -3620,16 +3632,10 @@ public final class PageDetailPanel extends JPanel {
         } else {
             folderFoot.reclaimTrailing();
         }
-        standingTrailing.setVisible(standingFootShown);
-        JComponent side = wide ? standingFoot : PAGE.equals(pageCard) ? analysisFoot : null;
-        if (analysesFoot.getComponentCount() != (side == null ? 0 : 1)
-                || side != null && analysesFoot.getComponent(0) != side) {
-            analysesFoot.removeAll();
-            if (side != null) {
-                analysesFoot.add(side, BorderLayout.CENTER);
-            }
-            analysesFoot.revalidate();
-            analysesFoot.repaint();
+        if (analysisRow != null) {
+            // Die Ebene bestimmt nur, welche Ansichten es gibt; Zeile, Symbole und Fuß sind für alle dieselben.
+            analysisRow.level(wide ? standing.tabs() : PAGE.equals(pageCard) ? analysisTabs : null);
+            subpagesShown();
         }
         JComponent shown = EXPORT.equals(selected) ? exportFoot
                 : ADVANCED.equals(selected) && wide ? wideAdvancedFoot

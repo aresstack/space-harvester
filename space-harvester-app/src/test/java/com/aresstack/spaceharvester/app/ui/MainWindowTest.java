@@ -170,7 +170,7 @@ class MainWindowTest {
         assertThat(find(surface[0], AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
                 .containsSubsequence("Suche", "Leseansicht", "Podcast-Ansicht", "Anhänge", "Info",
-                        "Export", "Chat", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
+                        "Export", "Chat", "Analysen", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
                 .doesNotContain("Inhalte")
                 .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen")
                 .as("Status ist kein Bereich mehr, sondern Einstellungen › Diagnose").doesNotContain("Status");
@@ -477,6 +477,64 @@ class MainWindowTest {
         assertThat(buttonTexts(surface[0])).contains("Erste Wissensquelle hinzufügen …");
         assertThat(labelTexts(surface[0])).contains("Space Harvester", AboutDialog.TAGLINE);
         assertThat(labelTexts(AboutDialog.body(context))).contains(AboutDialog.TAGLINE);
+    }
+
+    /**
+     * Die Analysen sind die dritte Seitenleiste rechts, ihr Knopf steht zwischen Chat und Aufträgen (Angelo
+     * 27.11.2026): Er klappt sie auf, blendet Chat und Aufträge aus, ein zweiter Klick klappt zu; die Mitte bleibt.
+     */
+    @Test
+    void theAnalysesAreASidebarWhoseButtonSitsBetweenChatAndJobs() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            try {
+                surface.setSize(1400, 820);
+                window.chatOpen(true);
+                layoutAll(surface);
+                AppContext.Section before = window.current();
+                Component sidebar = find((java.awt.Container) window.chatSplit().getRightComponent(),
+                        com.aresstack.spaceharvester.app.ui.content.AnalysesSidebar.class).get(0);
+                assertThat(window.analysesOpen()).isFalse();
+                assertThat(((java.awt.Container) sidebar).getComponents()).noneMatch(Component::isVisible);
+
+                window.analysesToggle().doClick();
+                layoutAll(surface);
+                assertThat(window.analysesOpen()).isTrue();
+                assertThat(window.chatOpen()).isFalse();
+                assertThat(window.jobsOpen()).isFalse();
+                assertThat(window.analysesToggle().isSelected()).isTrue();
+                assertThat(window.chatToggle().isSelected()).isFalse();
+                assertThat(window.current()).as("die Mitte bleibt").isEqualTo(before);
+                assertThat(((java.awt.Container) sidebar).getComponents()).allMatch(Component::isVisible);
+                assertThat(sidebar.getWidth())
+                        .isGreaterThanOrEqualTo(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH);
+                assertThat(WindowSizes.recallInt(MainWindow.SIDE_JOBS_KEY, -1)).isEqualTo(2);
+                // Kein Zurück-Knopf in der Leiste: Der gehört zur Ansicht in der Mitte.
+                assertThat(find((java.awt.Container) sidebar,
+                        com.aresstack.spaceharvester.app.ui.controls.BackButton.class)).isEmpty();
+
+                window.jobsOpen(true);
+                assertThat(window.analysesOpen()).isFalse();
+                assertThat(window.analysesToggle().isSelected()).isFalse();
+                window.analysesToggle().doClick();
+                assertThat(window.analysesOpen()).isTrue();
+                window.analysesToggle().doClick();
+                assertThat(window.analysesOpen()).isFalse();
+                assertThat(window.chatOpen()).isFalse();
+                assertThat(window.jobsOpen()).isFalse();
+            } finally {
+                // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten wieder mit dem Chat, zu.
+                window.chatOpen(true);
+                window.chatOpen(false);
+            }
+        });
     }
 
     /**

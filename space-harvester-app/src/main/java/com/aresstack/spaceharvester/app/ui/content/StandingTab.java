@@ -1109,14 +1109,17 @@ final class StandingTab extends JPanel {
     private void conflictLabel() {
         int found = conflicts == null ? 0 : conflicts.contradictions().size();
         javax.swing.AbstractButton pill = tabs.button(CONFLICTS);
-        if (pill.getIcon() != null) {
-            // Als Symbolknopf (Analysen der Auswahl): die Zahl steht hinter dem Blitz, der Name im Tooltip.
-            tabs.mark(CONFLICTS, found == 0 ? null : String.valueOf(found));
-            return;
-        }
         pill.setText(found == 0 ? CONFLICTS : CONFLICTS + " · " + found);
         pill.revalidate();
+        onConflicts.accept(found);
     }
+
+    /** Bekommt die Zahl der möglichen Widersprüche, etwa für die Marke am Reiter der gemeinsamen Reiterzeile. */
+    void onConflicts(java.util.function.IntConsumer listener) {
+        onConflicts = Objects.requireNonNull(listener, "listener");
+    }
+
+    private java.util.function.IntConsumer onConflicts = found -> { };
 
     private Point clamp(Point position) {
         int max = Math.max(0, list.getPreferredSize().height - scroll.getViewport().getExtentSize().height);
