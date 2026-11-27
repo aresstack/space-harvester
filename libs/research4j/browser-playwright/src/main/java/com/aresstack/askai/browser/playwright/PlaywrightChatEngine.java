@@ -106,8 +106,7 @@ public final class PlaywrightChatEngine implements BrowserEngine {
             throw new BrowserException(BrowserException.Kind.START_FAILED,
                     "Browser konnte nicht gestartet werden: " + message, e);
         }
-        return new Instance(actor, started[0].browserContext(), gone, started[0].camoufox(), navigationTimeoutMillis,
-                searchSettings, testSearchUrlTemplate);
+        return new Instance(actor, started[0].browserContext(), gone, navigationTimeoutMillis);
     }
 
     /** One running browser on one profile folder, owned by one thread. */
@@ -115,20 +114,12 @@ public final class PlaywrightChatEngine implements BrowserEngine {
         final BrowserSessionActor actor;
         private final BrowserContext context;
         private final long navigationTimeoutMillis;
-        final com.aresstack.askai.browser.search.LegacyBrowserSearchSettings searchSettings;
-        final boolean camoufox;
-        final String testSearchUrlTemplate;
         /** Set when the context closed (window closed, browser gone) or the chat stopped it. */
         private final java.util.concurrent.atomic.AtomicBoolean closed;
 
         Instance(BrowserSessionActor actor, BrowserContext context, java.util.concurrent.atomic.AtomicBoolean closed,
-                 boolean camoufox, long navigationTimeoutMillis,
-                 com.aresstack.askai.browser.search.LegacyBrowserSearchSettings searchSettings,
-                 String testSearchUrlTemplate) {
+                 long navigationTimeoutMillis) {
             this.actor = actor;
-            this.testSearchUrlTemplate = testSearchUrlTemplate;
-            this.searchSettings = searchSettings;
-            this.camoufox = camoufox;
             this.context = context;
             this.navigationTimeoutMillis = navigationTimeoutMillis;
             this.closed = closed;

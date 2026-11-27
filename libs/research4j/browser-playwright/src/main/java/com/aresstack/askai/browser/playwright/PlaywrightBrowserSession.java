@@ -32,6 +32,8 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
     private final String searchUrlTemplate;
     private WebSearchProvider searchProvider;
     private List<BrowserLink> currentLinks = Collections.emptyList();
+    /** {@link PlaywrightDriver#pageGeneration()} when {@link #currentLinks} were listed. */
+    private long linksGeneration;
     private boolean hasPage;
     /** Reads the PDF documents the browser reaches but cannot read as pages. */
     private final PdfPageReader documents;
@@ -341,6 +343,7 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
             throw refused;
         }
         List<BrowserLink> linksBefore = currentLinks;
+        long linksGenerationBefore = linksGeneration;
         boolean hadPage = hasPage;
         searchTabsUsed = false;
         try {
@@ -352,6 +355,7 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
                 // The result pages were read in the tabs that are gone now: links and "has a page" are again those
                 // of the page the session is back on, so a follow_link never resolves an id of a closed tab.
                 currentLinks = linksBefore;
+                linksGeneration = linksGenerationBefore;
                 hasPage = hadPage;
             }
         }
@@ -795,6 +799,62 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
                 diagnostic == null ? "" : diagnostic);
     }
 
+    /**
+     * The chat uses {@code tab}: the session's current page is that tab from now on (one current page for chat and
+     * research). The chat may change the page: link ids listed before are no longer this page's
+     * ({@link PlaywrightDriver#pageGeneration()}), and a document read before is read anew. Owner thread, between
+     * calls.
+     */
+    void useChatTab(com.microsoft.playwright.Page tab) {
+        if (playwright().useChatTab(tab)) {
+            currentDocument = null; // a document read in the other tab
+        }
+        hasPage = true;
+    }
+
+    /**
+     * The chat's load of the current tab reached a document instead of a page: a PDF in the viewer
+     * ({@code response}), or, with {@code response} null, a download of {@code url} while the tab kept its page. The
+     * session reads it as {@code web_open} would; false when the response is a page after all.
+     */
+    boolean chatReachedDocument(String url, com.microsoft.playwright.Response response) throws BrowserException {
+        PlaywrightPageState state = response == null
+                ? PlaywrightPageState.downloadedDocument(url, driver.currentUrl())
+                : playwright().chatViewedDocument(response);
+        if (state == null) {
+            currentDocument = null; // the load reached a page: a document read before is not what the tab shows
+            return false;
+        }
+        checkedSnapshot(readDocument(state));
+        return true;
+    }
+
+    /**
+     * The document the current tab still shows, read, or null when it shows a page. A PDF the tab's viewer shows is
+     * read anew when the session's read copy belonged to another tab.
+     */
+    BrowserPageSnapshot chatDocument() throws BrowserException {
+        PlaywrightPageState document = shownDocument();
+        if (document != null) {
+            return checkedSnapshot(document);
+        }
+        PlaywrightPageState viewed = playwright().viewedDocumentOfCurrentTab();
+        return viewed == null ? null : checkedSnapshot(readDocument(viewed));
+    }
+
+    /** The chat loaded pages in several tabs at once: link ids listed before may be stale. */
+    void chatChangedPages() {
+        playwright().chatChangedPages();
+        currentDocument = null;
+    }
+
+    private Playwright4jDriver playwright() {
+        if (!(driver instanceof Playwright4jDriver)) {
+            throw new IllegalStateException("chat tabs need the Playwright driver");
+        }
+        return (Playwright4jDriver) driver;
+    }
+
     public BrowserPageSnapshot open(String url) throws BrowserException {
         checkPolicy(url);
         currentDocument = null; // superseded by this navigation, whatever it brings
@@ -864,12 +924,17 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
 
     public List<BrowserLink> links() throws BrowserException {
         requirePage();
+        if (linksGeneration != driver.pageGeneration()) {
+            checkedSnapshot(current()); // the page changed outside the session: list its links as they are now
+        }
         return currentLinks;
     }
 
     public BrowserPageSnapshot follow(String linkId) throws BrowserException {
         requirePage();
-        for (BrowserLink link : currentLinks) {
+        List<BrowserLink> listed = linksGeneration == driver.pageGeneration() ? currentLinks
+                : Collections.<BrowserLink>emptyList(); // ids of a page that changed outside the session
+        for (BrowserLink link : listed) {
             if (link.getId().equals(linkId)) {
                 return open(link.getUrl());
             }
@@ -1034,6 +1099,7 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
             links.add(new BrowserLink("link-" + id, anchor.text, anchor.href));
         }
         currentLinks = Collections.unmodifiableList(links);
+        linksGeneration = driver.pageGeneration();
         hasPage = true;
         currentDocument = state.isDocument() ? state : null;
         return new BrowserPageSnapshot(state.url, state.title, text, truncated);

@@ -201,4 +201,12 @@ interface PlaywrightDriver extends AutoCloseable {
     default void terminate() {
         close();
     }
+
+    /**
+     * Counts the changes of the current page made outside the session (the chat used a tab, the current tab closed
+     * and another one took over): link ids and documents the session read before belong to an older count.
+     */
+    default long pageGeneration() {
+        return 0L;
+    }
 }

@@ -76,6 +76,14 @@ public record SectionDocument(List<Section> sections, long nextId) {
         return change.document();
     }
 
+    /**
+     * Zerlegt Markdown in Abschnitte mit neuen Kennungen ab {@code nextId}: für einen ganz neuen Text desselben
+     * Dokuments (etwa eine neue Auflage), damit keine alte Kennung einen anderen Abschnitt trifft.
+     */
+    public static SectionDocument parseFrom(String markdown, long nextId) {
+        return new SectionDocument(List.of(), Math.max(1, nextId)).split(markdown, 0, null).document();
+    }
+
     /** Das Markdown des Dokuments: die Abschnitte aneinandergereiht. */
     public String markdown() {
         StringBuilder out = new StringBuilder();
