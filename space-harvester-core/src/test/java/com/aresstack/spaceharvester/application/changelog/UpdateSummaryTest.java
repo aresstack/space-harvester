@@ -937,6 +937,19 @@ class UpdateSummaryTest {
             assertThat(done.progress().processed()).isEqualTo(done.progress().discovered());
             assertThat(done.progress().failed()).isEqualTo(stepsWithLoss);
             assertThat(done.progress().processed()).isGreaterThanOrEqualTo(finishedSteps);
+            // Angelo 27.11.2026: Ein Teil zählt seine Seiten, nicht „1/1“; die verlorene Seite ist ein Fehlschlag davon.
+            List<JobStatus> parts = children.stream().filter(child -> child.state() == JobState.COMPLETED
+                    && child.parameters().get(ChangeLog.STEP_PARAMETER).startsWith("Teil ")).toList();
+            assertThat(parts).allSatisfy(part ->
+                    assertThat(part.progress().processed()).isEqualTo(part.progress().discovered()));
+            assertThat(parts.stream().mapToLong(part -> part.progress().discovered()).sum())
+                    .as("Seiten statt einer Anfrage je Teil").isGreaterThan(parts.size());
+            // Die ganze Quelle steht als Bereich in der Spalte „Space“, auch bei den Unteraufträgen.
+            assertThat(done.parameters().get(com.aresstack.spaceharvester.application.jobs.JobArea.PARAMETER))
+                    .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobArea.WHOLE_SOURCE);
+            assertThat(children).allSatisfy(child -> assertThat(child.parameters()
+                    .get(com.aresstack.spaceharvester.application.jobs.JobArea.PARAMETER))
+                    .isEqualTo(com.aresstack.spaceharvester.application.jobs.JobArea.WHOLE_SOURCE));
         } finally {
             failWhen = null;
             ThematicSummarizer.backoffMillis = backoff;

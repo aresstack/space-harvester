@@ -258,8 +258,12 @@ public final class UpdatePodcasts {
             store.delete(meta -> !meta.key().equals(key) && area.key().equals(meta.area()));
             Map<String, String> parameters = summary.isArea() ? Map.of(PODCAST_PARAMETER, key)
                     : Map.of(PODCAST_PARAMETER, key, UPDATE_PARAMETER, summary.updateId());
+            // Ohne Space als Partition steht der Bereich in Worten in der Auftragsliste (Angelo 27.11.2026).
+            String where = summary.spaceKey() != null ? null : summary.isArea() && !summary.spaceNames().isEmpty()
+                    ? String.join(", ", new java.util.TreeSet<>(summary.spaceNames().keySet()))
+                    : com.aresstack.spaceharvester.application.jobs.JobArea.WHOLE_SOURCE;
             return jobs.submit(JobType.UPDATE_PODCAST, summary.sourceId(), summary.spaceKey(), null,
-                    caller.jobOwner(), parameters, JobTask.blocking(context -> production.run(context,
+                    caller.jobOwner(), com.aresstack.spaceharvester.application.jobs.JobArea.with(parameters, where), JobTask.blocking(context -> production.run(context,
                             new PodcastStore.Meta(key, area, material.pageIds()), material)));
         }
     }
