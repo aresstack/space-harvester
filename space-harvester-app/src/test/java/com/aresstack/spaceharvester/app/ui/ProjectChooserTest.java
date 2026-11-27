@@ -93,6 +93,14 @@ class ProjectChooserTest {
         assertThat(notices).extracting(notice -> notice.getPayload().getText())
                 .containsExactly(ProjectChooser.UNREACHABLE);
         assertThat(asked).as("nicht erreichbar: derselbe Dialog mit dem alten Ziel").hasSize(1);
+
+        projects.retarget(project.id(), ProjectTarget.of(ProjectTarget.Kind.WEBSITE, "beispiel.invalid"));
+        chooser.browse = url -> {
+            throw new java.io.IOException("kein Browser");
+        };
+        chooser.open(projects.resolve(project.id()));
+        assertThat(notices).hasSize(2);
+        assertThat(asked).as("auch eine Website ohne Browser führt zum Dialog").hasSize(2);
     }
 
     @Test
@@ -120,6 +128,13 @@ class ProjectChooserTest {
         chooser.delete(project);
         assertThat(projects.list()).extracting(Project::id).containsExactly(Project.DEFAULT_ID);
         assertThat(chats.all()).hasSize(3);
+
+        // Bis zum Neustart steht es durchgestrichen in der Liste; ein Klick holt es samt Gruppe zurück.
+        JMenuItem restore = (JMenuItem) chooser.items().get(1);
+        assertThat(restore.getText()).contains("<s>").contains("Weg");
+        restore.doClick();
+        assertThat(projects.active().id()).isEqualTo(project.id());
+        assertThat(projects.groups(project.id())).hasSize(1);
     }
 
     @Test

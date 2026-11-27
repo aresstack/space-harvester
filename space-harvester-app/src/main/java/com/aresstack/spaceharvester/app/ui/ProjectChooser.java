@@ -37,6 +37,7 @@ final class ProjectChooser {
     static final String TARGET = "Ziel ändern …";
     static final String DELETE = "Projekt löschen …";
     static final String UNREACHABLE = "Ziel des Projekts nicht erreichbar";
+    static final String DELETED_TIP = "Gelöscht, bis zum Neustart wiederherstellbar: Klick holt es zurück";
 
     private final ProjectStore projects;
     private final java.util.function.Supplier<Path> chatsDirectory;
@@ -47,8 +48,13 @@ final class ProjectChooser {
     java.util.function.BiFunction<String, String, String> askName;
     /** Fragt ein Ziel ab ({@code null} = abgebrochen); Tests antworten selbst. */
     java.util.function.BiFunction<Project, ProjectTarget, ProjectTarget> askTarget;
-    /** Öffnet eine Website. */
-    Consumer<String> browse = DesktopLinkOpener.systemDefault()::open;
+    /** Öffnet eine Website; wirft, wenn das System keinen Browser öffnen kann. */
+    WebsiteOpener browse = url -> {
+        if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+            throw new IOException("Das System kann hier keinen Browser öffnen");
+        }
+        DesktopLinkOpener.systemDefault().open(url);
+    };
     /** Öffnet einen lokalen Ordner oder eine Datei; wirft, wenn das System es nicht kann. */
     PathOpener openPath = path -> {
         if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
@@ -56,6 +62,11 @@ final class ProjectChooser {
         }
         Desktop.getDesktop().open(path.toFile());
     };
+
+    /** Öffnet eine Adresse im Browser. */
+    interface WebsiteOpener {
+        void open(String url) throws IOException;
+    }
 
     /** Öffnet einen Pfad mit dem Programm des Systems. */
     interface PathOpener {
@@ -97,6 +108,17 @@ final class ProjectChooser {
             item.addActionListener(e -> projects.activate(project.id()));
             items.add(item);
         }
+        // Gelöschte Projekte stehen bis zum Neustart durchgestrichen dabei; ein Klick holt sie zurück (F5).
+        for (Project deleted : projects.deleted()) {
+            JMenuItem item = new JMenuItem("<html><s>    " + escape(deleted.name()) + "</s></html>");
+            item.setToolTipText(DELETED_TIP);
+            item.addActionListener(e -> {
+                if (projects.restore(deleted.id()) != null) {
+                    projects.activate(deleted.id());
+                }
+            });
+            items.add(item);
+        }
         items.add(new JPopupMenu.Separator());
         JMenuItem create = new JMenuItem(NEW);
         create.addActionListener(e -> create());
@@ -114,6 +136,10 @@ final class ProjectChooser {
             items.add(delete);
         }
         return items;
+    }
+
+    private static String escape(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     /** „Neues Projekt …“: anlegen und gleich aktiv machen. */
@@ -145,11 +171,11 @@ final class ProjectChooser {
             changeTarget(project);
             return;
         }
-        if (target.isWebsite()) {
-            browse.accept(target.value());
-            return;
-        }
         try {
+            if (target.isWebsite()) {
+                browse.open(target.value());
+                return;
+            }
             Path path = Path.of(target.value());
             if (!Files.exists(path)) {
                 throw new IOException("fehlt");

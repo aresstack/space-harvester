@@ -729,8 +729,12 @@ public final class MainWindow implements AppContext.Navigator {
         ProjectChooser projectChooser = new ProjectChooser(context, surface);
         corner.chooser(projectChooser::show, projectChooser::open);
         corner.show(context.projects().active());
-        context.projects().addListener(() -> javax.swing.SwingUtilities.invokeLater(
-                () -> corner.show(context.projects().active())));
+        Runnable showProject = () -> javax.swing.SwingUtilities.invokeLater(
+                () -> corner.show(context.projects().active()));
+        context.projects().addListener(showProject);
+        // Das Fenster steht vor dem Laden der Einstellungen; erst danach ist der Datenordner und damit das gewählte
+        // Projekt bekannt.
+        context.onChange(ignored -> showProject.run());
         statusLine = new StatusLine(jobStatus.model(), StatusLine.alerts(signInNotice, networkNotice, proxyNotice), viewStatus,
                 statusBox, jobStatus, corner);
         JComponent foot = statusLine;
