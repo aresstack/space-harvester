@@ -19,6 +19,8 @@ import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSea
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.app.ui.controls.BusyOverlay;
+import com.aresstack.spaceharvester.app.ui.controls.SearchModeIcon;
+import com.aresstack.spaceharvester.app.ui.content.WordSearch;
 
 import javax.swing.BorderFactory;
 import javax.swing.JCheckBox;
@@ -77,9 +79,28 @@ public final class SearchView implements View {
     static final String NEIGHBORS = "Nachbarseiten einbeziehen";
     /** Suchmethode „Nur Fachbegriffe“ (K5b). */
     static final String TECHNICAL_TERMS = "Nur Fachbegriffe";
-    static final String TECHNICAL_TERMS_TIP = "Zeigt statt der Seiten die Fachbegriffe des Glossars und ihre Synonyme "
-            + "zum Prüfen; der Chat übernimmt diese Methode nicht";
-    static final String TECHNICAL_TERMS_MODE = "Modus: Fachbegriffe";
+    static final String TECHNICAL_TERMS_TIP = "Zeigt statt aller Begriffe nur die Fachbegriffe des Glossars und ihre "
+            + "Synonyme zum Prüfen; der Chat übernimmt diese Methode nicht";
+    static final String TECHNICAL_TERMS_MODE = "Modus: Wortsuche – nur Fachbegriffe";
+    /** Modus der Wortsuche (Angelo 27.11.2026): sucht nur nach Begriffen, nicht nach Seiten. */
+    static final String WORDS_MODE = "Modus: Wortsuche";
+    static final String WORD_KINDS = "Worttypen";
+    static final String WORD_KIND_TIP = "Nach Wörtern dieses Typs suchen, wie im Reiter „Begriffe“";
+    static final String WORD_SYNONYMS_TIP = "Passt der Suchtext zu einem Fachbegriff, werden auch die Wörter zu seinen "
+            + "Synonymen gesucht";
+    /** Tooltip der Lupe je Modus: was gerade gilt und was ein Klick tut. */
+    static final String PAGE_MODE_TIP = "Seitensuche – Klick wechselt zur Wortsuche (nur Begriffe)";
+    static final String WORD_MODE_TIP = "Wortsuche (nur Begriffe) – Klick wechselt zur Seitensuche";
+    /** Schlüssel im Application State: die zuletzt gewählte Suche und die Wahl der Wortsuche. */
+    static final String STATE_MODE = "search.mode";
+    static final String STATE_WORDS = "words";
+    static final String STATE_PAGES = "pages";
+    static final String STATE_WORD_KIND = "search.words.kind.";
+    static final String STATE_TECHNICAL = "search.words.technical";
+    static final String STATE_WORD_SYNONYMS = "search.words.synonyms";
+    /** Titel und Fragen der Hinweise, wenn Fachbegriffe oder Verben im Bereich fehlen. */
+    static final String TECHNICAL_OFFER_TITLE = "Fachbegriffe ermitteln?";
+    static final String VERBS_OFFER_TITLE = "Aussagen analysieren?";
     /** Gelbe Zeile, wenn die Nachbarseiten nicht geprüft werden konnten; kein Fehler der Suche. */
     static final String NEIGHBORS_UNCHECKED = "Nachbarseiten konnten nicht geprüft werden";
     /** Statuszeile, solange fehlende Nachbarn im Hintergrund laden. */
@@ -189,6 +210,23 @@ public final class SearchView implements View {
      * ({@link TechnicalTermsPanel}). Eine Pflegeansicht; der Chat übernimmt sie nicht.
      */
     final JCheckBox technicalTerms = checkBox(TECHNICAL_TERMS, TECHNICAL_TERMS_TIP);
+    /**
+     * Die Lupe links im Suchfeld (Angelo 27.11.2026): ein Klick wechselt zwischen Seitensuche und Wortsuche; in der
+     * Wortsuche steht ein kleines „w“ hinter der Lupe. Die letzte Wahl merkt der Application State.
+     */
+    final SearchModeIcon modeIcon = new SearchModeIcon();
+    /** Ob die Wortsuche gilt: nur Begriffe, keine Seiten. */
+    boolean words;
+    /** Die Worttypen der Wortsuche wie die Abschnitte des Reiters „Begriffe“; gemerkt im Application State. */
+    final Map<WordSearch.Kind, JCheckBox> wordKindBoxes = new java.util.EnumMap<>(WordSearch.Kind.class);
+    /** „Synonyme der Fachbegriffe einbeziehen“ der Wortsuche; gemerkt im Application State. */
+    final JCheckBox wordSynonyms = checkBox(SYNONYMS, WORD_SYNONYMS_TIP);
+    /** Die Wörter der Wortsuche in der Mitte statt der Seiten. */
+    final WordHitsPanel wordsPanel;
+    /** Der zuletzt in der Wortsuche gesuchte Text; wechselt der Bereich links, sucht sie damit neu. */
+    private String searchedWords;
+    /** Zählt Wortsuchen; Antworten einer überholten verfallen. */
+    private int wordRequest;
     /** Die Ansicht der Methode „Nur Fachbegriffe“ in der Mitte statt der Treffer. */
     final TechnicalTermsPanel termsPanel;
     /** Mitte: Trefferliste oder Fachbegriffe. */
@@ -196,6 +234,7 @@ public final class SearchView implements View {
     private final JPanel center = new JPanel(centerCards);
     private static final String HITS_CARD = "hits";
     private static final String TERMS_CARD = "terms";
+    private static final String WORDS_CARD = "words";
     /** Die Suche, nach deren Stapel die Nachbarseiten noch gesucht werden; -1 ohne. */
     private int neighborsFor = -1;
     /** Beobachtet das Nachladen fehlender Nachbarn der laufenden Anfrage; {@code null} ohne. */
@@ -240,7 +279,7 @@ public final class SearchView implements View {
     final JLabel kindsLabel = Comic.muted(" ");
     /** Die Suchleiste der Kopfzeile des Hauptfensters: Suchfeld mit Pfeil für die Suchoptionen (#515). */
     private final com.aresstack.spaceharvester.app.ui.controls.InputFrame searchBar =
-            com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(query);
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(query, modeIcon);
     /** Pfeil rechts im Suchfeld: öffnet {@link #options}. */
     final javax.swing.JButton optionsButton =
             com.aresstack.spaceharvester.app.ui.controls.InputFrame.flatButton("\u25BE", "Suchoptionen");
@@ -392,13 +431,33 @@ public final class SearchView implements View {
         semantic.setSelected(false);
         semantic.addItemListener(e -> mode());
         termsPanel = new TechnicalTermsPanel(error -> feedback.problem(error));
-        technicalTerms.setSelected(SearchMethods.user().technicalTermsOnly());
+        wordsPanel = new WordHitsPanel(place -> context.navigator().openPage(place.sourceId(), place.pageId()),
+                this::wordStatus, error -> feedback.problem(error));
+        AppState state = AppState.shared();
+        words = STATE_WORDS.equals(state.get(STATE_MODE));
+        modeIcon.word(words);
+        modeIcon.setToolTipText(words ? WORD_MODE_TIP : PAGE_MODE_TIP);
+        modeIcon.addActionListener(e -> switchMode(!words));
+        // „Nur Fachbegriffe“ gehört zur Wortsuche (Angelo 27.11.2026) und bleibt wie die Worttypen gemerkt.
+        technicalTerms.setSelected(state.getBoolean(STATE_TECHNICAL, false));
         technicalTerms.addItemListener(e -> {
-            SearchMethods.user().technicalTermsOnly(technicalTerms.isSelected());
+            AppState.shared().put(STATE_TECHNICAL, technicalTerms.isSelected());
             mode();
-            if (technicalTerms.isSelected() && !restoringHistory) {
+            if (technicalOn() && !restoringHistory) {
                 searchTechnicalTerms();
             }
+        });
+        for (WordSearch.Kind kind : WordSearch.Kind.values()) {
+            JCheckBox box = checkBox(kind.label(), WORD_KIND_TIP);
+            // Vorgabe: Akronyme und Bezeichner; Verben gibt es erst nach der Aussagenanalyse.
+            box.setSelected(state.getBoolean(STATE_WORD_KIND + kind.name(), kind != WordSearch.Kind.VERBS));
+            box.addItemListener(e -> AppState.shared().put(STATE_WORD_KIND + kind.name(), box.isSelected()));
+            wordKindBoxes.put(kind, box);
+        }
+        wordSynonyms.setSelected(state.getBoolean(STATE_WORD_SYNONYMS, false));
+        wordSynonyms.addItemListener(e -> {
+            AppState.shared().put(STATE_WORD_SYNONYMS, wordSynonyms.isSelected());
+            mode();
         });
         neighbors.setSelected(SearchMethods.user().neighbors());
         neighbors.addItemListener(e -> {
@@ -409,6 +468,10 @@ public final class SearchView implements View {
         termPages.addItemListener(e -> {
             SearchMethods.user().termPages(termPages.isSelected());
             mode();
+            if (termPages.isSelected() && !restoringHistory) {
+                // Nur sinnvoll mit Fachbegriffen: fehlen sie im Bereich, sagt die Suche es gleich (Angelo 27.11.2026).
+                checkTechnicalTerms(TERM_PAGES);
+            }
         });
         headingsOnly.setSelected(SearchMethods.user().headingsOnly());
         headingsOnly.addItemListener(e -> {
@@ -524,6 +587,7 @@ public final class SearchView implements View {
         center.setOpaque(false);
         center.add(list, HITS_CARD);
         center.add(termsPanel, TERMS_CARD);
+        center.add(wordsPanel, WORDS_CARD);
         root.add(center, BorderLayout.CENTER);
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
 
@@ -712,7 +776,9 @@ public final class SearchView implements View {
             + "Die Häkchen oben nehmen Quellen und Dateitypen aus der Suche.<br>"
             + "Semantische Suche: zusätzlich Varianten der Anfrage, alle Treffer nach Nähe zur Anfrage<br>"
             + "geordnet; braucht ein Embedding-Modell (Einstellungen › Modelle).<br>"
-            + "Nur Fachbegriffe: links die Fachbegriffe des Glossars zum Suchtext (auch über Synonyme), rechts<br>"
+            + "Die Lupe links im Suchfeld wechselt zur Wortsuche (Lupe mit „w“): sie sucht nur Begriffe<br>"
+            + "der angehakten Worttypen im Bereich; ein Klick auf ein Wort zeigt seine Seiten.<br>"
+            + "Nur Fachbegriffe (Wortsuche): links die Fachbegriffe des Glossars zum Suchtext (auch über Synonyme), rechts<br>"
             + "ihre Synonyme, je zum Bestätigen oder Ablehnen; leeres Feld zeigt alle des Bereichs. Eine Pflege-<br>"
             + "ansicht ohne Seitentreffer, der Chat übernimmt sie deshalb nicht.<br>"
             + "Eine Seitenadresse oder ein Lesezeichen (space-harvester://…) öffnet die Seite direkt.<br>"
@@ -770,14 +836,26 @@ public final class SearchView implements View {
         options.add(caption("Dateitypen"));
         kindBoxes.values().forEach(box -> options.add(menuItem(box)));
         options.addSeparator();
-        // Die Suchmethoden als Gruppe (UX-Manager 21.11.2026); weitere kommen hier dazu.
-        options.add(caption("Suchmethoden"));
-        options.add(menuItem(semantic));
-        options.add(menuItem(headingsOnly));
-        options.add(menuItem(neighbors));
-        options.add(menuItem(glossarySynonyms));
-        options.add(menuItem(termPages));
-        options.add(menuItem(technicalTerms));
+        // Der Hinweis zur semantischen Suche gilt nur in der Seitensuche.
+        semanticNote.setVisible(!words);
+        if (words) {
+            // Wortsuche (Angelo 27.11.2026): statt der Seitenmethoden die Worttypen, „Nur Fachbegriffe“ und Synonyme.
+            options.add(caption(WORD_KINDS));
+            wordKindBoxes.values().forEach(box -> options.add(menuItem(box)));
+            options.addSeparator();
+            options.add(caption("Suchmethoden"));
+            options.add(menuItem(headingsOnly));
+            options.add(menuItem(technicalTerms));
+            options.add(menuItem(wordSynonyms));
+        } else {
+            // Die Suchmethoden als Gruppe (UX-Manager 21.11.2026); weitere kommen hier dazu.
+            options.add(caption("Suchmethoden"));
+            options.add(menuItem(semantic));
+            options.add(menuItem(headingsOnly));
+            options.add(menuItem(neighbors));
+            options.add(menuItem(glossarySynonyms));
+            options.add(menuItem(termPages));
+        }
         options.add(notes);
         options.revalidate();
     }
@@ -879,9 +957,14 @@ public final class SearchView implements View {
         if (!lastChange) {
             return;
         }
-        if (technicalTerms.isSelected() && termsRuntime != null) {
+        if (technicalOn() && termsRuntime != null) {
             // Bereich = links gewählt, auch für „Nur Fachbegriffe“; die Liste beginnt dann oben.
             searchTechnicalTerms();
+        } else if (words) {
+            // Die Wortsuche richtet sich wie die Seitensuche nach der Auswahl links.
+            if (searchedWords != null && searchedWords.equals(query.getText().trim())) {
+                searchWords();
+            }
         } else if (searchedText != null && searchedText.equals(query.getText().trim())) {
             if (isAddress(searchedText)) {
                 search();
@@ -1518,12 +1601,13 @@ public final class SearchView implements View {
     private boolean restoringHistory;
     private java.util.function.Consumer<SearchLocation> searchLocationListener = location -> { };
 
-    record SearchLocation(String text, List<Explorer.Scope> area, boolean technical, boolean semantic,
+    record SearchLocation(String text, List<Explorer.Scope> area, boolean words, boolean technical, boolean semantic,
                           boolean neighbors, boolean synonyms, boolean termPages, Set<DocumentKind> kinds, String label,
-                          boolean headingsOnly) {
+                          Set<WordSearch.Kind> wordKinds, boolean wordSynonyms, boolean headingsOnly) {
         SearchLocation {
             area = List.copyOf(area);
             kinds = Set.copyOf(kinds);
+            wordKinds = Set.copyOf(wordKinds);
         }
     }
 
@@ -1536,9 +1620,10 @@ public final class SearchView implements View {
             Set<DocumentKind> selectedKinds = kindBoxes.entrySet().stream()
                     .filter(entry -> entry.getValue().isSelected()).map(Map.Entry::getKey)
                     .collect(java.util.stream.Collectors.toSet());
-            searchLocationListener.accept(new SearchLocation(text, area, technicalTerms.isSelected(),
+            searchLocationListener.accept(new SearchLocation(text, area, words, technicalTerms.isSelected(),
                     semantic.isSelected(), neighbors.isSelected(), glossarySynonyms.isSelected(), termPages.isSelected(),
-                    selectedKinds, "Suche: " + visitName(new Visit(text, area)), headingsOnly.isSelected()));
+                    selectedKinds, "Suche: " + visitName(new Visit(text, area)), chosenWordKinds(),
+                    wordSynonyms.isSelected(), headingsOnly.isSelected()));
         }
     }
 
@@ -1549,7 +1634,12 @@ public final class SearchView implements View {
             marked = location.area();
             use(location.area());
             query.setText(location.text());
+            if (location.words() != words) {
+                switchMode(location.words());
+            }
             technicalTerms.setSelected(location.technical());
+            wordKindBoxes.forEach((kind, box) -> box.setSelected(location.wordKinds().contains(kind)));
+            wordSynonyms.setSelected(location.wordSynonyms());
             semantic.setSelected(location.semantic());
             neighbors.setSelected(location.neighbors());
             glossarySynonyms.setSelected(location.synonyms());
@@ -1923,15 +2013,17 @@ public final class SearchView implements View {
 
     /** Nennt den Modus der nächsten Suche neben dem Umfang. */
     private void mode() {
-        boolean terms = technicalTerms.isSelected();
-        modeLabel.setText(terms ? TECHNICAL_TERMS_MODE
+        boolean terms = technicalOn();
+        modeLabel.setText(terms ? TECHNICAL_TERMS_MODE + (wordSynonyms.isSelected() ? " + Synonyme" : "")
+                : words ? WORDS_MODE + (headingsOnly.isSelected() ? " + nur Überschriften" : "")
+                + (wordSynonyms.isSelected() ? " + Synonyme" : "")
                 : (semantic.isSelected() && !headingsOnly.isSelected() ? "Modus: Semantische Suche"
                         : "Modus: Schlagwortsuche")
                 + (headingsOnly.isSelected() ? " + nur Überschriften" : "")
                 + (neighbors.isSelected() && neighbors.isEnabled() ? " + Nachbarseiten" : "")
                 + (synonymsOn() ? " + Synonyme" : "")
                 + (termPagesOn() ? " + Fachbegriffe" : ""));
-        centerCards.show(center, terms ? TERMS_CARD : HITS_CARD);
+        centerCards.show(center, terms ? TERMS_CARD : words ? WORDS_CARD : HITS_CARD);
         AppRuntime runtime = context.runtime();
         if (!terms || runtime == null) {
             termsRuntime = null;
@@ -1940,6 +2032,334 @@ public final class SearchView implements View {
             termsRuntime = runtime;
             termsPanel.access(TechnicalTermsPanel.of(runtime.workspace()));
         }
+    }
+
+    /** Ob „Nur Fachbegriffe“ gilt: nur in der Wortsuche (Angelo 27.11.2026). */
+    boolean technicalOn() {
+        return words && technicalTerms.isSelected();
+    }
+
+    /**
+     * Wechselt zwischen Seitensuche und Wortsuche (Klick auf die Lupe): Lupe, Suchoptionen und Mitte folgen, der
+     * Application State merkt die Wahl. Steht ein Suchtext im Feld, sucht die neue Suche gleich damit.
+     */
+    void switchMode(boolean toWords) {
+        if (toWords == words) {
+            return;
+        }
+        words = toWords;
+        AppState.shared().put(STATE_MODE, words ? STATE_WORDS : STATE_PAGES);
+        modeIcon.word(words);
+        modeIcon.setToolTipText(words ? WORD_MODE_TIP : PAGE_MODE_TIP);
+        feedback.clear();
+        rebuildOptions();
+        mode();
+        if (!restoringHistory && (words || !query.getText().trim().isEmpty())
+                && context.runtime() != null && !context.runtime().workspace().sources().isEmpty()) {
+            search();
+        }
+    }
+
+    /** Analysiert die Bereiche (Kontextmenü „Analysieren“ des Baums); {@code null} ohne Explorer. */
+    private java.util.function.Consumer<List<Explorer.Scope>> analyzeListener;
+
+    /** Wie „Analysieren“ im Baum, wenn die Wortsuche Verben braucht. */
+    void onAnalyze(java.util.function.Consumer<List<Explorer.Scope>> listener) {
+        this.analyzeListener = java.util.Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Fragt, ob Fehlendes erzeugt werden soll; {@code true} nur nach „Ja“. */
+    interface PrerequisiteOffer {
+        boolean accepted(String title, String question);
+    }
+
+    /** Die Rückfrage; ohne Bildschirm (Tests) wird nie gefragt. */
+    PrerequisiteOffer prerequisiteOffer = (title, question) -> !java.awt.GraphicsEnvironment.isHeadless()
+            && Dialogs.confirm(component(), title, question);
+
+    /** Bereiche, denen Fachbegriffe bzw. die Aussagenanalyse in dieser Sitzung schon angeboten wurden. */
+    private final Set<String> prerequisitesOffered = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Die Wurzeln des Bereichs der nächsten Suche: die gewählten Knoten der angehakten Quellen, sonst die Quellen. */
+    List<com.aresstack.spaceharvester.application.holdings.Selection.Root> areaRoots() {
+        Set<String> searched = searchedSources();
+        List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots = new ArrayList<>();
+        for (Explorer.Scope scope : scopes) {
+            if (searched.contains(scope.sourceId())) {
+                roots.add(new com.aresstack.spaceharvester.application.holdings.Selection.Root(scope.sourceId(),
+                        scope.spaceKey(), scope.spaceKey() == null ? null : scope.pageId()));
+            }
+        }
+        if (roots.isEmpty()) {
+            searched.forEach(source -> roots.add(
+                    com.aresstack.spaceharvester.application.holdings.Selection.Root.source(source)));
+        }
+        return List.copyOf(roots);
+    }
+
+    /** Die Worttypen der nächsten Wortsuche. */
+    Set<WordSearch.Kind> chosenWordKinds() {
+        Set<WordSearch.Kind> kinds = java.util.EnumSet.noneOf(WordSearch.Kind.class);
+        wordKindBoxes.forEach((kind, box) -> {
+            if (box.isSelected()) {
+                kinds.add(kind);
+            }
+        });
+        return kinds;
+    }
+
+    /** Die Wortsuche im Bereich der Auswahl: Begriffe der angehakten Worttypen, „Nur Fachbegriffe“ im Glossar. */
+    void searchWords() {
+        AppRuntime runtime = context.runtime();
+        // Jede neue Wortsuche macht eine noch wartende (Synonyme des Glossars) ungültig, auch wenn sie gleich abbricht.
+        int mine = ++wordRequest;
+        if (runtime == null) {
+            return;
+        }
+        if (searchedSources().isEmpty()) {
+            feedback.warning("Keine Wissensquelle angehakt", "In den Suchoptionen (Pfeil im Suchfeld) ist keine "
+                    + "Quelle angehakt, die zur Auswahl im Explorer passt.");
+            wordsPanel.clear();
+            return;
+        }
+        if (!anyKind()) {
+            feedback.warning("Kein Dateityp angehakt", "In den Suchoptionen (Pfeil im Suchfeld) mindestens einen "
+                    + "Dateityp anhaken.");
+            wordsPanel.clear();
+            return;
+        }
+        String text = query.getText().trim();
+        searchedWords = text;
+        WordSearch search = new WordSearch(runtime, WordSearch.area(areaRoots(), areaTitle(scopes)),
+                WordSearch.origin(kindBoxes.get(DocumentKind.PAGE).isSelected(), kindBoxes.entrySet().stream()
+                        .anyMatch(entry -> entry.getKey() != DocumentKind.PAGE && entry.getValue().isSelected())));
+        if (technicalOn()) {
+            checkTechnicalTerms(search, TECHNICAL_TERMS);
+            searchTechnicalTerms();
+            return;
+        }
+        Set<WordSearch.Kind> kinds = chosenWordKinds();
+        if (kinds.isEmpty()) {
+            feedback.warning("Kein Worttyp angehakt", "In den Suchoptionen (Pfeil im Suchfeld) mindestens einen "
+                    + "Worttyp anhaken.");
+            wordsPanel.clear();
+            return;
+        }
+        feedback.clear();
+        remember(text, scopes);
+        heading.title(HEADING_PREFIX + areaTitle(scopes));
+        if (kinds.contains(WordSearch.Kind.VERBS)) {
+            checkVerbs(search);
+        }
+        if (headingsOnly.isSelected() && !text.isEmpty()) {
+            // „Nur Überschriften durchsuchen“ (Angelo 27.11.2026): nur Wörter der Seiten, deren Titel oder Überschriften
+            // den Suchtext enthalten; dieselbe Schlagwortsuche wie die Seitensuche, nur im lokalen Index.
+            Set<String> sources = searchedSources();
+            KeywordSearch.Query q = new KeywordSearch.Query(text, sources.size() == 1 ? sources.iterator().next()
+                    : null, sources.size() > 1 ? sources : Set.of(), Set.of(), Set.of())
+                    .ofKinds(chosenKinds()).withHeadingsOnly(true);
+            wordStatus("Überschriften werden durchsucht …");
+            Background.run(() -> headingPages(runtime, q), pages -> {
+                if (mine == wordRequest) {
+                    runWords(runtime, search.only(pages), kinds, text, mine);
+                }
+            }, error -> {
+                if (mine == wordRequest) {
+                    feedback.problem(error);
+                }
+            });
+            return;
+        }
+        runWords(runtime, search, kinds, text, mine);
+    }
+
+    /** Alle Seiten, deren Titel oder Überschriften die Anfrage treffen, Stapel für Stapel dem Cursor nach. */
+    private static com.aresstack.spaceharvester.application.snapshot.PageSet headingPages(AppRuntime runtime,
+                                                                                         KeywordSearch.Query q) {
+        Map<String, Set<String>> pages = new LinkedHashMap<>();
+        String core = java.util.UUID.randomUUID().toString();
+        String cursor = null;
+        do {
+            KeywordSearch.Results results = runtime.workspace().keywordSearchIn(core, q, cursor, KeywordSearch.MAX_LIMIT,
+                    null);
+            for (KeywordSearch.Hit hit : results.hits()) {
+                pages.computeIfAbsent(hit.sourceId(), id -> new LinkedHashSet<>()).add(hit.pageId());
+            }
+            cursor = results.nextCursor();
+        } while (cursor != null);
+        return com.aresstack.spaceharvester.application.snapshot.PageSet.of(pages);
+    }
+
+    /** Startet die Liste: mit dem Suchtext, bei „Synonyme der Fachbegriffe“ auch mit deren Synonymen. */
+    private void runWords(AppRuntime runtime, WordSearch search, Set<WordSearch.Kind> kinds, String text, int mine) {
+        if (!wordSynonyms.isSelected() || text.isEmpty()) {
+            wordsPanel.search(search, kinds, List.of(text));
+            return;
+        }
+        com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope scope = technicalScope();
+        Background.run(() -> wordQueries(runtime, text, scope), queries -> {
+            if (mine == wordRequest) {
+                wordsPanel.search(search, kinds, queries);
+            }
+        }, error -> {
+            if (mine == wordRequest) {
+                // Ohne lesbares Glossar sucht die Wortsuche nur den Text, gelb wie in der Seitensuche.
+                wordsPanel.search(search, kinds, List.of(text));
+                noteSynonyms(SYNONYMS_UNREADABLE);
+            }
+        });
+    }
+
+    /**
+     * Der Suchtext und, passt er zu Fachbegriffen, deren Synonyme als weitere Suchtexte; höchstens so viele wie die
+     * Seitensuche ausweitet ({@link SearchExpansion#MAX_EXPANSIONS}).
+     */
+    static List<String> wordQueries(AppRuntime runtime, String text,
+                                    com.aresstack.spaceharvester.application.glossary.TechnicalTerms.Scope scope) {
+        Set<String> queries = new LinkedHashSet<>();
+        queries.add(text);
+        var page = runtime.workspace().technicalTerms(text, scope, SearchExpansion.MAX_EXPANSIONS, null);
+        for (var hit : page.hits()) {
+            queries.add(hit.entry().term());
+            for (var relation : runtime.workspace().technicalSynonyms(hit.entry())) {
+                if (queries.size() > SearchExpansion.MAX_EXPANSIONS) {
+                    return List.copyOf(queries);
+                }
+                queries.add(relation.other(hit.entry().normalized()));
+            }
+        }
+        return List.copyOf(queries);
+    }
+
+    /** Stand der Wortsuche in der Statuszeile. */
+    private void wordStatus(String text) {
+        if (words) {
+            status.setForeground(Comic.MUTED);
+            status.setText(text);
+        }
+    }
+
+    /** Wie {@link #checkTechnicalTerms(WordSearch, String)} für den Bereich der nächsten Suche. */
+    private void checkTechnicalTerms(String method) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || runtime.workspace().sources().isEmpty() || searchedSources().isEmpty()) {
+            return;
+        }
+        checkTechnicalTerms(new WordSearch(runtime, WordSearch.area(areaRoots(), areaTitle(scopes)), null), method);
+    }
+
+    /**
+     * Fehlen im Bereich Fachbegriffe (das Fachglossar wurde dort nicht oder nur teilweise erstellt), sagt die Suche es
+     * gelb und fragt einmal je Bereich, ob sie jetzt ermittelt werden sollen (Angelo 27.11.2026). Nach „Ja“ startet
+     * derselbe Lauf wie „Fachbegriffe ermitteln“ im Reiter „Fachglossar“, je fehlender Quelle bzw. Space.
+     */
+    private void checkTechnicalTerms(WordSearch search, String method) {
+        AppRuntime runtime = context.runtime();
+        String area = areaTitle(scopes);
+        Background.run(() -> new TechnicalCheck(search.roots().size(), search.withoutTechnicalTerms()), check -> {
+            if (check.missing().isEmpty()) {
+                return;
+            }
+            boolean none = check.missing().size() == check.roots();
+            String where = none ? "in „" + area + "“" : "in " + check.missing().stream()
+                    .map(this::rootTitle).collect(java.util.stream.Collectors.joining(", "));
+            feedback.warning(none ? "Keine Fachbegriffe im Bereich" : "Fachbegriffe nur teilweise ermittelt",
+                    technicalMissing(method, where, none));
+            if (!prerequisitesOffered.add("terms\u0000" + check.missing())
+                    || !prerequisiteOffer.accepted(TECHNICAL_OFFER_TITLE, technicalQuestion(where, none))) {
+                return;
+            }
+            detectTechnicalTerms(runtime, check.missing());
+        }, error -> LOG.log(System.Logger.Level.DEBUG, "Fachbegriffe des Bereichs nicht prüfbar", error));
+    }
+
+    private record TechnicalCheck(int roots,
+                                  List<com.aresstack.spaceharvester.application.holdings.Selection.Root> missing) {
+    }
+
+    /** Der gelbe Hinweis: warum die Methode im Bereich nichts bzw. nicht alles findet. */
+    static String technicalMissing(String method, String where, boolean none) {
+        return none ? "Für „" + method + "“ braucht es Fachbegriffe; " + where + " wurden noch keine ermittelt, "
+                + "die Suche findet deshalb nichts."
+                : "Für „" + method + "“ braucht es Fachbegriffe; " + where + " wurden noch keine ermittelt, "
+                + "dort findet die Suche nichts.";
+    }
+
+    /** Die Rückfrage mit „wirklich“, Antwort Ja oder Nein. */
+    static String technicalQuestion(String where, boolean none) {
+        return (none ? "Die Fachbegriffe wurden " + where + " noch nicht ermittelt. "
+                : "Die Fachbegriffe wurden nur teilweise ermittelt, sie fehlen noch " + where + ". ")
+                + "Das Ermitteln läuft als Auftrag mit dem eingestellten KI-Dienst, den du unter Aufträge jederzeit "
+                + "abbrechen kannst. Fachbegriffe wirklich jetzt ermitteln?";
+    }
+
+    private String rootTitle(com.aresstack.spaceharvester.application.holdings.Selection.Root root) {
+        return root.spaceKey() == null ? "„" + title(root.sourceId()) + "“"
+                : "„" + root.spaceKey() + "“ (" + title(root.sourceId()) + ")";
+    }
+
+    /** Startet „Fachbegriffe ermitteln“ je fehlender Wurzel und zeigt die Aufträge. */
+    private void detectTechnicalTerms(AppRuntime runtime,
+                                      List<com.aresstack.spaceharvester.application.holdings.Selection.Root> roots) {
+        var glossary = runtime.workspace().glossary();
+        if (glossary.isEmpty()) {
+            return;
+        }
+        Background.run(() -> {
+            List<com.aresstack.spaceharvester.application.jobs.JobStatus> started = new ArrayList<>();
+            for (var root : roots) {
+                started.addAll(glossary.get().classify(root.sourceId(), root.spaceKey(), root.pageId()));
+            }
+            return started;
+        }, started -> {
+            if (!started.isEmpty() && context.navigator() != null) {
+                context.navigator().showJob(started.get(0).id());
+            }
+        }, error -> feedback.problem(error));
+    }
+
+    /**
+     * Verben gibt es nur aus der Aussagenanalyse: Fehlt sie im Bereich ganz oder teilweise, sagt die Wortsuche es gelb
+     * und fragt einmal je Bereich, ob jetzt analysiert werden soll; nach „Ja“ derselbe Ablauf wie „Analysieren“ im
+     * Baum.
+     */
+    private void checkVerbs(WordSearch search) {
+        // Analysiert wird genau der durchsuchte Bereich: abgehakte Quellen bleiben draußen, auch bei „alle“.
+        List<Explorer.Scope> area = areaRoots().stream().map(root -> new Explorer.Scope(root.sourceId(),
+                root.spaceKey(), root.pageId(), null)).toList();
+        String title = areaTitle(scopes);
+        Background.run(search::verbCoverage, coverage -> {
+            if (coverage.complete()) {
+                return;
+            }
+            boolean none = coverage.analysed() == 0;
+            feedback.warning(none ? "Keine Verben im Bereich" : "Verben nur teilweise vorhanden",
+                    verbsMissing(coverage, title));
+            if (analyzeListener == null || !prerequisitesOffered.add("verbs\u0000" + area)
+                    || !prerequisiteOffer.accepted(VERBS_OFFER_TITLE, verbsQuestion(coverage, title))) {
+                return;
+            }
+            analyzeListener.accept(area);
+        }, error -> LOG.log(System.Logger.Level.DEBUG, "Aussagenanalyse des Bereichs nicht prüfbar", error));
+    }
+
+    /** Der gelbe Hinweis zu fehlenden Verben. */
+    static String verbsMissing(WordSearch.VerbCoverage coverage, String area) {
+        if (coverage.analysed() == 0) {
+            return "Verben kommen aus der Aussagenanalyse; in „" + area + "“ wurde noch nichts analysiert, die "
+                    + "Suche findet deshalb keine Verben.";
+        }
+        return "Verben kommen aus der Aussagenanalyse; in „" + area + "“ fehlt sie bei "
+                + Texts.count(coverage.unanalysed() + coverage.stale(), "Seite", "Seiten")
+                + (coverage.stale() > 0 ? " (davon " + coverage.stale() + " veraltet)" : "")
+                + ", deren Verben findet die Suche nicht.";
+    }
+
+    /** Die Rückfrage vor dem Analysieren; die Zahl der Seiten nennt danach der Dialog „Analysieren“. */
+    static String verbsQuestion(WordSearch.VerbCoverage coverage, String area) {
+        return (coverage.analysed() == 0 ? "In „" + area + "“ wurden die Aussagen noch nicht analysiert, deshalb gibt "
+                + "es dort keine Verben. " : "In „" + area + "“ sind die Aussagen nur teilweise analysiert. ")
+                + "Aussagen wirklich jetzt analysieren?";
     }
 
     /** Die Laufzeit, an die {@link #termsPanel} gebunden ist; {@code null} ohne. */
@@ -2119,9 +2539,9 @@ public final class SearchView implements View {
                     + "an (rechts oben).");
             return;
         }
-        if (technicalTerms.isSelected()) {
+        if (words) {
             mode();
-            searchTechnicalTerms();
+            searchWords();
             return;
         }
         if (text.isEmpty()) {

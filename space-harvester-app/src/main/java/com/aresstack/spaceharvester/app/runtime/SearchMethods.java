@@ -89,20 +89,6 @@ public final class SearchMethods {
     }
 
     /**
-     * Suchmethode „Nur Fachbegriffe“ (K5b); Standard aus, gilt nur für die Sitzung. Der Chat übernimmt sie nicht: sie
-     * ist eine Pflegeansicht für das Glossar und liefert keine Seitentreffer.
-     */
-    public boolean technicalTermsOnly() {
-        return technicalTermsOnly;
-    }
-
-    public void technicalTermsOnly(boolean on) {
-        technicalTermsOnly = on;
-    }
-
-    private volatile boolean technicalTermsOnly;
-
-    /**
      * Suchmethode „Nur Überschriften durchsuchen“ (Angelo 27.11.2026): Seitentitel und Überschriften, kein Fließtext;
      * Standard aus, die Stellung bleibt über den Neustart erhalten. Normale Suche und Wortsuche lesen dieselbe.
      */
