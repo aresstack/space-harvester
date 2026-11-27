@@ -18,8 +18,8 @@ class AbbreviationsTest {
     @Test
     void akronymeEinmalInReihenfolgeOhneSatzzeichen() {
         assertThat(Abbreviations.acronyms("Wie hängen OGR und das KMV zusammen? Ablauf im KMV, siehe auch (WZB). "
-                + "Dazu A, Ok, ABC-Liste und Version 2."))
-                .containsExactly("OGR", "KMV", "WZB", "ABC-Liste");
+                + "Dazu A, Ok, ABC-Liste, VV-ZBR, LPF-Programm und Version 2."))
+                .containsExactly("OGR", "KMV", "WZB", "ABC", "VV-ZBR", "LPF");
     }
 
     @Test

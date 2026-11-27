@@ -57,8 +57,20 @@ public final class Abbreviations {
         }
         for (String raw : text.split("[\\s,;:!?()\\[\\]{}\"'„“”‚‘’«»<>|=+*]+")) {
             String token = trim(raw);
-            if (token.length() > 1 && TermShape.letters(token) >= 2 && TermShape.isAcronym(token)) {
+            String[] parts = token.split("-");
+            boolean whole = parts.length > 0;
+            for (String part : parts) {
+                whole &= acronym(part) || !part.isEmpty() && part.chars().allMatch(Character::isDigit);
+            }
+            if (whole && acronym(token)) {
                 found.add(token);
+                continue;
+            }
+            // Zusammensetzungen wie „OGR-Eintrag“: die Abkürzung ist ein Teil.
+            for (String part : parts) {
+                if (acronym(trim(part))) {
+                    found.add(trim(part));
+                }
             }
         }
         return List.copyOf(found);
@@ -130,6 +142,10 @@ public final class Abbreviations {
                     acronym.toLowerCase(Locale.ROOT)) ? explanation : longForm + " – " + explanation);
         }
         return Optional.empty();
+    }
+
+    private static boolean acronym(String token) {
+        return token.length() > 1 && TermShape.letters(token) >= 2 && TermShape.isAcronym(token);
     }
 
     private static String trim(String raw) {
