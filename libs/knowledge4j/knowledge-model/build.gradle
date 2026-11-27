@@ -1,0 +1,5 @@
+// Model access contracts: ModelPort, chat core, role core, embedding. No implementation of a model client.
+
+dependencies {
+    api project(':knowledge-api')
+}

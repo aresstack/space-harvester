@@ -64,32 +64,28 @@ include 'space-harvester-app'
 // DOCX, PDF und Markdown, ParityReport für den Live-Lauf; hängt nur am Core, nichts hängt davon ab.
 include 'parity-tests'
 
-// Knowledge4j und Research4j kommen in der veröffentlichten Version von Maven Central (gradle/libs.versions.toml). Wer an
-// ihnen mitentwickelt, bindet die Nachbarverzeichnisse per Composite Build ein: -Paresstack.libs=.. (Kommandozeile) oder
-// aresstack.libs=.. in der eigenen gradle.properties nennt den Ordner, in dem beide liegen.
-def aresstackLibs = providers.gradleProperty('aresstack.libs').getOrNull()
-if (aresstackLibs != null) {
-    def libs = file(aresstackLibs)
-    includeBuild(new File(libs, 'knowledge4j')) {
+// Knowledge4j, Research4j und Writing4j: Maven Central nimmt keine neuen com.aresstack-Releases mehr an (Kontingent des
+// Namespace erschöpft, 27.11.2026). Der Space Harvester baut sie deshalb selbst, als eigene Gradle-Projekte per Composite
+// Build aus unveränderten Kopien unter libs/ (libs/README.md, Abgleich per libs/sync-from-upstream.sh). Die Koordinaten
+// in gradle/libs.versions.toml bleiben, Gradle ersetzt sie durch die Projekte. Wer an einer Bibliothek mitentwickelt,
+// nennt mit -Paresstack.libs=<ordner> (oder aresstack.libs=<ordner> in der eigenen gradle.properties) den Ordner mit den
+// eigenen Klonen; dann gelten diese statt der Kopien.
+def aresstackLibs = file(providers.gradleProperty('aresstack.libs').getOrElse("$rootDir/libs"))
+[
+        knowledge4j: [prefix: 'knowledge4j-', projects: ['knowledge-api', 'knowledge-model', 'knowledge-model-support',
+                                                          'knowledge-file-support']],
+        research4j : [prefix: 'research4j-', projects: ['browser-api', 'browser-tools', 'browser-playwright',
+                                                         'browser-search-analysis', 'browser-static-http',
+                                                         'web-search-providers', 'serp4j-playwright-google',
+                                                         'research-domain', 'research-agent-runtime',
+                                                         'agent-model-runtime-api', 'mcp-runtime-api', 'research-core']],
+        writing4j  : [prefix: 'writing4j-', projects: ['writing-core'], artifact: { it.replace('writing-', '') }],
+].each { library, spec ->
+    includeBuild(new File(aresstackLibs, library)) {
         dependencySubstitution {
-            ['knowledge-api', 'knowledge-model', 'knowledge-model-support', 'knowledge-file-support'].each { name ->
-                substitute module("com.aresstack:knowledge4j-${name}") using project(":${name}")
-            }
-        }
-    }
-    includeBuild(new File(libs, 'research4j')) {
-        dependencySubstitution {
-            ['research-core', 'browser-api', 'browser-tools', 'browser-playwright', 'browser-search-analysis'].each { name ->
-                substitute module("com.aresstack:research4j-${name}") using project(":${name}")
-            }
-        }
-    }
-    // Writing4j (Phase 4) liegt daneben, wenn es mitentwickelt wird.
-    def writing4j = new File(libs, 'writing4j')
-    if (writing4j.isDirectory()) {
-        includeBuild(writing4j) {
-            dependencySubstitution {
-                substitute module('com.aresstack:writing4j-core') using project(':writing-core')
+            spec.projects.each { name ->
+                def artifact = spec.artifact ? spec.artifact(name) : name
+                substitute module("com.aresstack:${spec.prefix}${artifact}") using project(":${name}")
             }
         }
     }

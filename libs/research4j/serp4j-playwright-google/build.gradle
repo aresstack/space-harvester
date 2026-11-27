@@ -1,0 +1,24 @@
+// askai #31: serp4j-playwright-google. Google web search (Quick Web Search) as a Serp4J PlaywrightSearchProvider on
+// the search browser that AskAI manages and hands over per search (ADR-020). Built on the Serp4J artifact
+// serp4j-playwright; lives in the AskAI repository, built only as part of AskAI, never published.
+// Java 21 like browser-runtime-java21, which owns the search browser.
+apply plugin: 'java-library'
+
+
+def serp4jVersion = rootProject.serp4jVersion
+
+dependencies {
+    // serp4j-playwright brings serp4j-core and the Playwright API WITHOUT a driver; browser-runtime-java21 brings the
+    // driver (playwright4j) and owns the browser.
+    api "com.aresstack:serp4j-playwright:${serp4jVersion}"
+    implementation 'org.jsoup:jsoup:1.18.3'
+
+    testImplementation "com.aresstack:serp4j-testkit:${serp4jVersion}"
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testImplementation 'org.assertj:assertj-core:3.26.3'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
+}
+
+test {
+    useJUnitPlatform()
+}

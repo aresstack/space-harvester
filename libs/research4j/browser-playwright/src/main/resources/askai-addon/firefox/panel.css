@@ -1,0 +1,20 @@
+:root { color-scheme: light dark; --bg: #f7f7f8; --fg: #1d1f23; --muted: #5d6470; --btn: #3a3f46; --btn-hover: #4a5058;
+  --accent: #2b6cb0; --danger: #7a2530; --danger-hover: #94303c; --wait: #b3261e; }
+@media (prefers-color-scheme: dark) { :root { --bg: #1d1f23; --fg: #e8eaed; --muted: #a3a9b3; } }
+body { margin: 0; padding: 10px; min-width: 260px; background: var(--bg); color: var(--fg);
+  font: 13px/1.4 system-ui, "Segoe UI", Arial, sans-serif; }
+header { display: flex; align-items: center; gap: 6px; }
+.badge { font-weight: 600; padding: 2px 8px; border-radius: 10px; background: var(--accent); color: #fff; }
+.star { cursor: pointer; border: 0; background: transparent; color: #f5c518; font-size: 18px; padding: 0 4px; }
+.host { margin: 8px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+.status { margin: 8px 0; color: var(--muted); overflow-wrap: anywhere; }
+.wait { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px;
+  border-radius: 8px; background: var(--wait); color: #fff; margin-bottom: 8px; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.btn { cursor: pointer; border: 0; border-radius: 6px; padding: 6px 12px; font: inherit; color: #fff; background: var(--btn); }
+.btn:hover { background: var(--btn-hover); }
+.danger { background: var(--danger); }
+.danger:hover { background: var(--danger-hover); }
+.delay { display: flex; align-items: center; gap: 6px; width: 100%; }
+.delay input { flex: 1; }
+[hidden] { display: none !important; }

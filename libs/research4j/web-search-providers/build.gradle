@@ -1,0 +1,27 @@
+// Isolated async web-search-provider module (Brave / Bright Data / DataForSEO) imported as a real
+// AskAI subproject. Group, version, Java 8 source/target, UTF-8 encoding and the mavenCentral repository
+// are inherited from the root build; only java-library (for the exported Gson API) and the module's own
+// dependencies are declared here. Since WP5 the productive providers are the Serp4J adapters (see below).
+apply plugin: 'java-library'
+
+// Serp4J (WP5): the productive Brave / Bright Data / DataForSEO providers come from Serp4J. The repository
+// Resolve the versioned artifacts from Maven Central.
+def serp4jVersion = rootProject.serp4jVersion
+
+dependencies {
+    // Ports/model in the public adapter signatures (Serp4jWebSearchProvider wraps a Serp4J SearchProvider).
+    api "com.aresstack:serp4j-core:${serp4jVersion}"
+    implementation "com.aresstack:serp4j-http-ahc:${serp4jVersion}"
+    implementation "com.aresstack:serp4j-provider-brave:${serp4jVersion}"
+    implementation "com.aresstack:serp4j-provider-brightdata:${serp4jVersion}"
+    implementation "com.aresstack:serp4j-provider-dataforseo:${serp4jVersion}"
+    implementation "com.aresstack:serp4j-provider-serpapi:${serp4jVersion}"
+    api "com.google.code.gson:gson:${gsonVersion}"
+    implementation 'org.asynchttpclient:async-http-client:2.16.0'
+
+    testImplementation 'junit:junit:4.13.2'
+}
+
+test {
+    useJUnit()
+}

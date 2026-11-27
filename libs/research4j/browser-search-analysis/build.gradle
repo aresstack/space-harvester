@@ -1,0 +1,14 @@
+// Mechanical SERP analysis (Java 8, framework-free): interprets the NEUTRAL RenderedPageDocument the
+// sidecar captured — region classification, container scoring, result-block detection, candidate
+// extraction. No Playwright, no Swing, no model library, no jsoup: the capture already delivers the
+// structured facts, this module only judges them. Consumed by the Java-21 sidecar (which runs the
+// Java-8 bytecode in-process for web_search) and open to the Java-8 research runtime.
+dependencies {
+    implementation project(':browser-api')
+
+    testImplementation 'junit:junit:4.13.2'
+}
+
+test {
+    useJUnit()
+}

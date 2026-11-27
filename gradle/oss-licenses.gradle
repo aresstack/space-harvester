@@ -54,14 +54,29 @@ def ossReportTask = rootProject.tasks.register('generateOssLicenseReport') {
         def byName = [:]
         ossTargetProject.configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts.each { artifact ->
             def component = artifact.id.componentIdentifier
-            if (component instanceof org.gradle.api.artifacts.component.ProjectComponentIdentifier) {
+            if (component instanceof org.gradle.api.artifacts.component.ProjectComponentIdentifier
+                    && component.build.buildPath == ':') {
                 shippedModules << component.projectPath
                 return
             }
             def id = artifact.moduleVersion.id
+            def license = 'Unknown'
+            // Bibliotheken aus libs/ (eingebundene Builds, settings.gradle): ausgeliefert wie eine Bibliothek, unter ihrem
+            // veröffentlichten Namen <bibliothek>-<modul>, Fassung = Upstream-Commit der Kopie; die Lizenz steht in der ersten Zeile ihrer LICENSE.
+            if (component instanceof org.gradle.api.artifacts.component.ProjectComponentIdentifier) {
+                def library = component.build.buildPath.substring(1)
+                def manifest = rootProject.file("libs/upstream/${library}.sha256")
+                def commit = manifest.isFile()
+                        ? (manifest.readLines().find { it.startsWith('# upstream ') } ?: '').tokenize(' ').last().take(7)
+                        : id.version
+                id = [group: id.group, name: "${library}-${component.projectName}".toString(), version: commit]
+                def licenseFile = rootProject.file("libs/${library}/LICENSE")
+                if (licenseFile.isFile() && licenseFile.readLines().find { it.trim() }?.trim() == 'MIT License') {
+                    license = 'MIT'
+                }
+            }
             def key = "${id.group}:${id.name}:${id.version}".toString()
             if (seen.add(key)) {
-                def license = 'Unknown'
                 for (mapping in knownLicenses) {
                     if (id.group == mapping.key || id.group.startsWith(mapping.key + '.')) {
                         license = mapping.value

@@ -1,0 +1,18 @@
+// The browser tools of a chat host (browser_tabs, _navigate, _read, _links, _follow, _back, _document, _controls,
+// _act, _screenshot, _open_many, _mark, _close): one browser per chat with its own profile, delayed start and
+// reconnect (ChatBrowserRuntime), the access rules per profile with the host's question for unknown sites, the
+// question before data-changing actions and the progress of a web exploration. Moved unchanged from
+// aresstack/enterprise-ai-client (see UPSTREAM.md). It knows only the contracts of browser-api; the browser itself
+// comes from an engine (browser-playwright), so the tools run in tests against a fake engine and never carry the
+// GraalVM stack of the Playwright driver.
+
+dependencies {
+    api project(':browser-api')
+
+    testImplementation 'junit:junit:4.13.2'
+}
+
+test {
+    useJUnit()
+    systemProperty 'java.awt.headless', 'true'
+}

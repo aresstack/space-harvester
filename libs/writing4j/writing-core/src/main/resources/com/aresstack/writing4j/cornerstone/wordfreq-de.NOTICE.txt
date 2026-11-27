@@ -1,0 +1,20 @@
+wordfreq-de.txt.gz: German word frequencies of the general language
+
+Derived from the German word list "large_de" of wordfreq 3.1.1 by Robyn Speer
+(https://github.com/rspeer/wordfreq, https://doi.org/10.5281/zenodo.7199437).
+Change: converted from MessagePack to text; one line per frequency bucket of one centibel
+("<bucket>\t<word> <word> ..."; Zipf value = 9 - bucket / 100); words below Zipf 1.5 left out.
+
+The wordfreq data is licensed under the Creative Commons Attribution-ShareAlike 4.0 International
+license (https://creativecommons.org/licenses/by-sa/4.0/); this derived file is shared under the
+same license. The code of Writing4j stays under its own license (MIT).
+
+wordfreq credits these sources of its data:
+- Google Books Ngrams (http://books.google.com/ngrams) and Google Books Syntactic Ngrams
+- The Leeds Internet Corpus, University of Leeds Centre for Translation Studies
+- Wikipedia, the free encyclopedia (http://www.wikipedia.org)
+- ParaCrawl, a multilingual Web crawl (https://paracrawl.eu)
+- OPUS OpenSubtitles 2018 (http://opus.nlpl.eu/OpenSubtitles.php), from the OpenSubtitles
+  project (http://www.opensubtitles.org/)
+- SUBTLEX-DE by Marc Brysbaert et al. (http://crr.ugent.be/programs-data/subtitle-frequencies);
+  SUBTLEX is freely available data.

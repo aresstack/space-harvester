@@ -1,0 +1,12 @@
+// The research methodology DOMAIN CORE: business objects, stable ids, revisions, approval baselines and
+// the no-delete invariants. Pure Java 8 — deliberately NO Swing, ACP, MCP, Solon, Ollama, DirectML,
+// OpenNLP, Lucene or HTTP dependency. Every port and adapter aligns to THIS model, never the reverse.
+apply plugin: 'java-library'
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+}
+
+test {
+    useJUnit()
+}

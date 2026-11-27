@@ -2,7 +2,8 @@
 # aller Spring-Starter; hier stehen nur Plugins und Bibliotheken außerhalb der BOM.
 
 [versions]
-# Bibliotheken der Ask-AI-Aufteilung (noch unveröffentlicht, Arbeitszweig per Composite Build, siehe settings.gradle)
+# Bibliotheken der Ask-AI-Aufteilung: Gradle ersetzt diese Koordinaten durch die Kopien unter libs/ (Composite Build,
+# settings.gradle, libs/README.md); die Versionen hier haben deshalb keine Wirkung.
 knowledge4j = "0.3.0"
 research4j = "0.3.0"
 # Treiber-Prozess der Chat-Websuche (GraalVM 25 nur dort, ADR 0046); dieselbe Fassung wie in Research4j

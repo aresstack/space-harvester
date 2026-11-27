@@ -1,0 +1,118 @@
+plugins {
+    id 'com.gradleup.nmcp.aggregation' version '0.1.5'
+    id 'com.gradleup.nmcp' version '0.1.5' apply false
+}
+
+allprojects {
+    group = 'com.aresstack'
+    version = (findProperty('releaseVersion') ?: '0.1.0-SNAPSHOT').toString()
+    repositories {
+        mavenCentral()
+    }
+}
+
+ext.gsonVersion = '2.14.0'
+ext.serp4jVersion = '0.1.0'
+ext.pdfboxVersion = '2.0.31'
+ext.knowledge4jVersion = '0.1.0'
+ext.junitVersion = '5.11.4'
+
+subprojects {
+    apply plugin: 'java-library'
+    apply plugin: 'maven-publish'
+    apply plugin: 'signing'
+    apply plugin: 'com.gradleup.nmcp'
+
+    java {
+        toolchain { languageVersion = JavaLanguageVersion.of(21) }
+        withSourcesJar()
+        withJavadocJar()
+    }
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+    }
+    tasks.withType(Javadoc).configureEach {
+        options.encoding = 'UTF-8'
+        options.addStringOption('Xdoclint:none', '-quiet')
+    }
+
+    // Keep environment-dependent acceptance tests separate from the reproducible build.
+    tasks.named('test', Test) {
+        exclude '**/*Live*Test.class'
+    }
+    tasks.register('liveTest', Test) {
+        group = 'verification'
+        description = 'Run opt-in browser and model acceptance tests.'
+        testClassesDirs = sourceSets.test.output.classesDirs
+        classpath = sourceSets.test.runtimeClasspath
+        javaLauncher = javaToolchains.launcherFor {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+        include '**/*Live*Test.class'
+        if (project.name in ['browser-playwright', 'serp4j-playwright-google', 'research-core']) {
+            useJUnitPlatform()
+        } else {
+            useJUnit()
+        }
+        System.properties.each { key, value ->
+            if (key.toString().startsWith('askai.live.')) {
+                systemProperty key.toString(), value.toString()
+            }
+        }
+        shouldRunAfter tasks.named('test')
+        outputs.upToDateWhen { false }
+    }
+
+    publishing {
+        publications {
+            library(MavenPublication) {
+                from components.java
+                artifactId = "research4j-${project.name}"
+                pom {
+                    name = "Research4j - ${project.name}"
+                    description = 'Reusable browser-based research components'
+                    url = 'https://github.com/aresstack/research4j'
+                    licenses {
+                        license {
+                            name = 'MIT'
+                            url = 'https://opensource.org/licenses/MIT'
+                            distribution = 'repo'
+                        }
+                    }
+                    developers {
+                        developer {
+                            id = 'aresstack'
+                            name = 'AresStack'
+                            url = 'https://github.com/aresstack'
+                        }
+                    }
+                    scm {
+                        connection = 'scm:git:https://github.com/aresstack/research4j.git'
+                        developerConnection = 'scm:git:ssh://git@github.com/aresstack/research4j.git'
+                        url = 'https://github.com/aresstack/research4j'
+                    }
+                }
+            }
+        }
+    }
+
+    def signingKey = providers.gradleProperty('signingInMemoryKey').filter { !it.isBlank() }
+    signing {
+        required = signingKey.isPresent()
+        if (signingKey.isPresent()) {
+            useInMemoryPgpKeys(signingKey.get(),
+                    providers.gradleProperty('signingInMemoryKeyPassword').getOrElse(''))
+        }
+        sign publishing.publications
+    }
+}
+
+nmcpAggregation {
+    centralPortal {
+        username = providers.gradleProperty('centralUsername')
+        password = providers.gradleProperty('centralPassword')
+        publishingType = 'AUTOMATIC'
+        verificationTimeout = java.time.Duration.ofHours(2)
+    }
+    publishAllProjectsProbablyBreakingProjectIsolation()
+}
