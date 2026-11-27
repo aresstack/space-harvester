@@ -558,8 +558,6 @@ public final class Explorer {
     private final ArtifactList artifacts;
     /** Wer erfährt, ob links die Artefakte stehen: die Mitte folgt der Wippe (ADR 0047 §5). */
     private Consumer<Boolean> artifactsListener = shown -> { };
-    /** Ob beim Drücken auf „Wissensquellen“ diese Hälfte schon gewählt war: dann wählt der Klick alles, wie bisher. */
-    private boolean sourcesBeforePress;
     /** Rechts neben den Kopfknöpfen: die Spalte der Sterne bleibt frei. */
     /** Links in der Zeile des Umschalters: wählt alle Wissensquellen. */
     private final IconButton selectAll = new IconButton(Glyph.SELECT_ALL, ALL_TIP);
@@ -1028,18 +1026,6 @@ public final class Explorer {
         view.button(SOURCES_TAB).setToolTipText(SOURCES_TIP);
         view.button(FAVORITES_TAB).setToolTipText(FAVORITES_TIP);
         view.button(ARTIFACTS_TAB).setToolTipText(ARTIFACTS_TIP);
-        view.button(SOURCES_TAB).addMouseListener(new MouseAdapter() {
-            @Override
-            public void mousePressed(MouseEvent event) {
-                sourcesBeforePress = SOURCES_TAB.equals(view.selected());
-            }
-        });
-        view.button(SOURCES_TAB).addActionListener(e -> {
-            if (sourcesBeforePress) {
-                selectAll();
-            }
-            sourcesBeforePress = false;
-        });
         view.onSelect(this::showView);
         // Eine eigene Zeile über den Kopfknöpfen. Der Umschalter steht rechtsbündig, zur Mitte des Fensters hin wie
         // der der Aufträge auf der anderen Seite (Angelo 27.11.2026): Man schaltet oft um.
@@ -1050,7 +1036,6 @@ public final class Explorer {
         viewRow.setOpaque(false);
         viewRow.add(selectAll, BorderLayout.WEST);
         // Senkrecht mittig in der Kopfleiste, in seiner eigenen Höhe.
-        JPanel viewHolder = new JPanel(new java.awt.GridBagLayout());
         viewHolder.setOpaque(false);
         viewHolder.add(view);
         viewRow.add(viewHolder, BorderLayout.EAST);
@@ -2839,6 +2824,7 @@ public final class Explorer {
      * Baums sind dann ausgeblendet.
      */
     private void showView(String tab) {
+        shownTab = tab;
         boolean shown = ARTIFACTS_TAB.equals(tab);
         if (!shown) {
             onlyFavorites = FAVORITES_TAB.equals(tab);
@@ -2867,12 +2853,31 @@ public final class Explorer {
         }
     }
 
+    /** Was die Leiste zeigt, auch solange der Umschalter zugeklappt ohne Wahl am Fensterrand steht. */
+    private String shownTab = SOURCES_TAB;
+    private final JPanel viewHolder = new JPanel(new java.awt.GridBagLayout());
+
+    /** Die Leiste klappt zu: Der Umschalter zeigt keine Wahl und kann an den Fensterrand gestellt werden. */
+    void switchAway() {
+        view.clear();
+    }
+
+    /** Die Leiste ist offen: Der Umschalter steht in ihrem Kopf und zeigt, was sie zeigt. */
+    void switchHome() {
+        if (view.getParent() != viewHolder) {
+            viewHolder.add(view);
+            viewHolder.revalidate();
+            viewHolder.repaint();
+        }
+        view.show(shownTab);
+    }
+
     /** Ob der Beobachter ({@link #onArtifactsShown}) die Artefakte zuletzt als gezeigt gemeldet bekam. */
     private boolean artifactsFront;
 
     /** Ob links gerade die Artefakte stehen. */
     boolean artifactsShown() {
-        return ARTIFACTS_TAB.equals(view.selected());
+        return ARTIFACTS_TAB.equals(shownTab);
     }
 
     /**

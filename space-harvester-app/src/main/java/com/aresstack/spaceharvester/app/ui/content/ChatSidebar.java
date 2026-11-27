@@ -40,6 +40,12 @@ public final class ChatSidebar extends JPanel {
             new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(), MORE).compact();
     private final IconButton enlarge = new IconButton(enlargeIcon(false), ENLARGE);
     private Runnable collapse = () -> { };
+    private final JPanel switchSlot = new JPanel(new java.awt.GridBagLayout());
+
+    /** Platz für den Umschalter der rechten Leiste (Chat | Analysen | Aufträge); das Hauptfenster stellt ihn hinein. */
+    public javax.swing.JComponent switchSlot() {
+        return switchSlot;
+    }
 
     ChatSidebar(ChatPanel chat) {
         super(new BorderLayout());
@@ -52,6 +58,9 @@ public final class ChatSidebar extends JPanel {
             menu.show(more, more.getWidth() - menu.getPreferredSize().width, more.getHeight());
         });
         JPanel head = new com.aresstack.spaceharvester.app.ui.controls.HeadBar(new BorderLayout(8, 0), 12, 8);
+        // Links der Umschalter der Leiste an Stelle des Worts „Chat:“, gleich dahinter der Name des Chats.
+        switchSlot.setOpaque(false);
+        head.add(switchSlot, BorderLayout.WEST);
         head.add(chat.header(), BorderLayout.CENTER);
         // Senkrecht mittig in der Kopfzeile statt oben angeklebt (Angelo 24.11.2026).
         JPanel centered = new JPanel(new java.awt.GridBagLayout());

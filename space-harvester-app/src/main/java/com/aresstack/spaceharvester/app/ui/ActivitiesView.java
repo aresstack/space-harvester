@@ -348,7 +348,8 @@ public final class ActivitiesView implements View {
         // Kopfzeile, immer einzeilig (Angelo 22.11.2026). GridBagLayout hält sie in ihrer eigenen Höhe mittig.
         JPanel listTitle = new JPanel(new java.awt.GridBagLayout());
         listTitle.setOpaque(false);
-        listTitle.add(tabs);
+        switchSlot.setOpaque(false);
+        listTitle.add(switchSlot);
         // Die drei Grenzen der Parallelität stehen im Menü hinter dem Dreieck (Angelo 22.11.2026), damit die
         // Kopfzeile auch in der Seitenleiste Platz hat.
         for (ParallelChoice choice : List.of(preparations, downloads, connections)) {
@@ -371,11 +372,21 @@ public final class ActivitiesView implements View {
         // Auf- und Zuklappen stehen gleich rechts der Lupe, die beiden Aktionen mittig in der ganzen Leiste.
         JPanel folding = Comic.row(expandAll, collapseAll);
         // Die Hilfe steht unten rechts in der Ecke der Leiste, nicht mehr in der Kopfzeile (Angelo 27.11.2026).
-        JPanel globalRow = new JPanel(new ToolsLayout(folding, global, hint));
+        // Rechts in der Leiste der Umschalter „Aufträge / Hintergrund“ (Angelo 27.11.2026: aus der Kopfzeile nach
+        // unten, rechtsbündig), dahinter in der Ecke die Hilfe. Wird es eng, weicht nur die Hilfe.
+        JPanel tabsHolder = new JPanel(new java.awt.GridBagLayout());
+        tabsHolder.setOpaque(false);
+        tabsHolder.add(tabs);
+        ToolsLayout toolsLayout = new ToolsLayout(folding, global, tabsHolder, hint);
+        // Reicht die Breite auch ohne Hilfe nicht (Leiste an ihrer Mindestbreite), stehen Auf- und Zuklappen im Menü
+        // hinter dem Dreieck, wie der Besen der Kopfzeile.
+        toolsLayout.onTight(tight -> foldingInMenu = tight);
+        JPanel globalRow = new JPanel(toolsLayout);
         globalRow.setOpaque(false);
         globalRow.putClientProperty(View.TOOLS_FILL, Boolean.TRUE);
         globalRow.add(folding);
         globalRow.add(global);
+        globalRow.add(tabsHolder);
         globalRow.add(hint);
         tools = globalRow;
         // Dieselbe Kopfleiste wie überall (HeadBar): gleiche Höhe, Linie darunter (Angelo 22.11. und 27.11.2026).
@@ -527,6 +538,15 @@ public final class ActivitiesView implements View {
     final IconButton enlarge = new IconButton(
             com.aresstack.spaceharvester.app.ui.content.ChatSidebar.enlargeIcon(false),
             com.aresstack.spaceharvester.app.ui.content.ChatSidebar.ENLARGE);
+    private final JPanel switchSlot = new JPanel(new java.awt.GridBagLayout());
+    /** Ob Auf- und Zuklappen gerade im Menü hinter dem Dreieck stehen, weil die Fußleiste zu schmal ist. */
+    private boolean foldingInMenu;
+
+    /** Platz für den Umschalter der rechten Leiste (Chat | Analysen | Aufträge); das Hauptfenster stellt ihn hinein. */
+    JComponent switchSlot() {
+        return switchSlot;
+    }
+
     private Runnable enlargeAction = () -> { };
     private Runnable collapseAction = () -> { };
 
@@ -2588,6 +2608,15 @@ public final class ActivitiesView implements View {
         menu.add(preparations.menu(PARALLEL_PREPARATIONS));
         menu.add(downloads.menu(PARALLEL_DOWNLOADS));
         menu.add(connections.menu(CONNECTIONS));
+        if (foldingInMenu) {
+            menu.addSeparator();
+            for (IconButton button : List.of(expandAll, collapseAll)) {
+                javax.swing.JMenuItem item = new javax.swing.JMenuItem(button.getToolTipText(), button.getIcon());
+                item.setFont(Comic.regular(13f));
+                item.addActionListener(e -> button.doClick(0));
+                menu.add(item);
+            }
+        }
         if (narrow) {
             menu.addSeparator();
             for (javax.swing.AbstractButton button : List.of(pauseAll, cancelAll)) {
@@ -2797,13 +2826,32 @@ public final class ActivitiesView implements View {
 
         private final Component west;
         private final Component center;
-        /** Steht rechtsbündig am Ende der Zeile, also unten rechts in der Ecke der Leiste. */
+        /** Steht rechts und bleibt immer stehen (etwa ein Umschalter), oder {@code null}. */
+        private final Component fixed;
+        /** Steht rechtsbündig am Ende der Zeile, also unten rechts in der Ecke der Leiste; weicht, wenn es eng wird. */
         private final Component east;
 
         ToolsLayout(Component west, Component center, Component east) {
+            this(west, center, null, east);
+        }
+
+        ToolsLayout(Component west, Component center, Component fixed, Component east) {
             this.west = west;
             this.center = center;
+            this.fixed = fixed;
             this.east = east;
+        }
+
+        private Consumer<Boolean> tight = now -> { };
+        private boolean isTight;
+
+        /** Meldet, wenn der linke Teil weichen muss, weil die Breite auch ohne Hilfe nicht reicht, und wenn er zurückkommt. */
+        void onTight(Consumer<Boolean> tight) {
+            this.tight = tight;
+        }
+
+        private int fixedWidth() {
+            return fixed == null || !fixed.isVisible() ? 0 : fixed.getPreferredSize().width + GAP / 2;
         }
 
         @Override
@@ -2811,19 +2859,39 @@ public final class ActivitiesView implements View {
             int height = parent.getHeight();
             java.awt.Dimension westSize = west.getPreferredSize();
             java.awt.Dimension centerSize = center.getPreferredSize();
-            west.setBounds(0, (height - westSize.height) / 2, westSize.width, westSize.height);
+            // Ein fester Teil rechts (der Umschalter) geht vor: Passt er nicht mehr neben die Aktionen, weicht der
+            // linke Teil ganz und sein Besitzer bietet ihn anderswo an.
+            boolean now = fixedWidth() > 0
+                    && westSize.width + GAP + centerSize.width + GAP + fixedWidth() > parent.getWidth();
+            if (now != isTight) {
+                isTight = now;
+                tight.accept(now);
+            }
+            if (now) {
+                westSize = new java.awt.Dimension(-GAP, westSize.height);
+                west.setBounds(0, 0, 0, 0);
+            } else {
+                west.setBounds(0, (height - westSize.height) / 2, westSize.width, westSize.height);
+            }
             // Die Leiste ist der nächste Vorfahr mit eigener Breite über die ganze Zeile (FindBar); ohne sie mittig
             // im eigenen Platz.
             Container bar = javax.swing.SwingUtilities.getAncestorOfClass(FindBar.class, parent);
             int middle = bar == null ? parent.getWidth() / 2
                     : javax.swing.SwingUtilities.convertPoint(bar, bar.getWidth() / 2, 0, parent).x;
             // Reicht die Breite nicht für alles (Leiste an ihrer Mindestbreite), weicht die Hilfe wie zuvor in der
-            // Kopfzeile; die Aktionen behalten ihren Platz.
+            // Kopfzeile; die Aktionen und der Umschalter behalten ihren Platz.
             java.awt.Dimension eastSize = east.getPreferredSize();
-            boolean fits = westSize.width + GAP + centerSize.width + GAP + eastSize.width <= parent.getWidth();
+            int fixedWidth = fixedWidth();
+            boolean fits = westSize.width + GAP + centerSize.width + GAP + fixedWidth + eastSize.width
+                    <= parent.getWidth();
             int right = fits ? parent.getWidth() - eastSize.width : parent.getWidth();
             east.setBounds(right, (height - eastSize.height) / 2, fits ? eastSize.width : 0, eastSize.height);
-            int room = fits ? right - GAP : right;
+            if (fixedWidth > 0) {
+                java.awt.Dimension fixedSize = fixed.getPreferredSize();
+                right -= fits ? fixedWidth : fixedSize.width;
+                fixed.setBounds(right, (height - fixedSize.height) / 2, fixedSize.width, fixedSize.height);
+            }
+            int room = fits || fixedWidth > 0 ? right - GAP : right;
             int x = Math.max(westSize.width + GAP, middle - centerSize.width / 2);
             x = Math.max(westSize.width + GAP, Math.min(x, room - centerSize.width));
             center.setBounds(x, (height - centerSize.height) / 2,
@@ -2835,8 +2903,8 @@ public final class ActivitiesView implements View {
             java.awt.Dimension westSize = west.getPreferredSize();
             java.awt.Dimension centerSize = center.getPreferredSize();
             java.awt.Dimension eastSize = east.getPreferredSize();
-            return new java.awt.Dimension(westSize.width + GAP + centerSize.width + GAP + eastSize.width,
-                    Math.max(Math.max(westSize.height, centerSize.height), eastSize.height));
+            return new java.awt.Dimension(westSize.width + GAP + centerSize.width + GAP + fixedWidth()
+                    + eastSize.width, Math.max(Math.max(westSize.height, centerSize.height), eastSize.height));
         }
 
         @Override

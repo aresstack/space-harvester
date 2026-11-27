@@ -172,7 +172,9 @@ class MainWindowTest {
                 .as("Die Suche hat keinen Knopf mehr: sie ist die Mitte ohne gewählten Knopf (Angelo 27.11.2026)")
                 .doesNotContain("Suche")
                 .containsSubsequence("Leseansicht", "Podcast-Ansicht", "Anhänge", "Info",
-                        "Export", "Chat", "Analysen", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
+                        "Export", "Wissensquellen verwalten", "Einstellungen")
+                .as("Chat, Analysen und Aufträge stehen im Umschalter der rechten Leiste (Angelo 27.11.2026)")
+                .containsSubsequence("Chat", "Analysen", "Aufträge")
                 .doesNotContain("Inhalte")
                 .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen")
                 .as("Status ist kein Bereich mehr, sondern Einstellungen › Diagnose").doesNotContain("Status");
@@ -528,10 +530,59 @@ class MainWindowTest {
                 assertThat(window.analysesToggle().isSelected()).isFalse();
                 window.analysesToggle().doClick();
                 assertThat(window.analysesOpen()).isTrue();
+                // Der Umschalter steht im Kopf der gezeigten Leiste (Angelo 27.11.2026), nicht mehr oben.
+                assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), sidebar)).isTrue();
+                assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), window.windowBar())).isFalse();
+                window.jobsToggle().doClick();
+                assertThat(window.jobsOpen()).isTrue();
+                assertThat(SwingUtilities.isDescendingFrom(window.jobsToggle(), sidebar)).isFalse();
+                assertThat(SwingUtilities.isDescendingFrom(window.jobsToggle(),
+                        window.chatSplit().getRightComponent())).isTrue();
+                window.analysesToggle().doClick();
+                // Ein zweiter Klick auf das gewählte Symbol klappt die Leiste zu; zugeklappt steht der Umschalter
+                // ohne gewähltes Symbol am rechten Rand unter dem Schließen-Knopf, auf der Linie unter der
+                // Titelleiste, und klappt von dort wieder auf.
                 window.analysesToggle().doClick();
                 assertThat(window.analysesOpen()).isFalse();
                 assertThat(window.chatOpen()).isFalse();
                 assertThat(window.jobsOpen()).isFalse();
+                layoutAll(surface);
+                java.awt.Rectangle edge = SwingUtilities.convertRectangle(window.sideSwitch().getParent(),
+                        window.sideSwitch().getBounds(), surface);
+                java.awt.Rectangle bar = SwingUtilities.convertRectangle(window.windowBar().getParent(),
+                        window.windowBar().getBounds(), surface);
+                assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), window.windowBar())).isFalse();
+                assertThat(edge.x + edge.width).as("rechtsbündig mit dem Schließen-Knopf")
+                        .isEqualTo(bar.x + bar.width - window.windowBar().getInsets().right);
+                assertThat(edge.y).as("unter dem Schließen-Knopf").isGreaterThan(bar.y + bar.height / 2);
+                assertThat(edge.y + edge.height).as("knapp über der Linie")
+                        .isEqualTo(bar.y + bar.height + com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay
+                                .BELOW_LINE);
+                assertThat(List.of(window.chatToggle(), window.analysesToggle(), window.jobsToggle()))
+                        .noneMatch(AbstractButton::isSelected);
+                window.chatToggle().doClick();
+                assertThat(window.chatOpen()).isTrue();
+                assertThat(SwingUtilities.isDescendingFrom(window.chatToggle(),
+                        window.chatSplit().getRightComponent())).isTrue();
+                window.chatToggle().doClick();
+                assertThat(window.chatOpen()).isFalse();
+                // Links genauso: Der zweite Klick auf das gewählte Symbol klappt die Leiste zu, der Umschalter
+                // wandert ohne Wahl an den linken Rand unter das Logo und öffnet von dort wieder.
+                var view = window.explorer().view;
+                assertThat(view.selected()).isEqualTo(Explorer.SOURCES_TAB);
+                view.button(Explorer.SOURCES_TAB).doClick();
+                assertThat(window.split().isLeftCollapsed()).isTrue();
+                assertThat(view.selected()).isNull();
+                layoutAll(surface);
+                java.awt.Rectangle left = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface);
+                assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isFalse();
+                assertThat(left.x).isEqualTo(bar.x + window.windowBar().getInsets().left);
+                assertThat(left.y + left.height).isEqualTo(edge.y + edge.height);
+                view.button(Explorer.FAVORITES_TAB).doClick();
+                assertThat(window.split().isLeftCollapsed()).isFalse();
+                assertThat(view.selected()).isEqualTo(Explorer.FAVORITES_TAB);
+                assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isTrue();
+                layoutAll(surface);
             } finally {
                 // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten wieder mit dem Chat, zu.
                 window.chatOpen(true);

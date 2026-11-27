@@ -146,6 +146,12 @@ public final class PerspectiveSwitcher extends JPanel {
         logo.getAccessibleContext().setAccessibleName(tooltip);
     }
 
+    /** Die Seitenleiste hat ihren eigenen Umschalter, der sie auch zuklappt: Das Logo verspricht nichts. */
+    public void sidebarElsewhere() {
+        logo.setToolTipText(null);
+        logo.getAccessibleContext().setAccessibleName(title.getText());
+    }
+
     /** Das Logo oben links, für versteckte Auslöser. */
     public JComponent logo() {
         return logo;

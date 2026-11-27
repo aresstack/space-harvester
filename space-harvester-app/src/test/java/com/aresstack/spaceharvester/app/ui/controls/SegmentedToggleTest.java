@@ -34,4 +34,28 @@ class SegmentedToggleTest {
             assertThat(icons.selected()).isEqualTo("Favoriten");
         });
     }
+
+    @Test
+    void aSecondClickGoesToItsReceiverAndTheToggleCanShowNoChoice() throws Exception {
+        // Angelo 27.11.2026: Der Umschalter der rechten Leiste klappt sie mit dem zweiten Klick zu; zugeklappt ist keine
+        // Hälfte gewählt, und ein Klick wählt wieder.
+        SwingUtilities.invokeAndWait(() -> {
+            java.util.List<String> events = new java.util.ArrayList<>();
+            SegmentedToggle toggle = new SegmentedToggle().segment("Chat", Glyph.STAR).segment("Aufträge", Glyph.STAR);
+            toggle.onSelect(name -> events.add("wahl " + name));
+            toggle.onAgain(name -> events.add("nochmal " + name));
+
+            toggle.button("Aufträge").doClick();
+            toggle.button("Aufträge").doClick();
+            toggle.clear();
+            assertThat(toggle.selected()).isNull();
+            assertThat(toggle.button("Chat").isSelected()).isFalse();
+            assertThat(toggle.button("Aufträge").isSelected()).isFalse();
+            toggle.button("Aufträge").doClick();
+            toggle.show("Chat");
+
+            assertThat(events).containsExactly("wahl Aufträge", "nochmal Aufträge", "wahl Aufträge");
+            assertThat(toggle.selected()).isEqualTo("Chat");
+        });
+    }
 }

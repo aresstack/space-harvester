@@ -55,17 +55,65 @@ public final class SegmentedToggle extends JPanel {
         Segment segment = new Segment(name);
         segment.icon = icon;
         if (icon != null) {
+            segment.setIcon(icon);
             segment.setToolTipText(name);
         }
         segments.put(name, segment);
         group.add(segment);
         add(segment);
-        segment.addActionListener(event -> select(name));
+        segment.addActionListener(event -> clicked(name));
         if (selected == null) {
             selected = name;
             segment.setSelected(true);
         }
         return this;
+    }
+
+    /**
+     * Ein Klick des Benutzers. Der zweite Klick auf die gewählte Hälfte geht an {@link #onAgain}, wenn jemand ihn haben
+     * will (etwa: die Seitenleiste klappt zu); sonst bleibt die Hälfte gewählt wie bisher.
+     */
+    private void clicked(String name) {
+        if (again != null && name.equals(selected)) {
+            again.accept(name);
+            return;
+        }
+        select(name);
+    }
+
+    /** Der zweite Klick auf die gewählte Hälfte; ohne Empfänger geschieht nichts. */
+    public void onAgain(Consumer<String> again) {
+        this.again = again;
+    }
+
+    private Consumer<String> again;
+
+    /** Hebt die Wahl auf, ohne etwas zu melden: Keine Hälfte ist gefüllt (etwa solange die Leiste zugeklappt ist). */
+    public void clear() {
+        selected = null;
+        group.clearSelection();
+        repaint();
+    }
+
+    /** Zeigt eine Hälfte als gewählt, ohne etwas zu melden (der Aufrufer hat den Zustand schon hergestellt). */
+    public void show(String name) {
+        Segment segment = segments.get(name);
+        if (segment != null) {
+            selected = name;
+            segment.setSelected(true);
+            repaint();
+        }
+    }
+
+    /** Tauscht das Symbol einer Hälfte (etwa „ungelesen“). */
+    public void icon(String name, javax.swing.Icon icon) {
+        Segment segment = segments.get(name);
+        if (segment != null && segment.icon != icon) {
+            segment.icon = icon;
+            segment.setIcon(icon);
+            revalidate();
+            repaint();
+        }
     }
 
     /** Wählt eine Hälfte; meldet nur einen echten Wechsel. */
