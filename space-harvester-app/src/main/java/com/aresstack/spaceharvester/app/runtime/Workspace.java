@@ -2400,10 +2400,27 @@ public final class Workspace {
                                         com.aresstack.spaceharvester.application.jobs.JobTask task) {
         JobStatus status = harvester.jobs().submitInteractive(type,
                 com.aresstack.spaceharvester.application.jobs.Jobs.ALL_SOURCES, null, null, caller.jobOwner(),
-                com.aresstack.spaceharvester.application.jobs.JobArea.with(java.util.Map.of(),
-                        folderName == null || folderName.isBlank() ? null : "Ordner „" + folderName + "“"), task);
+                com.aresstack.spaceharvester.application.jobs.JobArea.with(java.util.Map.of(), folderArea(folderName)),
+                task);
         activities.remember(status.id());
         return status;
+    }
+
+    private static String folderArea(String folderName) {
+        return folderName == null || folderName.isBlank() ? null : "Ordner „" + folderName + "“";
+    }
+
+    /**
+     * Die Unteraufträge unter einem laufenden Auftrag der Buchfunktion (Klammer mit Unteraufträgen wie bei
+     * „Zusammenfassen“, Angelo 27.11.2026): dieselbe Art, derselbe Ordner in der Spalte „Space“, zusammen höchstens
+     * {@code parallel} Anfragen zugleich.
+     */
+    public com.aresstack.spaceharvester.application.jobs.ChildJobs childJobs(
+            com.aresstack.spaceharvester.application.jobs.JobContext parent, int parallel, String folderName) {
+        JobStatus status = harvester.jobs().status(parent.jobId());
+        return new com.aresstack.spaceharvester.application.jobs.ChildJobs(harvester.jobs(), parallel,
+                java.time.Clock.systemUTC(), status.type(), parent.jobId(), status.sourceId(), status.partitionKey(),
+                caller.jobOwner(), folderArea(folderName), "book-");
     }
 
     public AiChat aiChat() {

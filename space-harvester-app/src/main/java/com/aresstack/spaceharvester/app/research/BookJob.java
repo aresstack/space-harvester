@@ -51,12 +51,13 @@ public final class BookJob {
         private final BookRun run;
         private final SourceBasket basket;
         private final PageBasketReader reader;
+        private final BookPieces pieces;
         /** Ein Auftrag je Sitzung: Abbrechen und Modell gehören der Sitzung, zwei Läufe würden sie teilen. */
         private final AtomicBoolean busy = new AtomicBoolean();
         private volatile BookRun.Preparation prepared;
 
         Session(String folderId, String folderName, MainModelChat chat, StopSwitch stop, BookRun run,
-                SourceBasket basket, PageBasketReader reader) {
+                SourceBasket basket, PageBasketReader reader, BookPieces pieces) {
             this.folderId = folderId;
             this.folderName = folderName;
             this.chat = chat;
@@ -64,6 +65,7 @@ public final class BookJob {
             this.run = run;
             this.basket = basket;
             this.reader = reader;
+            this.pieces = pieces;
         }
 
         public String folderId() {
@@ -110,22 +112,29 @@ public final class BookJob {
      * @param chat     das Chat-Modell des KI-Dienstes für alle Schritte (Kapazität in {@code settings})
      * @param questions die Fragen des Lesers an das Buch (leer: keine)
      * @param settings  Sprache, Länge, Kapazität und die Einstellungen der Schritte
+     * @param children  die Unteraufträge unter einem Auftrag der Sitzung, je Quelle einer; {@code null}: alles im
+     *                  Auftrag selbst
      */
     public static Session session(MainModelChat chat, PageStock stock, FavoritesBasket basket, String folderId,
                                   String folderName, Fence fence, List<String> questions,
-                                  BookRun.Settings settings) {
+                                  BookRun.Settings settings,
+                                  java.util.function.Function<JobContext,
+                                          com.aresstack.spaceharvester.application.jobs.ChildJobs> children) {
         Objects.requireNonNull(fence, "fence");
         PendingReleases releases = new PendingReleases(stock);
         StopSwitch stop = new StopSwitch();
         MainModelChat model = stop.guard(releases.releasingBefore(chat));
         PageBasketReader reader = new PageBasketReader(stock, releases, PageBasketReader.defaultSegmentation());
+        // Klammer mit Unteraufträgen (Angelo 27.11.2026): je Quelle ein Auftrag unter „Buch schreiben“.
+        BookPieces pieces = new BookPieces(settings.getCapacity(), children);
+        settings.withPieces(pieces);
         // Ohne Embedding-Modell: gemeinsame Wörter wählen die Passagen einer Pflichtfrage (Writing4j).
         BookRun run = new BookRun(model, model, model, null, settings, Clock.systemUTC(),
                 line -> LOG.log(System.Logger.Level.DEBUG, line));
         // Die Fragen des Lesers gehen als Pflichtfragen neben dem Weidezaun mit (Writing4j: immer verfolgt, ohne Beleg
         // eine Lücke im Missionsbericht).
         return new Session(folderId, folderName, chat, stop, run,
-                basket.basket().withFence(fence).withQuestions(questions), reader);
+                basket.basket().withFence(fence).withQuestions(questions), reader, pieces);
     }
 
     /** Vorbereiten als Auftrag; {@code prepared} bekommt die Sitzung, wenn die Vorbereitung fertig ist. */
@@ -137,11 +146,13 @@ public final class BookJob {
             BookRun.Preparation result;
             try {
                 session.stop.bind(() -> stopped(context));
+                session.pieces.bind(context);
                 try (AutoCloseable cancel = context.whenStopRequested(session.chat::cancelInFlight)) {
                     result = session.run.prepare(session.basket, session.reader, progress(context));
                 }
                 context.checkpoint();
             } finally {
+                session.pieces.bind(null);
                 session.release();
             }
             session.prepared = result;
@@ -169,6 +180,7 @@ public final class BookJob {
             BookRun.Result result;
             try {
                 session.stop.bind(() -> stopped(context));
+                session.pieces.bind(context);
                 try (AutoCloseable cancel = context.whenStopRequested(session.chat::cancelInFlight)) {
                     BookRun.Progress progress = progress(context);
                     BookRun.Opening opening = session.run.open(session.prepared, chosen, progress);
@@ -177,6 +189,7 @@ public final class BookJob {
                 }
                 context.checkpoint();
             } finally {
+                session.pieces.bind(null);
                 session.release();
             }
             context.written(result.getSections().size());
