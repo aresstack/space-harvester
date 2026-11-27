@@ -368,6 +368,41 @@ class AreaSummaryViewTest {
     }
 
     @Test
+    void theBookPodcastMarksTheToldChapterYellowAndNeverToldOnesGrey() throws Exception {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            String before = com.aresstack.spaceharvester.app.ui.AppState.shared().get(AreaSummaryView.BOOK_KEY
+                    + "ordner-b");
+            try {
+                AreaSummaryView view = view(AreaSummaryView.Mode.LISTEN, true);
+                String markdown = "# Buch\n\nVorwort.\n\n## Erstes\n\nEins.\n\n## Zweites\n\nZwei.\n";
+                int first = markdown.indexOf("## Erstes");
+                int second = markdown.indexOf("## Zweites");
+                actions.parts = List.of(new com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span(0, first),
+                        new com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span(first, second),
+                        new com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span(second,
+                                markdown.length()));
+                view.books(id -> new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, markdown,
+                        "", List.of()));
+
+                view.folder(folder("ordner-b", Root.space("wiki", "BAU")));
+                view.followPodcast(List.of(2), java.util.Optional.of(List.of(1, 2)));
+
+                assertThat(view.bookPartMark(2)).isEqualTo(SummaryReport.PODCAST_MARK);
+                assertThat(view.bookPartMark(3)).isEqualTo(com.aresstack.spaceharvester.app.ui.Comic.PODCAST_GAP);
+                assertThat(view.bookPartMark(1)).isNull();
+
+                view.followPodcast(List.of(3), java.util.Optional.empty());
+
+                assertThat(view.bookPartMark(2)).isNull();
+                assertThat(view.bookPartMark(3)).isEqualTo(SummaryReport.PODCAST_MARK);
+            } finally {
+                com.aresstack.spaceharvester.app.ui.AppState.shared().put(AreaSummaryView.BOOK_KEY + "ordner-b",
+                        before);
+            }
+        });
+    }
+
+    @Test
     void anEmptyFolderSaysSoWithoutAskingTheModel() {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
         view.folder(folder("ordner-leer"));
@@ -469,6 +504,14 @@ class AreaSummaryViewTest {
         @Override
         public SourceUpdatesView.Actions shared() {
             return shared;
+        }
+
+        List<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span> parts = List.of();
+
+        @Override
+        public List<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span> bookParts(
+                com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
+            return parts;
         }
     }
 }
