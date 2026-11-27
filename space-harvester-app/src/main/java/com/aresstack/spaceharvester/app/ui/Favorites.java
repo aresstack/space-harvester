@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.project.ProfileFiles;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
@@ -9,7 +10,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -524,14 +524,12 @@ public final class Favorites {
 
     /** Benennt eine unlesbare Datei um ({@code favorites.json.defekt-<Zeit>}), damit kein Stern sie überschreibt. */
     private static void quarantine(Path path, Exception cause) {
-        Path target = path.resolveSibling(path.getFileName() + ".defekt-" + System.currentTimeMillis());
-        try {
-            Files.move(path, target);
+        Path target = ProfileFiles.quarantine(path);
+        if (target != null) {
             LOG.log(Level.WARNING, "Favoriten nicht lesbar (" + cause.getClass().getSimpleName()
                     + "), beiseitegelegt: " + target);
-        } catch (IOException | RuntimeException e) {
-            LOG.log(Level.WARNING, "Favoriten nicht lesbar und nicht beiseitezulegen: " + path + " ("
-                    + e.getClass().getSimpleName() + ")");
+        } else {
+            LOG.log(Level.WARNING, "Favoriten nicht lesbar und nicht beiseitezulegen: " + path);
         }
     }
 
@@ -613,10 +611,7 @@ public final class Favorites {
         content.put("version", FORMAT_VERSION);
         content.put("entries", toEntries(load()));
         try {
-            Files.createDirectories(path.getParent());
-            Path temp = path.resolveSibling(path.getFileName() + ".part");
-            Files.writeString(temp, JSON.writeValueAsString(content), StandardCharsets.UTF_8);
-            Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            ProfileFiles.writeAtomic(path, JSON.writeValueAsString(content));
         } catch (IOException | RuntimeException e) {
             LOG.log(Level.WARNING, "Favoriten nicht gespeichert: " + path + " (" + e.getClass().getSimpleName() + ")");
         }
