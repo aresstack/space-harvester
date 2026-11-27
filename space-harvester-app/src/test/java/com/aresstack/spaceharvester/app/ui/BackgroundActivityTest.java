@@ -80,6 +80,11 @@ class BackgroundActivityTest {
         }), "blocked-task");
         worker.start();
         running.await();
+        // countDown() comes before release.await(): wait until the worker really sits in await, else its stack may not
+        // show CountDownLatch.await yet (seen in CI 27.11.2026).
+        while (worker.getState() != Thread.State.WAITING) {
+            Thread.onSpinWait();
+        }
         try {
             assertThatThrownBy(() -> activity.awaitIdle(mark, Duration.ZERO)).isInstanceOf(TimeoutException.class)
                     .hasMessageContaining("(running: 1, not started: 0)")
