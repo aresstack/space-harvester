@@ -840,4 +840,100 @@ class TermsTabTest {
             assertThat(tab[0].countTiles()).noneMatch(tile -> tile.counting());
         });
     }
+
+    /**
+     * Ein gewählter Abschnitt lädt sich selbst: „Verben“ wartet nicht, bis alle Bezeichner der Auswahl geladen sind
+     * (Angelo 27.11.2026: unter Verben und Beziehungen erschien keine Liste).
+     */
+    @Test
+    void aChosenSectionLoadsItselfInsteadOfWaitingForTheSectionsBeforeIt() throws Exception {
+        List<String> asked = new ArrayList<>();
+        TermsTab.Selection selection = new TermsTab.Selection() {
+            @Override
+            public String title() {
+                return "Handbuch";
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<
+                    com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary> acronyms(String q) {
+                return counting("acronyms", asked, List.of(summary("RSL", TermKind.ACRONYM, "Rückmeldeschlüssel")));
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<
+                    com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary> identifiers(String q) {
+                return counting("identifiers", asked, List.of(summary("Antrag", TermKind.NOUN, null)));
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<
+                    com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb> verbs(String q) {
+                return counting("verbs", asked, List.of(
+                        new com.aresstack.spaceharvester.application.knowledge.VerbQueries.Verb("prüfen", 2, 1,
+                                false)));
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.app.ui.Pager<com.aresstack.spaceharvester.app.ui.Relation> relations(
+                    String q) {
+                return counting("relations", asked, List.of(new com.aresstack.spaceharvester.app.ui.Relation("r1",
+                        "RSL", "ABBREVIATION", "Rückmeldeschlüssel", "PROPOSED", "RULE", 1)));
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.terms.TermQueries.OccurrenceList occurrences(
+                    com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary term) {
+                return null;
+            }
+        };
+        // Die Arbeit bleibt liegen, bis der Test sie abholt: so ist zu sehen, welcher Abschnitt als nächster fragt.
+        java.util.ArrayDeque<Runnable> queued = new java.util.ArrayDeque<>();
+        TermsTab[] tab = new TermsTab[1];
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0] = new TermsTab();
+            tab[0].runner(new TermsTab.Runner() {
+                @Override
+                public <T> void run(java.util.concurrent.Callable<T> work, java.util.function.Consumer<T> onSuccess,
+                                    java.util.function.Consumer<Throwable> onFailure) {
+                    queued.add(() -> {
+                        try {
+                            onSuccess.accept(work.call());
+                        } catch (Exception e) {
+                            onFailure.accept(e);
+                        }
+                    });
+                }
+            });
+            tab[0].selection(selection);
+            tab[0].kind(TermsTab.VERBS);
+            while (!queued.isEmpty()) {
+                queued.poll().run();
+            }
+        });
+        flush();
+        SwingUtilities.invokeAndWait(() -> {
+            while (!queued.isEmpty()) {
+                queued.poll().run();
+            }
+        });
+        assertThat(asked).as("die Verben fragen, ohne dass erst die Bezeichner geladen werden")
+                .contains("verbs").doesNotContain("identifiers", "relations");
+        asked.clear();
+        SwingUtilities.invokeAndWait(() -> {
+            tab[0].kind(TermsTab.RELATIONS);
+            while (!queued.isEmpty()) {
+                queued.poll().run();
+            }
+        });
+        assertThat(asked).contains("relations").doesNotContain("identifiers");
+    }
+
+    private static <T> com.aresstack.spaceharvester.app.ui.Pager<T> counting(String name, List<String> asked,
+                                                                           List<T> items) {
+        return new com.aresstack.spaceharvester.app.ui.Pager<>((one, other) -> 0, List.of(List.of(cursor -> {
+            asked.add(name);
+            return new com.aresstack.spaceharvester.app.ui.Pager.Page<>(items, null);
+        })));
+    }
 }
