@@ -2,8 +2,8 @@
 
 - Status: **Angenommen** (27.11.2026) nach Angelos Vorgabe. **Geändert** am 27.11.2026 durch den Nachtrag „Das Buch
   ist ein Artefakt der Schreibumgebung“ am Ende: Die Abschnitte 2 und 3 gelten nicht mehr, die Abschnitte 1, 4 und 5
-  gelten in der Fassung des Nachtrags. Seit [ADR 0047](0047-artefakte-des-projekts.md) gibt es keine Reihe von
-  Auflagen mehr: Ein Ordner hat ein Buch, „Neue Auflage erzeugen“ überschreibt es (Nachtrag N3).
+  gelten in der Fassung des Nachtrags. Das Buch ist ein globales, versioniertes Artefakt nach
+  [ADR 0047](0047-artefakte-des-projekts.md): Jede Auflage bleibt erhalten (Nachtrag N3).
 - Quelle: Angelos Nachricht vom 27.11.2026, 15:41 MEZ: „Eigentlich ist dieses Buch erstellen ja ein erweiterter
   Modus für die KI-Zusammenfassung. […] Wenn ein Buch existiert, sollte das eigentlich in erster Linie die
   KI-Zusammenfassung verdrängen und auch erstmal keine neue KI-Zusammenfassung erstellt werden. […] Neue Auflage
@@ -31,7 +31,8 @@ an dieselbe Stelle.
 
 ### 1. Das Buch gehört zum Ordner und hat Auflagen
 
-> Geändert durch den Nachtrag N3 und N4: keine Reihe von Auflagen, das Buch wird überschrieben und gehört dem Projekt.
+> Ergänzt durch den Nachtrag N3 und N4: Die Auflagen sind Versionen eines Artefakts, das dem Projekt gehört. Es
+> bleibt dabei: Auflagen werden nie überschrieben, frühere bleiben wählbar.
 
 - Jeder abgeschlossene Lauf von „Buch schreiben“ legt am Ordner eine **Auflage** ab: laufende Nummer, Zeitpunkt,
   Buchtext, Missionsbericht und der Stand der Quellen, aus denen sie entstand (je Seite Kennung und Version).
@@ -61,7 +62,7 @@ an dieselbe Stelle.
 
 ### 4. Neue Auflage
 
-> Geändert durch den Nachtrag N3 und N5: Die bisherige Fassung bleibt nicht als frühere Auflage erhalten.
+> Ergänzt durch den Nachtrag N5: „veraltet“ und der Knopf stehen am Reiter des Buchs.
 
 - Weicht der Stand der Quellen vom Stand der neuesten Auflage ab (Seite hinzugekommen, entfernt oder in neuer
   Version), zeigt die Ansicht „veraltet“ wie beim Überblick und den Knopf **„Neue Auflage erzeugen“**. Derselbe
@@ -116,14 +117,14 @@ Stand im Code davor (develop, 27.11.2026): Auflagen liegen in `BookEditions` am 
 neueste, der Umschalter hat die Hälfte „Buch“, „Neue Auflage erzeugen“ steht in der Leseansicht und im
 Rechtsklick-Menü des Ordners, und die Podcast-Ansicht erzeugt den Podcast aus dem Buch.
 
-Dazu Angelos Nachricht vom 27.11.2026, 21:04 MEZ: „Ja, also ich würde tatsächlich sagen, dass wir Podcasts in Zukunft
-auch irgendwie wie Artefakte behandeln. […] Ich würde bei diesen Artefakten keine Versionierung einführen. Dann kommt
-man nachher durcheinander. Ich würde da einfach das überschreiben. […] Also das über Projekte teilen und am selben
-Artefakt arbeiten, was ich eigentlich geplant hatte, das funktioniert damit nicht.“ Den Plan für alle Artefakte hält
-[ADR 0047](0047-artefakte-des-projekts.md) fest; dieser Nachtrag sagt, was daraus für das Buch folgt.
+Dazu Angelos Nachricht vom 27.11.2026, 21:26 MEZ: „die globalen Artefakte werden auch [versioniert], das hatte ich
+auch gesagt. Nur die lokalen Artefakte werden nicht [versioniert]. Weil es wäre scheiße, wenn wir ein Buch schreiben
+und haben eine neue Version und können aber nicht die alte Version sehen, für die wir mega viel Arbeit investiert
+haben.“ Die Unterteilung in lokale und globale Artefakte hält [ADR 0047](0047-artefakte-des-projekts.md) fest; dieser
+Nachtrag sagt, was daraus für das Buch folgt.
 
-N1, N2, der Kern von N3 (überschreiben statt Auflagen), N4 und N6 geben Angelos Vorgabe wieder. Die Einzelheiten in
-N3, N5 und N7 sind Entscheidungen des Architekten, die daraus folgen.
+N1, N2 und der Kern von N3 (jede Auflage bleibt zu sehen) geben Angelos Vorgabe wieder. N4 folgt aus ADR 0047. Die
+Einzelheiten in N3, N5 bis N7 sind Entscheidungen des Architekten, die daraus folgen.
 
 ### N1. Das Buch ist ein Dokument der Schreibumgebung
 - Ein geschriebenes Buch ist ein Dokument-Artefakt nach ADR 0045: Abschnitte mit festen Kennungen und „Rückgängig“.
@@ -137,24 +138,26 @@ N3, N5 und N7 sind Entscheidungen des Architekten, die daraus folgen.
   Abschnitt 7, auch wenn es ein Buch gibt, und der Überblick startet wie dort beschrieben.
 - Die Hälfte „Buch“ des Umschalters entfällt in der Leseansicht.
 
-### N3. Ein Buch je Ordner, keine Reihe von Auflagen
-- Ein Ordner hat in einem Projekt genau ein Buch, und das ist ein Artefakt. „Neue Auflage erzeugen“ überschreibt
-  dieses Artefakt. Frühere Fassungen werden nicht aufbewahrt und nicht zur Wahl gestellt. Das ersetzt aus
-  Abschnitt 1 „Auflagen werden nie überschrieben“ und „frühere bleiben wählbar“.
-- Das Überschreiben ist eine Änderung desselben Artefakts. „Rückgängig“ am Reiter wirkt darauf wie auf jede andere
-  Änderung (ADR 0047, Abschnitt 6, Lesart 1).
-- Der Buchtext liegt nur noch im Artefakt. Die Buchverwaltung am Ordner (`BookEditions`) behält je Projekt, was kein
-  Text ist: Zeitpunkt, Missionsbericht, Stand der Quellen je Seite, die Seiten mit KI-Freigabe und neu die Kennung
-  des Artefakts.
+### N3. Ein Buch je Ordner, jede Auflage bleibt
+- Ein Ordner hat in einem Projekt genau ein Buch, und das ist ein globales Artefakt (ADR 0047, Abschnitt 4). Jede
+  Auflage ist eine benannte Version dieses Artefakts. Es gilt weiter Abschnitt 1: Auflagen werden nie überschrieben,
+  gezeigt wird die neueste, frühere bleiben wählbar.
+- Am Reiter des Buchs steht die Auswahl der Auflage. Ältere Auflagen sind lesbar und ausgebbar; bearbeitet wird die
+  neueste. Der Stand einer älteren Auflage ist ihr letzter Stand samt Nachbearbeitungen.
+- Nachbearbeitungen sind Revisionen innerhalb ihrer Auflage. Eine neue Auflage wird neu geschrieben;
+  Nachbearbeitungen der früheren gehen nicht in sie über und bleiben in der früheren erhalten.
+- Der Buchtext liegt nur noch im Artefakt. Die Buchverwaltung am Ordner (`BookEditions`) behält je Auflage, was kein
+  Text ist: laufende Nummer, Zeitpunkt, Missionsbericht, Stand der Quellen je Seite, die Seiten mit KI-Freigabe, und
+  je Projekt die Kennung des Artefakts.
 - Die Kapitel des Buchs sind die Abschnitte des Dokuments.
-- Auflagen, die schon mit Text in `BookEditions` liegen: Die neueste wird ohne KI in das Artefakt überführt. Ältere
-  werden nicht mehr angezeigt. Die Umstellung löscht ihre Dateien nicht.
+- Auflagen, die schon mit Text in `BookEditions` liegen, werden ohne KI in Versionen des Artefakts überführt, in
+  ihrer Reihenfolge. Nichts geht verloren.
 - Der Export in den Ausgabeordner beim Schreiben bleibt wie bisher.
 
 ### N4. Besitzer
 - Das Buch gehört immer dem Projekt, das beim Schreiben aktiv war, auch im Standardprojekt „AresStack“ (ADR 0047,
   Abschnitt 2). Alle Chats des Projekts sehen und bearbeiten es. Eine eigene Ablage des Buchs am Ordner gibt es nicht.
-- Das Buch bleibt an seinem Ordner erreichbar (ADR 0047, Abschnitt 3): Die Buchverwaltung am Ordner hält je Projekt
+- Das Buch bleibt an seinem Ordner erreichbar: Die Buchverwaltung am Ordner hält je Projekt
   die Kennung des Artefakts. Darüber findet „Buch öffnen“ am Ordner das Buch des aktiven Projekts.
 
 ### N5. Öffnen, „veraltet“ und neue Auflage
@@ -163,24 +166,23 @@ N3, N5 und N7 sind Entscheidungen des Architekten, die daraus folgen.
   im Menü „Weitere Aktionen zur Seite“ an erster Stelle.
 - „veraltet“ und der Knopf „Neue Auflage erzeugen“ (Abschnitt 4) stehen am Reiter des Buchs statt in der
   Leseansicht. Der Befehl im Rechtsklick-Menü des Ordners bleibt. Die Abweichung wird weiter über die vorhandenen Beobachter erkannt und startet nie von selbst einen KI-Lauf.
-- Das bisherige Buch bleibt lesbar, bis das neue fertig ist. Dann ersetzt das neue den Inhalt.
-- Ist das Buch nachbearbeitet, fragt „Neue Auflage erzeugen“ vorher „wirklich?“ und sagt, dass die Änderungen
-  überschrieben werden.
+- Die bisherige Auflage bleibt lesbar, bis die neue fertig ist, und danach als frühere Auflage (Abschnitt 4).
+  „Neue Auflage erzeugen“ braucht deshalb keine Warnung vor einem Verlust.
 
 ### N6. Podcast
-- Der Podcast ist ein eigenes Artefakt (ADR 0047, Abschnitt 4). Er bleibt in seiner heutigen Ablage und läuft in der
-  Podcast-Ansicht des Ordners.
+- Der Podcast des Ordners ist ein lokales Artefakt (ADR 0047, Abschnitt 3). Er bleibt in seiner heutigen Ablage und
+  läuft in der Podcast-Ansicht des Ordners.
 - Die Vorgabe von 15:41 MEZ gilt weiter: Hat der Ordner ein Buch, ist das Buch die Vorlage des Podcasts, mit der Wahl
   „Buch | Bereich“ nur in der Podcast-Ansicht (Abschnitt 5).
-- Vorlage ist der aktuelle Text des Artefakts. Wird das Buch nachbearbeitet oder neu erzeugt, gilt sein Podcast als
-  veraltet wie jeder andere Podcast nach einer Änderung seiner Vorlage. Auch der Podcast wird überschrieben, nicht in
-  Fassungen aufbewahrt.
+- Vorlage ist der aktuelle Text der neuesten Auflage. Wird sie nachbearbeitet oder entsteht eine neue Auflage, gilt
+  der Podcast als veraltet wie jeder andere Podcast nach einer Änderung seiner Vorlage. Der Podcast wird
+  überschrieben, nicht in Fassungen aufbewahrt.
 
 ### N7. Umsetzung
-1. Speicher der Artefakte: Besitzer ist immer das Projekt (ADR 0047, Schritt 1). Das baut genau
+1. Speicher der Artefakte: Besitzer ist immer das Projekt, Auflagen als Versionen eines Buchs (ADR 0047, Technik). Das baut genau
    ein Strang, der der Schreibumgebung.
-2. Buch als Artefakt des Projekts anlegen, Kennung in der Buchverwaltung, neueste vorhandene Auflage überführen, Buch
-   öffnet sich in „Export“, „Neue Auflage erzeugen“ überschreibt.
+2. Buch als Artefakt des Projekts anlegen, Kennung in der Buchverwaltung, vorhandene Auflagen als Versionen
+   überführen, Buch öffnet sich in „Export“, Auswahl der Auflage am Reiter.
 3. Leseansicht zurück auf den Überblick, Hälfte „Buch“ dort entfernen, Start des Überblicks wieder nach ADR 0034.
 4. „veraltet“ und „Neue Auflage erzeugen“ am Reiter des Buchs, „Buch öffnen“ im Rechtsklick-Menü.
 
