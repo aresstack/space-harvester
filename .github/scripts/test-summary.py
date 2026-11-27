@@ -1,13 +1,34 @@
-"""Fasst JUnit-XML-Ergebnisse als Markdown für die GitHub-Job-Übersicht zusammen (#15)."""
+"""Fasst JUnit-XML-Ergebnisse als Markdown für die GitHub-Job-Übersicht zusammen (#15).
+
+Mit --log als erstem Argument schreibt es stattdessen jeden fehlgeschlagenen Test mit vollem Stacktrace ins
+Job-Log, damit der Fehler ohne Herunterladen des Testberichts lesbar ist.
+"""
 import pathlib
 import sys
 import xml.etree.ElementTree as ET
 
+log_mode = len(sys.argv) > 1 and sys.argv[1] == "--log"
+roots = sys.argv[2:] if log_mode else sys.argv[1:]
+
 suites = []
-for root in sys.argv[1:]:
+for root in roots:
     for path in sorted(pathlib.Path(root).rglob("TEST-*.xml")):
         suite = ET.parse(path).getroot()
         suites.append(suite)
+
+if log_mode:
+    for s in suites:
+        for case in s.iter("testcase"):
+            for problem in list(case.findall("failure")) + list(case.findall("error")):
+                print(f"::error title=Test fehlgeschlagen::{s.get('name')}.{case.get('name')}")
+                print(f"===== FEHLGESCHLAGEN: {s.get('name')} > {case.get('name')}")
+                print(problem.text or problem.get("message", ""))
+                for stream in ("system-out", "system-err"):
+                    out = case.findtext(stream)
+                    if out:
+                        print(f"----- {stream}")
+                        print(out)
+    sys.exit(0)
 
 total = sum(int(s.get("tests", 0)) for s in suites)
 failed = sum(int(s.get("failures", 0)) + int(s.get("errors", 0)) for s in suites)
