@@ -1,7 +1,8 @@
-# ADR 0047: Artefakte gehören dem Projekt und stehen in einer Liste unter „Export“
+# ADR 0047: Artefakte gehören dem Projekt und sind am Knoten im Baum geordnet
 
-- Status: **Angenommen** (27.11.2026) nach Angelos Vorgabe. Was nicht sein Wortlaut ist, steht in Abschnitt 6 als
-  Lesart des Architekten.
+- Status: Abschnitte 1 bis 4 **angenommen** (27.11.2026) nach Angelos Vorgabe. Abschnitt 5 (die Ansicht) ist ein
+  **Vorschlag**, Angelo am 27.11.2026 um 21:22 MEZ vorgelegt, und wird erst gebaut, wenn er zugestimmt hat. Was nicht
+  sein Wortlaut ist, steht in Abschnitt 6 als Lesart des Architekten.
 - Quellen:
   - Angelos Nachricht vom 27.11.2026, 20:55 MEZ: „Ich würde sagen, dass wir Bücher auch als so ein Artefakt behandeln
     sollten und dann unter der Exportansicht anzeigen sollten.“
@@ -18,13 +19,15 @@
     ich einen neuen Chat aufmache, komme ich nicht an die Artefakte dran. Also das über Projekte teilen und am selben
     Artefakt arbeiten, was ich eigentlich geplant hatte, das funktioniert damit nicht. Können wir das irgendwie anders
     machen? Mir fehlt gerade der Plan.“
+  - Angelos Nachricht vom 27.11.2026, 21:19 MEZ, zur ersten Fassung dieses ADR, die eine Liste über das ganze Projekt
+    vorsah: „Das Problem ist, wie wir mit so vielen Artefakten in einem Projekt umgehen. Wenn jede Datei ein neues
+    Artefakt generiert, weißt du, wie übersichtlich das nachher ist“. Abschnitt 5 ist deshalb neu gefasst.
 - Bezüge:
   - [ADR 0027](0027-beobachter-statt-abfragen.md): kein Polling
   - [ADR 0034](0034-favoriten-ordner-als-sammlungen.md), Abschnitt 7: Überblick eines Ordners
   - [ADR 0043](0043-projekte-als-wissensarbeitsbereich.md), Nachtrag F3: wird geändert (Abschnitt 2)
   - [ADR 0044](0044-buch-als-ueberblick-eines-ordners.md), Nachtrag: das Buch als Artefakt
-  - [ADR 0045](0045-schreibumgebung-im-chat.md), Abschnitte 1 und 5: werden geändert (Abschnitte 2 und 5)
-  - [Entwurf der Liste](../artefakt-liste.md) vom UX-Strang
+  - [ADR 0045](0045-schreibumgebung-im-chat.md), Abschnitt 1: wird geändert (Abschnitt 2)
 - Tickets: Zu Artefakten, ihrem Besitzer und ihrer Liste gibt es am 27.11.2026 kein Ticket in space-harvester,
   writing4j oder knowledge4j, das dem widerspricht (geprüft).
 
@@ -55,7 +58,7 @@ Podcast, Zusammenfassung.
   ADR 0043, F3, „im Standardprojekt besitzt der Chat“ und aus ADR 0045, Abschnitt 1, „Artefakte gehören zum Chat“.
 - Jeder Chat des Projekts sieht, öffnet und bearbeitet dieselben Artefakte, auch ein neuer Chat. Die Werkzeuge der KI
   arbeiten auf den Artefakten des Projekts; `dokumente_auflisten` nennt die zur aktuellen Auswahl zuerst.
-- Die Liste der Artefakte kommt aus dem Projekt, ohne dass ein Chat geladen wird.
+- Die Artefakte eines Projekts lassen sich lesen, ohne dass ein Chat geladen wird.
 - Einen Chat zu löschen löscht kein Artefakt. Gelöscht wird am Artefakt, nach „Artefakt wirklich löschen?“ Ja/Nein,
   mit Papierkorb bis zum Neustart wie beim Chat.
 - Die vorhandenen Artefakte der Chats ziehen einmal ins Standardprojekt um: lokal, ohne Netz und ohne KI, mit dem
@@ -69,8 +72,7 @@ Podcast, Zusammenfassung.
 - Ein Artefakt gehört zu einer Seite, einem Ordner, einem Space oder einer Quelle. Bei Dokument und Grafik ist das
   die Auswahl, in der der erzeugende Chat stand; beim Buch der Ordner. Dazu merkt sich das Artefakt den Chat, der es
   erzeugt hat.
-- Die Auswahl im Baum links filtert die Liste, wie bei der Suche. Ohne Auswahl zeigt die Liste das ganze Projekt.
-- Ein Artefakt ohne Herkunft zeigt „Projekt“.
+- Die Herkunft ist die Ordnung der Artefakte (Abschnitt 5). Eine eigene Ordnerstruktur für Artefakte gibt es nicht.
 
 ### 4. Keine Versionen, „veraltet“ und neu erzeugen
 - Je Sache gibt es genau ein Artefakt. Neu erzeugen überschreibt. Ein Ordner hat ein Buch (ADR 0044, Nachtrag N3),
@@ -82,18 +84,53 @@ Podcast, Zusammenfassung.
 - Der Podcast eines Ordners entsteht wie festgelegt aus dem Buch des Ordners, wenn es eines gibt (ADR 0044,
   Abschnitt 5 und Nachtrag N6).
 
-### 5. Ein Ort: die Liste unter „Export“
-- Ist im Reiter „Export“ kein Reiter offen, zeigt die Fläche die Liste der Artefakte zur Auswahl links. Die
-  Ausgabe-Knöpfe bleiben in der unteren Leiste (ADR 0045, Abschnitt 5).
-- Zusammenfassungen sind zunächst ausgeblendet. Ein abgesetzter Zähler „Zusammenfassungen“ rechts in der Kopfzeile
-  zeigt, wie viele es gibt, und holt sie auf Klick hervor. Podcasts stehen sichtbar in der Liste.
-- Ein Klick auf Dokument, Grafik oder Buch öffnet den Reiter in „Export“. Ein Klick auf einen Podcast öffnet die
-  Podcast-Ansicht, in der er heute läuft; es gibt keinen zweiten Player. Ein Klick auf eine Zusammenfassung öffnet
-  die Leseansicht ihrer Seite.
-- Das Menü „Weitere Aktionen zur Seite“ (▾) zeigt dieselbe Liste in Kurzform als schnellen Weg.
-- Die Leseansicht und die Podcast-Ansicht bleiben, wie sie sind.
-- Aufbau der Zeilen, Filter je Art, Rechtsklick-Menü und das Verhalten bei sehr vielen Artefakten stehen im
-  [Entwurf der Liste](../artefakt-liste.md).
+### 5. Ordnung für sehr viele Artefakte: der Knoten im Baum (Vorschlag)
+Es gibt keine Liste aller Artefakte eines Projekts. Der Baum links ist die Ordnung: „Export“ zeigt ohne offenen
+Reiter nur, was zu genau dem Knoten gehört, der links gewählt ist. Die Ausgabe-Knöpfe bleiben in der unteren Leiste
+(ADR 0045, Abschnitt 5).
+
+- **Erzeugtes ist ein fester Platz am Knoten, keine Zeile.** Eine Seite hat einen Platz für ihre Zusammenfassung und
+  einen für ihren Podcast, ein Ordner zusätzlich einen für sein Buch. Der Bereich „Erzeugt“ ist zugeklappt und nennt
+  nur die Zahl und wie viele davon veraltet sind. Das ist Angelos „standardmäßig ausblenden“ und „gesondert sichtbar
+  machen“.
+- **Geschriebenes hängt an dem Knoten, an dem es entstanden ist** (Abschnitt 3). Grafiken, auf die ein Dokument
+  verweist, stehen eingerückt unter diesem Dokument und nicht als eigene Zeilen.
+- **Was tiefer im Baum liegt, erscheint nur als Zahl.** Ein Ordner, ein Space oder eine Quelle zeigt unter „Darunter“
+  je Unterknoten eine Zeile mit Name und Anzahl des Geschriebenen, nur für Unterknoten, die etwas haben. Ein Klick
+  klappt die Zeile auf; die Auswahl im Baum ändert sich dabei nicht. Erzeugtes wird für den Zweig nur gezählt, nie
+  aufgelistet.
+- **Aufräumen am Zweig.** „Veraltetes löschen …“ löscht nach „wirklich?“ alle veralteten Zusammenfassungen und
+  Podcasts unter dem gewählten Knoten und nennt vorher die Zahl. Wird ein Chat gelöscht, fragt die App, ob die von
+  ihm geschriebenen Artefakte mit gelöscht werden.
+- **Finden.** Die Lupe der unteren Leiste sucht nach dem Titel im gewählten Zweig und zeigt die Treffer mit ihrem
+  Pfad. Es gibt keine zweite Suche. Das Menü „Weitere Aktionen zur Seite“ (▾) zeigt nur das Geschriebene des
+  gewählten Knotens.
+- **Öffnen.** Ein Klick auf Dokument, Grafik oder Buch öffnet den Reiter in „Export“. Ein Klick auf den Podcast
+  öffnet die Podcast-Ansicht, in der er heute läuft; es gibt keinen zweiten Player. Ein Klick auf die Zusammenfassung
+  öffnet die Leseansicht der Seite. Die Leseansicht und die Podcast-Ansicht bleiben, wie sie sind.
+
+Skizze, links ist ein Ordner gewählt (Beispiel erfunden):
+
+```
+ Ordner „Lager“
+ ───────────────────────────────────────────────────────────────
+ Geschrieben
+   Buch       Lagerprozesse                          [Veraltet]
+   Dokument   Betriebshandbuch                            23.11.
+                 Grafik   Schaubild Lagerplan
+
+ ▸ Erzeugt (2)
+
+ Darunter
+   ▸ Wareneingang     2 geschrieben
+   ▸ Inventur         1 geschrieben
+
+ In diesem Zweig erzeugt: 14 Zusammenfassungen, 3 Podcasts,
+ davon 5 veraltet                          [Veraltetes löschen …]
+```
+
+Verworfen: die Liste über das ganze Projekt mit Zählern je Art (erste Fassung dieses ADR und der Entwurf
+„Artefakt-Liste“ des UX-Strangs dazu). Sie wird nicht gebaut.
 
 ### 6. Lesarten des Architekten, nicht Angelos Wortlaut
 1. „Keine Versionierung“ heißt: keine sichtbare Reihe von Auflagen oder Fassungen. Die Revisionen eines Dokuments
@@ -105,17 +142,17 @@ Podcast, Zusammenfassung.
    nicht.
 5. Wurde ein Buch nachbearbeitet, fragt „Neue Auflage erzeugen“ vorher „wirklich?“ und sagt, dass die Änderungen
    überschrieben werden.
-6. Zusammenfassungen lassen sich in der Liste einzeln löschen.
+6. Zusammenfassungen und Podcasts lassen sich an ihrem Platz einzeln löschen.
 
-Angelo hat die Lesarten 1 und 2 am 27.11.2026 gegen 21:10 MEZ mit dem Konzept genannt bekommen.
+Angelo hat die Lesarten 1 und 2 am 27.11.2026 gegen 21:10 MEZ genannt bekommen.
 
 ## Technik
 
 - **Gemeinsame Schnittstelle.** Ein Typ „Artefakt“ mit Art, Titel, Herkunft, Zustand (aktuell, veraltet,
   fehlgeschlagen), Zeit und den erlaubten Aktionen (öffnen, ausgeben, neu erzeugen, umbenennen, löschen). Die fünf
-  Arten stehen als Typen dahinter. Die Liste fragt nie nach der Art; welches Menü und welches Klickziel gilt, sagt
+  Arten stehen als Typen dahinter. Die Ansicht fragt nie nach der Art; welches Menü und welches Klickziel gilt, sagt
   das Artefakt.
-- **Die Liste ist eine Sicht** über die vorhandenen Ablagen: den Speicher der Schreibumgebung
+- **Die Ansicht am Knoten ist eine Sicht** über die vorhandenen Ablagen: den Speicher der Schreibumgebung
   (`ChatArtifactStore`), `PodcastStore` und die Ablage der Zusammenfassungen. Nichts wird kopiert. Änderungen kommen
   über Beobachter der Ablagen.
 - **Kennungen.** Alles Geschriebene eines Projekts hat denselben Besitzer. Die Kennungen (D…, G…, B…) sind deshalb
@@ -131,8 +168,9 @@ Jeder Schritt ein kleiner PR auf develop. Den Speicher der Artefakte ändert nur
 
 1. Besitzer ist immer das Projekt, Umzug der vorhandenen Artefakte, Herkunft, Löschen am Artefakt.
 2. Buch als Artefakt des Projekts, überschreiben statt Auflagen (ADR 0044, Nachtrag N7; baut auf Schritt 1).
-3. Gemeinsame Schnittstelle und Liste in „Export“ für Dokument, Grafik und Buch, ▾-Menü auf dieselbe Liste.
-4. Podcast und Zusammenfassung in der Liste, Zähler für die ausgeblendeten Zusammenfassungen.
+3. Erst nach Angelos Zustimmung zu Abschnitt 5: gemeinsame Schnittstelle und die Ansicht am Knoten für Dokument,
+   Grafik und Buch, ▾-Menü.
+4. Erst nach Angelos Zustimmung: die Plätze für Podcast und Zusammenfassung, „Darunter“, „Veraltetes löschen …“.
 
 ## Der einmalige Umzug (Schritt 1, Stand des Baus vom 27.11.2026)
 
