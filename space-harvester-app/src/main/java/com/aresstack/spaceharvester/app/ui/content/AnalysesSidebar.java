@@ -78,6 +78,11 @@ public final class AnalysesSidebar extends JPanel {
         collapse = java.util.Objects.requireNonNull(action, "action");
     }
 
+    /** Was die Mitte wieder zeigt, wenn ein Sprung aus der groß gezeigten Leiste dorthin führt. */
+    public void onRevealMiddle(Runnable action) {
+        detail.onRevealMiddle(action);
+    }
+
     /** Was die Leiste aufklappt, wenn ein Sprung in die Analysen führt; das bestimmt das Hauptfenster. */
     public void onOpen(Runnable action) {
         detail.onOpenAnalyses(action);

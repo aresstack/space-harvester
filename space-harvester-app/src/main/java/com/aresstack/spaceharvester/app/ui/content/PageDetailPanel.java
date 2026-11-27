@@ -446,14 +446,17 @@ public final class PageDetailPanel extends JPanel {
     private boolean analysesOpen;
     /** Klappt die Seitenleiste mit den Analysen auf; ohne Hauptfenster (Tests) gelten sie sofort als gezeigt. */
     private Runnable openAnalyses = () -> analysesShown(true);
+    /** Ein Sprung aus den Analysen in die Mitte (Fundstelle, Seite): die groß gezeigte Leiste gibt die Mitte frei. */
+    private Runnable revealMiddle = () -> { };
     private static final String ANALYSES_PAGE = "page";
     private static final String ANALYSES_NONE = "none";
     static final String NO_ANALYSES = "Wähle links eine Seite oder einen Bereich, um die Analysen dazu zu sehen.";
     /**
-     * Die Reiter der Analysen jeder Ebene in der unteren Leiste der Seitenleiste; rechts „mit Unterseiten“ und die
-     * ?-Hilfe des gewählten Reiters.
+     * Die Reiter der Analysen jeder Ebene in der unteren Leiste der Seitenleiste, rechts die ?-Hilfe des gewählten
+     * Reiters, darunter rechts „mit Unterseiten“. Die Reiter brechen um, wenn die Leiste zu schmal ist (viele Reiter
+     * eines Programms), statt abgeschnitten zu werden.
      */
-    private TabFoot analysisFoot;
+    private JPanel analysisFoot;
     /** Die Unterreiter von „Begriffe“ (Akronyme, Bezeichner, Verben, Beziehungen) neben denen von „Analysen“. */
     /** Die Unterreiter von „Erweitert“ einer Seite bzw. ohne Seite, in der unteren Leiste. */
     private final TabFoot advancedFoot;
@@ -465,8 +468,8 @@ public final class PageDetailPanel extends JPanel {
      */
     private final JCheckBox folderSubfolders = Subpages.checkBox();
     private final TabFoot folderFoot = new TabFoot(javax.swing.Box.createHorizontalBox(), folderSubfolders);
-    /** Rechts in {@link #analysisFoot}: „mit Unterseiten“ der Seite oder des Ordners, daneben die ?-Hilfe. */
-    private final JPanel standingTrailing = new JPanel(new BorderLayout());
+    /** Unten rechts in {@link #analysisFoot}: „mit Unterseiten“ der Seite oder des Ordners. */
+    private final JPanel standingTrailing = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
     /** Der gewählte Ordner, sonst {@code null}; seine Stellung zeigt {@link #folderSubfolders}. */
     private ExportPanel.Selection.Collection folder;
     /** Bekommt die Stellung, die der Benutzer an {@link #folderSubfolders} wählt. */
@@ -1184,8 +1187,7 @@ public final class PageDetailPanel extends JPanel {
         graphHelp.setVisible(false);
         standingTrailing.setOpaque(false);
         // Die ?-Hilfe der Reiter steht unten rechts in der Ecke der Leiste, wie bei den Aufträgen (Angelo 27.11.2026).
-        standingTrailing.add(subpages.box(), BorderLayout.WEST);
-        standingTrailing.add(Comic.row(statementsHelp, standingHelp, glossaryHelp, graphHelp), BorderLayout.EAST);
+        standingTrailing.add(subpages.box());
         // Eine Reiterzeile für jede Ebene (Angelo 27.11.2026): alle Reiter in einer Reihenfolge, je Name ein Symbol,
         // der Name im Tooltip. Gleiche Reiter stehen an derselben Stelle, ob Seite oder oberer Knoten; Reiter eines
         // Programms (Kontrollfluss …) kommen dahinter und behalten ihren Text.
@@ -1205,7 +1207,14 @@ public final class PageDetailPanel extends JPanel {
         analysisRow.follow(standing.tabs());
         standing.onConflicts(found -> analysisRow.mark(StandingTab.CONFLICTS, found == 0 ? null : String.valueOf(found)));
         standing.tabs().detachBar();
-        analysisFoot = new TabFoot(analysisRow.bar(), standingTrailing);
+        JPanel helps = new JPanel(new BorderLayout());
+        helps.setOpaque(false);
+        helps.add(Comic.row(statementsHelp, standingHelp, glossaryHelp, graphHelp), BorderLayout.NORTH);
+        analysisFoot = new JPanel(new BorderLayout(8, 0));
+        analysisFoot.setOpaque(false);
+        analysisFoot.add(analysisRow.bar(), BorderLayout.CENTER);
+        analysisFoot.add(helps, BorderLayout.EAST);
+        analysisFoot.add(standingTrailing, BorderLayout.SOUTH);
         analysesFoot.add(analysisFoot, BorderLayout.CENTER);
         analyses.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
@@ -1618,6 +1627,11 @@ public final class PageDetailPanel extends JPanel {
         return analysisActions;
     }
 
+    /** Was die Mitte wieder zeigt, wenn ein Sprung aus den groß gezeigten Analysen dorthin führt (das Hauptfenster). */
+    void onRevealMiddle(Runnable action) {
+        revealMiddle = java.util.Objects.requireNonNull(action, "action");
+    }
+
     /** Was die Seitenleiste mit den Analysen aufklappt (das Hauptfenster); etwa wenn ein Sprung dorthin führt. */
     void onOpenAnalyses(Runnable action) {
         openAnalyses = java.util.Objects.requireNonNull(action, "action");
@@ -1688,7 +1702,7 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Für Tests: die Unterreiter von „Analysen“ samt „mit Unterseiten“ in der unteren Leiste. */
-    TabFoot analysisFoot() {
+    JPanel analysisFoot() {
         return analysisFoot;
     }
 
@@ -1879,6 +1893,7 @@ public final class PageDetailPanel extends JPanel {
         }
         // Ohne Stelle („Zuerst lesen“ öffnet nur die Seite) wird nach dem Laden nichts markiert.
         pendingJump = somewhere ? target : null;
+        revealMiddle.run();
         if (context.navigator() != null) {
             context.navigator().openPage(target.sourceId(), target.pageId());
         } else {
@@ -1900,6 +1915,7 @@ public final class PageDetailPanel extends JPanel {
         if (source == null || id == null) {
             return;
         }
+        revealMiddle.run();
         if (context != null && context.navigator() != null) {
             context.navigator().openPage(source, id);
         } else {
@@ -3627,7 +3643,8 @@ public final class PageDetailPanel extends JPanel {
         }
         if (standingFootShown && folder != null) {
             if (folderSubfolders.getParent() != standingTrailing) {
-                standingTrailing.add(folderSubfolders, BorderLayout.CENTER);
+                standingTrailing.add(folderSubfolders);
+                standingTrailing.revalidate();
             }
         } else {
             folderFoot.reclaimTrailing();
@@ -3929,6 +3946,7 @@ public final class PageDetailPanel extends JPanel {
         if (target.end() > reader.getDocument().getLength()) {
             return;
         }
+        revealMiddle.run();
         tabs.select(READ);
         reader.requestFocusInWindow();
         mark(target);

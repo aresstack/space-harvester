@@ -30,6 +30,8 @@ final class AnalysisTabRow {
         icons.keySet().forEach(name -> row.tab(name, new JPanel()));
         row.icons(icons);
         bar = row.detachBar();
+        // In der schmalen Leiste brechen die Reiter um, statt abgeschnitten zu werden (viele Reiter eines Programms).
+        bar.setLayout(new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(java.awt.FlowLayout.CENTER, 4, 2));
         row.onSelect(name -> {
             if (!syncing && level != null && level.button(name) != null && !name.equals(level.selected())) {
                 level.select(name);

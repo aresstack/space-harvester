@@ -628,6 +628,12 @@ public final class MainWindow implements AppContext.Navigator {
         analysesSidebar = content.analysesSidebar();
         analysesSidebar.onCollapse(() -> sideOpen(false, sideMode));
         analysesSidebar.onOpen(() -> sideOpen(true, SIDE_ANALYSES));
+        // Ein Sprung zu einer Fundstelle oder Seite soll sie zeigen: die große Ansicht wird wieder zur Leiste.
+        analysesSidebar.onRevealMiddle(() -> {
+            if (chatLarge && analysesOpen()) {
+                chatLarge(false);
+            }
+        });
         analysesSidebar.enlargeButton().addActionListener(e -> chatLarge(!chatLarge));
         sideDeck.setBackground(Comic.SURFACE);
         sideDeck.add(chatSidebar, SIDE_CHAT);

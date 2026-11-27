@@ -423,12 +423,14 @@ public final class ContentView implements View {
         detail.export().selection(selection);
         detail.chat().onResolved(resolved -> detail.graph().within(resolved == null ? null : resolved.pages()));
         detail.chat().selection(selection);
+        // Die Analysen der Auswahl stehen in der Seitenleiste auch neben der Suche: Sie folgen der Auswahl wie Chat
+        // und Export. Welche Ebene sie zeigen (Seite oder Auswahl), bleibt bei der offenen Seite in der Mitte.
+        detail.standing().selection(selection);
+        detail.overviewSelection(selection);
         if (searchFront) {
             return;
         }
         folder = selection instanceof ExportPanel.Selection.Collection collection ? collection : null;
-        detail.standing().selection(selection);
-        detail.overviewSelection(selection);
         // Eine Seite zeigt unter „Analysen“ ihre eigenen Analysen, jede weitere Ebene den Stand der Auswahl.
         detail.wide(selection == null || selection.global() || !selection.page());
         // Die globale Auswahl (alle Wissensquellen) lässt Brotkrumen und Einmalcode-Abfrage, wie sie sind; die Mitte
