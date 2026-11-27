@@ -70,11 +70,14 @@ public final class PageTextIndexing {
             // Gleicher Stand, aber ohne oder mit anderem Medientyp (Einträge vor dem Artenfilter): einmal nachschreiben.
             if (index.inputSha256(snapshot.key()).filter(input::equals).isPresent()
                     && (mediaType == null || mediaType.isEmpty()
-                    || index.mediaType(snapshot.key()).filter(mediaType::equals).isPresent())) {
+                    || index.mediaType(snapshot.key()).filter(mediaType::equals).isPresent())
+                    && index.headingsKnown(snapshot.key())) {
                 return false;
             }
             index.put(new PageTextIndex.Entry(snapshot.key(), current.partitionKey(), current.title(),
-                    text.get().text(), input, mediaType));
+                    text.get().text(), input, mediaType, 0,
+                    text.get().sections().stream()
+                            .map(section -> new PageTextIndex.Heading(section.heading(), section.start())).toList()));
             return true;
         } catch (RuntimeException e) {
             // Ohne Meldung: sie könnte Text der Seite enthalten.
