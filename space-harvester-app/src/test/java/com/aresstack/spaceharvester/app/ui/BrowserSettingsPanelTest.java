@@ -111,6 +111,19 @@ class BrowserSettingsPanelTest {
     }
 
     @Test
+    void anEditedCellIsSavedWhenItsEditorIsStopped() {
+        BrowserSettingsPanel panel = new BrowserSettingsPanel(settings);
+        javax.swing.JTable table = panel.external.engines.table();
+        assertThat(table.editCellAt(0, SearchEngineTable.COL_PAGES)).isTrue();
+        ((javax.swing.JTextField) table.getEditorComponent()).setText("5");
+
+        table.getCellEditor().stopCellEditing();
+
+        String engine = settings.engines(BrowserProfile.EXTERNAL).getEntries().get(0).getEngineId();
+        assertThat(settings.engines(BrowserProfile.EXTERNAL).resultPagesFor(engine)).isEqualTo(5);
+    }
+
+    @Test
     void theSearchWindowSwitchIsSaved() {
         BrowserSettingsPanel panel = new BrowserSettingsPanel(settings);
         assertThat(panel.searchWindow.isSelected()).isTrue();

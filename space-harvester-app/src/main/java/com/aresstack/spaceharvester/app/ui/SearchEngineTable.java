@@ -173,9 +173,17 @@ final class SearchEngineTable extends JPanel {
         changed = listener == null ? selection -> { } : listener;
     }
 
-    /** Die Liste in Tabellenreihenfolge. */
+    /** Die Liste in Tabellenreihenfolge; eine offene Zelle wird vorher übernommen. */
     BrowserSearchEngineSelection get() {
         stopEditing();
+        return snapshot();
+    }
+
+    /**
+     * Die Zeilen, wie sie sind, ohne den Zelleditor anzufassen: Eine Änderung wird gemeldet, während JTable die Zelle
+     * gerade übernimmt; ein weiteres Übernehmen dort liefe endlos.
+     */
+    private BrowserSearchEngineSelection snapshot() {
         List<BrowserSearchEngineSelection.Entry> entries = new ArrayList<>();
         for (Row row : rows) {
             entries.add(row.toEntry());
@@ -279,7 +287,7 @@ final class SearchEngineTable extends JPanel {
     // ------------------------------------------------------------------ intern
 
     private void fireChanged() {
-        changed.accept(get());
+        changed.accept(snapshot());
     }
 
     private void buildAddMenu() {
