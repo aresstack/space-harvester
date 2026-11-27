@@ -618,6 +618,8 @@ public final class ChatPanel extends JPanel {
             showModel();
             bindReadAloud();
             refresh();
+            // Erst nach dem Laden der Einstellungen ist das gewählte Projekt bekannt (ADR 0043, F6).
+            projectsChanged();
         });
         showModel();
         renderKnowledge(null, null, true);
