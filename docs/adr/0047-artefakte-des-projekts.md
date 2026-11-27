@@ -134,7 +134,16 @@ Jeder Schritt ein kleiner PR auf develop. Den Speicher der Artefakte ändert nur
 3. Gemeinsame Schnittstelle und Liste in „Export“ für Dokument, Grafik und Buch, ▾-Menü auf dieselbe Liste.
 4. Podcast und Zusammenfassung in der Liste, Zähler für die ausgeblendeten Zusammenfassungen.
 
-## Offen
+## Der einmalige Umzug (Schritt 1, Stand des Baus vom 27.11.2026)
 
-- Der Umzug in Schritt 1 läuft einmalig. Wann genau, und ob er bei vielen Chats ein sichtbarer Auftrag ist, klärt
-  der bauende Strang und trägt es hier nach.
+- Der Umzug läuft einmal je Programmlauf, sobald der Chat geladen ist, neben der Oberfläche. Er sucht die alten
+  Artefakt-Ordner der Chats, verschiebt ihre Dateien in den Ordner des Projekts und schreibt die Verweise, die
+  gemerkten offenen Reiter und den Verlauf des Chats auf die neuen Kennungen um. Danach findet er nichts mehr.
+- Das sind nur lokale Dateioperationen, ohne Netz und ohne KI, auch bei Hunderten Chats höchstens wenige Sekunden.
+  Ein sichtbarer Auftrag ist dafür nicht nötig.
+- Entscheidung des Architekten: Das ist eine Umstellung der eigenen Ablage und kein Abgleich mit einer Quelle. Die
+  Regel „nichts ohne Klick“ (kein Abgleich und keine KI beim Start) ist davon nicht berührt.
+- Zusätzlich zieht wie bisher jeder Chat beim Öffnen seine Reste um.
+- Die gemerkten offenen Reiter bleiben beim Chat. Die Werkzeuge der KI lesen und schreiben nach dem Wechsel im
+  Ordner des Projekts.
+- Ein Chat, dessen Projekt gelöscht oder unbekannt ist, gehört zum Standardprojekt; seine Artefakte liegen dann dort.
