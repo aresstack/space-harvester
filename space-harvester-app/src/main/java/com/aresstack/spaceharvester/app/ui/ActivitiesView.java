@@ -187,8 +187,28 @@ public final class ActivitiesView implements View {
     final javax.swing.JScrollPane detailScroll;
     /** Liste oben, Details unten; die Details stehen nur, solange ein Auftrag gewählt ist. */
     private final javax.swing.JSplitPane split;
-    /** Wo der Trenner steht, solange die Details offen sind; gilt wieder, wenn sie sich das nächste Mal öffnen. */
-    private int detailDivider = 260;
+    /**
+     * Höhe des Detailbereichs unter dem Trenner (Angelo 27.11.2026: „merkt sich die Position nicht dauerhaft“): gilt
+     * wieder, wenn die Details sich das nächste Mal öffnen, und bleibt im Application State über einen Neustart hinweg
+     * ({@link #DETAIL_HEIGHT_KEY}). Gemerkt wird die Höhe der Details, nicht die Lage des Trenners: So behalten sie ihre
+     * Größe, auch wenn die Seitenleiste höher oder niedriger wird.
+     */
+    private int detailHeight = DEFAULT_DETAIL_HEIGHT;
+    /** Schlüssel der Höhe des Detailbereichs im Application State ({@link WindowSizes}). */
+    static final String DETAIL_HEIGHT_KEY = "activities.details.height";
+    /** Höhe des Detailbereichs, solange keine gemerkt ist. */
+    static final int DEFAULT_DETAIL_HEIGHT = 320;
+    /** Kleinste Höhe des Detailbereichs, die als gezogene Höhe gilt. */
+    static final int MIN_DETAIL_HEIGHT = 80;
+    /** Kleinste Höhe der Liste über den Details, damit ein paar Zeilen sichtbar bleiben. */
+    static final int MIN_LIST_HEIGHT = 90;
+    /** Ob die Höhe des Detailbereichs im Application State bleibt; Tests ohne Ablage merken sich nichts. */
+    private final boolean rememberDetails;
+    /** Während die Ansicht den Trenner selbst setzt, ist das keine Wahl des Benutzers. */
+    private boolean placingDivider;
+    /** Schreibt die gezogene Höhe erst, wenn der Trenner kurz ruht, nicht bei jedem Schritt des Ziehens. */
+    private final Timer storeDetailHeight = new Timer(400, e -> WindowSizes.rememberInt(DETAIL_HEIGHT_KEY,
+            detailHeight));
     /**
      * Reiter über der Liste (Angelo 21.11.2026, Form vom UX-Manager): „Aufträge“ zeigt die Aufträge des Benutzers,
      * „Hintergrund“ die Hintergrundaufträge ({@link JobType#background()}); jeder Auftrag steht in genau einem.
@@ -250,6 +270,11 @@ public final class ActivitiesView implements View {
     ActivitiesView(AppContext context, java.util.prefs.Preferences preferences) {
         this.context = context;
         this.preferences = preferences;
+        this.rememberDetails = preferences != null;
+        if (rememberDetails) {
+            detailHeight = Math.max(MIN_DETAIL_HEIGHT, WindowSizes.recallInt(DETAIL_HEIGHT_KEY, DEFAULT_DETAIL_HEIGHT));
+        }
+        storeDetailHeight.setRepeats(false);
         this.signIn = new SignInSlot(context, requests -> selectedId == null
                 ? requests.pending().stream().findFirst() : requests.waiting(selectedId));
         root.setBackground(Comic.SURFACE);
@@ -287,6 +312,7 @@ public final class ActivitiesView implements View {
                 select(model.rows.get(table.getSelectedRow()).id());
             }
         });
+        RowActions.install(table, JobsModel.CONTROLS, CONTROL_SLOTS, this::controlActions);
         RowActions.install(table, JobsModel.ACTIONS, SLOTS, this::rowActions);
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setBackground(Comic.SURFACE);
@@ -435,8 +461,9 @@ public final class ActivitiesView implements View {
         split.setBackground(Comic.SURFACE);
         // Derselbe Trenner wie neben der Wissensquellen-Liste, nur liegend.
         ComicDivider.install(split, Comic.PALETTE);
-        split.setResizeWeight(0.4);
-        split.setDividerLocation(detailDivider);
+        // Wächst oder schrumpft die Seitenleiste, ändert sich die Liste; die Details behalten ihre Höhe.
+        split.setResizeWeight(1.0);
+        split.addPropertyChangeListener(javax.swing.JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> dividerMoved());
         // Ohne gewählten Auftrag gibt es keinen Detailbereich: Er öffnet sich erst mit einer Auswahl.
         showDetails(false);
         split.setContinuousLayout(true);
@@ -977,16 +1004,10 @@ public final class ActivitiesView implements View {
         if (detailScroll.isVisible() == show) {
             return;
         }
-        if (!show && split.getHeight() > 0) {
-            detailDivider = split.getDividerLocation();
-        }
         detailScroll.setVisible(show);
         split.setDividerSize(show ? ComicDivider.THICKNESS : 0);
         if (show) {
-            int room = split.getHeight() - split.getDividerSize();
-            // Der Liste bleiben mindestens ein paar Zeilen, den Details mindestens ein Drittel.
-            int location = room <= 0 ? detailDivider : Math.max(90, Math.min(detailDivider, room * 2 / 3));
-            split.setDividerLocation(location);
+            placeDivider();
         }
         split.revalidate();
         split.repaint();
@@ -1000,6 +1021,52 @@ public final class ActivitiesView implements View {
                 });
             }
         }
+    }
+
+    /** Setzt den Trenner so, dass die Details ihre gemerkte Höhe haben; der Liste bleiben ein paar Zeilen. */
+    private void placeDivider() {
+        int room = split.getHeight() - split.getDividerSize();
+        if (room <= 0) {
+            // Noch nicht ausgelegt: Sobald die Seitenleiste ihre Höhe hat, kommt der Trenner an seinen Platz.
+            split.addComponentListener(new java.awt.event.ComponentAdapter() {
+                @Override
+                public void componentResized(java.awt.event.ComponentEvent event) {
+                    if (split.getHeight() > 0) {
+                        split.removeComponentListener(this);
+                        if (detailScroll.isVisible()) {
+                            placeDivider();
+                        }
+                    }
+                }
+            });
+            return;
+        }
+        placingDivider = true;
+        try {
+            split.setDividerLocation(Math.max(Math.min(MIN_LIST_HEIGHT, room), room - detailHeight));
+        } finally {
+            placingDivider = false;
+        }
+    }
+
+    /** Hat der Benutzer den Trenner gezogen, gilt die neue Höhe der Details, auch nach einem Neustart. */
+    private void dividerMoved() {
+        if (placingDivider || !detailScroll.isVisible() || split.getHeight() <= 0) {
+            return;
+        }
+        int height = split.getHeight() - split.getDividerSize() - split.getDividerLocation();
+        if (height < MIN_DETAIL_HEIGHT || height == detailHeight) {
+            return;
+        }
+        detailHeight = height;
+        if (rememberDetails) {
+            storeDetailHeight.restart();
+        }
+    }
+
+    /** Die Höhe, die der Detailbereich beim nächsten Öffnen bekommt (für Tests). */
+    int detailHeight() {
+        return detailHeight;
     }
 
     /** Ob der Detailbereich offen ist (für Tests). */
@@ -1042,7 +1109,8 @@ public final class ActivitiesView implements View {
         facts.add("Zustand", waiting ? SIGN_IN : Texts.state(status),
                         waiting ? Comic.ORANGE : Comic.tone(Texts.tone(status)))
                 .add(backgroundGroup(status) ? "Quellen" : "Quelle", status.sourceId())
-                .add("Space", status.partitionKey())
+                .add(com.aresstack.spaceharvester.application.jobs.JobArea.of(status) == null ? "Space" : "Bereich",
+                        area(status).isEmpty() ? null : area(status))
                 .add("Startseite", startPage(status))
                 .add("Angelegt", Texts.time(status.createdAt()))
                 .add("Gestartet", Texts.time(status.startedAt()))
@@ -1082,7 +1150,7 @@ public final class ActivitiesView implements View {
         } else if (!status.state().terminal()) {
             feedback.working(Texts.type(status) + " läuft …");
         } else {
-            renderTerminal(status, true);
+            renderTerminal(status);
         }
         details.revalidate();
         details.repaint();
@@ -1142,7 +1210,7 @@ public final class ActivitiesView implements View {
                     ? "Der Lauf war unvollständig; der Bestand gilt nicht als bestätigt."
                     : "Grund: " + summary.notConfirmed());
         } else {
-            renderTerminal(status, false);
+            renderTerminal(status);
         }
     }
 
@@ -1171,12 +1239,10 @@ public final class ActivitiesView implements View {
         }
     }
 
-    private void renderTerminal(JobStatus status, boolean plain) {
+    private void renderTerminal(JobStatus status) {
         switch (status.state()) {
             case COMPLETED -> {
-                if (plain) {
-                    feedback.success(Texts.type(status) + " fertig");
-                }
+                // Kein Band „… fertig“ (Angelo 27.11.2026): Zustand und Zahlen stehen schon im Balken der Zeile.
             }
             case CANCELLED -> feedback.warning("Abgebrochen", "Teilergebnisse bleiben unbestätigt.");
             case PAUSED -> feedback.info("Angehalten", "Geladenes bleibt; „Fortsetzen“ holt nur, was noch fehlt.");
@@ -1240,8 +1306,8 @@ public final class ActivitiesView implements View {
             String suite = com.aresstack.spaceharvester.application.quality.SearchQualityRuns.suiteName(status);
             return suite.isEmpty() ? "Testbestand" : "Testbestand „" + suite + "“";
         }
-        String where = status.partitionKey() == null || status.partitionKey().isBlank()
-                ? status.sourceId() : status.sourceId() + " / " + status.partitionKey();
+        String area = area(status);
+        String where = area.isEmpty() ? status.sourceId() : status.sourceId() + " / " + area;
         if (status.rootPageId() == null) {
             return where;
         }
@@ -1270,13 +1336,25 @@ public final class ActivitiesView implements View {
         if (status.type() == JobType.SEARCH_QUALITY) {
             return "";
         }
-        String space = status.partitionKey() == null || status.partitionKey().isBlank() ? "" : status.partitionKey();
+        String space = area(status);
         if (status.rootPageId() == null) {
             return space;
         }
         String page = status.type() == JobType.GLOSSARY ? "„" + startPage(status) + "“ samt Unterseiten"
                 : "ab „" + startPage(status) + "“";
         return space.isEmpty() ? page : space + (status.type() == JobType.GLOSSARY ? " · " : " ") + page;
+    }
+
+    /**
+     * Der Space eines Auftrags oder, wenn er keinen als Partition trägt, sein Bereich in Worten ({@link com.aresstack.spaceharvester.application.jobs.JobArea}, Angelo
+     * 27.11.2026: die Spalte „Space“ war bei „Zusammenfassen“ und Podcast immer leer); sonst leer.
+     */
+    static String area(JobStatus status) {
+        String described = com.aresstack.spaceharvester.application.jobs.JobArea.of(status);
+        if (described != null && status.rootPageId() == null) {
+            return described;
+        }
+        return status.partitionKey() == null || status.partitionKey().isBlank() ? "" : status.partitionKey();
     }
 
     /** Titel der Startseite, solange der Auftrag sie noch nicht gelesen hat ihre ID; „–“ für ganze Spaces. */
@@ -1307,10 +1385,15 @@ public final class ActivitiesView implements View {
     private static final javax.swing.Icon FORCE_REFRESH = ComposerIcons.download();
     /**
      * Feste Plätze je Zeile (Angelo 10.11.2026), damit Aktionen in jeder Zeile untereinander stehen: der
-     * Fortschrittsbalken über {@link #PROGRESS_SLOTS} Plätze, ein freier Platz als Abstand, Diagnose, Inhalte, dann die
-     * Zustandsplätze {@link Slot}. Was ein Zustand nicht anbietet, steht blass da; jeder Platz ist immer belegt.
+     * Fortschrittsbalken über {@link #PROGRESS_SLOTS} Plätze, ein freier Platz als Abstand, Diagnose, Inhalte, dann
+     * Stop ⇄ Neu erzwingen. Wiederholen, Anhalten ⇄ Fortsetzen und Löschen stehen in eigener Spalte links vor dem Balken
+     * ({@link #ROW_CONTROLS}). Was ein Zustand nicht anbietet, steht blass da; jeder Platz ist immer belegt.
      */
-    static final int SLOTS = PROGRESS_SLOTS + 1 + 2 + Slot.values().length;
+    static final int SLOTS = PROGRESS_SLOTS + 1 + 2 + 1;
+    /** Die Zustandsknöpfe links neben dem Balken, in jeder Zeile, breit wie schmal. */
+    static final List<Slot> ROW_CONTROLS = List.of(Slot.RETRY, Slot.PLAY_PAUSE, Slot.DELETE);
+    /** Plätze der Spalte {@link JobsModel#CONTROLS}. */
+    static final int CONTROL_SLOTS = 3;
 
     /**
      * Die Zustandsplätze rechts, von links nach rechts, alle immer sichtbar (Angelo 10.11.2026): Ein Platz wechselt
@@ -1371,8 +1454,40 @@ public final class ActivitiesView implements View {
      */
     private List<RowActions.Action> rowActions(int index) {
         List<RowActions.Action> full = fullRowActions(index);
-        // Schmal (Seitenleiste) bleibt je Zeile nur der Balken; die Aktionen stehen in der Fußzeile.
-        return narrow && full.size() > PROGRESS_SLOTS ? full.subList(0, PROGRESS_SLOTS) : full;
+        if (full.size() <= PROGRESS_SLOTS) {
+            return full;
+        }
+        // Schmal (Seitenleiste) bleibt hinter den Knöpfen nur der Balken; Diagnose, Inhalte und Stop stehen in der
+        // Fußzeile.
+        if (narrow) {
+            return full.subList(0, PROGRESS_SLOTS);
+        }
+        // Breit: Balken, Abstand, Diagnose, Inhalte, Stop ⇄ Neu erzwingen; die übrigen Zustandsknöpfe stehen schon
+        // links neben dem Balken ({@link #controlActions}).
+        List<RowActions.Action> wide = new ArrayList<>(full.subList(0, PROGRESS_SLOTS + 3));
+        wide.add(full.get(PROGRESS_SLOTS + 3 + Slot.STOP_FORCE.ordinal()));
+        return wide;
+    }
+
+    /**
+     * Die Knöpfe jeder Zeile links neben dem Balken (Angelo 27.11.2026: „brauche diese 3 Buttons Retry, Play und Auftrag
+     * löschen bereits in der Zeile … links neben dem Fortschrittsbalken als eigene Spalte“): auch in der schmalen
+     * Seitenleiste erreichbar, ohne die Zeile erst zu wählen. Belegt wie die Zustandsplätze ({@link #stateActions}).
+     */
+    private List<RowActions.Action> controlActions(int index) {
+        if (index < 0 || index >= model.rows.size()) {
+            return List.of();
+        }
+        return controls(stateActions(model.rows.get(index)));
+    }
+
+    /** Aus den Zustandsplätzen einer Zeile die {@link #ROW_CONTROLS}, in dieser Reihenfolge. */
+    static List<RowActions.Action> controls(List<RowActions.Action> stateActions) {
+        List<RowActions.Action> controls = new ArrayList<>(ROW_CONTROLS.size());
+        for (Slot slot : ROW_CONTROLS) {
+            controls.add(stateActions.get(slot.ordinal()));
+        }
+        return controls;
     }
 
     private List<RowActions.Action> fullRowActions(int index) {
@@ -2931,8 +3046,10 @@ public final class ActivitiesView implements View {
         static final int TYPE = 0;
         static final int SOURCE = 1;
         static final int SPACE = 2;
-        static final int ACTIONS = 3;
-        private static final String[] COLUMNS = {"Art", "Quelle", "Space", ""};
+        /** Wiederholen, Anhalten ⇄ Fortsetzen und Löschen, links neben dem Balken ({@link #ROW_CONTROLS}). */
+        static final int CONTROLS = 3;
+        static final int ACTIONS = 4;
+        private static final String[] COLUMNS = {"Art", "Quelle", "Space", "", ""};
         private List<JobStatus> rows = new ArrayList<>();
         private List<JobStatus> all = List.of();
         private Map<String, List<JobStatus>> children = Map.of();

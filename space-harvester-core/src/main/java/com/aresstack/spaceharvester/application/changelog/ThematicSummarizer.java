@@ -143,6 +143,16 @@ final class ThematicSummarizer {
          */
         <T, R> List<R> run(List<T> items, IntFunction<String> title, BiFunction<T, JobContext, R> work,
                            JobContext context);
+
+        /**
+         * Wie {@link #run(List, IntFunction, BiFunction, JobContext)}; {@code size} sagt, wie viel ein Eintrag umfasst
+         * (Seiten eines Teils, Teilergebnisse eines Zusammenführens). Ein Unterauftrag zählt damit seinen echten
+         * Fortschritt statt „1/1“ (Angelo 27.11.2026); im Auftrag selbst zählen weiter die Anfragen.
+         */
+        default <T, R> List<R> run(List<T> items, IntFunction<String> title, java.util.function.ToIntFunction<T> size,
+                                   BiFunction<T, JobContext, R> work, JobContext context) {
+            return run(items, title, work, context);
+        }
     }
 
     private final SummaryModel model;
@@ -225,6 +235,7 @@ final class ThematicSummarizer {
         }
         List<Answer> answers = runner().run(indexes, index -> "Teil " + (index + 1) + " von " + count
                                 + (topics.get(index) == null ? "" : ": " + cut(topics.get(index), 60)),
+                        index -> parts.get(index).size(),
                         (index, lane) -> part(parts.get(index), framed(frame, topics.get(index)), lane, lost,
                                 lostPages), context).stream()
                 .flatMap(List::stream)
@@ -273,7 +284,7 @@ final class ThematicSummarizer {
             for (List<Answer> candidate : groups) {
                 titles.add(candidate.size() > 1 ? "Zusammenführen " + (++merge[0]) + " von " + merges : "");
             }
-            level = runner().run(groups, titles::get, (members, lane) -> {
+            level = runner().run(groups, titles::get, List::size, (members, lane) -> {
                 if (members.size() == 1) {
                     return members.getFirst();
                 }
