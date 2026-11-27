@@ -58,6 +58,14 @@ public interface PageTextIndex {
     }
 
     /**
+     * Ob der Eintrag der Seite ihre Überschriften führt ({@link Entry#headings()}); Einträge von vorher schreibt
+     * {@link PageTextIndexing} beim nächsten Indizieren der Seite einmal nach, ohne den Index neu aufzubauen.
+     */
+    default boolean headingsKnown(PageKey key) {
+        return true;
+    }
+
+    /**
      * Der abgelegte Lesetext der Seite (#181, für den Rerank-Dienst), wenn sie im Index liegt. Entscheidet nicht über
      * Rechte; der Aufrufer prüft {@code content} vorher.
      */
@@ -187,12 +195,20 @@ public interface PageTextIndex {
      *
      * @param spaceKey    Space bzw. Partition der Seite; ein anderer als bisher gilt auch für die Anhänge der Seite
      * @param inputSha256 Stand des Eintrags: Eingabe-Hash der Projektion samt Titel und Space
+     * @param headings    Überschriften der Seite in Textreihenfolge ({@code PageText.Section}); sie stehen
+     *                    auch im Text, zählen in der Rangfolge aber wie der Titel, und eine Überschrift, die genau
+     *                    der Anfrage entspricht, stellt die Seite nach oben
      */
     record Entry(PageKey key, String spaceKey, String title, String text, String inputSha256, String mediaType,
-                 int metadataPrefixChars) {
+                 int metadataPrefixChars, List<Heading> headings) {
 
         public Entry(PageKey key, String spaceKey, String title, String text, String inputSha256, String mediaType) {
             this(key, spaceKey, title, text, inputSha256, mediaType, 0);
+        }
+
+        public Entry(PageKey key, String spaceKey, String title, String text, String inputSha256, String mediaType,
+                     int metadataPrefixChars) {
+            this(key, spaceKey, title, text, inputSha256, mediaType, metadataPrefixChars, List.of());
         }
 
         public Entry {
@@ -202,6 +218,7 @@ public interface PageTextIndex {
             Objects.requireNonNull(text, "text");
             Objects.requireNonNull(inputSha256, "inputSha256");
             mediaType = mediaType == null ? "" : mediaType;
+            headings = headings == null ? List.of() : List.copyOf(headings);
             if (metadataPrefixChars < 0 || metadataPrefixChars > text.length()) {
                 throw new IllegalArgumentException("Invalid metadata prefix length");
             }
@@ -215,6 +232,23 @@ public interface PageTextIndex {
         /** Die Art des Dokuments aus Titel und Medientyp. */
         public DocumentKind kind() {
             return DocumentKind.of(title, mediaType);
+        }
+    }
+
+    /**
+     * Eine Überschrift einer Seite.
+     *
+     * @param text  Text der Überschrift
+     * @param start Zeichenposition der Überschrift im Text des Eintrags; dort beginnt der Auszug eines Treffers, dessen
+     *              Überschrift genau der Anfrage entspricht
+     */
+    record Heading(String text, int start) {
+
+        public Heading {
+            Objects.requireNonNull(text, "text");
+            if (start < 0) {
+                throw new IllegalArgumentException("start ab 0");
+            }
         }
     }
 
