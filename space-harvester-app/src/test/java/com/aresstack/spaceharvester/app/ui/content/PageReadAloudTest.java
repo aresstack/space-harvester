@@ -103,6 +103,35 @@ class PageReadAloudTest {
     }
 
     @Test
+    void theLowerHalfOfTheDialJumpsSentenceBySentenceFromTheMarkedOne() throws Exception {
+        FakeReadAloud fake = new FakeReadAloud();
+        ReadAloudBinding binding = new ReadAloudBinding(() -> fake, message -> { });
+        JTextPane pane = new JTextPane();
+        pane.setText(TEXT);
+        pane.setSize(600, 400);
+        PageReadAloud reading = new PageReadAloud(pane);
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                reading.bind(binding);
+                reading.speechText(TEXT);
+                reading.toggle();
+            });
+            assertThat(fake.await(1)).isTrue();
+            int sentence = TEXT.indexOf("Erst prüft");
+            SwingUtilities.invokeAndWait(() -> reading.playing(sentence, sentence + 20, 0));
+            SwingUtilities.invokeAndWait(() -> reading.jump(1));
+            assertThat(fake.await(2)).isTrue();
+            assertThat(fake.spoken.get(1)).isEqualTo("Störungen\nBei Störungen die Bereitschaft anrufen.");
+            // zurück über den Anfang hinaus: ab dem Anfang
+            SwingUtilities.invokeAndWait(() -> reading.jump(-99));
+            assertThat(fake.await(3)).isTrue();
+            assertThat(fake.spoken.get(2)).isEqualTo(TEXT);
+        } finally {
+            binding.close();
+        }
+    }
+
+    @Test
     void aDoubleClickWithoutReadingChangesNothingAndWithoutSpeechTheButtonIsGone() throws Exception {
         JTextPane pane = new JTextPane();
         pane.setText(TEXT);

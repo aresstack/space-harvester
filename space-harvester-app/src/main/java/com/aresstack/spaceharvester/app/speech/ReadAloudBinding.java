@@ -40,6 +40,8 @@ public final class ReadAloudBinding {
     /** Angehalten, bevor der Ablauf des laufenden Vorlesens da war: er beginnt erst beim Fortsetzen. */
     private volatile boolean pausedEarly;
     private final Object pauseLock = new Object();
+    /** Sprechgeschwindigkeit für jedes Vorlesen (Faktor, 1 = normal); gilt auch dem laufenden ab dem nächsten Block. */
+    private volatile double rate = 1.0;
     /** Die laufende oder wartende Ausgabe; {@link #speak}, {@link #stop()} und {@link #close()} brechen sie ab. */
     private Read active;
 
@@ -170,6 +172,7 @@ public final class ReadAloudBinding {
             if (generation.get() != mine) {
                 return;
             }
+            current.setRate(rate);
             service = current;
             current.speak(text, new ReadAloud.Listener() {
                 @Override
@@ -238,6 +241,23 @@ public final class ReadAloudBinding {
         if (current != null) {
             current.resume();
         }
+    }
+
+    /**
+     * Sprechgeschwindigkeit (Faktor, 1 = normal, Tonhöhe bleibt): gilt dem laufenden Vorlesen ab dem nächsten Block und
+     * jedem weiteren. Wie im Enterprise AI Client ({@code ReadAloudBinding.setRate}).
+     */
+    public void setRate(double rate) {
+        this.rate = rate;
+        ReadAloud current = service;
+        if (current != null) {
+            current.setRate(rate);
+        }
+    }
+
+    /** Die eingestellte Sprechgeschwindigkeit. */
+    public double rate() {
+        return rate;
     }
 
     public boolean isPaused() {

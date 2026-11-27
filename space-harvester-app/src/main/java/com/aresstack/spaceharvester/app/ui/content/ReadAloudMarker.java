@@ -42,15 +42,21 @@ final class ReadAloudMarker {
     private List<int[]> pending = List.of();
     private long pendingMillis;
     private int pendingCharacters;
+    /** Wann der laufende Takt begann und wie lang er ist (für eine Tempoänderung mitten im Satz). */
+    private long stepStarted;
+    private int stepDelay;
     /** Der ganze vorlesbare Text, ab wo vorgelesen wird und die Längen vor und nach der Bereinigung. */
     private String spoken = "";
     private int base;
     private int sourceLength;
     private int cleanedLength;
+    /** Anfang des gerade markierten Satzes im vorlesbaren Text (für das Springen). */
+    private int current;
     /** Die Hervorhebung: Textkomponente und Kennung; {@code null} ohne. */
     private JTextComponent marked;
     private Object mark;
     private int markEnd;
+    private int markStart;
 
     /**
      * @param blocks  liefert die angezeigten Textblöcke des Vorgelesenen in Lesereihenfolge
@@ -82,6 +88,55 @@ final class ReadAloudMarker {
         this.base = Math.max(0, Math.min(start, this.spoken.length()));
         this.sourceLength = this.spoken.length() - base;
         this.cleanedLength = Math.max(0, cleanedLength);
+        this.current = base;
+    }
+
+    /** Der Textblock der Marke, {@code null} ohne (Ausgangspunkt der Suche nach einem Sprung). */
+    JTextComponent shownBlock() {
+        return marked;
+    }
+
+    /**
+     * Ab wo in der Anzeige nach einem Sprung zu {@code target} gesucht wird: vorwärts hinter der Marke, rückwärts
+     * ungefähr so weit vor ihr, wie zurückgesprungen wird (mit Spielraum, die Anzeige ist nicht zeichengleich). So
+     * landet die Marke nicht in einem gleichlautenden Inhaltsverzeichnis.
+     */
+    int shownAnchor(int target) {
+        if (marked == null || mark == null) {
+            return 0;
+        }
+        if (target >= current) {
+            return markEnd;
+        }
+        int back = current - target;
+        return Math.max(0, markStart - back - back / 4 - PROBE);
+    }
+
+    /** Der ganze vorlesbare Text des laufenden Vorlesens. */
+    String spoken() {
+        return spoken;
+    }
+
+    /**
+     * Wo das Vorlesen nach einem Sprung um {@code sentences} Sätze (negativ = zurück) beginnt: ab dem Anfang des gerade
+     * markierten Satzes gezählt, begrenzt auf den Text.
+     */
+    int jumpTarget(int sentences) {
+        List<Integer> starts = new ArrayList<>();
+        starts.add(0);
+        Matcher matcher = BOUNDARY.matcher(spoken);
+        while (matcher.find()) {
+            if (matcher.end() < spoken.length()) {
+                starts.add(matcher.end());
+            }
+        }
+        int at = 0;
+        for (int i = 0; i < starts.size(); i++) {
+            if (starts.get(i) <= current) {
+                at = i;
+            }
+        }
+        return starts.get(Math.max(0, Math.min(starts.size() - 1, at + sentences)));
     }
 
     /**
@@ -113,6 +168,29 @@ final class ReadAloudMarker {
         nextStep();
     }
 
+    private void schedule(int delay) {
+        stepStarted = System.nanoTime();
+        stepDelay = delay;
+        steps.setInitialDelay(delay);
+        steps.restart();
+    }
+
+    /**
+     * Die Stimme spricht ab jetzt um {@code factor} länger (2 = halb so schnell): der Rest des Takts und die übrigen
+     * Sätze des Stücks dehnen oder stauchen sich mit.
+     */
+    void rescale(double factor) {
+        if (!(factor > 0) || factor == 1.0) {
+            return;
+        }
+        pendingMillis = Math.round(pendingMillis * factor);
+        if (steps.isRunning()) {
+            long elapsed = (System.nanoTime() - stepStarted) / 1_000_000L;
+            int remaining = (int) Math.max(1, Math.min(Integer.MAX_VALUE, Math.round((stepDelay - elapsed) * factor)));
+            schedule(remaining);
+        }
+    }
+
     /** Angehalten: die Marke wartet mit. */
     void pause() {
         steps.stop();
@@ -121,7 +199,7 @@ final class ReadAloudMarker {
     /** Fortgesetzt: die Marke schaltet weiter. */
     void resume() {
         if (!pending.isEmpty()) {
-            steps.restart();
+            schedule(Math.max(1, stepDelay));
         }
     }
 
@@ -137,12 +215,12 @@ final class ReadAloudMarker {
             return;
         }
         int[] sentence = pending.remove(0);
+        current = sentence[0];
         markSentence(spoken.substring(sentence[0], sentence[1]));
         if (!pending.isEmpty() && pendingCharacters > 0) {
             int delay = (int) Math.min(Integer.MAX_VALUE,
                     pendingMillis * (sentence[1] - sentence[0]) / pendingCharacters);
-            steps.setInitialDelay(Math.max(1, delay));
-            steps.restart();
+            schedule(Math.max(1, delay));
         }
     }
 
@@ -248,6 +326,7 @@ final class ReadAloudMarker {
             return false;
         }
         marked = block;
+        markStart = start;
         markEnd = end;
         follow(block, start, end);
         return true;
@@ -275,6 +354,7 @@ final class ReadAloudMarker {
         marked = null;
         mark = null;
         markEnd = 0;
+        markStart = 0;
     }
 
     /** Der hervorgehobene Text; leer ohne (für Tests). */
