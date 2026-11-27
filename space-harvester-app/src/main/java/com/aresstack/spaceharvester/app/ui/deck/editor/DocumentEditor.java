@@ -1255,6 +1255,10 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
                     "Trotzdem speichern", session::overwrite);
         } else if (state == EditorSession.State.FAILED) {
             plate.show(session.problem().orElse("Laden gescheitert."), null, null);
+        } else if (state == EditorSession.State.READY && session.document()
+                .map(document -> !document.writeRestriction().isEmpty()).orElse(false)) {
+            // Etwa ein Lademodul: Der Text ist Binärsalat; sagen, warum, statt ihn kommentarlos zu zeigen.
+            plate.show(session.document().get().writeRestriction(), null, null);
         } else {
             plate.dismiss();
         }

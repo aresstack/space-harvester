@@ -98,7 +98,8 @@ public final class ScreenText {
             b.append("]\n").append(ChatKnowledge.excerpt(block.text(), perBlock));
         }
         String text = b.toString().strip();
-        return text.length() <= max ? text : text.substring(0, max) + "\n… (Ansicht gekürzt)";
+        int end = com.aresstack.spaceharvester.app.runtime.ModelBudget.fit(text, 0, max);
+        return end >= text.length() ? text : text.substring(0, end) + "\n… (Ansicht gekürzt)";
     }
 
     private void walk(Component component) {
