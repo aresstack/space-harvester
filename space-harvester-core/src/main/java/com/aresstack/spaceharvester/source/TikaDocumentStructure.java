@@ -82,7 +82,7 @@ public final class TikaDocumentStructure implements DocumentStructure {
 
     public static final String ID = "tika";
     /** Tika-Linie und Regeln dieses Adapters; steigt, wenn sich die gelesenen Blöcke ändern können. */
-    public static final String VERSION = "3.3-s14";
+    public static final String VERSION = "3.3-s15"; // s15: PDF-Überschriften nach Schriftgröße (PdfHeadings)
 
     /**
      * Tika-Konfiguration: alle Standard-Parser außer der Texterkennung; HTML liest {@link HtmlStreamParser} als Strom
@@ -1284,6 +1284,8 @@ public final class TikaDocumentStructure implements DocumentStructure {
             private final int depth;
             private final Handler handler = new Handler();
             private volatile TikaInputStream stream;
+            /** Überschriften nach Schriftgröße, wenn das Dokument ein PDF ist; gelesen beim ersten Absatz. */
+            private PdfHeadings pdfHeadings;
             private long blocks;
             private long chars;
             /** Beginn der eigenen Laufzeit; die Zeit in Teilen wird hinzugerechnet (nicht mitgezählt). */
@@ -1817,6 +1819,20 @@ public final class TikaDocumentStructure implements DocumentStructure {
                     return "application/pdf".equals(detectedType());
                 }
 
+                private PdfHeadings pdfHeadings() {
+                    if (pdfHeadings == null) {
+                        TikaInputStream in = stream;
+                        Path file;
+                        try {
+                            file = in != null && in.hasFile() ? in.getPath() : null;
+                        } catch (IOException e) {
+                            file = null;
+                        }
+                        pdfHeadings = PdfHeadings.read(file, () -> lastProgress.set(System.nanoTime()));
+                    }
+                    return pdfHeadings;
+                }
+
                     /**
                  * Noch vor dem Inhalt einer Outlook-Mail: Tika schreibt dort Betreff ({@code h1}) und Von/An
                  * ({@code dl}), die schon in den Kopfdaten stehen.
@@ -2236,6 +2252,14 @@ public final class TikaDocumentStructure implements DocumentStructure {
                         return;
                     }
                     boolean ordered = !lists.isEmpty() && lists.peek();
+                    if (kind == TextKind.PARAGRAPH && lists.isEmpty() && pdf()) {
+                        // Ein PDF kennt keine Überschriften: erkannt an der Schriftgröße (PdfHeadings).
+                        Optional<Integer> heading = pdfHeadings().level(text);
+                        if (heading.isPresent()) {
+                            emitText(TextKind.HEADING, heading.get(), false, text, blockLinks, location());
+                            return;
+                        }
+                    }
                     int level = kind == TextKind.HEADING ? headingLevel : Math.max(1, lists.size());
                     emitText(kind, level, ordered, text, blockLinks, location());
                 }
