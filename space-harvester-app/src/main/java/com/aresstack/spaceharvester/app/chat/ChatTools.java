@@ -150,6 +150,9 @@ public final class ChatTools {
     private final Sources sources;
     private volatile ProgressiveSearch search;
     private volatile boolean cancelled;
+    /** Stopp im Chat für laufende Aufträge der Auswertungsmodelle ({@value #STATEMENTS}). */
+    private final com.aresstack.spaceharvester.app.runtime.Cancellation pageModelStop =
+            new com.aresstack.spaceharvester.app.runtime.Cancellation();
     /** Je Turn einmal geladen: Bestand und Titel je Space (aus den Kopfdaten, ohne Lesetext). */
     private final Map<String, Map<String, PageHolding>> holdings = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<String, Map<String, String>> titles = new java.util.concurrent.ConcurrentHashMap<>();
@@ -405,6 +408,7 @@ public final class ChatTools {
 
     void cancel() {
         cancelled = true;
+        pageModelStop.request();
         ProgressiveSearch running = search;
         if (running != null) {
             running.cancel();
@@ -471,8 +475,12 @@ public final class ChatTools {
 
     /** Ob die Seite im Bereich liegt oder ausdrücklich erlaubt ist. */
     boolean allows(PageKey key) {
-        return key != null && (scope != null && scope.contains(key) || granted.contains(key)
-                || scope != null && live.contains(key));
+        return key != null && (inArea(key) || granted.contains(key));
+    }
+
+    /** Ob die Seite zum gewählten Bereich gehört; Treffer der internen Suche zählen hier nicht. */
+    private boolean inArea(PageKey key) {
+        return key != null && scope != null && (scope.contains(key) || live.contains(key));
     }
 
     /** Trägt die Seite ein, bevor ihr Inhalt an das Modell geht; scheitert es, {@link ReleaseFailed}. */
@@ -552,7 +560,7 @@ public final class ChatTools {
      */
     String statements(String ref, boolean check) {
         PageKey key = parse(ref);
-        if (!allows(key)) {
+        if (!inArea(key)) {
             return UNAVAILABLE;
         }
         if (live.isFolder(key)) {
@@ -570,13 +578,19 @@ public final class ChatTools {
             return NOT_STORED;
         }
         release(key, page);
-        BooleanSupplier stop = () -> cancelled;
+        // Eine Cancellation meldet den Stopp dem wartenden Auftrag selbst (Workspace.awaitPageJob, ohne Abfragen).
+        com.aresstack.spaceharvester.app.runtime.Cancellation stop = pageModelStop;
         com.aresstack.spaceharvester.application.knowledge.PageStatements result;
         try {
             result = workspace.analyzeStatements(delivered.snapshot(), stop, pageModels.simplification().get());
-            if (check) {
+            if (check && !stop.getAsBoolean()) {
                 result = workspace.checkStatements(delivered.snapshot(), stop, pageModels.check().get());
             }
+            if (stop.getAsBoolean()) {
+                return "Abgebrochen.";
+            }
+        } catch (java.util.concurrent.CancellationException e) {
+            return "Abgebrochen.";
         } catch (com.aresstack.spaceharvester.application.knowledge.AnalyzerUnavailableException e) {
             return "Keine Aussagenanalyse möglich (" + e.reason() + "); unter Einstellungen › KI-Dienst › Modelle "
                     + "fehlt das Aussagen-Modell oder die Seite ist nicht für die KI freigegeben.";
@@ -594,13 +608,14 @@ public final class ChatTools {
             return "Keine Aussagen: " + (result == null ? "keine Analyse" : result.reason());
         }
         List<ParsedStatements.Statement> all = result.analysis().result().statements();
+        List<ParsedStatements.Sentence> sentences = result.analysis().result().sentences();
         String text = page.reading() == null ? page.text() : page.reading().text();
         StringBuilder b = new StringBuilder("Aussagen der Seite „").append(oneLine(page.title())).append("“: ")
                 .append(all.size()).append(checked ? ", geprüft" : "").append('\n');
         int room = ChatRoom.chars();
         int shown = 0;
         for (ParsedStatements.Statement statement : all) {
-            String line = "- " + statementLine(text, statement) + '\n';
+            String line = "- " + statementLine(text, sentences, statement) + '\n';
             if (room != ChatRoom.UNLIMITED && b.length() + line.length() > room) {
                 break;
             }
@@ -613,12 +628,27 @@ public final class ChatTools {
         return b.toString().stripTrailing();
     }
 
-    private static String statementLine(String text, ParsedStatements.Statement statement) {
-        int from = Math.max(0, Math.min(statement.start(), text.length()));
-        int to = Math.max(from, Math.min(statement.end(), text.length()));
-        StringBuilder b = new StringBuilder(oneLine(text.substring(from, to)));
-        if (b.isEmpty()) {
-            b.append(oneLine(statement.predicateText()));
+    /**
+     * Eine Aussage als Zeile: der ganze Satz (Wer, Was, Wen), dann das Prädikat der Aussage, denn ein Satz kann mehrere
+     * Aussagen tragen; {@code start}/{@code end} der Aussage umfassen nur das Prädikat.
+     */
+    private static String statementLine(String text, List<ParsedStatements.Sentence> sentences,
+                                        ParsedStatements.Statement statement) {
+        String sentence = "";
+        for (ParsedStatements.Sentence each : sentences) {
+            if (each.index() == statement.sentence()) {
+                int from = Math.max(0, Math.min(each.start(), text.length()));
+                sentence = oneLine(text.substring(from, Math.max(from, Math.min(each.end(), text.length()))));
+                break;
+            }
+        }
+        String predicate = oneLine(statement.predicateText());
+        StringBuilder b = new StringBuilder();
+        if (!sentence.isEmpty()) {
+            b.append('„').append(sentence).append('“');
+        }
+        if (!predicate.isEmpty()) {
+            b.append(b.isEmpty() ? "" : " – ").append("Aussage: ").append(predicate);
         }
         if (statement.features() != null && statement.features().modality() != null) {
             b.append(" [").append(statement.features().modality().name().toLowerCase(java.util.Locale.ROOT))
@@ -634,7 +664,7 @@ public final class ChatTools {
     /** {@value #PODCAST}: startet den Erklär-Podcast wie der Kopfhörer-Knopf der Seite. */
     String podcast(String ref) {
         PageKey key = parse(ref);
-        if (!allows(key)) {
+        if (!inArea(key)) {
             return UNAVAILABLE;
         }
         if (live.isFolder(key)) {
