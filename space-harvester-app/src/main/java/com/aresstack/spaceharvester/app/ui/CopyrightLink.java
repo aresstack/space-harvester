@@ -32,7 +32,7 @@ final class CopyrightLink extends JPanel {
 
     private final JLabel copyright = new JLabel();
     private final JLabel link = new JLabel(Project.DEFAULT_NAME);
-    private final IconButton choose = new IconButton(ComposerIcons.chevronUp(), CHOOSE_TIP);
+    private final IconButton choose = new IconButton(ComposerIcons.chevronUp(), CHOOSE_TIP).compact();
     private final Consumer<URI> opener;
     private Project project = Project.standard();
     private Consumer<Project> openProject = project -> { };
