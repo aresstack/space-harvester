@@ -92,11 +92,39 @@ Ein dritter Schalter „Schreiben“ neben „Websuche“ und „Interne Suche�
 mitten im Chat umschaltbar. Nur bei eingeschaltetem Schalter bekommt das Modell die Werkzeuge aus Abschnitt 3 und 6.
 Ist er aus, bleiben die Artefakte sichtbar, bearbeitbar und exportierbar; die KI ändert dann nichts daran.
 
-### 5. Ort: Artefakt in der Mitte, Chat rechts
+### 5. Ort: Schreibansicht im Reiter „Export“, Chat rechts
 
-Ein Artefakt öffnet sich in der Mitte als schließbarer Reiter (`ClosableTab`); der Chat bleibt in der rechten
-Seitenleiste. Mehrere Artefakte sind mehrere Reiter. Im Chat steht unter der Antwort, die ein Artefakt angelegt oder
-geändert hat, eine Zeile mit dessen Titel; ein Klick öffnet den Reiter. Welche Reiter offen waren, merkt sich der Chat.
+> Geändert am 27.11.2026 nach Angelos Nachricht von 17:27 MEZ: „Du hast für das Schreibtool jetzt überall einen neuen
+> Tab eingebaut, beziehungsweise alles hat jetzt irgendwie eine zusätzliche Tab-Leiste bekommen. Das war eigentlich
+> nicht so vorgesehen. […] Im Grunde ist das Schreiben eine Art Export. Deswegen würde ich die Schreibansicht
+> eigentlich nur im Export darstellen. Und da können wir meinetwegen auch mehrere Tabs machen. […] Wir können quasi
+> einen Vorschau-Tab machen und der Export, der immer mitwandert. Und wenn man […] tatsächlich Export anstößt, dann
+> bleibt er quasi als Tab stehen. […] Den kann der User natürlich auch wieder schließen. Und ich würde oben unter
+> weitere Aktionen, also mit dem Pfeil nach unten, […] die ganzen Artefakte auflisten.“ Vorher öffnete sich ein
+> Artefakt als Reiter über der ganzen Mitte, in jeder Ansicht.
+
+- **Nur im Reiter „Export“:** Die Schreibansicht gibt es nur im Reiter „Export“ der Seitenmitte. Nur dort steht eine
+  Reiterzeile. In allen anderen Ansichten der Mitte kommt keine Reiterzeile hinzu. Der Chat bleibt in der rechten
+  Seitenleiste.
+- **Reiter „Vorschau“:** Der erste Reiter heißt „Vorschau“, ist nicht schließbar und zeigt den heutigen Inhalt von
+  „Export“. Er wandert wie heute mit der Auswahl links mit.
+- **Artefakte:** Jedes geöffnete Artefakt ist daneben ein schließbarer Reiter (`ClosableTab`), mehrere Artefakte sind
+  mehrere Reiter. Welche Artefakt-Reiter offen waren, merkt sich der Chat.
+- **Angestoßener Export:** Stößt der Benutzer in „Vorschau“ einen Export an, öffnet sich dafür ein eigener
+  schließbarer Reiter. Er bleibt bei der Auswahl und dem Format stehen, für die er gestartet wurde, und zeigt deren
+  Stand und die erzeugten Dateien. „Vorschau“ wandert weiter. Mehrere Exporte sind mehrere Reiter.
+- **Wieder öffnen:** Das Menü „Weitere Aktionen zur Seite“ (Dreieck oben) listet alle Artefakte des Besitzers nach
+  Abschnitt 1; ein Klick wechselt zu „Export“ und öffnet den Reiter. So ist ein geschlossenes Artefakt nie verloren.
+- **Aus dem Chat:** Unter der Antwort, die ein Artefakt angelegt oder geändert hat, steht eine Zeile mit dessen Titel;
+  ein Klick wechselt zu „Export“ und öffnet den Reiter. Legt die KI ein Artefakt an oder ändert sie eines, zeigt die
+  Mitte es wie bisher von selbst, jetzt im Reiter „Export“.
+
+Entscheidungen des Architekten dazu, nicht Angelos Wortlaut:
+
+- Die Liste der Artefakte im Menü ist erreichbar, sobald es Artefakte gibt, auch wenn links keine Seite gewählt ist.
+- Das Schließen eines Export-Reiters bricht keinen Auftrag ab und löscht keine Datei; Aufträge bleiben in der rechten
+  Seitenleiste. Export-Reiter gelten für die laufende Sitzung der App, die Dateien bleiben im Ausgabeordner.
+- Das Schließen eines Artefakt-Reiters löscht das Artefakt nicht.
 
 Die Ansicht zeigt das Dokument gerendert mit der vorhandenen Markdown-Anzeige. Ändert die KI einen Abschnitt, rollt die
 Ansicht dorthin und hebt ihn hervor, bis die nächste Änderung kommt. Der Benutzer bearbeitet selbst je Abschnitt
@@ -132,7 +160,7 @@ Element. Die KI bekommt diesen Bezug mit und ändert gezielt dort.
 
 ### 8. Export, Import und Formatvorlagen
 
-- **Export:** Knopf am Reiter, Formate Markdown, Word und PDF über die vorhandenen Schreiber, Ablage im
+- **Export:** Knopf am Reiter des Artefakts, Formate Markdown, Word und PDF über die vorhandenen Schreiber, Ablage im
   Ausgabeordner, benannt nach dem Titel. Grafiken zusätzlich als SVG.
 - **PowerPoint und Excel** gehören nicht zum ersten Ausbau. Der vorhandene PowerPoint-Schreiber setzt Folien aus
   Bildern zusammen (Podcast), ein Excel-Schreiber fehlt. Beides sind eigene spätere Schritte.
@@ -179,7 +207,7 @@ des Repositorys.
 ## Umsetzung in kleinen Schritten
 
 1. Ablage der Artefakte am Chat und Abschnittsmodell mit allen Operationen und Revisionen, ohne Oberfläche.
-2. Werkzeuggruppe, Schalter „Schreiben“, Anzeige in der Mitte, Zeile im Chat. Echter Test mit einem lokalen Modell.
+2. Werkzeuggruppe, Schalter „Schreiben“, Anzeige im Reiter „Export“ (Abschnitt 5), Zeile im Chat. Echter Test mit einem lokalen Modell.
 3. Export-Knopf, Rückgängig, Hervorhebung der letzten Änderung.
 4. Bearbeiten durch den Benutzer je Abschnitt; Zitat mit Bezug auf Abschnitt.
 5. Grafik-Artefakte, Zeichnen über die Bildgenerierung, Einbinden per Verweis.
