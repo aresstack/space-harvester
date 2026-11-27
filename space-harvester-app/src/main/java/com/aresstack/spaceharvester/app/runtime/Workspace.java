@@ -2406,6 +2406,11 @@ public final class Workspace {
         return harvester.aiChat();
     }
 
+    /** Der Chat mit Modell, Tokenlänge und Nachdenken der Zeile {@code use} ({@code Harvester#aiChat(ModelUse)}). */
+    public AiChat aiChat(com.aresstack.spaceharvester.ai.AiServiceSettings.ModelUse use) {
+        return harvester.aiChat(use);
+    }
+
     // ------------------------------------------------------------------ Abgleich
 
     /** Vollständiger Abgleich eines Space mit dem Cache ({@link SyncMode#SYNC_CACHE}). */
