@@ -241,6 +241,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `GraphNeighbourhood.DEFAULT_MAX_NODES` | `50` | Vorgabe | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `GraphNeighbourhood.MAX_LIMIT` | `500` | fest | Stapel-/Seitengröße | einstellbar |
 | `GraphNeighbourhood.MAX_SUBPAGES` | `200` | fest | Speicher-/Ressourcenbudget | einstellbar |
+| `GraphicCanvas.SETTLE_SLICE_MS` | `50` | fest | Timeout | im Code belassen: Wartescheibe beim Warten auf Batik, die Wartezeit selbst gibt der Aufrufer |
 | `Harvester.DEFAULT_MAX_TEXT_FILE_BYTES` | `200L * 1024 * 1024` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
 | `Harvester.DEFAULT_SEARCH_RUN_MAX_AGE` | `Duration.ofDays(30)` | Vorgabe | Cache-Aufbewahrung | einstellbar |
 | `Harvester.SEARCH_FILL_PARALLEL` | `4` | fest | Parallelität | einstellbar |
