@@ -202,8 +202,11 @@ public final class ActivitiesView implements View {
     static final int MIN_DETAIL_HEIGHT = 80;
     /** Kleinste Höhe der Liste über den Details, damit ein paar Zeilen sichtbar bleiben. */
     static final int MIN_LIST_HEIGHT = 90;
-    /** Ob die Höhe des Detailbereichs im Application State bleibt; Tests ohne Ablage merken sich nichts. */
+    /** Ob die Höhe des Detailbereichs im Application State bleibt; Tests merken sich nichts. */
     private final boolean rememberDetails;
+    /** Ob die Liste fehlerfrei fertige Aufträge selbst löscht ({@link #scheduleCleanup}); Tests nie. */
+    private final boolean housekeeping;
+    private static final System.Logger LOG = System.getLogger(ActivitiesView.class.getName());
     /** Während die Ansicht den Trenner selbst setzt, ist das keine Wahl des Benutzers. */
     private boolean placingDivider;
     /** Schreibt die gezogene Höhe erst, wenn der Trenner kurz ruht, nicht bei jedem Schritt des Ziehens. */
@@ -260,7 +263,7 @@ public final class ActivitiesView implements View {
     private boolean toTop;
 
     public ActivitiesView(AppContext context) {
-        this(context, userPreferences());
+        this(context, userPreferences(), true);
     }
 
     /**
@@ -268,9 +271,22 @@ public final class ActivitiesView implements View {
      *                    in die Ablage des Benutzers)
      */
     ActivitiesView(AppContext context, java.util.prefs.Preferences preferences) {
+        this(context, preferences, false);
+    }
+
+    /**
+     * @param live die App selbst: merkt sich die Höhe der Details im Application State und räumt fehlerfrei fertige
+     *             Aufträge auf; Tests nie
+     */
+    private ActivitiesView(AppContext context, java.util.prefs.Preferences preferences, boolean live) {
         this.context = context;
         this.preferences = preferences;
-        this.rememberDetails = preferences != null;
+        this.rememberDetails = live;
+        this.housekeeping = live;
+        if (live) {
+            // Eine neue Frist gilt sofort, auch für schon fertige Aufträge.
+            AppTimeouts.onSave(() -> javax.swing.SwingUtilities.invokeLater(this::cleanupDue));
+        }
         if (rememberDetails) {
             detailHeight = Math.max(MIN_DETAIL_HEIGHT, WindowSizes.recallInt(DETAIL_HEIGHT_KEY, DEFAULT_DETAIL_HEIGHT));
         }
@@ -841,6 +857,7 @@ public final class ActivitiesView implements View {
             overall.observe(jobs, now, averages::get);
             groupEstimates = groupEstimates(jobs, now);
             lastJobs = List.copyOf(jobs);
+            scheduleCleanup(runtime);
             followSelectedTab(id);
             model.set(visible(jobs, backgroundTab()));
             updateBackgroundChip(jobs);
@@ -984,6 +1001,11 @@ public final class ActivitiesView implements View {
         // Die Meldung gehörte zum abgewählten Auftrag; sie hielte den Detailbereich sonst offen.
         feedback.clear();
         render();
+        // Ein fälliger fertiger Auftrag blieb nur, solange er gewählt war.
+        AppRuntime runtime = context.runtime();
+        if (runtime != null) {
+            scheduleCleanup(runtime);
+        }
     }
 
     /** Der Detailbereich ist offen, solange er etwas zeigt: einen Auftrag, das Codefeld oder eine Meldung. */
@@ -1889,6 +1911,141 @@ public final class ActivitiesView implements View {
                 feedback.problem(error);
             }
         });
+    }
+
+    /** Weckt das Aufräumen der Liste, wenn der nächste fehlerfrei fertige Auftrag fällig ist; einmalig, kein Takt. */
+    private final Timer cleanup = new Timer(0, e -> cleanupDue());
+    /** Fällige Aufträge, die das Aufräumen wegen eines Vermerks mit Auslassung behält ({@link #withoutOmissions}). */
+    private final Set<String> withOmissions = new HashSet<>();
+
+    private void cleanupDue() {
+        AppRuntime runtime = context.runtime();
+        if (runtime != null) {
+            scheduleCleanup(runtime);
+        }
+    }
+
+    /**
+     * Räumt die Auftragsliste auf (Angelo 27.11.2026: „jeder Auftrag, der erfolgreich durchgelaufen ist, also ohne
+     * irgendwelche Mängel, entfernt sich automatisch nach 5 Minuten“): Fällige löscht derselbe Weg wie der Besen
+     * ({@code Workspace#deleteJobs}), ohne Rückfrage; für den nächsten fälligen steht ein einmaliger Wecker. Die Frist
+     * steht unter Einstellungen › Allgemein ({@link AppTimeouts.Value#FINISHED_JOBS}), 0 schaltet es ab.
+     */
+    private void scheduleCleanup(AppRuntime runtime) {
+        cleanup.stop();
+        if (!housekeeping) {
+            return;
+        }
+        java.time.Duration keep = AppTimeouts.shared().get(AppTimeouts.Value.FINISHED_JOBS);
+        if (keep.isZero()) {
+            return;
+        }
+        Instant now = Instant.now();
+        List<String> due = new ArrayList<>();
+        Instant next = null;
+        for (JobStatus job : expendable(lastJobs, selectedId)) {
+            if (withOmissions.contains(job.id())) {
+                continue;
+            }
+            Instant at = job.finishedAt().plus(keep);
+            if (!at.isAfter(now)) {
+                due.add(job.id());
+            } else if (next == null || at.isBefore(next)) {
+                next = at;
+            }
+        }
+        if (!due.isEmpty()) {
+            Background.run(() -> {
+                List<String> clean = withoutOmissions(runtime.workspace(), due);
+                runtime.workspace().deleteJobs(clean);
+                return clean;
+            }, clean -> {
+                // Mit Auslassung bleibt ein Auftrag; das Aufräumen fragt ihn nicht wieder.
+                due.stream().filter(id -> !clean.contains(id)).forEach(withOmissions::add);
+                poll();
+            },
+                    error -> LOG.log(System.Logger.Level.WARNING, "Aufräumen der Auftragsliste gescheitert ({0})",
+                            error.getClass().getName()));
+            return;
+        }
+        if (next != null) {
+            long millis = java.time.Duration.between(now, next).toMillis() + 1;
+            cleanup.setInitialDelay((int) Math.min(Integer.MAX_VALUE, Math.max(1, millis)));
+            cleanup.setRepeats(false);
+            cleanup.start();
+        }
+    }
+
+    /**
+     * Die Aufträge, die das Aufräumen löschen darf: fertig ohne Fehlschlag, ohne Unvollständiges und ohne bewusst
+     * Ausgelassenes. Es bleiben Downloads (ihr Datenbestand verschwindet mit dem Auftrag, {@link #KEPT}), der gewählte
+     * Auftrag, solange seine Details offen sind, und Vorgänger, auf die ein offener Auftrag noch wartet.
+     */
+    static List<JobStatus> expendable(List<JobStatus> jobs, String selectedId) {
+        Set<String> awaited = new HashSet<>();
+        for (JobStatus job : jobs) {
+            if (job.state().terminal()) {
+                continue;
+            }
+            // Beide Arten, auf Vorgänger zu warten: Hintergrundteile ({@code Jobs.AFTER}) und Folgeaufträge
+            // ({@code Jobs.AWAITS}); das Löschen eines solchen Vorgängers löschte den wartenden Folgeauftrag mit.
+            String after = job.parameter(com.aresstack.spaceharvester.application.jobs.Jobs.AFTER);
+            if (after != null) {
+                awaited.addAll(java.util.Arrays.asList(after.split(",")));
+            }
+            String awaits = job.parameter(com.aresstack.spaceharvester.application.jobs.Jobs.AWAITS);
+            if (awaits != null) {
+                awaited.add(awaits);
+            }
+        }
+        Set<String> shown = selected(jobs, selectedId);
+        return jobs.stream()
+                .filter(job -> job.id() != null && !synthetic(job.id()) && !shown.contains(job.id()))
+                .filter(job -> job.state() == JobState.COMPLETED && job.finishedAt() != null)
+                .filter(job -> job.progress().failed() == 0 && !job.incomplete() && skipped(job) == 0)
+                .filter(job -> job.type() != JobType.EXPORT && !awaited.contains(job.id()))
+                .toList();
+    }
+
+    /**
+     * Die Aufträge, deren Details gerade offen sind: der gewählte oder, bei einer gewählten Gruppenzeile, alle Teile
+     * dieser Gruppe; sie bleiben, bis die Auswahl wechselt.
+     */
+    static Set<String> selected(List<JobStatus> jobs, String selectedId) {
+        if (selectedId == null) {
+            return Set.of();
+        }
+        if (!synthetic(selectedId)) {
+            return Set.of(selectedId);
+        }
+        boolean sync = selectedId.startsWith(SYNC_GROUP_PREFIX);
+        String group = selectedId.substring((sync ? SYNC_GROUP_PREFIX : GROUP_PREFIX).length());
+        String key = sync ? SpaceSyncJobs.GROUP : BackgroundJobs.GROUP;
+        Set<String> members = new HashSet<>();
+        for (JobStatus job : jobs) {
+            if (group.equals(job.parameter(key))) {
+                members.add(job.id());
+            }
+        }
+        return members;
+    }
+
+    /**
+     * Ohne Aufträge, die einen Schritt bewusst ausgelassen haben (Vermerk mit Auslassung, etwa „Fachbegriffe
+     * ermitteln“ ohne Modell): Das ist ein Mangel, ihre Diagnose bleibt. Liest die Ereignisse nur der fälligen.
+     */
+    private static List<String> withoutOmissions(Workspace workspace, List<String> due) {
+        List<String> kept = new ArrayList<>();
+        for (String id : due) {
+            try {
+                if (notes(workspace.events(id)).stream().noneMatch(Note::skipped)) {
+                    kept.add(id);
+                }
+            } catch (RuntimeException gone) {
+                // Inzwischen gelöscht: nichts zu tun.
+            }
+        }
+        return kept;
     }
 
     /** Für Tests und Bilder: zeigt diese Aufträge, als kämen sie vom Core. */
