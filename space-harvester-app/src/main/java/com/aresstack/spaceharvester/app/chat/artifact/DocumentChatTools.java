@@ -39,8 +39,13 @@ public final class DocumentChatTools {
     public static final String GRAPHIC_DRAW = "grafik_zeichnen";
     public static final String GRAPHIC_CREATE = "grafik_anlegen";
     public static final String GRAPHIC_EMBED = "grafik_einbinden";
+    public static final String GRAPHIC_ELEMENTS = "grafik_elemente";
+    public static final String GRAPHIC_READ = "grafik_lesen";
+    public static final String GRAPHIC_ELEMENT_REPLACE = "grafik_element_ersetzen";
+    public static final String GRAPHIC_REPLACE = "grafik_ersetzen";
     private static final Set<String> NAMES = Set.of(LIST, CREATE, OUTLINE, READ, REPLACE, REPLACE_TEXT, INSERT,
-            DELETE, RENAME, MOVE, GRAPHIC_DRAW, GRAPHIC_CREATE, GRAPHIC_EMBED);
+            DELETE, RENAME, MOVE, GRAPHIC_DRAW, GRAPHIC_CREATE, GRAPHIC_EMBED, GRAPHIC_ELEMENTS, GRAPHIC_READ,
+            GRAPHIC_ELEMENT_REPLACE, GRAPHIC_REPLACE);
 
     /** Das Schema eines Links auf ein Artefakt in der Chat-Antwort; ein Klick öffnet den Reiter. */
     public static final String LINK_SCHEME = "artefakt:";
@@ -61,8 +66,11 @@ public final class DocumentChatTools {
             kein Dokument: grafik_zeichnen (Thema und Inhalt, gezeichnet vom Bildmodell) oder grafik_anlegen (du \
             lieferst das SVG selbst). Ein Dokument nur, wenn er auch Text haben möchte; dann die Grafik mit \
             grafik_einbinden in den passenden Abschnitt. Ein SVG nie in den Text eines Abschnitts schreiben.
-            - Beginnt ein Zitat in der Nachricht mit „(Bezug: Dokument D…, Abschnitt a…)“ oder „(Bezug: Grafik G…)“, \
-            meint der Benutzer genau diese Stelle: lies diesen Abschnitt und ändere nur dort.
+            - Vorhandene Grafik ändern: erst grafik_elemente (jedes Element hat eine Kennung e1, e2, …), dann nur das \
+            gemeinte Element mit grafik_element_ersetzen (leeres svg löscht es). Nur für einen Umbau des Ganzen \
+            grafik_lesen und grafik_ersetzen. Eine Grafik nie neu anlegen, wenn der Benutzer eine vorhandene ändern will.
+            - Beginnt ein Zitat in der Nachricht mit „(Bezug: Dokument D…, Abschnitt a…)“, „(Bezug: Grafik G…)“ oder \
+            „(Bezug: Grafik G…, Element e…)“, meint der Benutzer genau diese Stelle: lies sie und ändere nur dort.
             - Antworte am Ende kurz, was du im Dokument getan hast; wiederhole das Dokument nicht in der Antwort.""";
 
     /** Das Wort vor dem Bezug eines Zitats aus einem Artefakt (ADR 0045 §7), wie es {@link #RULES} nennen. */
@@ -123,6 +131,21 @@ public final class DocumentChatTools {
         all.add(tool(GRAPHIC_CREATE, "Legt eine Grafik aus einem SVG an, das du selbst schreibst.",
                 "\"titel\":{\"type\":\"string\"},\"svg\":{\"type\":\"string\",\"description\":"
                         + "\"vollständiges SVG mit <svg …>\"}", List.of("titel", "svg")));
+        String graphic = "\"grafik\":{\"type\":\"string\",\"description\":\"Kennung der Grafik, etwa G1; leer "
+                + "lassen, wenn der Benutzer gerade eine geöffnet hat\"}";
+        all.add(tool(GRAPHIC_ELEMENTS, "Listet die Elemente einer Grafik mit Kennung (e1, e2, …), Art, Text und "
+                + "Lage; Gruppen mit eingerückten Teilen.", graphic, List.of()));
+        all.add(tool(GRAPHIC_READ, "Liest das SVG einer Grafik, so viel wie in die Anfrage passt; mit element nur "
+                + "dieses Element.", graphic + ",\"element\":{\"type\":\"string\"},\"versatz\":{\"type\":"
+                + "\"integer\",\"minimum\":0}", List.of()));
+        all.add(tool(GRAPHIC_ELEMENT_REPLACE, "Ersetzt ein Element einer Grafik durch neues SVG (ein oder mehrere "
+                + "Elemente); leeres svg löscht es. Das übrige SVG bleibt unverändert.", graphic
+                + ",\"element\":{\"type\":\"string\",\"description\":\"Kennung aus grafik_elemente, etwa e3\"},"
+                + "\"svg\":{\"type\":\"string\",\"description\":\"etwa <rect …/> oder <g>…</g>\"}",
+                List.of("element", "svg")));
+        all.add(tool(GRAPHIC_REPLACE, "Ersetzt das ganze SVG einer Grafik (für einen Umbau des Ganzen).", graphic
+                + ",\"svg\":{\"type\":\"string\",\"description\":\"vollständiges SVG mit <svg …>\"}",
+                List.of("svg")));
         all.add(tool(GRAPHIC_EMBED, "Bindet eine Grafik am Ende eines Abschnitts ein, als Verweis (keine Kopie): "
                 + "wird die Grafik später geändert, stimmt das Dokument von selbst.", DOC + "," + SECTION
                 + ",\"grafik\":{\"type\":\"string\",\"description\":\"Kennung der Grafik, etwa G1\"}",
@@ -186,6 +209,8 @@ public final class DocumentChatTools {
             case GRAPHIC_DRAW -> "Grafik wird gezeichnet …";
             case GRAPHIC_CREATE -> "Grafik wird angelegt";
             case GRAPHIC_EMBED -> "Grafik wird eingebunden";
+            case GRAPHIC_ELEMENTS, GRAPHIC_READ -> "Grafik wird gelesen";
+            case GRAPHIC_ELEMENT_REPLACE, GRAPHIC_REPLACE -> "Grafik wird geändert";
             default -> "Werkzeug";
         };
     }
@@ -240,9 +265,19 @@ public final class DocumentChatTools {
                 case GRAPHIC_DRAW -> draw(arguments);
                 case GRAPHIC_CREATE -> createGraphic(text(arguments, "titel"), raw(arguments, "svg"));
                 case GRAPHIC_EMBED -> embed(arguments);
+                case GRAPHIC_ELEMENTS -> withGraphic(arguments, graphic -> graphic.id() + " „" + graphic.title()
+                        + "“, Stand " + graphic.revision() + ":\n" + SvgElements.listing(graphic.current().svg()));
+                case GRAPHIC_READ -> withGraphic(arguments, graphic -> readSvg(graphic, text(arguments, "element"),
+                        arguments.path("versatz").asInt(0)));
+                case GRAPHIC_ELEMENT_REPLACE -> changeGraphic(arguments, "Element " + text(arguments, "element")
+                        + " ersetzt", svg -> SvgElements.replace(svg, text(arguments, "element"),
+                        raw(arguments, "svg")));
+                case GRAPHIC_REPLACE -> changeGraphic(arguments, "SVG ersetzt", svg -> wholeSvg(raw(arguments, "svg")));
                 default -> "Unbekanntes Werkzeug.";
             };
         } catch (SectionDocument.SectionException invalid) {
+            return "Fehler: " + invalid.getMessage();
+        } catch (SvgElements.SvgException invalid) {
             return "Fehler: " + invalid.getMessage();
         } catch (RuntimeException failed) {
             return "Fehler: Das Werkzeug ist gescheitert (" + failed.getClass().getSimpleName() + ").";
@@ -385,6 +420,80 @@ public final class DocumentChatTools {
         report(created);
         return "Grafik " + created.id() + " „" + created.title() + "“ angelegt. Mit grafik_einbinden in einen "
                 + "Abschnitt setzen.";
+    }
+
+    /** Das vollständige SVG aus {@code text}, oder ein Fehler für das Modell. */
+    private static String wholeSvg(String text) {
+        String content = text == null ? "" : text.strip();
+        int start = content.indexOf("<svg");
+        int end = content.lastIndexOf("</svg>");
+        if (start < 0 || end < start) {
+            throw new SvgElements.SvgException("'svg' enthält kein vollständiges SVG (<svg …>…</svg>).");
+        }
+        return content.substring(start, end + 6);
+    }
+
+    /** Die gemeinte Grafik: die genannte, sonst die geöffnete, sonst die einzige des Chats. */
+    private ChatArtifact graphic(JsonNode arguments) {
+        String id = text(arguments, "grafik");
+        if (id.isEmpty()) {
+            ChatArtifact open = focused();
+            if (open != null && open.kind() == ChatArtifact.Kind.GRAPHIC) {
+                return open;
+            }
+            List<ChatArtifact> graphics = store.list(folder, chatId).stream()
+                    .filter(artifact -> artifact.kind() == ChatArtifact.Kind.GRAPHIC).toList();
+            if (graphics.size() == 1) {
+                return graphics.get(0);
+            }
+            throw new SvgElements.SvgException(graphics.isEmpty() ? "Dieser Chat hat noch keine Grafik."
+                    : "'grafik' fehlt. Vorhandene Grafiken:\n" + listing(graphics));
+        }
+        ChatArtifact graphic = store.read(folder, chatId, id);
+        if (graphic == null || graphic.kind() != ChatArtifact.Kind.GRAPHIC) {
+            throw new SvgElements.SvgException("Grafik '" + id + "' gibt es in diesem Chat nicht. Mit "
+                    + LIST + " nachsehen.");
+        }
+        return graphic;
+    }
+
+    private String withGraphic(JsonNode arguments, Function<ChatArtifact, String> reading) {
+        return reading.apply(graphic(arguments));
+    }
+
+    /** Ändert das SVG einer Grafik auf den neuesten Stand; die Ansicht zeigt die Grafik danach. */
+    private String changeGraphic(JsonNode arguments, String note, java.util.function.UnaryOperator<String> change) {
+        ChatArtifact graphic = graphic(arguments);
+        String next = change.apply(graphic.current().svg());
+        ChatArtifactStore.WriteResult result = store.replaceSvg(folder, chatId, graphic.id(), ChatArtifactStore.ANY,
+                ChatArtifact.Origin.AI, note, next);
+        if (!result.success()) {
+            return "Fehler: " + result.reason();
+        }
+        report(result.artifact());
+        return graphic.id() + " „" + graphic.title() + "“: " + note + ", jetzt Stand " + result.revision() + ".";
+    }
+
+    /** Das SVG einer Grafik oder eines Elements, so viel wie in die Anfrage passt (wie {@link #read}). */
+    static String readSvg(ChatArtifact graphic, String element, int offset) {
+        String text = element == null || element.isBlank() ? graphic.current().svg().strip()
+                : SvgElements.element(graphic.current().svg(), element);
+        int room = ChatRoom.chars();
+        if (room == 0) {
+            return ChatRoom.FULL;
+        }
+        int from = Math.min(Math.max(0, offset), text.length());
+        int to = ModelBudget.fit(text, from, room);
+        StringBuilder b = new StringBuilder(graphic.id()).append(" „").append(graphic.title()).append('“')
+                .append(element == null || element.isBlank() ? "" : ", Element " + element.strip());
+        if (from > 0 || to < text.length()) {
+            b.append(", Zeichen ").append(from).append(" bis ").append(to).append(" von ").append(text.length());
+        }
+        b.append(":\n").append(text, from, to);
+        if (to < text.length()) {
+            b.append("\n\n(Fortsetzung mit ").append(GRAPHIC_READ).append(", versatz ").append(to).append(')');
+        }
+        return b.toString();
     }
 
     private String embed(JsonNode arguments) {

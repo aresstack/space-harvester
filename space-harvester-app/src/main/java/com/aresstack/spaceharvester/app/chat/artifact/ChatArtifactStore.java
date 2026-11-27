@@ -301,7 +301,9 @@ public final class ChatArtifactStore {
     /** Legt eine Grafik an; {@code null} ohne Datenordner. */
     public ChatArtifact createGraphic(Path folder, String chatId, String title, String svg,
                                       ChatArtifact.Origin origin) {
-        return create(folder, chatId, ChatArtifact.Kind.GRAPHIC, title, origin, List.of(), null, svg);
+        // Jedes sichtbare Element bekommt eine feste Kennung (e1, e2, …), damit Bezüge und Änderungen eines treffen.
+        return create(folder, chatId, ChatArtifact.Kind.GRAPHIC, title, origin, List.of(), null,
+                SvgElements.withIds(svg));
     }
 
     private ChatArtifact create(Path folder, String chatId, ChatArtifact.Kind kind, String title,
@@ -375,7 +377,7 @@ public final class ChatArtifactStore {
                 return WriteResult.failed(current, problem);
             }
             ChatArtifact.Revision revision = new ChatArtifact.Revision(current.revision() + 1, current.revision(),
-                    System.currentTimeMillis(), origin, note, List.of(), null, svg);
+                    System.currentTimeMillis(), origin, note, List.of(), null, SvgElements.withIds(svg));
             result = store(folder, chatId, current, current.with(revision), List.of());
         }
         if (result.success()) {
