@@ -57,79 +57,15 @@ class ModelChatToolsTest {
     }
 
     @Test
-    void severalDiagramsStandInTheOrderOfTheCallsNotOfTheirCompletion() throws Exception {
-        ScriptedChat port = new ScriptedChat(List.of(
-                (request, listener) -> listener.toolCalls("", List.of(
-                        new AiChat.ToolCall("a", ModelChatTools.DIAGRAM, "{\"thema\":\"Erst\",\"inhalt\":\"langsam\"}"),
-                        new AiChat.ToolCall("b", ModelChatTools.DIAGRAM, "{\"thema\":\"Dann\",\"inhalt\":\"schnell\"}"))),
-                (request, listener) -> listener.completed("Zwei Bilder.")));
-        TerminalMaskFixture.Events events = new TerminalMaskFixture.Events();
-        context = TerminalMaskFixture.runtime(home, "");
-        java.util.concurrent.CountDownLatch fastDone = new java.util.concurrent.CountDownLatch(1);
-        ChatTurn turn = new ChatTurn(TerminalMaskFixture.workspace(context), port, "modell", null, List.of(),
-                "Zwei Bilder", null, "Test", events, Runnable::run).withToolset(empty(), "System")
-                .diagrams((topic, material) -> {
-                    if ("Erst".equals(topic)) {
-                        try {
-                            // Das erste wird erst fertig, wenn das zweite schon da ist (falls parallel).
-                            fastDone.await(2, TimeUnit.SECONDS);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                        }
-                        return Optional.of(SVG.replace("10", "11"));
-                    }
-                    fastDone.countDown();
-                    return Optional.of(SVG);
-                });
-
-        turn.start();
-        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
-
-        assertThat(events.completed).isEqualTo("Zwei Bilder." + ModelChatTools.block(SVG.replace("10", "11"))
-                + ModelChatTools.block(SVG));
-    }
-
-    @Test
-    void stopInterruptsARunningDiagram() throws Exception {
-        java.util.concurrent.CountDownLatch started = new java.util.concurrent.CountDownLatch(1);
-        java.util.concurrent.atomic.AtomicBoolean interrupted = new java.util.concurrent.atomic.AtomicBoolean();
-        List<String> below = new CopyOnWriteArrayList<>();
-        ChatToolset tools = ModelChatTools.with(empty(), (topic, material) -> {
-            started.countDown();
-            try {
-                Thread.sleep(30_000);
-            } catch (InterruptedException e) {
-                interrupted.set(true);
-                return Optional.empty();
-            }
-            return Optional.of(SVG);
-        }, (id, text) -> below.add(text));
-        java.util.concurrent.atomic.AtomicReference<String> result = new java.util.concurrent.atomic.AtomicReference<>();
-        Thread worker = new Thread(() -> result.set(tools.run(new AiChat.ToolCall("c1", ModelChatTools.DIAGRAM,
-                "{\"thema\":\"x\",\"inhalt\":\"y\"}"))));
-        worker.start();
-        assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
-
-        tools.cancel();
-        worker.join(10_000);
-
-        assertThat(interrupted).isTrue();
-        assertThat(result.get()).isEqualTo("Abgebrochen.");
-        assertThat(below).isEmpty();
-        assertThat(tools.run(new AiChat.ToolCall("c2", ModelChatTools.DIAGRAM, "{\"thema\":\"x\",\"inhalt\":\"y\"}")))
-                .isEqualTo("Abgebrochen.");
-    }
-
-    @Test
     void withoutDiagramsTheToolIsNotOffered() throws Exception {
-        assertThat(ModelChatTools.with(empty(), null, (id, text) -> { }).definitions()).isEmpty();
+        assertThat(ModelChatTools.with(empty(), null, text -> { }).definitions()).isEmpty();
     }
 
     @Test
     void withoutImageModelTheChatModelIsToldWhy() {
         List<String> below = new CopyOnWriteArrayList<>();
         String result = ModelChatTools.diagram(new AiChat.ToolCall("c1", ModelChatTools.DIAGRAM,
-                "{\"thema\":\"x\",\"inhalt\":\"y\"}"), (topic, material) -> Optional.empty(), (id, text) -> below.add(text));
+                "{\"thema\":\"x\",\"inhalt\":\"y\"}"), (topic, material) -> Optional.empty(), below::add);
 
         assertThat(result).isEqualTo(ModelChatTools.DIAGRAM_NONE);
         assertThat(below).isEmpty();

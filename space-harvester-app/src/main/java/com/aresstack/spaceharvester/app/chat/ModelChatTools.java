@@ -4,7 +4,7 @@ import com.aresstack.spaceharvester.ai.AiChat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -55,16 +55,12 @@ public final class ModelChatTools {
     /**
      * {@code base} samt den Modellwerkzeugen; ohne {@code diagrams} unverändert.
      *
-     * @param appendix nimmt je Aufruf (Kennung) Markdown entgegen, das unter der Antwort stehen soll (das Schaubild
-     *                 als SVG-Block); der Turn ordnet es nach der Reihenfolge der Aufrufe
+     * @param appendix nimmt Markdown entgegen, das unter der Antwort stehen soll (das Schaubild als SVG-Block)
      */
-    public static ChatToolset with(ChatToolset base, Diagrams diagrams, BiConsumer<String, String> appendix) {
+    public static ChatToolset with(ChatToolset base, Diagrams diagrams, Consumer<String> appendix) {
         if (diagrams == null) {
             return base;
         }
-        // Stopp unterbricht laufende Schaubilder; ihre Einzelteile brechen dann ab (DiagramComposer).
-        java.util.Set<Thread> drawing = java.util.concurrent.ConcurrentHashMap.newKeySet();
-        java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
         return new ChatToolset() {
             @Override
             public List<AiChat.Tool> definitions() {
@@ -75,22 +71,7 @@ public final class ModelChatTools {
 
             @Override
             public String run(AiChat.ToolCall call) {
-                if (!DIAGRAM.equals(call.name())) {
-                    return base.run(call);
-                }
-                if (cancelled.get()) {
-                    return "Abgebrochen.";
-                }
-                Thread self = Thread.currentThread();
-                drawing.add(self);
-                try {
-                    String result = diagram(call, diagrams, appendix);
-                    return cancelled.get() ? "Abgebrochen." : result;
-                } finally {
-                    drawing.remove(self);
-                    // Die Unterbrechung galt nur dem Schaubild, nicht dem Werkzeug-Thread danach.
-                    Thread.interrupted();
-                }
+                return DIAGRAM.equals(call.name()) ? diagram(call, diagrams, appendix) : base.run(call);
             }
 
             @Override
@@ -115,14 +96,12 @@ public final class ModelChatTools {
 
             @Override
             public void cancel() {
-                cancelled.set(true);
-                drawing.forEach(Thread::interrupt);
                 base.cancel();
             }
         };
     }
 
-    static String diagram(AiChat.ToolCall call, Diagrams diagrams, BiConsumer<String, String> appendix) {
+    static String diagram(AiChat.ToolCall call, Diagrams diagrams, Consumer<String> appendix) {
         JsonNode arguments;
         try {
             arguments = JSON.readTree(call.argumentsJson());
@@ -144,7 +123,7 @@ public final class ModelChatTools {
         if (svg.isEmpty() || svg.get().isBlank()) {
             return DIAGRAM_NONE;
         }
-        appendix.accept(call.id(), block(svg.get()));
+        appendix.accept(block(svg.get()));
         return DIAGRAM_DRAWN;
     }
 
