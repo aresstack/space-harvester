@@ -195,7 +195,88 @@ public class InputFrame extends JPanel {
     public static InputFrame search(JTextComponent field) {
         InputFrame frame = new InputFrame(field, magnifier());
         frame.addClearButton();
+        frame.gated = true;
+        // Wandert das Feld unter eine Fläche mit Schleuse (oder heraus), gilt sofort deren Stellung.
+        frame.addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.PARENT_CHANGED) != 0) {
+                frame.regate();
+            }
+        });
         return frame;
+    }
+
+    /**
+     * Die Schleuse für Suchfelder ({@link #search}) unter einer Fläche: Wo kein Platz für ein Suchfeld je Ansicht
+     * ist (Analysen in der Seitenleiste, Angelo 27.11.2026), blendet ein Filtersymbol sie alle gemeinsam ein und aus.
+     * Die Ansicht entscheidet weiter mit {@code setVisible}, ob ihr Feld gerade gebraucht wird; zu sehen ist es nur,
+     * wenn auch die Schleuse offen ist. Ohne Schleuse darüber ändert sich nichts. Beim Schließen wird der Text
+     * geleert, damit kein unsichtbarer Filter wirkt.
+     */
+    public static void gate(JComponent root, boolean open) {
+        root.putClientProperty(GATE, open);
+        regate(root, !open);
+    }
+
+    /** Ob unter {@code root} gerade ein Suchfeld zu sehen wäre, wenn die Schleuse offen ist. */
+    public static InputFrame gated(Component root) {
+        if (root instanceof InputFrame frame && frame.gated && frame.wanted && shownUpTo(frame.getParent())) {
+            return frame;
+        }
+        if (root instanceof java.awt.Container container && root.isVisible()) {
+            for (Component child : container.getComponents()) {
+                InputFrame found = gated(child);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean shownUpTo(Component component) {
+        return component == null || component.isVisible();
+    }
+
+    private static void regate(Component component, boolean clear) {
+        if (component instanceof InputFrame frame && frame.gated) {
+            if (clear && frame.field instanceof JTextComponent text && !text.getText().isEmpty()) {
+                text.setText("");
+            }
+            frame.regate();
+        }
+        if (component instanceof java.awt.Container container) {
+            for (Component child : container.getComponents()) {
+                regate(child, clear);
+            }
+        }
+    }
+
+    static final String GATE = "InputFrame.searchGate";
+    /** Ob dieses Feld ein Suchfeld ist und damit einer Schleuse folgt. */
+    private boolean gated;
+    /** Was die Ansicht zuletzt wollte; die Schleuse kann es überstimmen. */
+    private boolean wanted = true;
+
+    @Override
+    public void setVisible(boolean visible) {
+        wanted = visible;
+        super.setVisible(visible && gateOpen());
+    }
+
+    private void regate() {
+        super.setVisible(wanted && gateOpen());
+    }
+
+    private boolean gateOpen() {
+        if (!gated) {
+            return true;
+        }
+        for (java.awt.Container parent = getParent(); parent != null; parent = parent.getParent()) {
+            if (parent instanceof JComponent holder && holder.getClientProperty(GATE) instanceof Boolean open) {
+                return open;
+            }
+        }
+        return true;
     }
 
     public JComponent field() {

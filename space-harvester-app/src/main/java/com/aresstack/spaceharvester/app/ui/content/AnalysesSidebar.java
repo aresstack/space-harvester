@@ -21,10 +21,18 @@ public final class AnalysesSidebar extends JPanel {
 
     public static final String TITLE = PageDetailPanel.ANALYSES;
     public static final String MORE = "Weitere Aktionen zu den Analysen";
+    public static final String FILTER = "Filtern: Suchfeld des gezeigten Reiters ein- oder ausblenden";
 
     private final PageDetailPanel detail;
     private final IconButton more = new IconButton(
             new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(), MORE).compact();
+    /**
+     * Das Filtersymbol links neben dem Dreieck (Angelo 27.11.2026): In der Leiste hat ein Suchfeld je Reiter keinen
+     * Platz; es erscheint erst mit diesem Knopf und verschwindet mit ihm wieder, sein Text wird dabei geleert.
+     */
+    private final com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton filter =
+            new com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton(
+                    com.aresstack.spaceharvester.app.ui.Glyph.FILTER, null, FILTER);
     private final IconButton enlarge = new IconButton(ChatSidebar.enlargeIcon(false), ChatSidebar.ENLARGE);
     private Runnable collapse = () -> { };
 
@@ -37,6 +45,9 @@ public final class AnalysesSidebar extends JPanel {
                     moreMenu(), more);
             menu.show(more, more.getWidth() - menu.getPreferredSize().width, more.getHeight());
         });
+        filter.getAccessibleContext().setAccessibleName(FILTER);
+        com.aresstack.spaceharvester.app.ui.controls.InputFrame.gate(detail.analyses(), false);
+        filter.addActionListener(e -> filter(filter.isSelected()));
         JLabel title = new JLabel(TITLE);
         title.setFont(Comic.semiBold(14f));
         title.setForeground(Comic.TEXT);
@@ -48,7 +59,7 @@ public final class AnalysesSidebar extends JPanel {
         head.add(title, BorderLayout.CENTER);
         JPanel centered = new JPanel(new java.awt.GridBagLayout());
         centered.setOpaque(false);
-        centered.add(Comic.row(detail.analysesActions(), enlarge, more));
+        centered.add(Comic.row(detail.analysesActions(), enlarge, filter, more));
         head.add(centered, BorderLayout.EAST);
         JPanel foot = new JPanel(new BorderLayout());
         foot.setOpaque(false);
@@ -71,6 +82,25 @@ public final class AnalysesSidebar extends JPanel {
             child.setVisible(shown);
         }
         detail.analysesShown(shown);
+    }
+
+    /** Blendet die Suchfelder der Analysen ein oder aus; eingeblendet steht die Schreibmarke im gezeigten Feld. */
+    public void filter(boolean shown) {
+        filter.setSelected(shown);
+        com.aresstack.spaceharvester.app.ui.controls.InputFrame.gate(detail.analyses(), shown);
+        detail.analyses().revalidate();
+        detail.analyses().repaint();
+        if (shown) {
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame field =
+                    com.aresstack.spaceharvester.app.ui.controls.InputFrame.gated(detail.analyses());
+            if (field != null) {
+                field.field().requestFocusInWindow();
+            }
+        }
+    }
+
+    public javax.swing.AbstractButton filterButton() {
+        return filter;
     }
 
     /** Was „Seitenleiste einklappen“ im Menü tut; das bestimmt das Hauptfenster. */
