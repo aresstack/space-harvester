@@ -167,6 +167,7 @@ public final class Texts {
             case DOCUMENT_ANALYSIS -> "Dokument analysieren";
             case RESEARCH -> "Korb füllen";
             case BOOK -> "Buch schreiben";
+            case PODCAST_EXPORT -> "Podcast exportieren";
             case BACKGROUND -> "Hintergrund";
         };
     }
@@ -227,6 +228,10 @@ public final class Texts {
             String title = status.parameters().get(
                     com.aresstack.spaceharvester.application.background.BackgroundJobs.TITLE);
             return title == null || title.isBlank() ? type(status.type()) : backgroundTitle(title);
+        }
+        if (status.type() == JobType.PODCAST_EXPORT) {
+            return com.aresstack.spaceharvester.app.podcast.PodcastExport.Format.parse(status.parameters().get(
+                    com.aresstack.spaceharvester.app.podcast.PodcastExport.FORMAT_PARAMETER)).label() + " exportieren";
         }
         if (status.type() == JobType.PRESENTATION_EXPORT) {
             return com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.parse(

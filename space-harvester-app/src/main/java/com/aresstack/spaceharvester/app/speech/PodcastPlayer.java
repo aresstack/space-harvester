@@ -420,7 +420,7 @@ public final class PodcastPlayer {
     }
 
     /** Länge einer WAV-Datei in Millisekunden; unlesbar = 0. */
-    static long duration(Path file) {
+    public static long duration(Path file) {
         try {
             AudioFileFormat format = AudioSystem.getAudioFileFormat(file.toFile());
             long frames = format.getFrameLength();

@@ -600,6 +600,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ParallelChoice.CUSTOM_MAX` | `9999` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `PassagesTab.PREVIEW_CHARS` | `140` | fest | Invariante/Darstellung | im Code belassen |
 | `PdfPages.MAX_PIXELS` | `40_000_000d` | fest | Speicher-/Ressourcenbudget | einstellbar |
+| `PodcastExport.MAX_WAV_DATA` | `0xFFFFFFFFL - 36` | fest | Externe Protokollgrenze | dokumentieren: WAV (RIFF) zählt Längen in 32 Bit, darüber meldet der Export „bitte als Video exportieren“ |
 | `PresentationPages.MAX_PIXELS` | `40_000_000d` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `ProgressiveText.STEP_CHARS` | `256 * 1024` | fest | Invariante/Darstellung | im Code belassen (begrenzt nur die Arbeit je EDT-Durchlauf, nie den Inhalt) |
 | `ReaderImageStore.MAX_PIXELS` | `40_000_000L` | fest | Speicher-/Ressourcenbudget | einstellbar |
