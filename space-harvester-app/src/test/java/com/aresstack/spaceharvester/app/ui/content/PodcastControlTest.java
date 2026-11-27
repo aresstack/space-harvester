@@ -149,6 +149,24 @@ class PodcastControlTest {
     }
 
     @Test
+    void aDeletedPodcastStopsAndTheButtonStandsAsWithoutPodcast() throws Exception {
+        // ADR 0047 §5a: Löschen unter „Aus dieser Seite erzeugt“ meldet über die Ablage; nichts entsteht neu.
+        onEdt(() -> {
+            control = control();
+            control.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
+            control.orb().doClick();
+            assertTrue(control.timelineShown());
+            source.deleted = true;
+            source.stored.run();
+        });
+        onEdt(() -> {
+            assertFalse(control.timelineShown());
+            assertEquals(PodcastOrb.State.PLAY, control.orb().state());
+            assertEquals(1, source.starts);
+        });
+    }
+
+    @Test
     void anotherSummaryStopsPlaybackAndHidesTheTimeline() throws Exception {
         onEdt(() -> {
             control = control();
@@ -520,6 +538,8 @@ class PodcastControlTest {
         boolean failRenew;
         int starts;
         int renews;
+        boolean deleted;
+        Runnable stored = () -> { };
         List<Podcast.Part> parts = List.of();
         String transcript;
         java.util.Map<Integer, List<Integer>> focus = java.util.Map.of();
@@ -546,7 +566,7 @@ class PodcastControlTest {
 
         @Override
         public Optional<Podcast> podcast(UpdateSummary summary) {
-            return starts == 0 || failStart ? Optional.empty()
+            return starts == 0 || failStart || deleted ? Optional.empty()
                     : Optional.of(new Podcast(UpdatePodcasts.key(summary), null, parts, true));
         }
 
@@ -576,6 +596,7 @@ class PodcastControlTest {
 
         @Override
         public Subscription subscribe(String key, Runnable listener) {
+            stored = listener;
             return Subscription.NONE;
         }
 
