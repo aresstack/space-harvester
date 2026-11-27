@@ -1164,7 +1164,7 @@ final class TermsTab extends JPanel {
     static String stateText(PageAcronyms.State state) {
         return switch (state) {
             case CURRENT -> "Aktuell";
-            case STALE -> "Veraltet";
+            case STALE -> TabHeader.STALE;
             case FAILED -> "Fehlgeschlagen";
             case MISSING -> "Nicht durchgeführt";
         };

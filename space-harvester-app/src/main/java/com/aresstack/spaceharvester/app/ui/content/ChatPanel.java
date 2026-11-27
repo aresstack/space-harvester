@@ -674,7 +674,9 @@ public final class ChatPanel extends JPanel {
         editor.getActionMap().put("send", new javax.swing.AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent e) {
-                send();
+                if (enterSends(turn != null)) {
+                    send();
+                }
             }
         });
         editor.addFocusListener(new FocusAdapter() {
@@ -2573,7 +2575,8 @@ public final class ChatPanel extends JPanel {
     /**
      * Senden (Enter): die Nachricht erscheint als Sprechblase, der Turn holt das Wissen aus dem Bestand und streamt die
      * Antwort in eine zweite Blase; der Knopf heißt solange „Stopp“. Dateien aus den Chips gehen als Text mit, wenn
-     * sie lesbarer Text sind. Läuft schon ein Turn, bricht Senden ihn ab.
+     * sie lesbarer Text sind. Läuft schon ein Turn, bricht der Klick auf den Knopf ihn ab; Enter tut das nicht
+     * ({@link #enterSends}).
      */
     void send() {
         if (turn == null && dictationPhase != DictationPhase.IDLE) {
@@ -2653,6 +2656,14 @@ public final class ChatPanel extends JPanel {
     /** Bildangaben im Bild ohne Vision-Modell: wohin der Benutzer gehen muss. */
     static final String NO_VISION_MODEL = "(Bild: Kein Vision-Modell eingestellt – Einstellungen › KI-Dienst › Modelle "
             + "› „Vision-Modell“, etwa gemma)";
+
+    /**
+     * Enter sendet nur, solange keine Antwort läuft. Senden und Stopp sind derselbe Knopf; Enter während der Antwort
+     * würde sonst die Antwort abbrechen. Stoppen geht nur per Klick auf den Knopf.
+     */
+    static boolean enterSends(boolean answerRunning) {
+        return !answerRunning;
+    }
 
     /** Solange die Anhänge gelesen werden, sendet Enter nichts zweites. */
     private boolean readingAttachments;

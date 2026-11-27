@@ -38,10 +38,10 @@ jobs:
         run: cat parity-tests/build/reports/parity/parity-report.md >> "$GITHUB_STEP_SUMMARY" || true
       - name: Fehlgeschlagene Tests ins Log
         if: failure()
-        run: python3 .github/scripts/test-summary.py --log space-harvester-*/build/test-results browser-runtime/build/test-results parity-tests/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results
+        run: python3 .github/scripts/test-summary.py --log space-harvester-*/build/test-results browser-runtime/build/test-results proving-ground/build/test-results parity-tests/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results
       - name: Testübersicht
         if: always()
-        run: python3 .github/scripts/test-summary.py space-harvester-*/build/test-results browser-runtime/build/test-results parity-tests/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results >> "$GITHUB_STEP_SUMMARY"
+        run: python3 .github/scripts/test-summary.py space-harvester-*/build/test-results browser-runtime/build/test-results proving-ground/build/test-results parity-tests/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results >> "$GITHUB_STEP_SUMMARY"
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -93,4 +93,36 @@ jobs:
           path: |
             browser-runtime/build/test-results/liveTest/
             browser-runtime/build/reports/tests/liveTest/
+          if-no-files-found: ignore
+  # Proving Ground (#1153), vertikaler Prototyp mit dem Standard-Firefox des Runners: originaler Playwright-Recorder über
+  # WebDriver BiDi, Testfall speichern/laden/bearbeiten, Wiedergabe mit Assertions und Trace. Ein fehlender Firefox
+  # schlägt fehl (kein übersprungener Test).
+  proving-ground-firefox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Firefox des Runners
+        run: firefox --version
+      - name: Aufnehmen und Abspielen mit Firefox
+        env:
+          PROVING_GROUND_TEST_CHANNEL: firefox
+        run: ./gradlew :proving-ground:liveTest --console=plain
+      - name: Kein Test übersprungen
+        working-directory: proving-ground/build/test-results/liveTest
+        run: |
+          ls TEST-*.xml
+          ! grep -q "<skipped" TEST-*.xml
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proving-ground-firefox
+          path: |
+            proving-ground/build/test-results/liveTest/
+            proving-ground/build/reports/tests/liveTest/
           if-no-files-found: ignore

@@ -590,6 +590,8 @@ public final class Explorer {
     private final JLabel note = Comic.muted(" ");
     private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alles zuklappen");
     private final IconButton showCurrent = new IconButton(Glyph.CROSSHAIR, "Aktuelles Dokument im Baum zeigen");
+    /** Unten unter „Artefakte“: nach Art gruppieren (Angelo 27.11.2026), global gemerkt. */
+    private final IconButton groupByKind = new IconButton(Glyph.TABLE, ArtifactList.GROUP_BY_KIND);
     /** Ob die Hälfte „Favoriten“ gilt: nur die Favoriten als Liste mit Pfad; bleibt unter „Artefakte“ gemerkt. */
     private boolean onlyFavorites;
     /** Die Favoritenansicht an Stelle des Baums (ADR 0034, 2a); im Konstruktor angelegt, sie fragt den Baum. */
@@ -1062,12 +1064,18 @@ public final class Explorer {
         showCurrent.addActionListener(e -> showCurrent());
         // Hinweise nur beim Titelfilter und bei Fehlern; die Anzahl der Wissensquellen sieht man im Baum.
         note.setBorder(BorderFactory.createEmptyBorder(2, 6, 0, 0));
+        groupByKind.setVisible(false);
+        groupByKind.setSelected(artifacts.grouped());
+        groupByKind.addActionListener(e -> {
+            artifacts.grouped(!artifacts.grouped());
+            groupByKind.setSelected(artifacts.grouped());
+        });
         // „Neuer Ordner“ nur, solange die Favoriten gezeigt werden (Angelo 24.11.2026: unten in der Fußleiste).
         favorites.newFolderButton().setVisible(false);
         // Die gemeinsame Fußleiste aller Seitenleisten, so hoch wie die Leiste mit der Lupe daneben.
         root.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(
                 com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, showCurrent,
-                        favorites.newFolderButton()), note, allBadge), BorderLayout.SOUTH);
+                        favorites.newFolderButton(), groupByKind), note, allBadge), BorderLayout.SOUTH);
         context.onChange(ignored -> refreshSources());
         refreshSources();
     }
@@ -2836,6 +2844,7 @@ public final class Explorer {
         }
         // „Alles aktualisieren“ gehört zum Baum der Wissensquellen, nicht zu Favoriten oder Artefakten.
         allBadge.setVisible(SOURCES_TAB.equals(tab));
+        groupByKind.setVisible(shown);
         favorites.newFolderButton().setVisible(!shown && onlyFavorites);
         head.setOpaque(!shown && global);
         head.repaint();
@@ -2871,6 +2880,25 @@ public final class Explorer {
                           java.util.function.BiConsumer<String, com.aresstack.spaceharvester.app.chat.ChatExport.Format>
                                   export) {
         artifacts.connect(store, open, export);
+        artifacts.books(this::newBookEdition, this::showFavoriteFolder);
+    }
+
+    /** „Ordner in den Wissensquellen zeigen“ am Buch: links die Favoriten, der Ordner gewählt. */
+    void showFavoriteFolder(String folderId) {
+        if (folderId == null) {
+            return;
+        }
+        // Ein Titelfilter zeigte die Treffer statt des Baums; der Ordner soll sichtbar werden.
+        filter.setText("");
+        showArtifacts(false);
+        showOnlyFavorites(true);
+        favorites.select(folderId);
+    }
+
+    /** Öffnet ein Artefakt des Projekts über den Navigator: links „Artefakte“, die Liste frisch gelesen. */
+    void revealArtifacts() {
+        showArtifacts(true);
+        artifacts.reload();
     }
 
     /** Meldet jeden Wechsel der Wippe: {@code true} heißt, links stehen die Artefakte. */
@@ -2885,6 +2913,11 @@ public final class Explorer {
     public void unseenArtifacts(int count) {
         view.count(ARTIFACTS_TAB, count, Comic.PETROL, Texts.count(count, "Artefakt neu oder geändert",
                 "Artefakte neu oder geändert"), ARTIFACTS_TIP);
+    }
+
+    /** Für Tests: der Schalter „Nach Art gruppieren“. */
+    IconButton groupByKindButton() {
+        return groupByKind;
     }
 
     /** Für Tests: die Liste der Artefakte. */
