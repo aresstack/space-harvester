@@ -62,7 +62,7 @@ public final class MermaidDiagramPanel extends JPanel {
      * Blase den SVG-Quelltext als Codeblock mit einer kurzen Fehlerzeile.
      */
     static MermaidDiagramPanel svg(String svgSource, MarkdownTheme theme, MermaidImageRenderer svgRenderer) {
-        return new MermaidDiagramPanel(svgSource, theme, svgRenderer, "SVG-Grafik", true);
+        return new MermaidDiagramPanel(svgSource, theme, svgRenderer, SVG_LABEL, true);
     }
 
     /**
@@ -74,6 +74,17 @@ public final class MermaidDiagramPanel extends JPanel {
     }
 
     static final String DRAWIO = "draw.io-Diagramm";
+    private static final String SVG_LABEL = "SVG-Grafik";
+
+    /** Woraus das Diagramm gezeichnet wird. */
+    public enum Kind { MERMAID, DRAWIO, SVG }
+
+    /**
+     * Schlüssel einer Client-Eigenschaft an einem Vorfahren: liefert zu einem Diagramm das Rechtsklick-Menü oder
+     * {@code null} (etwa „Element an Chat anhängen“ in einem Artefakt, ADR 0045 §6), als
+     * {@code Function<MermaidDiagramPanel, JPopupMenu>}.
+     */
+    public static final String MENU = "spaceharvester.diagramMenu";
 
     private MermaidDiagramPanel(String diagramCode, MarkdownTheme theme, MermaidImageRenderer imageRenderer,
                                 String kindLabel, boolean showSourceOnFailure) {
@@ -100,6 +111,55 @@ public final class MermaidDiagramPanel extends JPanel {
     /** @return der unveränderte Mermaid-Quelltext dieses Diagramms */
     public String getDiagramCode() {
         return diagramCode;
+    }
+
+    /** Woraus dieses Diagramm gezeichnet wird. */
+    public Kind kind() {
+        return SVG_LABEL.equals(kindLabel) ? Kind.SVG : DRAWIO.equals(kindLabel) ? Kind.DRAWIO : Kind.MERMAID;
+    }
+
+    /**
+     * Das Diagramm als SVG mit denselben Bibliotheken wie die Anzeige (mermaid-java, drawio-java); ein SVG unverändert.
+     * Rechnet (GraalJS), also nicht auf dem EDT aufrufen.
+     *
+     * @throws IllegalStateException mit dem Grund, wenn es sich nicht zeichnen lässt
+     */
+    public String svg() {
+        return switch (kind()) {
+            case SVG -> diagramCode.strip();
+            case MERMAID -> {
+                String svg = com.aresstack.Mermaid.render(diagramCode);
+                if (svg == null || svg.isBlank()) {
+                    throw new IllegalStateException("Mermaid nicht darstellbar");
+                }
+                yield svg;
+            }
+            case DRAWIO -> {
+                com.aresstack.spaceharvester.application.diagrams.Diagrams.Rendering rendering =
+                        com.aresstack.spaceharvester.application.diagrams.Diagrams.drawio(
+                                diagramCode.strip().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                if (!rendering.drawn()) {
+                    throw new IllegalStateException(rendering.problem());
+                }
+                yield new String(rendering.content(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+        };
+    }
+
+    /** Das Rechtsklick-Menü des nächsten Vorfahren mit {@link #MENU} an der Mausposition. */
+    @SuppressWarnings("unchecked")
+    private void showMenu(MouseEvent event) {
+        for (Container at = getParent(); at != null; at = at.getParent()) {
+            if (at instanceof JComponent component && component.getClientProperty(MENU)
+                    instanceof java.util.function.Function<?, ?> provider) {
+                javax.swing.JPopupMenu menu =
+                        ((java.util.function.Function<MermaidDiagramPanel, javax.swing.JPopupMenu>) provider).apply(this);
+                if (menu != null) {
+                    menu.show(event.getComponent(), event.getX(), event.getY());
+                }
+                return;
+            }
+        }
     }
 
     private JComponent buildToolbar() {
@@ -262,6 +322,20 @@ public final class MermaidDiagramPanel extends JPanel {
                 public void mouseClicked(MouseEvent event) {
                     if (event.getButton() == MouseEvent.BUTTON1 && image != null) {
                         openEnlargedViewer();
+                    }
+                }
+
+                @Override
+                public void mousePressed(MouseEvent event) {
+                    if (event.isPopupTrigger()) {
+                        showMenu(event);
+                    }
+                }
+
+                @Override
+                public void mouseReleased(MouseEvent event) {
+                    if (event.isPopupTrigger()) {
+                        showMenu(event);
                     }
                 }
             });

@@ -46,7 +46,7 @@ public final class TextContextMenu {
     public interface QuoteTarget {
 
         /** Ob dieses Feld zitiert werden kann (nicht die Chat-Eingabe selbst, nur solange der Chat zu sehen ist). */
-        boolean accepts(JTextComponent field);
+        boolean accepts(Component field);
 
         /**
          * Hängt {@code text} als Zitat an die nächste Nachricht an; {@code reference} nennt, woher es stammt (etwa
@@ -76,13 +76,21 @@ public final class TextContextMenu {
      * Gibt markierten Text aus {@code field} als Zitat an den Chat, mit dem Bezug des Bereichs; ein Weg für Menü und
      * schwebenden Knopf. {@code false}, wenn kein Chat ihn annimmt.
      */
-    public static boolean quote(JTextComponent field, String text) {
+    public static boolean quote(Component field, String text) {
+        return quote(field, text, quoteReference(field));
+    }
+
+    /**
+     * Wie {@link #quote(Component, String)}, mit einem eigenen Bezug: etwa ein Element einer Grafik, das kein
+     * markierbarer Text ist (ADR 0045 §6).
+     */
+    public static boolean quote(Component source, String text, String reference) {
         QuoteTarget target = quoteTarget.get();
-        if (target == null || text == null || text.isBlank() || field instanceof JPasswordField
-                || !target.accepts(field)) {
+        if (target == null || text == null || text.isBlank() || source instanceof JPasswordField
+                || !target.accepts(source)) {
             return false;
         }
-        target.quote(text, quoteReference(field));
+        target.quote(text, reference);
         return true;
     }
 

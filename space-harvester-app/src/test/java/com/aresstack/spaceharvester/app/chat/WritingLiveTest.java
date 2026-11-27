@@ -88,6 +88,66 @@ class WritingLiveTest {
                 + second.calls + " Aufrufe, " + second.seconds + " s");
     }
 
+    @Test
+    void aFlyerEmbedsTheExistingGraphicAndTheAnswerOnlyLinksIt() throws Exception {
+        // Angelo 27.11.2026: Flyer mit vorhandener Grafik; die Antwort verweist nur, sie wiederholt nichts.
+        Workspace workspace = start();
+        ChatStore chats = new ChatStore(() -> home.resolve("data").resolve(ChatStore.FOLDER));
+        ChatNode node = new ChatNode("handbuch", null, null);
+        Path folder = chats.folder(node);
+        ChatRecord chat = ChatRecord.fresh(1).plus(ChatRecord.Message.user("Start", 1), 1);
+        chats.save(folder, chat);
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.createGraphic(folder, chat.id(), "Beetplan", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" "
+                + "height=\"40\"><rect width=\"80\" height=\"30\" fill=\"#8c8\"/><text x=\"2\" y=\"38\">Legende: grün = Beet"
+                + "</text></svg>", ChatArtifact.Origin.AI);
+
+        Turn flyer = turn(workspace, store, folder, chat.id(), List.of(), "Erstelle einen kurzen Flyer „Gartenfest "
+                + "im Kleingartenverein“ (Termin Samstag 14 Uhr, Kuchenbuffet, Pflanzentausch) und binde die Grafik G1 "
+                + "ein.");
+        ChatArtifact document = store.list(folder, chat.id()).stream()
+                .filter(artifact -> artifact.kind() == ChatArtifact.Kind.DOCUMENT).findFirst().orElse(null);
+        assertThat(document).as("Flyer als Dokument").isNotNull();
+        System.out.println("[live] Flyer:\n" + document.content());
+        assertThat(document.content()).as("Grafik eingebunden").contains("artefakt:G1");
+        assertThat(flyer.answer).contains("artefakt:" + document.id());
+        assertThat(flyer.answer.length()).as("Antwort verweist nur").isLessThan(document.content().length());
+        assertThat(flyer.calls).as("nicht erst suchen").doesNotContain(ChatTools.SEARCH);
+
+        // Angelo 27.11.2026: Legende entfernen änderte nicht G1, sondern legte eine zweite Grafik an; im Dokument
+        // standen dann alte und neue Grafik untereinander.
+        List<ChatRecord.Message> history = new ArrayList<>(List.of(ChatRecord.Message.user(flyer.question, 1),
+                ChatRecord.Message.assistant(flyer.answer, false, 2)));
+        Turn legend = turn(workspace, store, folder, chat.id(), history, "Entferne in der Grafik die Legende.");
+        List<ChatArtifact> graphics = store.list(folder, chat.id()).stream()
+                .filter(artifact -> artifact.kind() == ChatArtifact.Kind.GRAPHIC).toList();
+        System.out.println("[live] Grafik nach Legende: " + store.read(folder, chat.id(), "G1").current().svg());
+        assertThat(graphics).as("keine zweite Grafik").hasSize(1);
+        assertThat(store.read(folder, chat.id(), "G1").current().svg()).doesNotContain("Legende");
+        String after = store.read(folder, chat.id(), document.id()).content();
+        assertThat(after.split("artefakt:G", -1)).as("die Grafik genau einmal im Dokument").hasSize(2);
+        assertThat(legend.calls).doesNotContain(DocumentChatTools.GRAPHIC_CREATE, DocumentChatTools.GRAPHIC_DRAW);
+    }
+
+    @Test
+    void withoutWritingTheModelClaimsNoArtifactAndPointsToTheSwitch() throws Exception {
+        Workspace workspace = start();
+        List<String> calls = new CopyOnWriteArrayList<>();
+        Events events = new Events(calls);
+        AiChat port = new AiChat() {
+            @Override
+            public Task stream(Request request, Listener listener) {
+                return workspace.aiChat().stream(request, listener);
+            }
+        };
+        new ChatTurn(workspace, port, model(), null, List.of(), "Erstelle mir als Dokument einen kurzen Flyer "
+                + "„Gartenfest“ für Samstag 14 Uhr.", null, null, events, Runnable::run)
+                .knowledgeByTools(null).searchAgent().start();
+        assertThat(events.done.await(15, TimeUnit.MINUTES)).isTrue();
+        System.out.println("[live] Ohne Schreiben: " + events.completed);
+        assertThat(events.completed).contains("Schreiben").doesNotContain("artefakt:");
+    }
+
     private static String sectionWith(SectionDocument document, String heading) {
         return document.sections().stream()
                 .filter(section -> section.heading().toLowerCase(Locale.ROOT).contains(heading))

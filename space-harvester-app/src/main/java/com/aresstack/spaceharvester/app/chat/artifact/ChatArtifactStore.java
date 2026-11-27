@@ -301,7 +301,9 @@ public final class ChatArtifactStore {
     /** Legt eine Grafik an; {@code null} ohne Datenordner. */
     public ChatArtifact createGraphic(Path folder, String chatId, String title, String svg,
                                       ChatArtifact.Origin origin) {
-        return create(folder, chatId, ChatArtifact.Kind.GRAPHIC, title, origin, List.of(), null, svg);
+        // Jedes sichtbare Element bekommt eine feste Kennung (e1, e2, …), damit Bezüge und Änderungen eines treffen.
+        return create(folder, chatId, ChatArtifact.Kind.GRAPHIC, title, origin, List.of(), null,
+                SvgElements.withIds(svg));
     }
 
     private ChatArtifact create(Path folder, String chatId, ChatArtifact.Kind kind, String title,
@@ -367,6 +369,17 @@ public final class ChatArtifactStore {
     /** Ersetzt das SVG einer Grafik; Bedingungen wie {@link #edit}. */
     public WriteResult replaceSvg(Path folder, String chatId, String artifactId, long expectedRevision,
                                   ChatArtifact.Origin origin, String note, String svg) {
+        return changeSvg(folder, chatId, artifactId, expectedRevision, origin, note, old -> svg);
+    }
+
+    /**
+     * Ändert das SVG einer Grafik ausgehend vom neuesten Stand, unter demselben Schloss wie jedes Schreiben: Zwei
+     * gleichzeitige Änderungen (parallele Werkzeugaufrufe) gehen nacheinander und keine verliert die andere.
+     * {@code change} darf {@link SvgElements.SvgException} werfen; dann bleibt die Grafik, wie sie ist.
+     */
+    public WriteResult changeSvg(Path folder, String chatId, String artifactId, long expectedRevision,
+                                 ChatArtifact.Origin origin, String note,
+                                 java.util.function.UnaryOperator<String> change) {
         WriteResult result;
         synchronized (LOCK) {
             ChatArtifact current = read(folder, chatId, artifactId);
@@ -375,7 +388,8 @@ public final class ChatArtifactStore {
                 return WriteResult.failed(current, problem);
             }
             ChatArtifact.Revision revision = new ChatArtifact.Revision(current.revision() + 1, current.revision(),
-                    System.currentTimeMillis(), origin, note, List.of(), null, svg);
+                    System.currentTimeMillis(), origin, note, List.of(), null,
+                    SvgElements.withIds(change.apply(current.current().svg())));
             result = store(folder, chatId, current, current.with(revision), List.of());
         }
         if (result.success()) {
