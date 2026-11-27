@@ -423,10 +423,14 @@ public final class UpdatePodcasts {
         return open(jobs, key);
     }
 
-    /** Ob ein Auftrag dieses Podcasts noch nicht geendet hat, auch einer, dessen Abbruch erst angefordert ist. */
+    /**
+     * Ob ein Auftrag dieses Podcasts noch nicht geendet hat, auch einer, dessen Abbruch erst angefordert ist, oder einer,
+     * dessen abgekoppelte Arbeit nach dem Abbruch noch läuft und noch ablegen könnte ({@link Jobs#lingering}).
+     */
     static boolean unfinished(Jobs jobs, String key) {
         for (JobStatus status : jobs.listAll(JobType.UPDATE_PODCAST)) {
-            if (!status.state().terminal() && key.equals(status.parameters().get(PODCAST_PARAMETER))) {
+            if (key.equals(status.parameters().get(PODCAST_PARAMETER))
+                    && (!status.state().terminal() || jobs.lingering(status.id()))) {
                 return true;
             }
         }
