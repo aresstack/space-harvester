@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.chat.artifact;
 
 import com.aresstack.spaceharvester.app.chat.ChatExport;
 import com.aresstack.spaceharvester.document.ExportDocumentNode;
+import com.aresstack.spaceharvester.document.ExportGraphics;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -35,7 +36,8 @@ public final class ArtifactExport {
                 markdown.append(section.markdown());
             }
         }
-        return new ExportDocumentNode(artifact.title(), markdown.toString().strip() + "\n", List.of());
+        // Nur Leerraum am Ende fällt weg: Ein eingerückter Codeblock direkt unter dem Titel bleibt ein Codeblock.
+        return new ExportDocumentNode(artifact.title(), markdown.toString().stripTrailing() + "\n", List.of());
     }
 
     /** Schreibt ein Dokument im gewählten Format in den Ordner; liefert die Datei. */
@@ -44,12 +46,18 @@ public final class ArtifactExport {
             throw new IllegalArgumentException("Nur Dokumente haben diese Formate");
         }
         Files.createDirectories(directory);
-        Path target = free(directory, filename(artifact.title()), format.extension);
-        if (format == ChatExport.Format.MARKDOWN) {
-            // Markdown wie in der Ansicht, samt Überschriften: so lässt es sich weiterbearbeiten.
-            Files.writeString(target, artifact.document().markdown(), StandardCharsets.UTF_8);
-        } else {
-            ChatExport.write(document(artifact), format, target);
+        Path target = reserve(directory, filename(artifact.title()), format.extension);
+        try {
+            if (format == ChatExport.Format.MARKDOWN) {
+                // Markdown wie in der Ansicht, samt Überschriften: so lässt es sich weiterbearbeiten.
+                Files.writeString(target, artifact.document().markdown(), StandardCharsets.UTF_8);
+            } else {
+                // Mit den Offline-Zeichnern (Batik für SVG, mermaid-java), damit Diagramme als Bild erscheinen.
+                ChatExport.write(document(artifact), format, target, ExportGraphics.rendering());
+            }
+        } catch (IOException | RuntimeException failed) {
+            Files.deleteIfExists(target);
+            throw failed;
         }
         return target;
     }
@@ -57,8 +65,13 @@ public final class ArtifactExport {
     /** Schreibt eine Grafik als SVG in den Ordner; liefert die Datei. */
     public static Path writeSvg(ChatArtifact artifact, Path directory) throws IOException {
         Files.createDirectories(directory);
-        Path target = free(directory, filename(artifact.title()), SVG);
-        Files.writeString(target, artifact.current().svg(), StandardCharsets.UTF_8);
+        Path target = reserve(directory, filename(artifact.title()), SVG);
+        try {
+            Files.writeString(target, artifact.current().svg(), StandardCharsets.UTF_8);
+        } catch (IOException | RuntimeException failed) {
+            Files.deleteIfExists(target);
+            throw failed;
+        }
         return target;
     }
 
@@ -72,11 +85,18 @@ public final class ArtifactExport {
         return name.isBlank() ? "Dokument" : name;
     }
 
-    private static Path free(Path directory, String name, String extension) {
+    /**
+     * Legt die Zieldatei leer an und reserviert damit den Namen; gibt es ihn schon, die nächste Nummer. Das Anlegen ist
+     * atomar, sodass zwei gleichzeitige Exporte mit gleichem Titel nie dieselbe Datei bekommen.
+     */
+    private static Path reserve(Path directory, String name, String extension) throws IOException {
         Path candidate = directory.resolve(name + "." + extension);
-        for (int number = 2; Files.exists(candidate); number++) {
-            candidate = directory.resolve(name + " (" + number + ")." + extension);
+        for (int number = 2; ; number++) {
+            try {
+                return Files.createFile(candidate);
+            } catch (java.nio.file.FileAlreadyExistsException taken) {
+                candidate = directory.resolve(name + " (" + number + ")." + extension);
+            }
         }
-        return candidate;
     }
 }

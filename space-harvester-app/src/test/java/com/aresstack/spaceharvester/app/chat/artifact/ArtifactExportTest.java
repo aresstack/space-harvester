@@ -45,5 +45,34 @@ class ArtifactExportTest {
         assertThat(Files.readString(svg)).contains("<svg");
         assertThat(ArtifactExport.document(document).text())
                 .as("die Titelüberschrift steht nicht doppelt").startsWith("Bohnen.").contains("## Boden");
+
+        ChatArtifact code = store.createDocument(chats.folder(node), chat.id(), "Code",
+                "# Code\n\n    int x = 1;", ChatArtifact.Origin.AI);
+        assertThat(ArtifactExport.document(code).text()).as("Codeblock bleibt eingerückt").startsWith("    int x");
+    }
+
+    @Test
+    void parallelExportsWithTheSameTitleGetOwnFiles() throws Exception {
+        ChatStore chats = new ChatStore(() -> home.resolve("chats"));
+        ChatNode node = new ChatNode("wiki", null, null);
+        ChatRecord chat = ChatRecord.fresh(1).plus(ChatRecord.Message.user("x", 1), 1);
+        chats.save(node, chat);
+        ChatArtifact document = new ChatArtifactStore(chats).createDocument(chats.folder(node), chat.id(), "Brief",
+                "Hallo.", ChatArtifact.Origin.AI);
+        Path out = home.resolve("parallel");
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(4);
+        try {
+            java.util.List<java.util.concurrent.Future<Path>> files = new java.util.ArrayList<>();
+            for (int i = 0; i < 4; i++) {
+                files.add(pool.submit(() -> ArtifactExport.write(document, ChatExport.Format.MARKDOWN, out)));
+            }
+            java.util.Set<Path> distinct = new java.util.HashSet<>();
+            for (java.util.concurrent.Future<Path> file : files) {
+                distinct.add(file.get());
+            }
+            assertThat(distinct).hasSize(4);
+        } finally {
+            pool.shutdownNow();
+        }
     }
 }
