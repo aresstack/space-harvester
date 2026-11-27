@@ -115,6 +115,9 @@ class SearchViewTest {
         // läuft (Ring über der Liste); die Zeile unter der Liste gilt erst mit dem fertigen Stapel.
         await(() -> table.getRowCount() > 0 && !view[0].overlay.isBusy());
         assertThat(view[0].statusText()).contains("Dateien: " + SearchView.NOT_ONLINE_SEARCHABLE).doesNotContain("Bestand");
+        // Angelo 28.11.2026: Der Begriff landet im Suchverlauf des Felds und bleibt über einen Neustart gemerkt.
+        assertThat(view[0].recentTerms.terms()).startsWith("betrieb");
+        assertThat(AppState.shared().get(SearchView.STATE_RECENT_TERMS)).startsWith("betrieb");
         // Angelo 27.11.2026: Eine nicht indexierte Quelle ohne Online-Suche bekommt einmal die Rückfrage; „Nein“ startet
         // nichts, und weitere Stapel fragen nicht erneut.
         await(() -> !offered.isEmpty());

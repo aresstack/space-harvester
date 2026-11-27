@@ -5,8 +5,6 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import javax.swing.JButton;
 import javax.swing.JMenuItem;
 import javax.swing.JPopupMenu;
-import javax.swing.SwingUtilities;
-import javax.swing.Timer;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Cursor;
@@ -36,7 +34,7 @@ public final class BackButton extends JButton {
     /** Durchmesser des Knopfs. */
     public static final int DIAMETER = 28;
     /** So lange gedrückt halten, bis der Verlauf aufgeht (wie in Edge). */
-    public static final int HOLD_MS = 450;
+    public static final int HOLD_MS = HoldGesture.HOLD_MS;
     /** So viele Einträge je Richtung zeigt der Verlauf höchstens. */
     public static final int MAX_ENTRIES = 15;
     /** Platz unter dem Knopf für den Schatten. */
@@ -90,7 +88,7 @@ public final class BackButton extends JButton {
     }
 
     private Navigator navigator;
-    private final Timer hold = new Timer(HOLD_MS, e -> showHistory());
+    private final HoldGesture hold;
     private JPopupMenu menu;
 
     public BackButton(String tooltip) {
@@ -102,7 +100,7 @@ public final class BackButton extends JButton {
         setOpaque(false);
         setRolloverEnabled(true);
         Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        hold.setRepeats(false);
+        hold = HoldGesture.install(this, this::showHistory);
         addActionListener(e -> {
             if (navigator != null && !navigator.history().back().isEmpty()) {
                 navigator.go(-1);
@@ -113,22 +111,14 @@ public final class BackButton extends JButton {
             public void mousePressed(MouseEvent e) {
                 if (e.isPopupTrigger()) {
                     showHistory();
-                } else if (SwingUtilities.isLeftMouseButton(e) && isEnabled()) {
-                    hold.restart();
                 }
             }
 
             @Override
             public void mouseReleased(MouseEvent e) {
-                hold.stop();
                 if (e.isPopupTrigger()) {
                     showHistory();
                 }
-            }
-
-            @Override
-            public void mouseExited(MouseEvent e) {
-                hold.stop();
             }
         });
         refresh();
@@ -180,7 +170,7 @@ public final class BackButton extends JButton {
     }
 
     private void showHistory() {
-        hold.stop();
+        hold.cancel();
         if (!isEnabled() || navigator == null || !isShowing()) {
             return;
         }
