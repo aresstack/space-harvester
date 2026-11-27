@@ -380,6 +380,14 @@ public final class PageDetailPanel extends JPanel {
     private final ComposerButton saveAsset = Comic.button("Anhang speichern …", "Datei des gewählten Anhangs");
     private final ComposerButton previewAsset = Comic.button("Vorschau",
             "Zeigt den gewählten Anhang im Anhang-Viewer (auch per Doppelklick)");
+    /**
+     * „Bilder anzeigen“ rechts in der Leiste der Anhänge (Angelo 27.11.2026): Bilder sieht man sich im Editor an, in der
+     * Liste verwirren sie. Vorgabe aus; die Wahl gilt global und wird im Application State gemerkt.
+     */
+    private final JCheckBox showImages = Comic.checkBox("Bilder anzeigen");
+    static final String SHOW_IMAGES_KEY = "attachments.images.shown";
+    /** Die Leiste mit der Lupe unter „Anhänge“: Vorschau, Ablegen, Speichern links, „Bilder anzeigen“ rechts. */
+    private final JPanel attachmentsFoot = footRow();
     /** Reiter „Anhänge“: Liste unten, der Anhang-Viewer als Comic-Overlay darüber (wie im Enterprise AI Client). */
     private final JLayeredPane attachmentLayers = new JLayeredPane();
     private ComicOverlayPanel attachmentOverlay;
@@ -839,7 +847,19 @@ public final class PageDetailPanel extends JPanel {
         assetsBusy.setHighlight(Comic.BLUE);
         assetsBusy.setVeilColor(Comic.SURFACE);
         attachmentList.add(assetsBusy, BorderLayout.CENTER);
-        attachmentList.add(Comic.row(previewAsset, harvest, saveAsset), BorderLayout.SOUTH);
+        // Die Knöpfe stehen in der Leiste mit der Lupe, nicht in einer eigenen Zeile darüber (Angelo 27.11.2026).
+        attachmentsFoot.add(Comic.row(previewAsset, harvest, saveAsset), BorderLayout.WEST);
+        attachmentsFoot.add(showImages, BorderLayout.EAST);
+        showImages.setToolTipText("Bilder und SVG-Grafiken in der Liste zeigen; gilt für alle Seiten");
+        showImages.setSelected(com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(SHOW_IMAGES_KEY, 0) == 1);
+        assetsModel.showImages(showImages.isSelected());
+        showImages.addActionListener(e -> {
+            com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(SHOW_IMAGES_KEY,
+                    showImages.isSelected() ? 1 : 0);
+            assetsModel.showImages(showImages.isSelected());
+            updateAssetsHint();
+            updatePreviewEnabled();
+        });
         attachmentLayers.setLayout(new FillLayout());
         attachmentLayers.add(attachmentList, JLayeredPane.DEFAULT_LAYER);
         JPanel attachmentsPanel = new JPanel(new BorderLayout());
@@ -1166,6 +1186,16 @@ public final class PageDetailPanel extends JPanel {
         standingTrailing.setVisible(false);
         // Die ?-Hilfe der Reiter steht unten rechts in der Ecke der Leiste, wie bei den Aufträgen (Angelo 27.11.2026).
         standingTrailing.add(Comic.row(standingHelp, glossaryHelp, graphHelp), BorderLayout.EAST);
+        // Die Reiter der Analysen einer Auswahl als Symbole, der Name im Tooltip (Angelo 27.11.2026).
+        java.util.Map<String, javax.swing.Icon> standingIcons = new java.util.LinkedHashMap<>();
+        standingIcons.put(StandingTab.TERMS, AnalysisTabIcons.terms());
+        standingIcons.put(StandingTab.STATEMENTS, AnalysisTabIcons.statements());
+        standingIcons.put(StandingTab.READING, AnalysisTabIcons.readFirst());
+        standingIcons.put(StandingTab.CONFLICTS, AnalysisTabIcons.conflicts());
+        standingIcons.put(StandingTab.GLOSSARY, AnalysisTabIcons.glossary());
+        standingIcons.put(StandingTab.GRAPH, AnalysisTabIcons.graph());
+        standingIcons.put(RELATIONS, AnalysisTabIcons.relations());
+        standing.tabs().icons(standingIcons);
         standingFoot = new TabFoot(standing.tabs().detachBar(), standingTrailing);
         deck.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
@@ -1346,9 +1376,8 @@ public final class PageDetailPanel extends JPanel {
         } else if (SOURCE_CARD.equals(pageCard) || wide && pageId == null) {
             more.setEnabled(false);
         }
-        if (artifactTabs != null && (export.selection() != null || !artifactTabs.artifacts().isEmpty()
-                || !artifactTabs.deletedArtifacts().isEmpty())) {
-            more.setEnabled(true); // „Neuer Export“ und die Artefakte des Chats stehen in jedem Fall im Menü
+        if (artifactTabs != null && export.selection() != null) {
+            more.setEnabled(true); // „Neuer Export“ steht in jedem Fall im Menü
         }
         heading.revalidate();
         heading.repaint();
@@ -1839,9 +1868,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Setzt die Export-Ansicht mit den Artefakt-Reitern ein (ADR 0045, Abschnitt 5): Sie umschließt den Export und
-     * steht an seiner Stelle; ein geöffnetes Artefakt holt den Reiter „Export“ nach vorn. Im Menü
-     * „Weitere Aktionen“ stehen danach alle Artefakte des Chats.
+     * Setzt die Export-Ansicht mit den Export-Reitern ein (ADR 0045 §5, ADR 0047 §5): Sie umschließt den Export und
+     * steht an seiner Stelle; ein neuer Export-Reiter holt den Reiter „Export“ nach vorn.
      */
     void artifactTabs(ArtifactTabs artifactTabs) {
         this.artifactTabs = artifactTabs;
@@ -3536,6 +3564,7 @@ public final class PageDetailPanel extends JPanel {
                 : READING.equals(selected) && SOURCE_CARD.equals(pageCard) && sourceView.sourceId() != null
                 ? readingSourceFoot
                 : READ.equals(selected) && PAGE.equals(pageCard) ? pageFoot
+                : ATTACHMENTS.equals(selected) && PAGE.equals(pageCard) ? attachmentsFoot
                 : wide && folder != null ? folderFoot
                 : null;
         // Podcast-Ansicht eines Ordners: „mit Unterseiten“ rechts in ihrer Leiste, wie in der Ordnerleiste.
@@ -3957,9 +3986,7 @@ public final class PageDetailPanel extends JPanel {
                 prefetch(context.runtime()).focus(attachmentsOfKind(
                         com.aresstack.spaceharvester.application.assets.AssetKind.MARK), null);
             }
-            assetsHint.setText(Texts.count(overview.entries().size(), "Anhang", "Anhänge")
-                    + (overview.listComplete() ? "" : " (Liste unvollständig)") + " · live, "
-                    + Texts.time(overview.retrievedAt()));
+            updateAssetsHint();
         }, error -> {
             if (shown != page) {
                 return;
@@ -3973,6 +4000,19 @@ public final class PageDetailPanel extends JPanel {
                     .describe(error).title() + " (" + detail + "); der nächste Wechsel auf „Anhänge“ versucht es "
                     + "erneut.");
         });
+    }
+
+    /** „N Anhänge · live, Zeit“ über der Liste; ausgeblendete Bilder stehen mit ihrer Zahl dabei. */
+    private void updateAssetsHint() {
+        PageAssets overview = assetsModel.overview;
+        if (overview == null) {
+            return;
+        }
+        int hidden = overview.entries().size() - assetsModel.rows.size();
+        assetsHint.setText(Texts.count(overview.entries().size(), "Anhang", "Anhänge")
+                + (overview.listComplete() ? "" : " (Liste unvollständig)")
+                + (hidden == 0 ? "" : ", davon " + Texts.count(hidden, "Bild", "Bilder") + " ausgeblendet")
+                + " · live, " + Texts.time(overview.retrievedAt()));
     }
 
     /**
@@ -5974,6 +6014,10 @@ public final class PageDetailPanel extends JPanel {
         return assets;
     }
 
+    JCheckBox showImages() {
+        return showImages;
+    }
+
     ComposerButton previewAsset() {
         return previewAsset;
     }
@@ -6402,8 +6446,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Unter einer Linie alle Artefakte des Chats (Angelo 27.11.2026): Ein Klick öffnet den Reiter in der
-     * Export-Ansicht wieder, auch nachdem er geschlossen wurde.
+     * Unter einer Linie „Neuer Export“ (ADR 0045 §5). Die Artefakte stehen nicht mehr hier, sondern links unter
+     * „Artefakte“ (ADR 0047 §5).
      */
     private void addArtifacts(javax.swing.JPopupMenu menu) {
         if (artifactTabs == null) {
@@ -6416,32 +6460,10 @@ public final class PageDetailPanel extends JPanel {
         ExportPanel.Selection current = export.selection();
         menu.add(menuItem(NEW_EXPORT, NEW_EXPORT_TIP, current != null,
                 () -> artifactTabs.openExport(current, null)));
-        List<com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact> artifacts = artifactTabs.artifacts();
-        for (com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact artifact : artifacts) {
-            String kind = artifact.kind() == com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact.Kind.GRAPHIC
-                    ? ARTIFACT_GRAPHIC : ARTIFACT_DOCUMENT;
-            menu.add(menuItem(kind + artifact.title(), ARTIFACT_TIP, true, () -> artifactTabs.open(artifact.id())));
-        }
-        // Gelöschte bis zum nächsten Start, durchgestrichen wie gelöschte Chats; ein Klick stellt wieder her.
-        for (com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact artifact : artifactTabs.deletedArtifacts()) {
-            String kind = artifact.kind() == com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact.Kind.GRAPHIC
-                    ? ARTIFACT_GRAPHIC : ARTIFACT_DOCUMENT;
-            menu.add(menuItem("<html><s>" + escapeArtifactTitle(kind + artifact.title()) + "</s></html>",
-                    ARTIFACT_RESTORE_TIP, true, () -> artifactTabs.restore(artifact.id())));
-        }
     }
-
-    private static String escapeArtifactTitle(String text) {
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-    }
-
-    static final String ARTIFACT_RESTORE_TIP = "Gelöscht – Klick stellt das Artefakt wieder her";
 
     static final String NEW_EXPORT = "Neuer Export";
     static final String NEW_EXPORT_TIP = "Öffnet einen Export-Reiter für die Auswahl links";
-    static final String ARTIFACT_DOCUMENT = "Dokument: ";
-    static final String ARTIFACT_GRAPHIC = "Grafik: ";
-    static final String ARTIFACT_TIP = "Öffnet das Artefakt dieses Chats als Reiter in der Export-Ansicht";
 
     private javax.swing.JPopupMenu pageMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
@@ -6929,11 +6951,30 @@ public final class PageDetailPanel extends JPanel {
     private static final class AssetsModel extends AbstractTableModel {
 
         private static final String[] COLUMNS = {"Titel", "Art", "Größe", "Version", "Abgelegt", "Vorschau von"};
+        /** Die gezeigten Zeilen: ohne „Bilder anzeigen“ alle außer Bildern und SVG-Grafiken. */
         private List<PageAssets.Entry> rows = new ArrayList<>();
+        private PageAssets overview;
+        private boolean images;
 
-        void set(PageAssets overview) {
-            rows = overview == null ? new ArrayList<>() : new ArrayList<>(overview.entries());
+        void set(PageAssets next) {
+            overview = next;
+            refilter();
+        }
+
+        void showImages(boolean shown) {
+            images = shown;
+            refilter();
+        }
+
+        private void refilter() {
+            rows = overview == null ? new ArrayList<>() : new ArrayList<>(overview.entries().stream()
+                    .filter(entry -> images || !isImage(entry.kind())).toList());
             fireTableDataChanged();
+        }
+
+        private static boolean isImage(com.aresstack.spaceharvester.application.assets.AssetKind kind) {
+            return kind == com.aresstack.spaceharvester.application.assets.AssetKind.IMAGE
+                    || kind == com.aresstack.spaceharvester.application.assets.AssetKind.VECTOR;
         }
 
         @Override

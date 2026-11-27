@@ -1109,6 +1109,11 @@ final class StandingTab extends JPanel {
     private void conflictLabel() {
         int found = conflicts == null ? 0 : conflicts.contradictions().size();
         javax.swing.AbstractButton pill = tabs.button(CONFLICTS);
+        if (pill.getIcon() != null) {
+            // Als Symbolknopf (Analysen der Auswahl): die Zahl steht hinter dem Blitz, der Name im Tooltip.
+            tabs.mark(CONFLICTS, found == 0 ? null : String.valueOf(found));
+            return;
+        }
         pill.setText(found == 0 ? CONFLICTS : CONFLICTS + " · " + found);
         pill.revalidate();
     }

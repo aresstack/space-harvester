@@ -235,6 +235,53 @@ public final class PillTabs extends JPanel {
     }
 
     /**
+     * Zeigt die Reiter an Ort und Stelle als Symbolknöpfe statt als Pillen mit Text (Angelo 27.11.2026): Der Name
+     * steht im Tooltip und bleibt der zugängliche Name, Reihenfolge, Auswahl und Füllung bleiben. Reiter ohne Symbol
+     * in {@code icons} behalten ihren Text. Eine Zahl am Reiter setzt danach {@link #mark}.
+     */
+    public void icons(Map<String, javax.swing.Icon> icons) {
+        icons.forEach((name, icon) -> {
+            ComposerToggleButton button = buttons.get(name);
+            if (button == null) {
+                return;
+            }
+            button.setIcon(icon);
+            button.setText(null);
+            button.setToolTipText(name);
+            button.getAccessibleContext().setAccessibleName(name);
+            square(button);
+        });
+        bar.revalidate();
+        bar.repaint();
+    }
+
+    /**
+     * Eine kurze Marke hinter dem Symbol eines Reiters, etwa die Zahl der Widersprüche; {@code null} nimmt sie weg.
+     * Der Tooltip nennt dann Name und Marke. Nur für Reiter, die {@link #icons} auf Symbole umgestellt hat.
+     */
+    public void mark(String name, String mark) {
+        ComposerToggleButton button = buttons.get(name);
+        if (button == null) {
+            return;
+        }
+        button.setText(mark);
+        button.setToolTipText(mark == null ? name : name + " · " + mark);
+        button.setPreferredSize(null);
+        if (mark == null) {
+            square(button);
+        }
+        button.revalidate();
+        button.repaint();
+    }
+
+    private static void square(ComposerToggleButton button) {
+        button.setPreferredSize(null);
+        java.awt.Dimension natural = button.getPreferredSize();
+        int side = Math.max(natural.width, natural.height);
+        button.setPreferredSize(new java.awt.Dimension(side, side));
+    }
+
+    /**
      * Macht aus den Reitern quadratische Symbolknöpfe (der Name bleibt Tooltip und zugänglicher Name) und gibt ihre
      * Leiste zum Einbau an anderer Stelle zurück, etwa in die Icon-Leiste des Hauptfensters. Umschalten, Auswahl und
      * die dunkle Füllung des aktiven Knopfs bleiben wie bei den Pillen; die Reiterzeile oben entfällt, solange sie
