@@ -51,7 +51,7 @@ class DocumentChatToolsTest {
         assertThat(tools.definitions()).extracting(AiChat.Tool::name).containsExactlyInAnyOrder(
                 "dokumente_auflisten", "dokument_anlegen", "dokument_gliederung", "abschnitt_lesen",
                 "abschnitt_ersetzen", "text_ersetzen", "abschnitt_einfuegen", "abschnitt_loeschen",
-                "ueberschrift_aendern", "abschnitt_verschieben");
+                "ueberschrift_aendern", "abschnitt_verschieben", "grafik_anlegen", "grafik_einbinden");
         assertThat(tools.definitions()).allSatisfy(tool -> assertThat(tool.parametersSchemaJson()).startsWith("{\"type\""));
     }
 
@@ -144,7 +144,7 @@ class DocumentChatToolsTest {
         };
         ChatToolset joined = tools.attach(base);
 
-        assertThat(joined.definitions()).hasSize(11);
+        assertThat(joined.definitions()).hasSize(13);
         assertThat(joined.run(new AiChat.ToolCall("1", "suche", "{}"))).isEqualTo("Treffer");
         assertThat(joined.run(new AiChat.ToolCall("2", "dokumente_auflisten", "{}"))).contains("noch keine");
         assertThat(joined.describe(new AiChat.ToolCall("3", "abschnitt_ersetzen", "{}")))
@@ -163,5 +163,46 @@ class DocumentChatToolsTest {
         assertThat(rest).doesNotContain("Fortsetzung").endsWith("Humus");
         assertThat(ChatRoom.within(0, () -> call("abschnitt_lesen", "{\"abschnitt\":\"a1\"}")))
                 .endsWith(ChatRoom.FULL);
+    }
+
+    private static final String SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"20\">"
+            + "<rect width=\"40\" height=\"20\" fill=\"#8c8\"/></svg>";
+
+    @Test
+    void graphicsAreOwnArtifactsEmbeddedByReference() {
+        List<String> drawn = new ArrayList<>();
+        DocumentChatTools withDrawing = new DocumentChatTools(store, folder, chatId, focus::get,
+                artifact -> opened.add(artifact.id()), (topic, material) -> {
+                    drawn.add(topic + ": " + material);
+                    return java.util.Optional.of(SVG);
+                });
+        assertThat(tools.definitions()).extracting(AiChat.Tool::name).doesNotContain("grafik_zeichnen")
+                .contains("grafik_anlegen", "grafik_einbinden");
+        call("dokument_anlegen", "{\"titel\":\"Gartenfibel\",\"text\":\"## Beet\\n\\nDrei Reihen.\"}");
+
+        String drawnAnswer = withDrawing.run(new AiChat.ToolCall("1", "grafik_zeichnen",
+                "{\"titel\":\"Beetplan\",\"inhalt\":\"drei Reihen Bohnen\"}"));
+        assertThat(drawnAnswer).contains("G1").contains("grafik_einbinden");
+        assertThat(drawn).containsExactly("Beetplan: drei Reihen Bohnen");
+        assertThat(call("grafik_anlegen", "{\"titel\":\"Kaputt\",\"svg\":\"<rect/>\"}"))
+                .contains("kein vollständiges SVG");
+        assertThat(call("grafik_anlegen", "{\"titel\":\"Zaun\",\"svg\":\"Hier: " + SVG.replace("\"", "\\\"")
+                + " fertig\"}")).contains("G2");
+        assertThat(store.read(folder, chatId, "G2").current().svg()).isEqualTo(SVG);
+
+        assertThat(withDrawing.run(new AiChat.ToolCall("2", "grafik_einbinden",
+                "{\"abschnitt\":\"a1\",\"grafik\":\"G1\"}"))).startsWith("Erledigt");
+        assertThat(store.read(folder, chatId, "D1").document().section("a1").text())
+                .isEqualTo("Drei Reihen.\n\n![Beetplan](artefakt:G1)");
+        assertThat(withDrawing.run(new AiChat.ToolCall("3", "grafik_einbinden",
+                "{\"abschnitt\":\"a1\",\"grafik\":\"G1\"}"))).contains("schon");
+        assertThat(call("grafik_einbinden", "{\"abschnitt\":\"a1\",\"grafik\":\"G9\"}")).contains("G9");
+        assertThat(withDrawing.footer()).contains("Grafik: [Beetplan](artefakt:G1)").contains("````svg");
+
+        store.replaceSvg(folder, chatId, "G1", ChatArtifactStore.ANY, ChatArtifact.Origin.USER, "", "<svg>neu</svg>");
+        assertThat(GraphicReferences.inline(store.read(folder, chatId, "D1").content(),
+                id -> store.read(folder, chatId, id).current().svg()))
+                .as("Verweis, keine Kopie: die korrigierte Grafik steht von selbst im Dokument")
+                .contains("<svg>neu</svg>").doesNotContain("artefakt:G1");
     }
 }

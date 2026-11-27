@@ -23,8 +23,19 @@ public final class ArtifactExport {
     private ArtifactExport() {
     }
 
-    /** Das Dokument für die Schreiber: Titel und Markdown; eine Überschrift erster Ebene gleich dem Titel fällt weg. */
+    /** Das Dokument ohne eingebundene Grafiken (für Tests und Aufrufer ohne Speicher). */
     public static ExportDocumentNode document(ChatArtifact artifact) {
+        return document(artifact, id -> null);
+    }
+
+    /**
+     * Das Dokument für die Schreiber: Titel und Markdown; eine Überschrift erster Ebene gleich dem Titel fällt weg.
+     * Eingebundene Grafiken gehen als Bilder des Exports mit, die Schreiber zeichnen sie wie jedes SVG.
+     *
+     * @param graphics liefert zu einer Kennung die Grafik oder {@code null}
+     */
+    public static ExportDocumentNode document(ChatArtifact artifact,
+                                              java.util.function.Function<String, ChatArtifact> graphics) {
         SectionDocument document = artifact.document();
         List<SectionDocument.Section> sections = document.sections();
         StringBuilder markdown = new StringBuilder();
@@ -36,12 +47,28 @@ public final class ArtifactExport {
                 markdown.append(section.markdown());
             }
         }
+        List<com.aresstack.spaceharvester.document.ExportImage> images = new java.util.ArrayList<>();
+        for (String id : GraphicReferences.ids(markdown.toString())) {
+            ChatArtifact graphic = graphics.apply(id);
+            String src = DocumentChatTools.LINK_SCHEME + id;
+            images.add(graphic == null || graphic.kind() != ChatArtifact.Kind.GRAPHIC
+                    ? com.aresstack.spaceharvester.document.ExportImage.failed(src, id, "Grafik fehlt")
+                    : com.aresstack.spaceharvester.document.ExportImage.loaded(src, graphic.title(),
+                    graphic.current().svg().getBytes(StandardCharsets.UTF_8)));
+        }
         // Nur Leerraum am Ende fällt weg: Ein eingerückter Codeblock direkt unter dem Titel bleibt ein Codeblock.
-        return new ExportDocumentNode(artifact.title(), markdown.toString().stripTrailing() + "\n", List.of());
+        return new ExportDocumentNode(artifact.title(), null, markdown.toString().stripTrailing() + "\n", images,
+                List.of());
     }
 
     /** Schreibt ein Dokument im gewählten Format in den Ordner; liefert die Datei. */
     public static Path write(ChatArtifact artifact, ChatExport.Format format, Path directory) throws IOException {
+        return write(artifact, format, directory, id -> null);
+    }
+
+    /** Wie {@link #write(ChatArtifact, ChatExport.Format, Path)}, mit den eingebundenen Grafiken. */
+    public static Path write(ChatArtifact artifact, ChatExport.Format format, Path directory,
+                             java.util.function.Function<String, ChatArtifact> graphics) throws IOException {
         if (artifact.kind() != ChatArtifact.Kind.DOCUMENT) {
             throw new IllegalArgumentException("Nur Dokumente haben diese Formate");
         }
@@ -49,11 +76,16 @@ public final class ArtifactExport {
         Path target = reserve(directory, filename(artifact.title()), format.extension);
         try {
             if (format == ChatExport.Format.MARKDOWN) {
-                // Markdown wie in der Ansicht, samt Überschriften: so lässt es sich weiterbearbeiten.
-                Files.writeString(target, artifact.document().markdown(), StandardCharsets.UTF_8);
+                // Markdown wie in der Ansicht, samt Überschriften; Grafiken als SVG-Block, damit die Datei für sich
+                // steht.
+                Files.writeString(target, GraphicReferences.inline(artifact.document().markdown(), id -> {
+                    ChatArtifact graphic = graphics.apply(id);
+                    return graphic == null ? null : graphic.current().svg();
+                }), StandardCharsets.UTF_8);
             } else {
-                // Mit den Offline-Zeichnern (Batik für SVG, mermaid-java), damit Diagramme als Bild erscheinen.
-                ChatExport.write(document(artifact), format, target, ExportGraphics.rendering());
+                // Mit den Offline-Zeichnern (Batik für SVG, mermaid-java), damit Diagramme und eingebundene Grafiken
+                // als Bild erscheinen.
+                ChatExport.write(document(artifact, graphics), format, target, ExportGraphics.rendering());
             }
         } catch (IOException | RuntimeException failed) {
             Files.deleteIfExists(target);

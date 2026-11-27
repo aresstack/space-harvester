@@ -108,8 +108,21 @@ final class ArtifactView extends JPanel {
     }
 
     private void changed(ChatArtifactStore.Event event) {
-        if (!artifactId.equals(event.artifact().id()) || !chatId.equals(event.chatId())
-                || !java.util.Objects.equals(folder, event.folder())) {
+        if (!chatId.equals(event.chatId()) || !java.util.Objects.equals(folder, event.folder())) {
+            return;
+        }
+        if (!artifactId.equals(event.artifact().id())) {
+            // Eine eingebundene Grafik wurde geändert: das Dokument zeigt sie neu (Verweis, keine Kopie).
+            ChatArtifact current = shown;
+            if (current != null && current.kind() == ChatArtifact.Kind.DOCUMENT
+                    && com.aresstack.spaceharvester.app.chat.artifact.GraphicReferences.ids(current.content())
+                    .contains(event.artifact().id())) {
+                SwingUtilities.invokeLater(() -> {
+                    if (editing == null && shown != null) {
+                        render(shown);
+                    }
+                });
+            }
             return;
         }
         Runnable update = () -> {
@@ -144,8 +157,8 @@ final class ArtifactView extends JPanel {
             List<String> definitions = artifact.document().referenceDefinitions();
             String references = definitions.isEmpty() ? "" : "\n\n" + String.join("\n", definitions) + "\n";
             for (SectionDocument.Section section : artifact.document().sections()) {
-                JComponent block = block(section.markdown() + references, theme,
-                        highlighted.contains(section.id()));
+                JComponent block = block(com.aresstack.spaceharvester.app.chat.artifact.GraphicReferences.inline(
+                        section.markdown(), this::svgOf) + references, theme, highlighted.contains(section.id()));
                 ((Section) block).pen(() -> edit(section.id()));
                 block.setName(section.id());
                 blocks.put(section.id(), block);
@@ -154,6 +167,12 @@ final class ArtifactView extends JPanel {
         }
         column.revalidate();
         column.repaint();
+    }
+
+    /** Das SVG einer Grafik des Chats, sonst {@code null}. */
+    private String svgOf(String graphicId) {
+        ChatArtifact graphic = store.read(folder, chatId, graphicId);
+        return graphic == null || graphic.kind() != ChatArtifact.Kind.GRAPHIC ? null : graphic.current().svg();
     }
 
     private JComponent block(String markdown, MarkdownTheme theme, boolean changed) {

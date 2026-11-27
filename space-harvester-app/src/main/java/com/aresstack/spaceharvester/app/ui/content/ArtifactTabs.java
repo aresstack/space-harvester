@@ -280,7 +280,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         com.aresstack.spaceharvester.app.ui.Background.run(() -> format == null
                         ? com.aresstack.spaceharvester.app.chat.artifact.ArtifactExport.writeSvg(artifact, directory)
                         : com.aresstack.spaceharvester.app.chat.artifact.ArtifactExport.write(artifact, format,
-                        directory),
+                        directory, id -> store.read(folder, chatId, id)),
                 file -> status.accept("Export gespeichert: " + file.getFileName()),
                 error -> status.accept("Export fehlgeschlagen: " + error.getClass().getSimpleName()));
     }
