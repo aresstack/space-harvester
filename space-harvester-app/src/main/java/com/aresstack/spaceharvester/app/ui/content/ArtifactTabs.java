@@ -177,7 +177,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         ClosableTab pill = new ClosableTab(artifact.kind() == ChatArtifact.Kind.GRAPHIC ? ComposerIcons.picture()
                 : ComposerIcons.document(), artifact.title(), artifact.title(), CLOSE, () -> close(artifact.id()));
         pill.addActionListener(event -> select(artifact.id()));
-        Tab tab = new Tab(pill, new ArtifactView(store, folder, chatId, artifact.id()));
+        Tab tab = new Tab(pill, new ArtifactView(store, folder, chatId, artifact.id(), status));
         tabs.put(artifact.id(), tab);
         group.add(pill);
         pills.add(pill);
@@ -280,7 +280,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         com.aresstack.spaceharvester.app.ui.Background.run(() -> format == null
                         ? com.aresstack.spaceharvester.app.chat.artifact.ArtifactExport.writeSvg(artifact, directory)
                         : com.aresstack.spaceharvester.app.chat.artifact.ArtifactExport.write(artifact, format,
-                        directory),
+                        directory, id -> store.read(folder, chatId, id)),
                 file -> status.accept("Export gespeichert: " + file.getFileName()),
                 error -> status.accept("Export fehlgeschlagen: " + error.getClass().getSimpleName()));
     }

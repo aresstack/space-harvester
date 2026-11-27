@@ -36,8 +36,11 @@ public final class DocumentChatTools {
     public static final String DELETE = "abschnitt_loeschen";
     public static final String RENAME = "ueberschrift_aendern";
     public static final String MOVE = "abschnitt_verschieben";
+    public static final String GRAPHIC_DRAW = "grafik_zeichnen";
+    public static final String GRAPHIC_CREATE = "grafik_anlegen";
+    public static final String GRAPHIC_EMBED = "grafik_einbinden";
     private static final Set<String> NAMES = Set.of(LIST, CREATE, OUTLINE, READ, REPLACE, REPLACE_TEXT, INSERT,
-            DELETE, RENAME, MOVE);
+            DELETE, RENAME, MOVE, GRAPHIC_DRAW, GRAPHIC_CREATE, GRAPHIC_EMBED);
 
     /** Das Schema eines Links auf ein Artefakt in der Chat-Antwort; ein Klick öffnet den Reiter. */
     public static final String LINK_SCHEME = "artefakt:";
@@ -54,6 +57,10 @@ public final class DocumentChatTools {
             nie anfassen.
             - Abschnittskennungen (a1, a2, …) und Dokumentkennungen (D1, …) stammen aus den Werkzeugen; nie raten.
             - abschnitt_ersetzen ersetzt nur den Text unter der Überschrift; die Überschrift ändert ueberschrift_aendern.
+            - Möchte der Benutzer eine Grafik (Bild, Schaubild, Diagramm, Skizze, Plan), legst du eine Grafik an, \
+            kein Dokument: grafik_zeichnen (Thema und Inhalt, gezeichnet vom Bildmodell) oder grafik_anlegen (du \
+            lieferst das SVG selbst). Ein Dokument nur, wenn er auch Text haben möchte; dann die Grafik mit \
+            grafik_einbinden in den passenden Abschnitt. Ein SVG nie in den Text eines Abschnitts schreiben.
             - Antworte am Ende kurz, was du im Dokument getan hast; wiederhole das Dokument nicht in der Antwort.""";
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -67,6 +74,8 @@ public final class DocumentChatTools {
     private final String chatId;
     private final Supplier<String> focus;
     private final Consumer<ChatArtifact> changed;
+    /** Zeichnet Grafiken mit dem Modell der Bildgenerierung; {@code null}: kein {@value #GRAPHIC_DRAW}. */
+    private final com.aresstack.spaceharvester.app.chat.ModelChatTools.Diagrams diagrams;
     /** Was dieser Turn angelegt oder geändert hat, in der Reihenfolge der ersten Änderung. */
     private final Map<String, String> touched = new LinkedHashMap<>();
 
@@ -76,6 +85,17 @@ public final class DocumentChatTools {
      */
     public DocumentChatTools(ChatArtifactStore store, Path folder, String chatId, Supplier<String> focus,
                              Consumer<ChatArtifact> changed) {
+        this(store, folder, chatId, focus, changed, null);
+    }
+
+    /**
+     * @param diagrams die Bildgenerierung (Zeilen „Bildgenerierung“, wie Podcast und {@code schaubild_zeichnen});
+     *                 {@code null} ohne {@value #GRAPHIC_DRAW}
+     */
+    public DocumentChatTools(ChatArtifactStore store, Path folder, String chatId, Supplier<String> focus,
+                             Consumer<ChatArtifact> changed,
+                             com.aresstack.spaceharvester.app.chat.ModelChatTools.Diagrams diagrams) {
+        this.diagrams = diagrams;
         this.store = store;
         this.folder = folder;
         this.chatId = chatId;
@@ -88,6 +108,24 @@ public final class DocumentChatTools {
     }
 
     public List<AiChat.Tool> definitions() {
+        List<AiChat.Tool> all = new ArrayList<>(documentDefinitions());
+        if (diagrams != null) {
+            all.add(tool(GRAPHIC_DRAW, "Zeichnet eine Grafik für ein Dokument (Karten mit Symbolen, Pfeilen, kurzen "
+                    + "Beschriftungen) mit dem Modell der Bildgenerierung und legt sie als Grafik des Chats an.",
+                    "\"titel\":{\"type\":\"string\"},\"inhalt\":{\"type\":\"string\",\"description\":"
+                            + "\"Fakten und Zusammenhänge, die die Grafik zeigen soll\"}", List.of("titel", "inhalt")));
+        }
+        all.add(tool(GRAPHIC_CREATE, "Legt eine Grafik aus einem SVG an, das du selbst schreibst.",
+                "\"titel\":{\"type\":\"string\"},\"svg\":{\"type\":\"string\",\"description\":"
+                        + "\"vollständiges SVG mit <svg …>\"}", List.of("titel", "svg")));
+        all.add(tool(GRAPHIC_EMBED, "Bindet eine Grafik am Ende eines Abschnitts ein, als Verweis (keine Kopie): "
+                + "wird die Grafik später geändert, stimmt das Dokument von selbst.", DOC + "," + SECTION
+                + ",\"grafik\":{\"type\":\"string\",\"description\":\"Kennung der Grafik, etwa G1\"}",
+                List.of("abschnitt", "grafik")));
+        return all;
+    }
+
+    private List<AiChat.Tool> documentDefinitions() {
         return List.of(
                 tool(LIST, "Listet die Dokumente dieses Chats mit Kennung, Titel und Umfang.", "{}", List.of()),
                 tool(CREATE, "Legt ein neues Dokument an. Optional mit erstem Text, am besten nur der Gliederung "
@@ -140,6 +178,9 @@ public final class DocumentChatTools {
             case DELETE -> "Abschnitt wird gelöscht";
             case RENAME -> "Überschrift wird geändert";
             case MOVE -> "Abschnitt wird verschoben";
+            case GRAPHIC_DRAW -> "Grafik wird gezeichnet …";
+            case GRAPHIC_CREATE -> "Grafik wird angelegt";
+            case GRAPHIC_EMBED -> "Grafik wird eingebunden";
             default -> "Werkzeug";
         };
     }
@@ -191,6 +232,9 @@ public final class DocumentChatTools {
                         arguments.path("ebene").asInt(0)));
                 case MOVE -> edit(arguments, "Abschnitt verschoben", doc -> doc.move(
                         text(arguments, "abschnitt"), text(arguments, "nach")));
+                case GRAPHIC_DRAW -> draw(arguments);
+                case GRAPHIC_CREATE -> createGraphic(text(arguments, "titel"), raw(arguments, "svg"));
+                case GRAPHIC_EMBED -> embed(arguments);
                 default -> "Unbekanntes Werkzeug.";
             };
         } catch (SectionDocument.SectionException invalid) {
@@ -210,8 +254,22 @@ public final class DocumentChatTools {
                 return "";
             }
             StringBuilder out = new StringBuilder("\n\n");
-            touched.forEach((id, title) -> out.append("Dokument: [").append(title.replace("]", ")"))
-                    .append("](").append(LINK_SCHEME).append(id).append(")  \n"));
+            List<String> graphics = new ArrayList<>();
+            touched.forEach((id, title) -> {
+                boolean graphic = id.startsWith("G");
+                out.append(graphic ? "Grafik: [" : "Dokument: [").append(title.replace("]", ")"))
+                        .append("](").append(LINK_SCHEME).append(id).append(")  \n");
+                if (graphic) {
+                    graphics.add(id);
+                }
+            });
+            // Grafiken erscheinen im Chat über dieselbe Anzeige wie direktes SVG (ein Renderweg).
+            for (String id : graphics) {
+                ChatArtifact graphic = store.read(folder, chatId, id);
+                if (graphic != null && !graphic.current().svg().isBlank()) {
+                    out.append("\n````svg\n").append(graphic.current().svg().strip()).append("\n````\n");
+                }
+            }
             return out.toString().stripTrailing() + "\n";
         }
     }
@@ -282,6 +340,64 @@ public final class DocumentChatTools {
                 ? ", noch leer. Weiter mit abschnitt_einfuegen ohne 'nach'."
                 : " mit " + sections.size() + " Abschnitten. Gliederung:\n" + outline(created.document())
                 + "\nJetzt die Abschnitte einzeln mit abschnitt_ersetzen füllen.");
+    }
+
+    private String draw(JsonNode arguments) {
+        String title = text(arguments, "titel");
+        String material = text(arguments, "inhalt");
+        if (material.isEmpty()) {
+            return "Fehler: Gib im Feld inhalt an, was die Grafik zeigen soll.";
+        }
+        java.util.Optional<String> svg;
+        try {
+            svg = diagrams.compose(title.isEmpty() ? material : title, material);
+        } catch (RuntimeException failed) {
+            return "Fehler: Die Bildgenerierung ist gescheitert (" + failed.getClass().getSimpleName() + ").";
+        }
+        if (svg.isEmpty() || svg.get().isBlank()) {
+            return "Keine Grafik: Unter Einstellungen › KI-Dienst › Modelle ist keine Bildgenerierung eingerichtet, "
+                    + "oder das Modell lieferte keinen brauchbaren Plan. Mit grafik_anlegen selbst ein SVG schreiben "
+                    + "oder es dem Benutzer sagen.";
+        }
+        return createGraphic(title.isEmpty() ? "Grafik" : title, svg.get());
+    }
+
+    private String createGraphic(String title, String svg) {
+        if (title.isEmpty()) {
+            return "Fehler: 'titel' fehlt.";
+        }
+        String content = svg == null ? "" : svg.strip();
+        int start = content.indexOf("<svg");
+        int end = content.lastIndexOf("</svg>");
+        if (start < 0 || end < start) {
+            return "Fehler: 'svg' enthält kein vollständiges SVG (<svg …>…</svg>).";
+        }
+        ChatArtifact created = store.createGraphic(folder, chatId, title, content.substring(start, end + 6),
+                ChatArtifact.Origin.AI);
+        if (created == null) {
+            return "Fehler: Die Grafik konnte nicht gespeichert werden (kein Datenordner).";
+        }
+        report(created);
+        return "Grafik " + created.id() + " „" + created.title() + "“ angelegt. Mit grafik_einbinden in einen "
+                + "Abschnitt setzen.";
+    }
+
+    private String embed(JsonNode arguments) {
+        String id = text(arguments, "grafik");
+        ChatArtifact graphic = id.isEmpty() ? null : store.read(folder, chatId, id);
+        if (graphic == null || graphic.kind() != ChatArtifact.Kind.GRAPHIC) {
+            return "Fehler: Grafik '" + id + "' gibt es in diesem Chat nicht. Mit dokumente_auflisten nachsehen.";
+        }
+        String reference = GraphicReferences.reference(graphic);
+        return edit(arguments, "Grafik " + graphic.id() + " eingebunden", doc -> {
+            SectionDocument.Section section = doc.section(text(arguments, "abschnitt"));
+            if (GraphicReferences.ids(section.text()).contains(graphic.id())) {
+                throw new SectionDocument.SectionException("Grafik " + graphic.id() + " steht schon in Abschnitt "
+                        + section.id() + ".");
+            }
+            return doc.replaceText(section.id(), section.text().isEmpty() ? reference
+                    : section.text() + "\n\n" + reference);
+        });
     }
 
     private String withDocument(JsonNode arguments, Function<SectionDocument, String> reading) {

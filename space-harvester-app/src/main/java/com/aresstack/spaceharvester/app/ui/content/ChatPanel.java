@@ -2807,13 +2807,14 @@ public final class ChatPanel extends JPanel {
             // Fokus und Öffnen gelten nur, solange die Mitte noch den Chat dieses Zugs zeigt (Chatwechsel im Lauf).
             ArtifactHost host = artifactHost;
             String turnChat = target.id();
+            // Grafiken über dieselben Zeilen „Bildgenerierung“ wie Podcast und Chat-Schaubild (keine neue Zeile).
             turn.writing(new com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools(artifacts, targetNode,
                     turnChat, () -> showsArtifactsOf(host, targetNode, turnChat) ? host.focus() : null,
                     changed -> SwingUtilities.invokeLater(() -> {
                         if (showsArtifactsOf(host, targetNode, turnChat)) {
                             host.open(changed.id());
                         }
-                    })));
+                    }), runtime.workspace()::composeDiagram));
         }
         listener.turn = turn;
         send.setText(STOP);

@@ -49,9 +49,23 @@ final class ArtifactView extends JPanel {
     private final CachingMermaidImageRenderer mermaid = CachingMermaidImageRenderer.forChat();
     private ChatArtifact shown;
     private List<String> highlighted = List.of();
+    /** Der Abschnitt, den der Benutzer gerade bearbeitet, sonst {@code null}; Änderungen warten bis danach. */
+    private String editing;
+    private javax.swing.JTextArea editor;
+    private ChatArtifact pending;
+    private final Consumer<String> status;
+
+    static final String EDIT = "Abschnitt bearbeiten (Markdown)";
+    static final String SAVE = "Übernehmen (Strg+Enter)";
+    static final String CANCEL = "Verwerfen (Esc)";
 
     ArtifactView(ChatArtifactStore store, Path folder, String chatId, String artifactId) {
+        this(store, folder, chatId, artifactId, text -> { });
+    }
+
+    ArtifactView(ChatArtifactStore store, Path folder, String chatId, String artifactId, Consumer<String> status) {
         super(new BorderLayout());
+        this.status = status;
         this.store = store;
         this.folder = folder;
         this.chatId = chatId;
@@ -94,13 +108,30 @@ final class ArtifactView extends JPanel {
     }
 
     private void changed(ChatArtifactStore.Event event) {
-        if (!artifactId.equals(event.artifact().id()) || !chatId.equals(event.chatId())
-                || !java.util.Objects.equals(folder, event.folder())) {
+        if (!chatId.equals(event.chatId()) || !java.util.Objects.equals(folder, event.folder())) {
+            return;
+        }
+        if (!artifactId.equals(event.artifact().id())) {
+            // Eine eingebundene Grafik wurde geändert: das Dokument zeigt sie neu (Verweis, keine Kopie).
+            ChatArtifact current = shown;
+            if (current != null && current.kind() == ChatArtifact.Kind.DOCUMENT
+                    && com.aresstack.spaceharvester.app.chat.artifact.GraphicReferences.ids(current.content())
+                    .contains(event.artifact().id())) {
+                SwingUtilities.invokeLater(() -> {
+                    if (editing == null && shown != null) {
+                        render(shown);
+                    }
+                });
+            }
             return;
         }
         Runnable update = () -> {
             if (!event.changed().isEmpty() || highlighted.isEmpty()) {
                 highlighted = event.changed();
+            }
+            if (editing != null) {
+                pending = event.artifact();
+                return;
             }
             render(event.artifact());
             scrollTo(highlighted);
@@ -126,8 +157,9 @@ final class ArtifactView extends JPanel {
             List<String> definitions = artifact.document().referenceDefinitions();
             String references = definitions.isEmpty() ? "" : "\n\n" + String.join("\n", definitions) + "\n";
             for (SectionDocument.Section section : artifact.document().sections()) {
-                JComponent block = block(section.markdown() + references, theme,
-                        highlighted.contains(section.id()));
+                JComponent block = block(com.aresstack.spaceharvester.app.chat.artifact.GraphicReferences.inline(
+                        section.markdown(), this::svgOf) + references, theme, highlighted.contains(section.id()));
+                ((Section) block).pen(() -> edit(section.id()));
                 block.setName(section.id());
                 blocks.put(section.id(), block);
                 column.add(block);
@@ -135,6 +167,12 @@ final class ArtifactView extends JPanel {
         }
         column.revalidate();
         column.repaint();
+    }
+
+    /** Das SVG einer Grafik des Chats, sonst {@code null}. */
+    private String svgOf(String graphicId) {
+        ChatArtifact graphic = store.read(folder, chatId, graphicId);
+        return graphic == null || graphic.kind() != ChatArtifact.Kind.GRAPHIC ? null : graphic.current().svg();
     }
 
     private JComponent block(String markdown, MarkdownTheme theme, boolean changed) {
@@ -145,6 +183,112 @@ final class ArtifactView extends JPanel {
                 BorderFactory.createMatteBorder(0, 3, 0, 0, changed ? CHANGED : Comic.SURFACE),
                 BorderFactory.createEmptyBorder(2, 9, 2, 0)));
         return block;
+    }
+
+    /**
+     * Öffnet das Markdown eines Abschnitts zum Bearbeiten (ADR 0045, Abschnitt 5: Stift am Abschnitt). Übernehmen
+     * schreibt eine Revision des Benutzers, aber nur auf den Stand, den er gesehen hat; hat die KI inzwischen
+     * geschrieben, bleibt der Editor offen und die Statuszeile sagt es.
+     */
+    void edit(String sectionId) {
+        if (shown == null || editing != null) {
+            return;
+        }
+        JComponent block = blocks.get(sectionId);
+        SectionDocument.Section section;
+        try {
+            section = shown.document().section(sectionId);
+        } catch (SectionDocument.SectionException gone) {
+            return;
+        }
+        editing = sectionId;
+        // Nur Leerraum am Ende weg: ein eingerückter Codeblock am Anfang bleibt beim unveränderten Übernehmen gleich.
+        editor = new javax.swing.JTextArea(section.markdown().stripTrailing());
+        editor.setLineWrap(true);
+        editor.setWrapStyleWord(true);
+        editor.setFont(Comic.regular(14f));
+        editor.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+        com.aresstack.spaceharvester.app.ui.controls.FlatIconButton save =
+                new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(
+                        com.aresstack.spaceharvester.app.ui.Glyph.ACCEPT, SAVE);
+        com.aresstack.spaceharvester.app.ui.controls.FlatIconButton cancel =
+                new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(
+                        com.aresstack.spaceharvester.app.ui.Glyph.CANCEL, CANCEL);
+        save.addActionListener(event -> saveEdit());
+        cancel.addActionListener(event -> closeEditor());
+        editor.getInputMap().put(javax.swing.KeyStroke.getKeyStroke("control ENTER"), "uebernehmen");
+        editor.getActionMap().put("uebernehmen", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent event) {
+                saveEdit();
+            }
+        });
+        editor.getInputMap().put(javax.swing.KeyStroke.getKeyStroke("ESCAPE"), "verwerfen");
+        editor.getActionMap().put("verwerfen", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent event) {
+                closeEditor();
+            }
+        });
+        JPanel buttons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 3, 0));
+        buttons.setOpaque(false);
+        buttons.add(save);
+        buttons.add(cancel);
+        JPanel box = new JPanel(new BorderLayout(0, 4)) {
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
+        box.setName(sectionId);
+        box.setOpaque(false);
+        box.setAlignmentX(LEFT_ALIGNMENT);
+        box.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 3, 1, 1, CHANGED),
+                BorderFactory.createEmptyBorder(4, 4, 4, 4)));
+        box.add(editor, BorderLayout.CENTER);
+        box.add(buttons, BorderLayout.SOUTH);
+        int index = java.util.Arrays.asList(column.getComponents()).indexOf(block);
+        column.remove(index);
+        column.add(box, index);
+        column.revalidate();
+        column.repaint();
+        editor.requestFocusInWindow();
+    }
+
+    /** Für Tests: der offene Editor eines Abschnitts, sonst {@code null}. */
+    javax.swing.JTextArea editor() {
+        return editor;
+    }
+
+    /** Übernimmt den bearbeiteten Abschnitt als Revision des Benutzers. */
+    void saveEdit() {
+        if (editing == null || shown == null) {
+            return;
+        }
+        String id = editing;
+        String text = editor.getText();
+        ChatArtifactStore.WriteResult result = store.edit(folder, chatId, artifactId, shown.revision(),
+                ChatArtifact.Origin.USER, "vom Benutzer bearbeitet", document -> document.replaceSection(id, text));
+        if (!result.success()) {
+            status.accept(result.reason().contains("inzwischen geändert")
+                    ? "Der Abschnitt wurde inzwischen geändert. Text kopieren, verwerfen und neu bearbeiten."
+                    : result.reason());
+            return;
+        }
+        highlighted = result.changed();
+        pending = result.artifact();
+        closeEditor();
+    }
+
+    /** Verwirft die Bearbeitung (Esc). */
+    void closeEditor() {
+        editing = null;
+        editor = null;
+        ChatArtifact next = pending != null ? pending : shown;
+        pending = null;
+        if (next != null) {
+            render(next);
+        }
     }
 
     private void scrollTo(List<String> ids) {
@@ -162,9 +306,10 @@ final class ArtifactView extends JPanel {
         });
     }
 
-    /** Ein Abschnitt: so hoch wie sein Markdown bei der Breite der Spalte. */
+    /** Ein Abschnitt: so hoch wie sein Markdown bei der Breite der Spalte; rechts der Stift zum Bearbeiten. */
     private static final class Section extends JPanel {
         private final MarkdownMessageView view;
+        private JComponent pen;
 
         Section(MarkdownMessageView view) {
             super(new BorderLayout());
@@ -172,6 +317,18 @@ final class ArtifactView extends JPanel {
             setOpaque(false);
             setAlignmentX(LEFT_ALIGNMENT);
             add(view, BorderLayout.CENTER);
+        }
+
+        void pen(Runnable edit) {
+            com.aresstack.spaceharvester.app.ui.controls.FlatIconButton button =
+                    new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(
+                            com.aresstack.spaceharvester.app.ui.Glyph.PENCIL, EDIT);
+            button.addActionListener(event -> edit.run());
+            JPanel holder = new JPanel(new BorderLayout());
+            holder.setOpaque(false);
+            holder.add(button, BorderLayout.NORTH);
+            pen = holder;
+            add(holder, BorderLayout.EAST);
         }
 
         @Override
@@ -186,8 +343,10 @@ final class ArtifactView extends JPanel {
                 width = 600;
             }
             Insets own = getInsets();
-            int inner = Math.max(1, width - own.left - own.right);
-            return new Dimension(width, own.top + own.bottom + view.preferredHeightForWidth(inner));
+            int penWidth = pen == null ? 0 : pen.getPreferredSize().width;
+            int inner = Math.max(1, width - own.left - own.right - penWidth);
+            int height = Math.max(view.preferredHeightForWidth(inner), pen == null ? 0 : pen.getPreferredSize().height);
+            return new Dimension(width, own.top + own.bottom + height);
         }
 
         @Override
