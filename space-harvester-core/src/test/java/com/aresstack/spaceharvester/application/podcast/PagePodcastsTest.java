@@ -197,6 +197,10 @@ class PagePodcastsTest {
                 .containsExactly("Einleitung", "Ablauf");
         PodcastWriter.Material material = PagePodcasts.material(root, List.of(), List.of(), small);
         assertThat(material.stories().get(1).text()).hasSizeLessThanOrEqualTo(12).endsWith("…");
+        // dieselbe Menge gilt auch beim Planen und Schreiben, kein zweites festes Kürzen dahinter
+        assertThat(material.storyChars()).isEqualTo(12);
+        assertThat(PagePodcasts.material(root, List.of(), List.of(), new PagePodcasts.Reading(9000, 1)).storyChars())
+                .isEqualTo(9000);
         PodcastPlan plan = new PodcastPlan("Nordlicht", List.of(
                 new PodcastPlan.Topic("Ablauf", "", 0.5, List.of(), List.of(2))), List.of());
         PagePodcasts.Span told = PagePodcasts.coverage(root, plan, small).get(0);

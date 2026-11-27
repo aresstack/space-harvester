@@ -94,7 +94,7 @@ public final class PagePodcasts {
     /** Was von der Seite gelesen wird; die Einstellung kann sich jederzeit ändern. */
     private volatile Supplier<Reading> reading = () -> Reading.DEFAULT;
 
-    private record Remembered(long at, Optional<PodcastWriter.Material> material) {
+    private record Remembered(long at, Reading reading, Optional<PodcastWriter.Material> material) {
     }
 
     /**
@@ -437,14 +437,16 @@ public final class PagePodcasts {
     private Optional<PodcastWriter.Material> material(AccessContext caller, String sourceId, String pageId) {
         String key = key(caller, sourceId, pageId);
         long now = clock.getAsLong();
+        Reading current = reading.get();
         Remembered known = remembered.get(key);
-        if (known != null && now - known.at() < MATERIAL_MILLIS) {
+        // Geänderte Lesemengen gelten sofort: das gemerkte Material passt nur zu denselben Einstellungen.
+        if (known != null && now - known.at() < MATERIAL_MILLIS && known.reading().equals(current)) {
             return known.material();
         }
         Optional<PodcastWriter.Material> material = pages.page(caller, sourceId, pageId)
                 .map(page -> material(page, children(caller, sourceId, pageId),
-                        safe(() -> pages.ancestors(caller, sourceId, pageId)), reading.get()));
-        remembered.put(key, new Remembered(now, material));
+                        safe(() -> pages.ancestors(caller, sourceId, pageId)), current));
+        remembered.put(key, new Remembered(now, current, material));
         return material;
     }
 
@@ -609,7 +611,7 @@ public final class PagePodcasts {
             overview.append(" Anfang der Seite: ").append(PodcastWriter.cut(start, 600));
         }
         return new PodcastWriter.Material(overview.toString(), stories, "Seite „" + page.title() + "“",
-                PodcastWriter.Format.EXPLAINER);
+                PodcastWriter.Format.EXPLAINER).withStoryChars(reading.sectionChars());
     }
 
     /** Die Fassung des Materials: ändert sich der Inhalt, ändert sie sich. */
