@@ -91,7 +91,7 @@ public final class SearchView implements View {
     /** Suchmethode „Nur Überschriften durchsuchen“. */
     static final String HEADINGS_ONLY = "Nur Überschriften durchsuchen";
     static final String HEADINGS_ONLY_TIP = "Sucht nur in Seitentiteln und Überschriften, nicht im Fließtext; nur im "
-            + "lokalen Index";
+            + "lokalen Index und immer als Schlagwortsuche";
     /** Ein Satz, wie bei den Nachbarseiten. */
     static final String TERM_PAGES_TIP = "Nennt die Anfrage einen bestätigten Fachbegriff, kommen Seiten dazu, auf "
             + "denen der Wissensgraph Aussagen zu ihm belegt";
@@ -1519,7 +1519,8 @@ public final class SearchView implements View {
     private java.util.function.Consumer<SearchLocation> searchLocationListener = location -> { };
 
     record SearchLocation(String text, List<Explorer.Scope> area, boolean technical, boolean semantic,
-                          boolean neighbors, boolean synonyms, boolean termPages, Set<DocumentKind> kinds, String label) {
+                          boolean neighbors, boolean synonyms, boolean termPages, Set<DocumentKind> kinds, String label,
+                          boolean headingsOnly) {
         SearchLocation {
             area = List.copyOf(area);
             kinds = Set.copyOf(kinds);
@@ -1537,7 +1538,7 @@ public final class SearchView implements View {
                     .collect(java.util.stream.Collectors.toSet());
             searchLocationListener.accept(new SearchLocation(text, area, technicalTerms.isSelected(),
                     semantic.isSelected(), neighbors.isSelected(), glossarySynonyms.isSelected(), termPages.isSelected(),
-                    selectedKinds, "Suche: " + visitName(new Visit(text, area))));
+                    selectedKinds, "Suche: " + visitName(new Visit(text, area)), headingsOnly.isSelected()));
         }
     }
 
@@ -1553,6 +1554,7 @@ public final class SearchView implements View {
             neighbors.setSelected(location.neighbors());
             glossarySynonyms.setSelected(location.synonyms());
             termPages.setSelected(location.termPages());
+            headingsOnly.setSelected(location.headingsOnly());
             kindBoxes.forEach((kind, box) -> box.setSelected(location.kinds().contains(kind)));
             search();
         } finally {
@@ -1923,7 +1925,8 @@ public final class SearchView implements View {
     private void mode() {
         boolean terms = technicalTerms.isSelected();
         modeLabel.setText(terms ? TECHNICAL_TERMS_MODE
-                : (semantic.isSelected() ? "Modus: Semantische Suche" : "Modus: Schlagwortsuche")
+                : (semantic.isSelected() && !headingsOnly.isSelected() ? "Modus: Semantische Suche"
+                        : "Modus: Schlagwortsuche")
                 + (headingsOnly.isSelected() ? " + nur Überschriften" : "")
                 + (neighbors.isSelected() && neighbors.isEnabled() ? " + Nachbarseiten" : "")
                 + (synonymsOn() ? " + Synonyme" : "")
@@ -2206,7 +2209,8 @@ public final class SearchView implements View {
     /** Startet die gebaute Anfrage: Schlagwortsuche oder semantisch. */
     private void run(AppRuntime runtime, KeywordSearch.Query q, String text) {
         started(runtime, text);
-        if (semantic.isSelected()) {
+        // Nur Überschriften kann allein die Schlagwortsuche; die Vektoren gehören zum ganzen Inhalt.
+        if (semantic.isSelected() && !q.headingsOnly()) {
             progressive(runtime, q);
             checkSynonyms(runtime, q, request);
             return;

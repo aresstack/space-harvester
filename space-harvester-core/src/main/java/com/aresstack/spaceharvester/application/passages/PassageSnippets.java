@@ -72,8 +72,9 @@ public final class PassageSnippets implements PageTextIndex {
     public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, PageSet pages,
                               Set<com.aresstack.spaceharvester.application.query.DocumentKind> kinds, Fields fields,
                               int limit) {
+        // Nur Überschriften: der Auszug des Index steht schon an der passenden Überschrift und bleibt.
         return fields == Fields.ALL ? search(text, sourceIds, spaces, pages, kinds, limit)
-                : refine(text, index.search(text, sourceIds, spaces, pages, kinds, fields, limit));
+                : index.search(text, sourceIds, spaces, pages, kinds, fields, limit);
     }
 
     private List<Match> refine(String text, List<Match> matches) {
