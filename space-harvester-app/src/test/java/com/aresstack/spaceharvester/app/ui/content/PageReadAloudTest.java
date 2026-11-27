@@ -41,6 +41,14 @@ class PageReadAloudTest {
             assertThat(fake.spoken.get(0)).isEqualTo(TEXT);
             assertThat(reading.orb().getToolTipText()).isEqualTo(PageReadAloud.PAUSE_TIP);
 
+            // der gerade erklingende Satz wird hervorgehoben wie im Chat (gemeinsamer ReadAloudMarker)
+            int sentence = TEXT.indexOf("Erst prüft");
+            SwingUtilities.invokeAndWait(() -> reading.playing(sentence,
+                    sentence + "Erst prüft der Nachtlauf Nordlicht den Spool, dann startet er.".length(), 0));
+            String[] marked = new String[1];
+            SwingUtilities.invokeAndWait(() -> marked[0] = reading.marked());
+            assertThat(marked[0]).isEqualTo("Erst prüft der Nachtlauf Nordlicht den Spool, dann startet er");
+
             SwingUtilities.invokeAndWait(reading::toggle);
             assertThat(reading.paused()).isTrue();
             assertThat(fake.calls).contains("pause");
@@ -75,6 +83,15 @@ class PageReadAloudTest {
             });
             assertThat(fake.await(3)).isTrue();
             assertThat(fake.spoken.get(2)).isEqualTo("Störungen\nBei Störungen die Bereitschaft anrufen.");
+            // die Hervorhebung bleibt an der angeklickten Überschrift, nicht im Inhaltsverzeichnis
+            int[] markAt = new int[] {-1};
+            SwingUtilities.invokeAndWait(() -> {
+                reading.playing(0, "Störungen".length(), 0);
+                for (javax.swing.text.Highlighter.Highlight highlight : pane.getHighlighter().getHighlights()) {
+                    markAt[0] = highlight.getStartOffset();
+                }
+            });
+            assertThat(markAt[0]).isEqualTo(TEXT.indexOf("\nStörungen\nBei") + 1);
 
             // eine andere Seite beendet das Vorlesen
             SwingUtilities.invokeAndWait(() -> reading.speechText("Eine andere Seite."));
