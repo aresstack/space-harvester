@@ -1164,6 +1164,8 @@ public final class PageDetailPanel extends JPanel {
         graphHelp.setVisible(false);
         standingTrailing.setOpaque(false);
         standingTrailing.setVisible(false);
+        // Die ?-Hilfe der Reiter steht unten rechts in der Ecke der Leiste, wie bei den Aufträgen (Angelo 27.11.2026).
+        standingTrailing.add(Comic.row(standingHelp, glossaryHelp, graphHelp), BorderLayout.EAST);
         standingFoot = new TabFoot(standing.tabs().detachBar(), standingTrailing);
         deck.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
@@ -3520,7 +3522,7 @@ public final class PageDetailPanel extends JPanel {
         } else {
             folderFoot.reclaimTrailing();
         }
-        standingTrailing.setVisible(standingFootShown && folder != null);
+        standingTrailing.setVisible(standingFootShown);
         JComponent shown = EXPORT.equals(selected) ? exportFoot
                 : standingFootShown ? standingFoot
                 : ANALYSES.equals(selected) && PAGE.equals(pageCard) && !wide ? analysisFoot
@@ -6358,8 +6360,7 @@ public final class PageDetailPanel extends JPanel {
         return Comic.row(analysisActions, advancedActions, sourceView.tools(), sourceChanges.tools(),
                 areaView.tools(), areaPodcast.tools(),
                 sourceProperties.tools(), readingHelp,
-                statementsHelp,
-                standingHelp, glossaryHelp, graphHelp, star, more);
+                statementsHelp, star, more);
     }
 
     /** Return the existing document-history control for the fixed viewer header. */
