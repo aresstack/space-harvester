@@ -186,8 +186,19 @@ public final class PillTabs extends JPanel {
             button.setSelected(true);
             cards.show(deck, name);
             listener.accept(name);
+            observers.forEach(observer -> observer.accept(name));
         }
     }
+
+    /**
+     * Ein weiterer Beobachter der Wahl neben dem Besitzer ({@link #onSelect}), etwa eine Reiterzeile an anderer
+     * Stelle, die dieselbe Wahl zeigt. Er wird nach dem Besitzer gerufen.
+     */
+    public void alsoOnSelect(Consumer<String> observer) {
+        observers.add(java.util.Objects.requireNonNull(observer, "observer"));
+    }
+
+    private final java.util.List<Consumer<String>> observers = new java.util.ArrayList<>();
 
     public String selected() {
         return current;
