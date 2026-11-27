@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.jobs.JobArea;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
@@ -595,8 +596,8 @@ public final class ChangeLog implements AutoCloseable {
             throw new SummaryUnavailableException(SummaryUnavailableException.Reason.NO_MODEL, sourceId);
         }
         Summaries runtime = summaries;
-        Map<String, String> parameters = spaceKey == null ? Map.of(UPDATE_PARAMETER, update)
-                : Map.of(UPDATE_PARAMETER, update, SPACE_PARAMETER, spaceKey);
+        Map<String, String> parameters = JobArea.with(spaceKey == null ? Map.of(UPDATE_PARAMETER, update)
+                : Map.of(UPDATE_PARAMETER, update, SPACE_PARAMETER, spaceKey), levelArea(sourceId, spaceKey));
         synchronized (summarizing) {
             // Kein Doppelstart (die Leseansicht stößt „Zusammenfassen“ selbst an, auch aus zwei Fenstern): Wartet oder
             // läuft der Auftrag für dieses Update in dieser Ebene schon, ist er die Antwort.
@@ -637,7 +638,8 @@ public final class ChangeLog implements AutoCloseable {
                     Map<String, String> names = spaceNames(sourceId, reportSpaces);
                     ThematicSummarizer.Result result = new UpdateSummarizer(runtime.model(), runtime.released(),
                             new SummaryChildJobs(runtime.jobs(), runtime.model(), runtime.clock(),
-                                    JobType.UPDATE_SUMMARY, context.jobId(), sourceId, partition, caller.jobOwner()))
+                                    JobType.UPDATE_SUMMARY, context.jobId(), sourceId, partition, caller.jobOwner(),
+                                    parameters.get(JobArea.PARAMETER)))
                             .withPlanner(runtime.planner())
                             .summarize(report, page -> releasedPath(page, visible, runtime.released()), text, names,
                                     context);
@@ -798,7 +800,9 @@ public final class ChangeLog implements AutoCloseable {
         requireReadablePages(runtime, area(caller, stock, selection, resolvedNow), sourceId);
         SummaryScope.Selected scope = SummaryScope.selection(caller, selection);
         String spaceKey = areaSpace(selection);
-        Map<String, String> parameters = Map.of(AREA_PARAMETER, scope.key());
+        String area = spaceKey == null || selection.roots().getFirst().pageId() != null
+                ? areaLabel(sourceId, selection) : null;
+        Map<String, String> parameters = JobArea.with(Map.of(AREA_PARAMETER, scope.key()), area);
         synchronized (summarizing) {
             for (JobStatus open : runtime.jobs().listAll(JobType.UPDATE_SUMMARY)) {
                 if (!open.state().terminal() && !open.cancelRequested()
@@ -848,7 +852,8 @@ public final class ChangeLog implements AutoCloseable {
                 try {
                     result = new AreaSummarizer(runtime.model(), runtime.released(),
                             new SummaryChildJobs(runtime.jobs(), runtime.model(), runtime.clock(),
-                                    JobType.UPDATE_SUMMARY, context.jobId(), sourceId, spaceKey, caller.jobOwner()),
+                                    JobType.UPDATE_SUMMARY, context.jobId(), sourceId, spaceKey, caller.jobOwner(),
+                                    area),
                             runtime.planner())
                             .summarize(pages, text, names, unstored, context);
                 } catch (com.aresstack.spaceharvester.ai.AiServiceException e) {
@@ -897,6 +902,44 @@ public final class ChangeLog implements AutoCloseable {
     }
 
     /** Der Space einer Auswahl aus einer Wurzel mit Space, sonst {@code null} (ganze Quelle oder mehrere Wurzeln). */
+    /**
+     * Der Bereich einer Ebene in Worten für die Auftragsliste ({@link JobArea}): die ganze Quelle oder eine Seite samt
+     * Unterseiten; {@code null} für einen ganzen Space, den der Auftrag als Partition trägt.
+     */
+    private String levelArea(String sourceId, String spaceKey) {
+        ChangeLevel level = ChangeLevel.of(spaceKey);
+        if (level.spaceKey() == null && level.rootPageId() == null) {
+            return JobArea.WHOLE_SOURCE;
+        }
+        return level.rootPageId() == null ? null
+                : (level.spaceKey() == null ? "" : level.spaceKey() + " ") + "ab „"
+                + pageTitle(new PageKey(sourceId, level.rootPageId())) + "“";
+    }
+
+    /**
+     * Der Bereich einer Auswahl in Worten für die Auftragsliste ({@link JobArea}): je Wurzel der Space, eine Seite mit
+     * „ab „Titel““, eine ganze Quelle als „alle Spaces“; Wurzeln einer anderen Quelle mit ihrer Quelle davor.
+     */
+    private String areaLabel(String sourceId, com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        List<String> parts = new ArrayList<>();
+        for (com.aresstack.spaceharvester.application.holdings.Selection.Root root : selection.roots()) {
+            String part = root.spaceKey() == null ? JobArea.WHOLE_SOURCE : root.pageId() == null ? root.spaceKey()
+                    : root.spaceKey() + " ab „" + pageTitle(new PageKey(root.sourceId(), root.pageId())) + "“";
+            parts.add(root.sourceId().equals(sourceId) ? part : root.sourceId() + " / " + part);
+        }
+        return String.join(", ", new LinkedHashSet<>(parts));
+    }
+
+    /** Der Titel einer Seite aus dem Cache, sonst „Seite“ und ihre ID. */
+    private String pageTitle(PageKey key) {
+        try {
+            return headers.apply(key).map(found -> found.metadata().title()).filter(title -> !title.isBlank())
+                    .orElse("Seite " + key.pageId());
+        } catch (RuntimeException e) {
+            return "Seite " + key.pageId();
+        }
+    }
+
     private static String areaSpace(com.aresstack.spaceharvester.application.holdings.Selection selection) {
         return selection.roots().size() == 1 ? selection.roots().getFirst().spaceKey() : null;
     }

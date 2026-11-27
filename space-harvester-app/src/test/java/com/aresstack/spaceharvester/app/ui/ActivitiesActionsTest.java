@@ -68,7 +68,8 @@ class ActivitiesActionsTest {
                 }
             }
         }
-        assertThat(ActivitiesView.SLOTS).isEqualTo(5 + 1 + 2 + 4);
+        assertThat(ActivitiesView.SLOTS).isEqualTo(5 + 1 + 2 + 1);
+        assertThat(ActivitiesView.CONTROL_SLOTS).isEqualTo(ActivitiesView.ROW_CONTROLS.size());
     }
 
     @Test
@@ -527,6 +528,38 @@ class ActivitiesActionsTest {
         assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.PAUSED, false))).isFalse();
         assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.RUNNING, false))).isFalse();
         assertThat(ActivitiesView.finished(job(JobType.EXPORT, JobState.QUEUED, false))).isFalse();
+    }
+
+    /**
+     * Angelo 27.11.2026: Wiederholen, Anhalten ⇄ Fortsetzen und Löschen stehen in jeder Zeile links neben dem Balken,
+     * auch schmal, belegt wie die Zustandsplätze.
+     */
+    @Test
+    void retryPlayPauseAndDeleteStandInEveryRow() {
+        for (JobState state : JobState.values()) {
+            JobStatus job = job(JobType.EXPORT, state, false);
+            List<RowActions.Action> slots = ActivitiesView.stateActions(job, a -> { });
+            List<RowActions.Action> controls = ActivitiesView.controls(slots);
+            assertThat(controls).as(state.name()).hasSize(ActivitiesView.CONTROL_SLOTS);
+            assertThat(controls.get(0)).isSameAs(slots.get(ActivitiesView.Slot.RETRY.ordinal()));
+            assertThat(controls.get(1)).isSameAs(slots.get(ActivitiesView.Slot.PLAY_PAUSE.ordinal()));
+            assertThat(controls.get(2)).isSameAs(slots.get(ActivitiesView.Slot.DELETE.ordinal()));
+            assertThat(controls.get(2).enabled()).as("Löschen geht immer").isTrue();
+        }
+        assertThat(ActivitiesView.controls(ActivitiesView.stateActions(job(JobType.EXPORT, JobState.RUNNING, false),
+                a -> { })).get(1).tooltip()).startsWith("Anhalten");
+    }
+
+    /** Angelo 27.11.2026: Ohne Space als Partition steht der Bereich des Auftrags in der Spalte „Space“. */
+    @Test
+    void theSpaceColumnShowsTheAreaOfAJobWithoutPartition() {
+        JobStatus whole = new JobStatus("j2", JobType.UPDATE_SUMMARY, "wiki", null, "local", JobState.COMPLETED,
+                new JobProgress(1, 1, 1, 0), null, false, Instant.EPOCH, null, null, null, null,
+                Map.of(com.aresstack.spaceharvester.application.jobs.JobArea.PARAMETER, "DEV, OPS"), false, false,
+                null);
+        assertThat(ActivitiesView.space(whole)).isEqualTo("DEV, OPS");
+        assertThat(ActivitiesView.where(whole)).isEqualTo("wiki / DEV, OPS");
+        assertThat(ActivitiesView.space(job(JobType.EXPORT, JobState.RUNNING, false))).isEqualTo("OPS");
     }
 
     private static JobStatus job(JobType type, JobState state, boolean pausing) {

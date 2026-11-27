@@ -77,9 +77,12 @@ public final class ChatTools {
 
     /**
      * So viele Treffer nennt die Suche höchstens über die Liste der Suchleiste hinaus (die Funde der progressiven Suche:
-     * Varianten, Bewertung, Nachbarn); die Liste der Suchleiste nennt sie immer ganz ({@link #barHits}).
+     * Varianten, Bewertung, Nachbarn); die Liste der Suchleiste nennt sie immer ganz ({@link #barResults}).
      */
     static final int SEARCH_HITS = 10;
+
+    /** Der Menüeintrag zum Indexieren einer Quelle im Baum, für den Hinweis bei Quellen ohne Online-Suche. */
+    static final String INDEX_ACTION = com.aresstack.spaceharvester.app.ui.Explorer.INDEX;
     /** Längstens so lange wartet ein Suchaufruf; danach zählen die bis dahin bewerteten Treffer. */
     static final long SEARCH_SECONDS = 60;
 
@@ -1011,7 +1014,8 @@ public final class ChatTools {
         }
         query = clampQuery(query);
         KeywordSearch.Query search = areaQuery(query, scope, live).withGlossarySynonyms(glossarySynonyms);
-        List<KeywordSearch.Hit> bar = barHits(search);
+        KeywordSearch.Results barResults = barResults(search);
+        List<KeywordSearch.Hit> bar = barResults == null ? List.of() : barResults.ranked();
         List<KeywordSearch.Hit> hits = listed(bar, ranked(search, neighbors, false));
         int most = bar.size() + SEARCH_HITS;
         StringBuilder b = new StringBuilder();
@@ -1029,7 +1033,50 @@ public final class ChatTools {
                 break;
             }
         }
-        return seen.isEmpty() ? "Keine Treffer im gewählten Bereich." : b.toString().stripTrailing();
+        String note = localOnlyNote(barResults);
+        String listing = seen.isEmpty() ? "Keine Treffer im gewählten Bereich." : b.toString().stripTrailing();
+        return note == null ? listing : listing + "\n" + note;
+    }
+
+    /**
+     * Welche Quellen nur in ihren indexierten Inhalten durchsucht wurden, weil sie keine Online-Suche haben
+     * ({@code SourceState.Status.INDEXED}). Ohne diese Zeile hielt das Modell „Keine Treffer“ für „gibt es nicht“,
+     * obwohl nicht indexierte Dokumente dieser Quellen gar nicht durchsucht waren. Der Benutzer muss erfahren, dass er
+     * sie zuerst indexieren muss (Angelo 27.11.2026).
+     */
+    String localOnlyNote(KeywordSearch.Results results) {
+        if (results == null) {
+            return null;
+        }
+        List<String> titles = new ArrayList<>();
+        for (KeywordSearch.SourceState state : results.sources()) {
+            if (state.status() == KeywordSearch.SourceState.Status.INDEXED) {
+                titles.add(sourceTitle(state.sourceId()));
+            }
+        }
+        return titles.isEmpty() ? null : localOnlyNote(titles);
+    }
+
+    /** Die Zeile für {@link #localOnlyNote(KeywordSearch.Results)} aus den Titeln der Quellen. */
+    static String localOnlyNote(List<String> titles) {
+        // Derselbe Menüeintrag wie im Baum (Explorer.INDEX).
+        return "Hinweis: " + String.join(", ", titles) + (titles.size() == 1 ? " kann" : " können")
+                + " nicht online durchsucht werden; durchsucht wurden dort nur indexierte Inhalte. Was nicht indexiert "
+                + "ist, findet die Suche nicht: Sage dem Benutzer, dass er die Quelle zuerst indexieren muss "
+                + "(Rechtsklick auf die Quelle › " + INDEX_ACTION + "), statt zu behaupten, es gebe nichts dazu.";
+    }
+
+    private String sourceTitle(String sourceId) {
+        try {
+            for (var source : workspace.sources()) {
+                if (source.id().equals(sourceId) && source.title() != null && !source.title().isBlank()) {
+                    return source.title();
+                }
+            }
+        } catch (RuntimeException e) {
+            // Ohne Katalog bleibt die Kennung.
+        }
+        return sourceId;
     }
 
     /**
@@ -1043,16 +1090,16 @@ public final class ChatTools {
      * Seitentitel, den die Suchleiste zeigte, kam so nicht in die Liste (Angelo 24.11.2026, „Team 10“). Scheitert die
      * Schlagwortsuche, bleibt die progressive Suche.
      */
-    private List<KeywordSearch.Hit> barHits(KeywordSearch.Query search) {
+    private KeywordSearch.Results barResults(KeywordSearch.Query search) {
         if (cancelled) {
-            return List.of();
+            return null;
         }
         try {
             return workspace.keywordSearchIn(java.util.UUID.randomUUID().toString(), search, null, SearchView.LIMIT,
-                    null).ranked();
+                    null);
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.INFO, "Schlagwortsuche nicht möglich ({0})", e.getClass().getName());
-            return List.of();
+            return null;
         }
     }
 
@@ -1188,7 +1235,8 @@ public final class ChatTools {
         String single = searched.size() == 1 ? searched.iterator().next() : null;
         KeywordSearch.Query search = new KeywordSearch.Query(query, single, single == null ? searched : Set.of(),
                 Set.of()).ofKinds(kinds).withGlossarySynonyms(arguments.path("synonyme").asBoolean(false));
-        List<KeywordSearch.Hit> bar = barHits(search);
+        KeywordSearch.Results barResults = barResults(search);
+        List<KeywordSearch.Hit> bar = barResults == null ? List.of() : barResults.ranked();
         List<KeywordSearch.Hit> hits = listed(bar, ranked(search, arguments.path("nachbarseiten").asBoolean(false),
                 arguments.path("fachbegriffe").asBoolean(false)));
         int most = bar.size() + SEARCH_HITS;
@@ -1207,8 +1255,10 @@ public final class ChatTools {
                 break;
             }
         }
-        return seen.isEmpty() ? "Keine Treffer in den Wissensquellen. Versuche andere Begriffe."
+        String note = localOnlyNote(barResults);
+        String listing = seen.isEmpty() ? "Keine Treffer in den Wissensquellen. Versuche andere Begriffe."
                 : b.toString().stripTrailing();
+        return note == null ? listing : listing + "\n" + note;
     }
 
     private static Set<String> strings(JsonNode node) {

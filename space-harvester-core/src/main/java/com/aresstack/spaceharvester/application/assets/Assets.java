@@ -3111,15 +3111,53 @@ public class Assets implements DocumentInventory {
     }
 
     private void leaveDescription(java.util.concurrent.atomic.AtomicInteger counter) {
-        if (counter == describingNow) {
-            describingNow.decrementAndGet();
-            return;
-        }
-        synchronized (lanes) {
-            if (counter.decrementAndGet() == 0) {
-                // Leere Spuren fallen weg.
-                lanes.values().removeIf(value -> value == counter);
+        try {
+            if (counter == describingNow) {
+                describingNow.decrementAndGet();
+                return;
             }
+            synchronized (lanes) {
+                if (counter.decrementAndGet() == 0) {
+                    // Leere Spuren fallen weg.
+                    lanes.values().removeIf(value -> value == counter);
+                }
+            }
+        } finally {
+            synchronized (descriptionFreed) {
+                descriptionFreed.notifyAll();
+            }
+        }
+    }
+
+    /** Meldet einen frei gewordenen Platz an Wartende von {@link #describeAttachment}. */
+    private final Object descriptionFreed = new Object();
+
+    /**
+     * Ein Bild, das der Benutzer selbst mitgibt (Chat-Anhang): keine Quelle, nichts abgelegt. Es zählt zu denselben
+     * gleichzeitigen Anfragen wie jede Bildbeschreibung ({@link ImageDescriber#parallel()}) und wartet auf einen freien
+     * Platz, statt abzulehnen; der Benutzer hat es eben angehängt.
+     *
+     * @throws ImageDescriptionException {@code NOT_CONFIGURED} ohne Vision-Modell
+     */
+    public String describeAttachment(byte[] image, String mediaType, String instruction) {
+        ImageDescriber model = describerInUse().orElseThrow(() -> new ImageDescriptionException(
+                ImageDescriptionException.Reason.NOT_CONFIGURED, "Kein Vision-Modell eingestellt", null));
+        java.util.concurrent.atomic.AtomicInteger slot;
+        synchronized (descriptionFreed) {
+            while ((slot = enterDescription(Math.max(1, model.parallel()))) == null) {
+                try {
+                    descriptionFreed.wait();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new ImageDescriptionException(ImageDescriptionException.Reason.FAILED,
+                            "Warten auf das Vision-Modell abgebrochen", e);
+                }
+            }
+        }
+        try {
+            return model.describe(image, mediaType, instruction);
+        } finally {
+            leaveDescription(slot);
         }
     }
 

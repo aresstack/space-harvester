@@ -322,14 +322,27 @@ class KeywordSearchDiscoveryTest {
     }
 
     @Test
-    void aConciseQueryGoesToTheSourceUnchanged() {
+    void aConciseQueryGoesToTheSourceUnchangedFirstThenWithRuleVariantsToFetchMore() {
+        // Angelo 27.11.2026: Die Online-Suche sammelt nur Seiten ein; Varianten ohne Modell holen auch Seiten, die
+        // nicht alle Begriffe enthalten. Treffer kommen weiter nur aus dem lokalen Index.
         wiki.results("Hashicorp Vault", "1");
 
         KeywordSearch.Results results = search(KeywordSearch.DEFAULT_MAX_QUERIES, ExcerptPriority.off())
                 .search(APP, KeywordSearch.Query.of("Hashicorp Vault"), null, 50);
 
-        assertThat(wiki.searches).containsExactly("Hashicorp Vault");
+        assertThat(wiki.searches).containsExactlyInAnyOrder("Hashicorp Vault", "Hashicorp", "Vault");
         assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("1");
+    }
+
+    @Test
+    void withoutALocalIndexAConciseQueryGetsNoVariantsBecauseTheirFindsWouldBeHits() {
+        wiki.results("Hashicorp Vault", "1").results("Hashicorp", "5");
+
+        KeywordSearch.Results results = new KeywordSearch(catalog, access)
+                .search(APP, KeywordSearch.Query.of("Hashicorp Vault"), null, 50);
+
+        assertThat(wiki.searches).containsExactly("Hashicorp Vault");
+        assertThat(results.ranked()).extracting(KeywordSearch.Hit::pageId).doesNotContain("5");
     }
 
     @Test
@@ -738,6 +751,39 @@ class KeywordSearchDiscoveryTest {
         assertThat(results.nextCursor()).isNull();
     }
 
+    @Test
+    void aWhollyLocalAndCurrentSourceIsNotAskedOnline() {
+        // Angelo 27.11.2026: lokal zuerst; online nur, wo Daten nicht lokal oder nicht aktuell vorliegen.
+        wiki.results("Wolkenpegel", "1");
+        cached.add("7");
+        KeywordSearch search = search(1, ExcerptPriority.off());
+        search.coverage((source, scope) -> new LocalCoverage.Coverage(true, Set.of("DEV")));
+
+        KeywordSearch.Results results = search.search(APP, KeywordSearch.Query.of("Wolkenpegel"), null, 50);
+
+        assertThat(wiki.searches).isEmpty();
+        assertThat(loads).isEmpty();
+        assertThat(results.sources()).extracting(KeywordSearch.SourceState::status)
+                .containsExactly(KeywordSearch.SourceState.Status.LOCAL);
+        assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("7");
+    }
+
+    @Test
+    void coveredSpacesAreLeftOutOfTheOnlineSearchAndLocalPagesAreNoProvisionalHits() {
+        wiki.results("Wolkenpegel", "1", "2");
+        KeywordSearch.Prefetch none = (caller, hits) -> KeywordSearch.Prefetch.Fill.NONE;
+        KeywordSearch search = new KeywordSearch(catalog, access, texts, none, 1, ExcerptPriority.off());
+        search.coverage((source, scope) -> new LocalCoverage.Coverage(false, Set.of("OPS")));
+        // Seite 2 liegt schon im lokalen Index, trifft dort aber nicht: kein Treffer, auch kein vorläufiger.
+        when(texts.inputSha256(new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "2")))
+                .thenReturn(Optional.of("abc"));
+
+        KeywordSearch.Results results = search.search(APP, KeywordSearch.Query.of("Wolkenpegel"), null, 50);
+
+        assertThat(wiki.spacesAsked).isNotEmpty().allSatisfy(spaces -> assertThat(spaces.excluded()).contains("OPS"));
+        assertThat(results.found()).extracting(KeywordSearch.Hit::pageId).containsExactly("1");
+    }
+
     private KeywordSearch search(int maxQueries, ExcerptPriority excerpts) {
         return new KeywordSearch(catalog, access, texts, prefetch, maxQueries, excerpts);
     }
@@ -747,6 +793,7 @@ class KeywordSearchDiscoveryTest {
 
         private final Map<String, List<String>> results = new java.util.concurrent.ConcurrentHashMap<>();
         private final List<String> searches = Collections.synchronizedList(new ArrayList<>());
+        private final List<SearchSpaces> spacesAsked = Collections.synchronizedList(new ArrayList<>());
         private volatile String failing;
 
         FakeSource results(String query, String... pageIds) {
@@ -793,6 +840,7 @@ class KeywordSearchDiscoveryTest {
         @Override
         public List<SourceSearchMatch> searchPages(String text, int limit, SearchSpaces spaces) {
             searches.add(text);
+            spacesAsked.add(spaces);
             if (text.equals(failing)) {
                 throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE, "Zeitüberschreitung",
                         null);

@@ -14,6 +14,19 @@ public interface RoutedHttpPort extends AutoCloseable {
     CompletionStage<Response> requestOnceAsync(String method, URI uri, Map<String, String> headers,
                                                int maxBytes, Duration timeout);
 
+    /**
+     * Wie oben, mit einem Körper (etwa einem Formular); {@code body == null} heißt ohne Körper. Ohne Unterstützung
+     * scheitert die Stufe.
+     */
+    default CompletionStage<Response> requestOnceAsync(String method, URI uri, Map<String, String> headers,
+                                                       byte[] body, int maxBytes, Duration timeout) {
+        if (body == null) {
+            return requestOnceAsync(method, uri, headers, maxBytes, timeout);
+        }
+        return java.util.concurrent.CompletableFuture.failedFuture(
+                new UnsupportedOperationException("Transport kann keinen Körper senden"));
+    }
+
     @Override
     void close();
 

@@ -143,7 +143,9 @@ public record SearchRun(SearchRunId id, SearchRunId partOf, Kind kind, String ow
             /** Weder eigene Suche noch Index. */
             NOT_SUPPORTED,
             /** Die Quelle hat nicht oder fehlerhaft geantwortet. */
-            UNAVAILABLE
+            UNAVAILABLE,
+            /** Lokal vollständig und aktuell: nur der Index des Caches hat gesucht. */
+            LOCAL
         }
     }
 }

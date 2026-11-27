@@ -184,6 +184,30 @@ public class PageImageAnalysis {
                 java.util.function.Supplier<ImagePayload.Entry> image);
     }
 
+    /**
+     * Ein Bild, das der Benutzer selbst mitgibt (Chat-Anhang): Es gehört zu keiner Seite und keiner Quelle, also gilt
+     * keine Quellenfreigabe, und nichts wird abgelegt. {@code instruction} ist der Prompt des Aufrufers; die Antwort
+     * kommt gestreamt vom eingestellten Vision-Modell ({@link ImageDescriber#describe(byte[], String, String)}) und
+     * hat Vorrang vor dem Hintergrundlauf; es gilt die Grenze gleichzeitiger Anfragen ({@code ai.parallel}).
+     *
+     * @throws ImageDescriptionException {@code NOT_CONFIGURED} ohne Vision-Modell
+     */
+    public String describeAttachment(byte[] image, String mediaType, String instruction) {
+        Objects.requireNonNull(image, "image");
+        ImageDescriber model = assets.describerInUse().orElseThrow(() -> new ImageDescriptionException(
+                ImageDescriptionException.Reason.NOT_CONFIGURED, "Kein Vision-Modell eingestellt", null));
+        try (ModelPriority.Interactive ignored = priority.interactive()) {
+            prepare(model);
+            // Dieselbe Grenze gleichzeitiger Anfragen wie jede Bildbeschreibung (ai.parallel).
+            return assets.describeAttachment(image, mediaType, instruction);
+        }
+    }
+
+    /** Das eingestellte Vision-Modell, leer ohne Modell. */
+    public Optional<String> visionModel() {
+        return assets.describerInUse().map(ImageDescriber::modelVersion);
+    }
+
     /** Vorrang der interaktiven Beschreibungen vor dem Hintergrundlauf. */
     public ModelPriority priority() {
         return priority;

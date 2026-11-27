@@ -140,15 +140,26 @@ final class BscwWebDavSourceTest {
     }
 
     @Test
-    void titleLookupSearchesOnlyAlreadyKnownWebDavEntries() throws Exception {
+    void titleLookupUsesTheOnlineSearchAndKnownWebDavEntriesWithoutCrawling() throws Exception {
         KnowledgeSourcePort port = open("reader", "secret");
         KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource(
                 "bscw-test", "bscw", "BSCW", port);
         PageNavigationSource navigation = (PageNavigationSource) port;
 
+        // Seit der Online-Suche (27.11.2026) findet die Titelsuche auch nie aufgeklappte Einträge über die Namenssuche
+        // von BSCW, ohne den Baum zu durchlaufen: je Treffer nur eine Kopfdatenabfrage für seine Art, damit ein Ordner
+        // als Ordner öffnet und nicht als lesbarer Inhalt.
         assertThat(source.findByTitle("readme", com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
-                .isEmpty();
-        assertThat(propfinds).hasValue(0);
+                .extracting(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::title,
+                        com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::kind)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("readme.txt",
+                        com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode.Kind.FILE));
+        assertThat(searchForms).singleElement().satisfies(form -> assertThat(form).contains("qsmode=q_search_all"));
+        assertThat(propfinds).hasValue(1);
+        assertThat(source.findByTitle("Nested", com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
+                .extracting(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::kind)
+                .containsExactly(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode.Kind.FOLDER);
+        int beforeBrowsing = propfinds.get();
 
         navigation.children(NavigationNode.root("space:bscw-test", "BSCW", "bscw-test",
                 NavigationNode.Children.YES), "");
@@ -170,7 +181,8 @@ final class BscwWebDavSourceTest {
         assertThat(source.findByTitle("not-found",
                 com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
                 .isEmpty();
-        assertThat(propfinds).hasValue(1);
+        // Nach dem Aufklappen kennt die Quelle die Art der Einträge, nur das Aufklappen selbst fragt nach.
+        assertThat(propfinds).hasValue(beforeBrowsing + 1);
         assertThat(downloads).hasValue(0);
     }
 
@@ -731,6 +743,12 @@ final class BscwWebDavSourceTest {
         return all;
     }
 
+    private static SourceAdapter.Context context() {
+        return new SourceAdapter.Context(new ConfiguredSecrets(),
+                ProxyRoutes.from(ProxySettings.disabled()), "bscw-test-agent",
+                TrustBundles.NONE, null, ProxyCredentials.none());
+    }
+
     private KnowledgeSourcePort open(String username, String password) {
         ConfiguredSecrets secrets = new ConfiguredSecrets();
         secrets.put("bscw-test", username, password);
@@ -764,6 +782,9 @@ final class BscwWebDavSourceTest {
                 String depth = exchange.getRequestHeaders().getFirst("Depth");
                 String body = directoryResponse(path, "1".equals(depth));
                 respond(exchange, 207, body.getBytes(StandardCharsets.UTF_8), "application/xml");
+                return;
+            }
+            if (search(exchange, path)) {
                 return;
             }
             if ("GET".equals(exchange.getRequestMethod())) {
@@ -814,6 +835,88 @@ final class BscwWebDavSourceTest {
         } finally {
             exchange.close();
         }
+    }
+
+    /** Die Formulare, die die Schnellsuche an den Startordner geschickt hat. */
+    private final java.util.List<String> searchForms = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+    /**
+     * Die Schnellsuche der Weboberfläche, mit erfundenen Daten nachgebildet: Ordnerseite mit Formular-Token, Formular an
+     * den Startordner, zwei Weiterleitungen auf den Suchordner 900, dessen Seite die Treffer trägt.
+     */
+    private boolean search(HttpExchange exchange, String path) throws IOException {
+        String method = exchange.getRequestMethod();
+        String query = exchange.getRequestURI().getRawQuery();
+        if ("GET".equals(method) && "/sec/bscw.cgi/146377797".equals(path)) {
+            respond(exchange, 200, ("<html><form><input type=\"hidden\" name=\"bscw_v_post\" value=\"tok/1\" />"
+                    + "</form></html>").getBytes(StandardCharsets.UTF_8), "text/html; charset=UTF-8");
+            return true;
+        }
+        if ("POST".equals(method) && "/sec/bscw.cgi/146377797".equals(path)) {
+            String form = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            searchForms.add(form + "|" + exchange.getRequestHeaders().getFirst("Content-Type"));
+            exchange.getResponseHeaders().set("Location", "/sec/bscw.cgi/900?op=applyQuery");
+            respond(exchange, 303, new byte[0], "text/html");
+            return true;
+        }
+        if ("GET".equals(method) && "/sec/bscw.cgi/900".equals(path) && "op=applyQuery".equals(query)) {
+            exchange.getResponseHeaders().set("Location", "/sec/bscw.cgi/900");
+            respond(exchange, 303, new byte[0], "text/html");
+            return true;
+        }
+        if ("GET".equals(method) && "/sec/bscw.cgi/900".equals(path)) {
+            respond(exchange, 200, (BscwSearchPageTest.row("900", "666", "d666/readme.txt", "readme.txt",
+                    List.of("4", "Root"), "2026-11-17 18:00")
+                    + BscwSearchPageTest.row("900", "555", "d555/archive.zip", "archive.zip",
+                    List.of("4", "Root", "444", "Nested"), "2026-11-16 09:30")
+                    + BscwSearchPageTest.row("900", "444", "444", "Nested", List.of("4", "Root"),
+                    "2026-11-15 08:00"))
+                    .getBytes(StandardCharsets.UTF_8), "text/html; charset=UTF-8");
+            return true;
+        }
+        return false;
+    }
+
+    @Test
+    void searchesWithTheQuickSearchOfTheWebInterfaceAndHitsAreTheWebDavResources() throws Exception {
+        KnowledgeSourcePort port = open("reader", "secret");
+
+        List<com.aresstack.enterpriseai.source.api.SourceSearchHit> hits =
+                ((com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource) port)
+                        .search(new com.aresstack.enterpriseai.source.api.SourceQuery("Betriebshandbuch Nord", 10));
+
+        assertThat(hits).extracting(com.aresstack.enterpriseai.source.api.SourceSearchHit::title)
+                .containsExactly("readme.txt", "archive.zip", "Nested");
+        assertThat(hits.get(1).snippet()).isEqualTo("Root / Nested");
+        assertThat(hits.get(0).url().getRawPath()).isEqualTo("/sec/bscw.cgi/666");
+        assertThat(searchForms).singleElement().satisfies(form -> assertThat(form)
+                .contains("operation=op_qsearch", "bscw_v_post=tok%2F1", "query=Betriebshandbuch+Nord",
+                        "qstype=BscwSearch", "qsmode=q_search_content", "application/x-www-form-urlencoded"));
+        // Ein Treffer ist dieselbe Ressource wie im Baum: Kopfdaten über WebDAV.
+        ResourceMetadataSource metadata = (ResourceMetadataSource) port;
+        assertThat(metadata.resourceMetadata(metadata.localId(hits.get(0).resourceId())).title())
+                .isEqualTo("readme.txt");
+    }
+
+    @Test
+    void titleSearchAndTheSwitchedOffContentOptionAlsoSearchNames() throws Exception {
+        KnowledgeSourcePort port = open("reader", "secret");
+        ((com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource) port).search(
+                new com.aresstack.enterpriseai.source.api.SourceQuery("readme", 5).withTitleOnly(true));
+        assertThat(searchForms).singleElement().satisfies(form -> assertThat(form).contains("qsmode=q_search_all"));
+
+        SourceSettingsConfig config = new SourceSettingsConfig("bscw-test", "bscw", "Test", null,
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("rootUrl", root, "searchContentOnly", "false"));
+        KnowledgeSourcePort names = new BscwSourceAdapter().open(config, context()).port();
+        ((com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource) names).search(
+                new com.aresstack.enterpriseai.source.api.SourceQuery("readme", 5));
+        assertThat(searchForms).hasSize(2).last().satisfies(form -> assertThat(form).contains("qsmode=q_search_all"));
+
+        assertThat(new BscwSourceAdapter().check(new SourceSettingsConfig("bscw-test", "bscw", "Test", null,
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.BASIC, "reader", "secret", null),
+                Map.of("rootUrl", root, "searchContentOnly", "vielleicht"))))
+                .contains("options.searchContentOnly muss true oder false sein");
     }
 
     private static boolean authorized(HttpExchange exchange) {

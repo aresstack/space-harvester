@@ -100,7 +100,7 @@ public final class Explorer {
      * Indexieren statt Herunterladen (Angelo, 20.11.2026): Erst indexierte Seiten findet die Suche im Volltext. Die
      * Knöpfe stehen nur im Kontextmenü, weil man meist alles indexiert.
      */
-    static final String INDEX = "Indexieren";
+    public static final String INDEX = "Indexieren";
     static final String INDEX_TIP = "Lädt den Knoten samt allem darunter vollständig und hält ihn bei jeder "
             + "Synchronisierung aktuell, auch neue Seiten; Bilder und Anhänge folgen danach";
     static final String UNINDEX = "Nicht mehr indexieren";

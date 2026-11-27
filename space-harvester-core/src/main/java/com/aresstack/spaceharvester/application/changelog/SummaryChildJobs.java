@@ -30,6 +30,8 @@ final class SummaryChildJobs implements ThematicSummarizer.Runner {
     private final String sourceId;
     private final String partitionKey;
     private final String owner;
+    /** Bereich des Oberauftrags in Worten ({@link com.aresstack.spaceharvester.application.jobs.JobArea}), oder null. */
+    private final String area;
     private final Semaphore lanes;
 
     /**
@@ -38,6 +40,12 @@ final class SummaryChildJobs implements ThematicSummarizer.Runner {
      */
     SummaryChildJobs(Jobs jobs, SummaryModel model, Clock clock, JobType type, String parentId, String sourceId,
                      String partitionKey, String owner) {
+        this(jobs, model, clock, type, parentId, sourceId, partitionKey, owner, null);
+    }
+
+    /** @param area Bereich des Oberauftrags in Worten; die Unteraufträge zeigen denselben in der Spalte „Space“ */
+    SummaryChildJobs(Jobs jobs, SummaryModel model, Clock clock, JobType type, String parentId, String sourceId,
+                     String partitionKey, String owner, String area) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.model = Objects.requireNonNull(model, "model");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -46,11 +54,25 @@ final class SummaryChildJobs implements ThematicSummarizer.Runner {
         this.sourceId = sourceId;
         this.partitionKey = partitionKey;
         this.owner = owner;
+        this.area = area;
         this.lanes = new Semaphore(Math.max(1, model.parallel()));
     }
 
     @Override
     public <T, R> List<R> run(List<T> items, java.util.function.IntFunction<String> title,
+                              java.util.function.BiFunction<T, com.aresstack.spaceharvester.application.jobs
+                                      .JobContext, R> work,
+                              com.aresstack.spaceharvester.application.jobs.JobContext context) {
+        return run(items, title, null, work, context);
+    }
+
+    /**
+     * @param extent wie viel ein Eintrag umfasst; der Unterauftrag zählt in dieser Einheit (Seiten eines Teils,
+     *             Teilergebnisse eines Zusammenführens), sonst eine Anfrage
+     */
+    @Override
+    public <T, R> List<R> run(List<T> items, java.util.function.IntFunction<String> title,
+                              java.util.function.ToIntFunction<T> extent,
                               java.util.function.BiFunction<T, com.aresstack.spaceharvester.application.jobs
                                       .JobContext, R> work,
                               com.aresstack.spaceharvester.application.jobs.JobContext context) {
@@ -78,14 +100,27 @@ final class SummaryChildJobs implements ThematicSummarizer.Runner {
             Map<String, String> parameters = new LinkedHashMap<>();
             parameters.put(ChangeLog.PARENT_PARAMETER, parentId);
             parameters.put(ChangeLog.STEP_PARAMETER, step);
+            if (area != null && !area.isBlank()) {
+                parameters.put(com.aresstack.spaceharvester.application.jobs.JobArea.PARAMETER, area);
+            }
             try {
                 children[i] = jobs.submit(type, sourceId, partitionKey, null, owner, parameters,
                         JobTask.blocking(child -> {
                             if (!claimed.get(index).compareAndSet(false, true)) {
                                 return;
                             }
-                            child.discovered(1);
-                            execute(item, work, reporting(child, context), results.get(index));
+                            if (extent == null) {
+                                child.discovered(1);
+                                execute(item, work, reporting(child, context, false), results.get(index));
+                                return;
+                            }
+                            // Echter Fortschritt (Angelo 27.11.2026: „bei Unteraufträgen immer nur 1 von 1“): Der
+                            // Unterauftrag zählt, was er umfasst, etwa die Seiten seines Teils; verlorene Seiten zählen
+                            // als Fehlschläge davon.
+                            int units = Math.max(1, extent.applyAsInt(item));
+                            child.discovered(units);
+                            execute(item, work, reporting(child, context, true), results.get(index));
+                            child.processed(units);
                         })).id();
                 try {
                     jobs.prioritize(children[i], owner);
@@ -263,13 +298,17 @@ final class SummaryChildJobs implements ThematicSummarizer.Runner {
      */
     private static com.aresstack.spaceharvester.application.jobs.JobContext reporting(
             com.aresstack.spaceharvester.application.jobs.JobContext child,
-            com.aresstack.spaceharvester.application.jobs.JobContext parent) {
+            com.aresstack.spaceharvester.application.jobs.JobContext parent, boolean sized) {
         return (com.aresstack.spaceharvester.application.jobs.JobContext) java.lang.reflect.Proxy.newProxyInstance(
                 com.aresstack.spaceharvester.application.jobs.JobContext.class.getClassLoader(),
                 new Class<?>[] {com.aresstack.spaceharvester.application.jobs.JobContext.class},
                 (proxy, method, args) -> {
                     if (method.getName().equals("incomplete") || method.getName().equals("record")) {
                         method.invoke(parent, args);
+                    }
+                    if (sized && (method.getName().equals("discovered") || method.getName().equals("processed"))) {
+                        // Anfragen und Teilungen zählen nicht; der Unterauftrag zählt seinen Umfang am Ende.
+                        return null;
                     }
                     try {
                         return method.invoke(child, args);

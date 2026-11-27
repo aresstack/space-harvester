@@ -442,11 +442,30 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             if (port instanceof SearchableKnowledgeSource searchable) {
                 int depth = Math.min(Math.max(limit * 4, 100), Math.max(limit, TITLE_SEARCH_DEPTH));
                 Map<String, PageNode> found = new LinkedHashMap<>();
+                if (port instanceof KnownTitleLookup known) {
+                    // BSCW: Schon beim Aufklappen gesehene Einträge zuerst, mit ihrer Art (Ordner oder Datei); die
+                    // Online-Suche ergänzt, was noch nie aufgeklappt wurde.
+                    for (SourcePartition partition : port.partitions()) {
+                        if (!spaces.permits(partition.key())) {
+                            continue;
+                        }
+                        for (KnowledgeResource resource : known.knownTitles(term, limit)) {
+                            PageMetadata metadata = pageMetadata(resource, partition.key());
+                            if (found.size() < limit) {
+                                found.putIfAbsent(metadata.pageId(), pageNode(metadata));
+                            }
+                        }
+                    }
+                }
                 for (SourceSearchHit hit : searchable.search(new SourceQuery(term, depth)
-                        .withIncludedPartitions(spaces.only()).withExcludedPartitions(spaces.excluded()))) {
-                    if (found.size() < limit && contains(hit.title(), needle)) {
-                        found.putIfAbsent(nativeId(hit.resourceId()),
-                                new PageNode(nativeId(hit.resourceId()), hit.title(), null, null));
+                        .withIncludedPartitions(spaces.only()).withExcludedPartitions(spaces.excluded())
+                        .withTitleOnly(port instanceof KnownTitleLookup))) {
+                    String id = nativeId(hit.resourceId());
+                    if (found.size() < limit && contains(hit.title(), needle) && !found.containsKey(id)) {
+                        PageNode node = titleMatch(id, hit);
+                        if (node != null) {
+                            found.put(id, node);
+                        }
                     }
                 }
                 return List.copyOf(found.values());
@@ -1509,6 +1528,22 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                     "Quelle kann Seiten nicht über ihre ID finden");
         }
         return single.resourceMetadata(pageId);
+    }
+
+    /**
+     * Ein Titeltreffer der Online-Suche. Kennt die Quelle die Art ihrer Einträge (BSCW: Ordner oder Datei), fragt sie
+     * die Art des Treffers nach, damit ein noch nie aufgeklappter Ordner als Ordner öffnet und nicht als lesbarer
+     * Inhalt. Lässt sich der Treffer nicht nachschlagen (gelöscht oder ohne Rechte), fällt er weg.
+     */
+    private PageNode titleMatch(String id, SourceSearchHit hit) {
+        if (!(port instanceof ResourceNodeKindSource presentation)) {
+            return new PageNode(id, hit.title(), null, null);
+        }
+        try {
+            return new PageNode(id, hit.title(), null, null, presentation.kind(hit.resourceId()));
+        } catch (KnowledgeSourceException unavailable) {
+            return null;
+        }
     }
 
     private PageNode node(NavigationNode node, String partitionKey) {

@@ -815,4 +815,56 @@ class ChatPanelTest {
         collect(container, javax.swing.JLabel.class, labels);
         return labels.stream().filter(label -> tooltip.equals(label.getToolTipText())).count();
     }
+
+    /** Bildanhang (Angelo 27.11.2026): Das Vision-Modell liest das Bild, sein Text steht unter „--- Anhang: …“. */
+    @Test
+    void imageAttachmentsAreReadByTheVisionModel() throws Exception {
+        Path png = home.resolve("tafel.png");
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB),
+                "png", png.toFile());
+        Path notes = Files.writeString(home.resolve("notiz.txt"), "Termin Freitag");
+        List<String> questions = new ArrayList<>();
+
+        String asked = ChatPanel.withAttachments("Was steht auf der Tafel?", List.of(png, notes), 10_000,
+                new ChatPanel.AttachmentImageReading("gemma4:12b", (bytes, type, instruction) -> {
+                    questions.add(instruction);
+                    return "Sprint-Ziele: Login fertig";
+                }));
+
+        assertThat(asked).isEqualTo("Was steht auf der Tafel?"
+                + "\n\n--- Anhang: tafel.png ---\n(Bildinhalt, abgelesen vom Vision-Modell gemma4:12b)\n"
+                + "Sprint-Ziele: Login fertig"
+                + "\n\n--- Anhang: notiz.txt ---\nTermin Freitag");
+        assertThat(questions).singleElement().asString().endsWith("Was steht auf der Tafel?");
+    }
+
+    /** Ohne Vision-Modell sagt der Anhang, wo es eingestellt wird, statt „nicht als Text lesbar“. */
+    @Test
+    void withoutVisionModelTheAttachmentSaysWhereToSetIt() throws Exception {
+        Path png = home.resolve("tafel.png");
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB),
+                "png", png.toFile());
+
+        String asked = ChatPanel.withAttachments("?", List.of(png), 10_000,
+                new ChatPanel.AttachmentImageReading(null, (bytes, type, instruction) -> {
+                    throw new AssertionError("ohne Modell geht nichts hinaus");
+                }));
+
+        assertThat(asked).endsWith(ChatPanel.NO_VISION_MODEL);
+    }
+
+    /** Antwortet das Vision-Modell nicht, steht der Grund im Anhang. */
+    @Test
+    void aFailingVisionModelIsNamedWithItsReason() throws Exception {
+        Path png = home.resolve("tafel.png");
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB),
+                "png", png.toFile());
+
+        String asked = ChatPanel.withAttachments("?", List.of(png), 10_000,
+                new ChatPanel.AttachmentImageReading("gemma", (bytes, type, instruction) -> {
+                    throw new IllegalStateException("Zeitüberschreitung");
+                }));
+
+        assertThat(asked).endsWith("(Bild: Das Vision-Modell gemma hat nicht geantwortet: Zeitüberschreitung)");
+    }
 }
