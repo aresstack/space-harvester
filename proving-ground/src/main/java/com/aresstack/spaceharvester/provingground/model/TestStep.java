@@ -5,12 +5,17 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * One step of a test case: Playwright's own {@code ActionInContext} as the recorder reports it
  * ({@code {"pageGuid": ..., "action": {"name": "click", "selector": "internal:role=button[name=\"Save\"i]", ...},
  * "startTime": ...}}). No own action model: the step keeps every field Playwright wrote, also those this class does
  * not know, and edits change single fields of the action. Immutable.
+ *
+ * <p>Only addition to Playwright's format: {@code stepId}, a stable id next to {@code pageGuid}. Subject matter kept
+ * apart from the actions (Given/When/Then, variables, the user a step runs as) refers to a step by it, so inserting,
+ * deleting and moving steps never breaks that link. Edits keep the id.</p>
  *
  * <p>Action names (Playwright 1.62): {@code openPage}, {@code closePage}, {@code navigate}, {@code click},
  * {@code hover}, {@code fill}, {@code press}, {@code check}, {@code uncheck}, {@code select}, {@code setInputFiles},
@@ -24,18 +29,26 @@ public final class TestStep {
         this.json = json;
     }
 
-    /** A step from Playwright's {@code ActionInContext} (copied). */
+    /** Field of the stable step id. */
+    public static final String STEP_ID = "stepId";
+
+    /** A step from Playwright's {@code ActionInContext} (copied); without a step id it gets a new one. */
     public static TestStep of(JsonObject actionInContext) {
         Objects.requireNonNull(actionInContext, "actionInContext");
         if (!actionInContext.has("action") || !actionInContext.get("action").isJsonObject()) {
             throw new IllegalArgumentException("not a Playwright ActionInContext: " + actionInContext);
         }
-        return new TestStep(actionInContext.deepCopy());
+        JsonObject copy = actionInContext.deepCopy();
+        if (!copy.has(STEP_ID) || !copy.get(STEP_ID).isJsonPrimitive()) {
+            copy.addProperty(STEP_ID, UUID.randomUUID().toString());
+        }
+        return new TestStep(copy);
     }
 
     /** A new action on the page {@code pageGuid}, in Playwright's format (for steps added in the editor). */
     public static TestStep action(String pageGuid, JsonObject action) {
         JsonObject json = new JsonObject();
+        json.addProperty(STEP_ID, UUID.randomUUID().toString());
         json.addProperty("pageGuid", pageGuid);
         JsonObject copy = action.deepCopy();
         if (!copy.has("signals")) {
@@ -85,6 +98,18 @@ public final class TestStep {
         action.addProperty("name", name);
         action.addProperty("selector", selector);
         return action;
+    }
+
+    /** The stable id of the step (survives edits, inserting, deleting and moving). */
+    public String id() {
+        return string(json, STEP_ID);
+    }
+
+    /** This step carrying the id of {@code other} (Playwright merged further input into that step). */
+    public TestStep withIdOf(TestStep other) {
+        JsonObject copy = json.deepCopy();
+        copy.addProperty(STEP_ID, other.id());
+        return new TestStep(copy);
     }
 
     /** The page the step runs on (Playwright's page guid of the recording; only its identity matters). */
