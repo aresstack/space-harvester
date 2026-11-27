@@ -70,6 +70,34 @@ class HarvesterAddressesTest {
     }
 
     @Test
+    void copiedLinksWithInvisibleCharactersResolve() {
+        try (Harvester harvester = harvester(Harvester.builder())) {
+            String host = base().getHost();
+            String copied = "\u200B " + base().toString().replace(host, host.charAt(0) + "\u00AD"
+                    + host.substring(1)) + "spaces/DEV/pages/102/Pr%C3%BCfung%20%26%20Abnahme\uFEFF";
+
+            assertThat(harvester.addresses().resolve(harvester.caller(), copied).matches())
+                    .extracting(PageAddresses.Match::pageId).containsExactly("102");
+            assertThat(pageId(harvester, copied)).isEqualTo("102");
+        }
+    }
+
+    @Test
+    void aProtectedHyphenInTheHostStillMeansTheSource() {
+        // Kopiert aus Office oder Chat: U+2011 statt „-“ im Hostnamen (Angelo, 27.11.2026). Die Quelle erkennt die
+        // Adresse als ihre und fragt die Seite ab; der erfundene Host ist nicht erreichbar.
+        try (Harvester harvester = harvester(Harvester.builder().source(new SourceSettingsConfig("intern",
+                "confluence", "Intern", URI.create("http://wiki-intern.invalid:1/"),
+                SourceSettingsConfig.Auth.anonymous(), Map.of("connectTimeoutMillis", "500"))))) {
+            PageAddresses.Resolution resolution = harvester.addresses().resolve(harvester.caller(),
+                    "http://wiki\u2011intern.invalid:1/spaces/DEV/pages/102/Pr%C3%BCfung");
+
+            assertThat(resolution.matches()).isEmpty();
+            assertThat(resolution.unavailableSources()).containsExactly("intern");
+        }
+    }
+
+    @Test
     void bookmarksAndResourceIdsOfTheSourceResolve() {
         try (Harvester harvester = harvester(Harvester.builder())) {
             String resourceId = harvester.pages().page(harvester.caller(), "wiki", "102", false).header().metadata()

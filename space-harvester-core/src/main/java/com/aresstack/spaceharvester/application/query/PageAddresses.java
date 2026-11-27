@@ -11,11 +11,14 @@ import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
+import java.net.IDN;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Adressauflösung über alle Quellen (#178, wie {@code ResolveKnowledgeAddressUseCase} im Enterprise AI Client): jede
@@ -44,7 +47,7 @@ public final class PageAddresses {
         if (address == null || address.isBlank() || address.length() > PageBookmark.maxAddressLength(address)) {
             throw new InvalidQueryException("address fehlt oder ist zu lang");
         }
-        String value = address.trim();
+        String value = normalize(address);
         Optional<PageBookmark> bookmark;
         try {
             bookmark = PageBookmark.parse(value);
@@ -74,6 +77,48 @@ public final class PageAddresses {
             }
         }
         return new Resolution(matches, unavailable);
+    }
+
+    /** Unsichtbare Zeichen, die beim Kopieren aus Mails, Chats oder Office-Dokumenten in Links geraten. */
+    private static final Pattern INVISIBLE = Pattern.compile("[\\u00AD\\u200B-\\u200D\\u2060\\uFEFF]");
+    /** Bindestrich-Varianten (geschützt, Gedanken-, Minus-, Vollbreiten-Strich), die im Hostnamen „-“ meinen. */
+    private static final Pattern DASHES = Pattern.compile("[\\u2010-\\u2015\\u2212\\uFE58\\uFE63\\uFF0D]");
+    private static final Pattern AUTHORITY = Pattern.compile("^([A-Za-z][A-Za-z0-9+.-]*://)([^/?#]*)(.*)$",
+            Pattern.DOTALL);
+
+    /**
+     * Macht eine eingegebene Adresse vergleichbar, ohne ihre Bedeutung zu ändern: Leerraum außen und unsichtbare
+     * Zeichen (weiches Trennzeichen, Null-Breite) fallen weg; im Hostnamen werden Unicode-Bindestriche wie der
+     * geschützte Bindestrich (U+2011, entsteht beim Kopieren aus Office/Chats) zu „-“ und ein Name mit Umlauten zur
+     * ASCII-Form (IDN), damit er mit der Basis-URL einer Quelle übereinstimmt. Pfad, Titel und %-Kodierung bleiben
+     * unverändert; die Quelle dekodiert sie selbst.
+     *
+     * @return die bereinigte Adresse; {@code null} bleibt {@code null}
+     */
+    public static String normalize(String address) {
+        if (address == null) {
+            return null;
+        }
+        String value = INVISIBLE.matcher(address).replaceAll("").strip();
+        Matcher parts = AUTHORITY.matcher(value);
+        if (!parts.matches()) {
+            return value;
+        }
+        String authority = DASHES.matcher(parts.group(2)).replaceAll("-");
+        int at = authority.lastIndexOf('@');
+        String user = at < 0 ? "" : authority.substring(0, at + 1);
+        String hostPort = authority.substring(at + 1);
+        int colon = hostPort.startsWith("[") ? -1 : hostPort.lastIndexOf(':');
+        String host = colon < 0 ? hostPort : hostPort.substring(0, colon);
+        String port = colon < 0 ? "" : hostPort.substring(colon);
+        if (!host.chars().allMatch(c -> c < 0x80)) {
+            try {
+                host = IDN.toASCII(host, IDN.ALLOW_UNASSIGNED);
+            } catch (IllegalArgumentException malformed) {
+                // Bleibt, wie eingegeben; die Quelle erkennt die Adresse dann nicht.
+            }
+        }
+        return parts.group(1) + user + host + port + parts.group(3);
     }
 
     /**
