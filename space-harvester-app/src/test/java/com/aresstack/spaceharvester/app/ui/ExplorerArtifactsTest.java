@@ -199,6 +199,11 @@ class ExplorerArtifactsTest {
                 }
             }
             assertThat(labels).contains(Texts.NEW_EDITION, ArtifactList.SHOW_FOLDER);
+
+            // Ein Titelfilter darf den gezeigten Ordner nicht hinter den Treffern verstecken.
+            explorer.filter().setText("lager");
+            explorer.showFavoriteFolder("ordner-lager");
+            assertThat(explorer.filter().getText()).isEmpty();
         });
         assertThat(editions).containsExactly("ordner-lager");
         assertThat(folders).containsExactly("ordner-lager");

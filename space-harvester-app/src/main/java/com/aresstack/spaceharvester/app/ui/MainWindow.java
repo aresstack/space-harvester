@@ -1456,6 +1456,11 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     @Override
+    public boolean opensArtifacts() {
+        return true;
+    }
+
+    @Override
     public void newBookEdition(String folderId) {
         explorer.newBookEdition(folderId);
     }

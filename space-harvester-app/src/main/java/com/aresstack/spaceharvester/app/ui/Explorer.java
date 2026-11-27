@@ -2869,6 +2869,8 @@ public final class Explorer {
         if (folderId == null) {
             return;
         }
+        // Ein Titelfilter zeigte die Treffer statt des Baums; der Ordner soll sichtbar werden.
+        filter.setText("");
         showArtifacts(false);
         showOnlyFavorites(true);
         favorites.select(folderId);

@@ -282,6 +282,12 @@ final class ArtifactList {
         bookFolders.putAll(states.folders());
         staleBooks.clear();
         staleBooks.addAll(states.stale());
+        // Das Abzeichen macht die Zeile höher; ein Setzen der Buchzeilen lässt die Liste die Höhen neu messen.
+        for (int i = 0; i < model.size(); i++) {
+            if (model.get(i).id().startsWith(ChatArtifactStore.BOOK)) {
+                model.set(i, model.get(i));
+            }
+        }
         list.repaint();
     }
 
