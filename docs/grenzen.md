@@ -141,6 +141,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `AiServiceSettings.DEFAULT_PARALLEL` | `4` | Vorgabe | Parallelität | einstellbar |
 | `AiServiceSettings.DEFAULT_PODCAST_ATTEMPTS` | `3` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
 | `AiServiceSettings.DEFAULT_PODCAST_MAX_TOKENS` | `16384` | Vorgabe | Modellkontext | aus Modellfähigkeit ableiten |
+| `AiServiceSettings.DEFAULT_PODCAST_SECTION_CHARS` | `3000` | Vorgabe | Modellkontext | einstellbar |
 | `AiServiceSettings.DEFAULT_SUMMARY_MAX_TOKENS` | `32768` | Vorgabe | Modellkontext | aus Modellfähigkeit ableiten |
 | `AiServiceSettings.DEFAULT_SUMMARY_PLAN_MAX_TOKENS` | `16384` | Vorgabe | Modellkontext | aus Modellfähigkeit ableiten |
 | `AiServiceSettings.DEFAULT_TIMEOUT` | `Duration.ofSeconds(30)` | Vorgabe | Timeout | einstellbar |
@@ -332,9 +333,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `PagePassages.TITLE_CHARS` | `80` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `PagePodcasts.GRANDCHILD_CHARS` | `300` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `PagePodcasts.MAX_GRANDCHILDREN` | `6` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `PagePodcasts.MAX_SECTIONS` | `10` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `PagePodcasts.MAX_SUBPAGES` | `12` | fest | Modellkontext | aus Modellfähigkeit ableiten |
-| `PagePodcasts.SECTION_CHARS` | `3000` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `PagePodcasts.SUBPAGE_CHARS` | `1500` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `PageQueries.MAX_CHECKED` | `10_000` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `PageQueries.MAX_TREE_LEVELS` | `200` | fest | Stapel-/Seitengröße | Invariante: Ebenen je JSON-Antwort, Fortsetzung über `root` (F40-6) |
