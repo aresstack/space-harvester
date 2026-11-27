@@ -320,6 +320,25 @@ public final class DocumentChatTools {
         }
     }
 
+    /** Eine Antwort, die eine Änderung an einem Artefakt als erledigt meldet („habe … angepasst“). */
+    private static final java.util.regex.Pattern CLAIM = java.util.regex.Pattern.compile(
+            "\\b(habe|hab|wurde|wurden|ist jetzt|sind jetzt)\\b[^.!?\\n]{0,160}\\b(erstellt|angelegt|geändert|angepasst|"
+                    + "eingebunden|ersetzt|eingefügt|gelöscht|entfernt|aktualisiert|überarbeitet|ergänzt|umbenannt|"
+                    + "verschoben|gefüllt)\\b", java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.UNICODE_CASE);
+
+    /**
+     * Ob {@code answer} eine Änderung an einem Dokument oder einer Grafik meldet, obwohl dieser Zug nichts geschrieben
+     * hat (Angelo 27.11.2026: „habe den Abschnitt angepasst“ ohne einen Aufruf).
+     */
+    public boolean claimsWithoutWriting(String answer) {
+        synchronized (touched) {
+            if (!touched.isEmpty()) {
+                return false;
+            }
+        }
+        return answer != null && CLAIM.matcher(answer).find();
+    }
+
     /** {@code base} samt den Schreibwerkzeugen. */
     public ChatToolset attach(ChatToolset base) {
         return new ChatToolset() {

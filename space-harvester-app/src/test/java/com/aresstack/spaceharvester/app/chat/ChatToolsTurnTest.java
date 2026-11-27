@@ -527,6 +527,37 @@ class ChatToolsTurnTest {
     }
 
     @Test
+    void aClaimedChangeWithoutAWritingToolIsRemindedOnceAndThenDone() throws Exception {
+        // Angelo 27.11.2026 (Echttest): „habe den Abschnitt angepasst“ ohne einen Aufruf ist keine Änderung.
+        ChatStore chats = new ChatStore(() -> home.resolve("artefakt-chats"));
+        ChatNode node = new ChatNode("wiki", null, null);
+        ChatRecord chat = ChatRecord.fresh(1).plus(ChatRecord.Message.user("Schreib", 1), 1);
+        chats.save(node, chat);
+        var store = new com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore(chats);
+        store.createDocument(chats.folder(node), chat.id(), "Fibel", "## Ernte\n\nIm August.",
+                com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact.Origin.AI);
+        var tools = new com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools(store, chats.folder(node),
+                chat.id(), () -> null, artifact -> { });
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.completed("Ich habe den Abschnitt Ernte angepasst."),
+                (request, listener) -> listener.toolCalls("", List.of(new AiChat.ToolCall("c1", "abschnitt_ersetzen",
+                        "{\"abschnitt\":\"a1\",\"text\":\"Ab Mitte Juli.\"}"))),
+                (request, listener) -> listener.completed("Erledigt.")));
+        Events events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Ernte ab Mitte Juli", null, null, events,
+                Runnable::run).knowledgeByTools(null).writing(tools).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(port.requests).hasSize(3);
+        assertThat(port.requests.get(1).messages().get(port.requests.get(1).messages().size() - 1).text())
+                .isEqualTo(ChatTurn.WRITING_REMINDER);
+        assertThat(store.read(chats.folder(node), chat.id(), "D1").document().section("a1").text())
+                .isEqualTo("Ab Mitte Juli.");
+        assertThat(events.completed).startsWith("Erledigt.").doesNotContain("angepasst");
+        assertThat(tools.claimsWithoutWriting("Der Abschnitt wurde angepasst.")).as("nach dem Schreiben").isFalse();
+    }
+
+    @Test
     void withoutAreaAndWithoutAnySearchTheAgentAnswersFromItsOwnKnowledge() throws Exception {
         // Angelo 24.11.2026: Ohne Auswahl und ohne zugeschaltete Suche antwortet der Chat aus eigenem Wissen.
         ScriptedChat port = new ScriptedChat(List.of((request, listener) -> listener.completed("Aus dem Kopf.")));
