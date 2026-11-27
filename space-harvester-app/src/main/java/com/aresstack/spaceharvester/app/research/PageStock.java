@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -35,6 +36,11 @@ public interface PageStock {
     /** Die Unterseiten in der Reihenfolge der Quelle; leer bei Quellen ohne Seitenbaum. */
     List<Child> children(PageKey key, String spaceKey);
 
-    /** Trägt die Seite in die Liste freigegebener Seiten ein (KI-Freigabe); wirft, wenn das scheitert. */
-    void release(String spaceKey, PageKey key);
+    /**
+     * Trägt Seiten in die Liste freigegebener Seiten ein (KI-Freigabe), alle in einer Änderung; wirft, wenn das
+     * scheitert.
+     *
+     * @param spaceOfPage Seite → Space der Seite
+     */
+    void release(Map<PageKey, String> spaceOfPage);
 }

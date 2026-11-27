@@ -3531,6 +3531,15 @@ public final class Workspace {
     }
 
     /**
+     * Mehrere Seiten auf einmal freigeben (Seite → Space): eine Meldung an die Beobachter statt einer je Seite; die
+     * Korb-Recherche gibt so jede Runde frei, bevor das Modell sie prüft.
+     */
+    public List<com.aresstack.spaceharvester.application.release.PageReleases.Entry> releasePagesForChat(
+            java.util.Map<com.aresstack.spaceharvester.application.snapshot.PageKey, String> spaceOfPage) {
+        return harvester.pageReleaseService().releasePages(caller, spaceOfPage);
+    }
+
+    /**
      * Die Liste freigegebener Seiten gebündelt nach Quelle, Space und Knoten, für die Tabelle unter Einstellungen ›
      * Sicherheit. Einmal lesen, danach nur nach Meldungen von {@link #subscribePageReleases}.
      */

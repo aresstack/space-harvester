@@ -83,9 +83,12 @@ class HostResearchTest {
             return children.getOrDefault(key, List.of());
         }
 
+        final List<Map<PageKey, String>> batches = new ArrayList<>();
+
         @Override
-        public void release(String spaceKey, PageKey key) {
-            released.add(key);
+        public synchronized void release(Map<PageKey, String> spaceOfPage) {
+            batches.add(spaceOfPage);
+            released.addAll(spaceOfPage.keySet());
         }
     }
 
@@ -95,6 +98,9 @@ class HostResearchTest {
         private static final Pattern MARK = Pattern.compile("\\[(INNEN|GEMISCHT|AUSSEN|UNKLAR)]");
         private static final Pattern NODE = Pattern.compile("NODE\\n(.+)\\n");
         final Set<String> seenPages = ConcurrentHashMap.newKeySet();
+        /** Seiten, deren Text das Modell sah, bevor sie freigegeben waren; muss leer bleiben. */
+        final Set<String> unreleased = ConcurrentHashMap.newKeySet();
+        Set<PageKey> released = Set.of();
 
         @Override
         public Task stream(Request request, Listener listener) {
@@ -109,6 +115,9 @@ class HostResearchTest {
                 Matcher address = ADDRESS.matcher(prompt);
                 String page = address.find() ? address.group(1) : "";
                 seenPages.add(page);
+                if (!page.isEmpty() && !released.contains(new PageKey("wiki", page.substring(page.indexOf('/') + 1)))) {
+                    unreleased.add(page);
+                }
                 Matcher mark = MARK.matcher(prompt);
                 answer = "{\"subject\":\"" + page + "\",\"fence\":\"" + (mark.find() ? mark.group(1) : "UNKLAR")
                         + "\",\"reason\":\"geskriptet\"}";
@@ -126,6 +135,7 @@ class HostResearchTest {
     void dieRechercheFuelltDenFavoritenordnerUndGibtJedeGeleseneSeiteVorherFrei() {
         Stock stock = new Stock();
         Model model = new Model();
+        model.released = stock.released;
         Favorites favorites = new Favorites(() -> dir.resolve("favorites.json"));
         String folder = favorites.createFolder("Korb Kompost", null);
         FavoritesBasket basket = new FavoritesBasket(favorites, folder, id -> "Wiki");
@@ -138,10 +148,10 @@ class HostResearchTest {
                 .containsExactlyInAnyOrder("1", "2", "4");
         assertThat(basket.basket().sources()).hasSize(3);
         assertThat(result.profiles()).anyMatch(p -> p.source().id().equals("wiki/3") && p.fit() == FenceFit.AUSSEN);
-        for (String page : model.seenPages) {
-            assertThat(stock.released).as("vor dem Senden freigegeben: " + page)
-                    .contains(new PageKey("wiki", page.substring(page.indexOf('/') + 1)));
-        }
+        assertThat(model.seenPages).isNotEmpty();
+        assertThat(model.unreleased).as("jede Seite vor dem Senden freigegeben").isEmpty();
+        assertThat(stock.batches).as("gebündelt: höchstens eine Freigabe je Runde, nicht eine je Seite")
+                .hasSizeLessThanOrEqualTo(result.rounds()).hasSizeLessThan(stock.released.size());
         assertThat(favorites.favoritesIn(folder, true)).allSatisfy(f -> assertThat(f.spaceKey()).isEqualTo("GARTEN"));
     }
 

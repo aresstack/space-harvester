@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -71,7 +72,7 @@ public final class WorkspacePageStock implements PageStock {
     }
 
     @Override
-    public void release(String spaceKey, PageKey key) {
-        workspace.releasePageForChat(spaceKey, key);
+    public void release(Map<PageKey, String> spaceOfPage) {
+        workspace.releasePagesForChat(spaceOfPage);
     }
 }

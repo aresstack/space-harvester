@@ -12,13 +12,15 @@ import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 
+import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * „Korb füllen“ als Auftrag: Research4j füllt einen Favoritenordner über den Bestand. Läuft nur auf Klick, nie beim
  * Start, und lässt sich nach einem Neustart nicht fortsetzen (ein neuer Klick startet neu; was im Ordner liegt, bleibt
- * und wird nicht noch einmal gelesen). Zähler: gefundene Quellen, gelesene, aufgenommene, übersprungene. Abbrechen
+ * und wird nicht noch einmal gelesen). Zähler: Arbeitsschritte (Planen, Suchen, Lesen, Prüfen), erledigte, aufgenommene
+ * Quellen, übersprungene. Abbrechen
  * wirkt am nächsten Schritt; der Ordner behält, was bis dahin gefunden wurde.
  */
 public final class BasketResearchJob {
@@ -37,19 +39,9 @@ public final class BasketResearchJob {
         Objects.requireNonNull(fence, "fence");
         return JobTask.blocking(context -> {
             context.rootTitle(folderName);
-            context.phase("Recherche", "Korb füllen");
+            context.phase("Korb füllen", "Start");
             SourceKeeper counted = content -> keepCounted(basket, content, context);
-            AtomicLong lastFetch = new AtomicLong();
-            ProgressListener progress = (step, done, total) -> {
-                if (BasketResearch.STEP_FETCH.equals(step)) {
-                    if (done == 0) {
-                        lastFetch.set(0);
-                        context.discovered(total);
-                    } else {
-                        context.processed(done - lastFetch.getAndSet(done));
-                    }
-                }
-            };
+            ProgressListener progress = progress(context);
             BasketResearch.Result result;
             try (AutoCloseable stop = context.whenStopRequested(chat::cancelInFlight)) {
                 result = HostResearch.research(chat, stock, counted, hitsPerQuery, settings)
@@ -68,6 +60,43 @@ public final class BasketResearchJob {
                 context.checkpoint();
             }
         });
+    }
+
+    /**
+     * Fortschritt über alle Schritte jeder Runde, nicht nur über das Lesen: Planen und Prüfen am Weidezaun sind
+     * Modellarbeit und brauchen oft am längsten. Zählte nur das Lesen, stand die Anzeige danach auf 99 %, während das
+     * Modell noch prüfte (Test des Produktverantwortlichen am 27.11.). Jeder Schritt meldet seine Menge beim Start
+     * als gefunden und jedes erledigte Stück als bearbeitet; die Phase nennt, was gerade läuft.
+     */
+    static ProgressListener progress(JobContext context) {
+        Map<String, Long> reported = new ConcurrentHashMap<>();
+        return (step, done, total) -> {
+            if (done == 0) {
+                reported.put(step, 0L);
+                context.discovered(total);
+                context.phase("Korb füllen", phaseOf(step));
+                return;
+            }
+            long[] delta = new long[1];
+            reported.compute(step, (name, last) -> {
+                long before = last == null ? 0 : last;
+                delta[0] = Math.max(0, done - before);
+                return Math.max(before, done);
+            });
+            if (delta[0] > 0) {
+                context.processed(delta[0]);
+            }
+        };
+    }
+
+    static String phaseOf(String step) {
+        return switch (step) {
+            case BasketResearch.STEP_PLAN -> "Suchanfragen planen";
+            case BasketResearch.STEP_SEARCH -> "Suchen";
+            case BasketResearch.STEP_FETCH -> "Seiten lesen";
+            case BasketResearch.STEP_JUDGE -> "Am Weidezaun prüfen";
+            default -> step;
+        };
     }
 
     private static SourceRef keepCounted(FavoritesBasket basket, FetchedContent content, JobContext context)

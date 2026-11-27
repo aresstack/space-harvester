@@ -105,17 +105,36 @@ public final class PageReleaseService {
     public List<PageReleases.Entry> releasePage(AccessContext caller, String spaceKey, PageKey key) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(spaceKey, "spaceKey");
-        if (pages.contains(key)) {
-            return List.of();
-        }
-        for (Holdings.StoredPage page : holdings.storedPages(caller,
-                Selection.of(Selection.Root.subtree(key.sourceId(), spaceKey, key.pageId())))) {
-            if (page.key().equals(key)) {
-                return pages.add(List.of(new PageReleases.Entry(key, spaceKey, key.pageId(), PageReleases.CHAT,
-                        clock.instant())));
+        return releasePages(caller, Map.of(key, spaceKey));
+    }
+
+    /**
+     * Wie {@link #releasePage}, für mehrere Seiten auf einmal: eine Änderung der Liste und damit eine Meldung an die
+     * Beobachter statt einer je Seite. Die Korb-Recherche gibt so alle Seiten einer Runde frei, bevor das Modell sie
+     * prüft; je Seite gemeldet, startete jede Freigabe die automatischen Folgeläufe neu (Test vom 27.11.).
+     *
+     * @param spaceOfPage Seite → Space der Seite, in der Reihenfolge des Eintragens
+     * @return die neu eingetragenen Einträge
+     */
+    public List<PageReleases.Entry> releasePages(AccessContext caller, Map<PageKey, String> spaceOfPage) {
+        Objects.requireNonNull(spaceOfPage, "spaceOfPage");
+        List<PageReleases.Entry> entries = new ArrayList<>();
+        spaceOfPage.forEach((key, spaceKey) -> {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(spaceKey, "spaceKey");
+            if (pages.contains(key)) {
+                return;
             }
-        }
-        return List.of();
+            for (Holdings.StoredPage page : holdings.storedPages(caller,
+                    Selection.of(Selection.Root.subtree(key.sourceId(), spaceKey, key.pageId())))) {
+                if (page.key().equals(key)) {
+                    entries.add(new PageReleases.Entry(key, spaceKey, key.pageId(), PageReleases.CHAT,
+                            clock.instant()));
+                    return;
+                }
+            }
+        });
+        return entries.isEmpty() ? List.of() : pages.add(entries);
     }
 
     /** Die Gruppen der Liste, nach Quelle, Space und Knoten (der ganze Space zuerst, dann nach Titel). */

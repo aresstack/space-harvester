@@ -153,6 +153,24 @@ class PageReleaseServiceTest {
     }
 
     @Test
+    void severalPagesAtOnceAreOneChangeAndOneMessage() {
+        PageReleaseService service = service(true);
+        List<PageReleases.Change> changes = new java.util.ArrayList<>();
+        service.subscribe(CALLER, changes::add);
+        Map<PageKey, String> round = new java.util.LinkedHashMap<>();
+        round.put(key("3"), "DEV");
+        round.put(key("4"), "DEV");
+        round.put(key("2"), "DEV");
+        round.put(key("6"), "DEV");
+
+        assertThat(service.releasePages(CALLER, round)).extracting(entry -> entry.key().pageId() + "@" + entry.node())
+                .as("nur gespeicherte, nicht gesperrte, jede mit sich als Knoten").containsExactly("3@3", "4@4");
+        assertThat(changes).singleElement().satisfies(change -> assertThat(change.added()).hasSize(2));
+        assertThat(service.releasePages(CALLER, round)).as("schon eingetragen").isEmpty();
+        assertThat(changes).as("keine leere Meldung").hasSize(1);
+    }
+
+    @Test
     void onlySingleStoredPagesComeOnTheListEachWithItselfAsNode() {
         PageReleaseService service = service(true);
 

@@ -35,9 +35,11 @@ public final class HostResearch {
                                           BasketResearch.Settings settings) {
         RunGuard guard = new RunGuard(TransferPolicy.internalStaysInternal(),
                 Provenance.classified(Classification.INTERNAL));
-        return new BasketResearch(chat,
+        // Gelesene Seiten gehen gebündelt vor jedem Modellaufruf auf die Liste freigegebener Seiten.
+        PendingReleases releases = new PendingReleases(stock);
+        return new BasketResearch(releases.releasingBefore(chat),
                 List.of(new SearchChannel(TransferTarget.internal(INDEX), new IndexSearchPort(stock), hitsPerQuery)),
-                List.of(new FetchChannel(TransferTarget.internal(PAGES), new PageFetchPort(stock))),
+                List.of(new FetchChannel(TransferTarget.internal(PAGES), new PageFetchPort(stock, releases))),
                 keeper, guard, settings);
     }
 }
