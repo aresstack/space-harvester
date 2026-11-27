@@ -570,7 +570,7 @@ public final class Dialogs {
      */
     public static void viewSized(Component parent, String title, JComponent body, String sizeKey, double share) {
         JDialog dialog = dialog(parent, title);
-        presentSized(dialog, title, body, sizeKey, share, null);
+        presentSized(dialog, title, body, sizeKey, share, false, null);
     }
 
     /**
@@ -582,7 +582,7 @@ public final class Dialogs {
         boolean[] result = {false};
         JDialog dialog = dialog(parent, title);
         ComposerButton accept = Comic.primary(action, null);
-        presentSized(dialog, title, confirmStack(body, accept), sizeKey, share, close -> {
+        presentSized(dialog, title, confirmStack(body, accept), sizeKey, share, true, close -> {
             accept.addActionListener(e -> {
                 result[0] = true;
                 close.run();
@@ -592,9 +592,12 @@ public final class Dialogs {
         return result[0];
     }
 
-    /** {@code wire} bekommt das Schließen, das die gezogene Größe merkt, bevor das Fenster erscheint. */
+    /**
+     * {@code wire} bekommt das Schließen, das die gezogene Größe merkt, bevor das Fenster erscheint; {@code esc}: ein
+     * Formular bricht mit dem Esc-Kreis ab wie {@link #formOverlay}, eine Ansicht schließt mit ✕.
+     */
     private static void presentSized(JDialog dialog, String title, JComponent body, String sizeKey, double share,
-                                     java.util.function.Consumer<Runnable> wire) {
+                                     boolean esc, java.util.function.Consumer<Runnable> wire) {
         Dimension[] opened = new Dimension[1];
         Runnable close = () -> {
             if (opened[0] != null && !opened[0].equals(dialog.getSize())) {
@@ -605,7 +608,11 @@ public final class Dialogs {
         if (wire != null) {
             wire.accept(close);
         }
-        frame(dialog, title, body, close);
+        if (esc) {
+            escFrame(dialog, title, body, close);
+        } else {
+            frame(dialog, title, body, close);
+        }
         dialog.addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
             public void windowClosing(java.awt.event.WindowEvent e) {

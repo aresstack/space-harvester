@@ -32,4 +32,48 @@ class BasketResearchFormTest {
 
         assertThat(form.fence()).isEmpty();
     }
+
+    @Test
+    void derAuftragWaechstMitDemFensterUndErweitertZeigtDieFelder() {
+        BasketResearchForm form = BasketResearchForm.book();
+        javax.swing.JComponent body = form.body("Streuobst");
+        body.setSize(800, 600);
+        layout(body);
+        int closed = form.mission.getParent().getParent().getHeight();
+        assertThat(closed).isGreaterThan(300);
+
+        button(body, "Erweitert").doClick();
+        body.setSize(800, 900);
+        layout(body);
+
+        java.awt.Component edge = form.edge.getParent().getParent();
+        assertThat(edge.isShowing() || edge.isVisible()).isTrue();
+        assertThat(edge.getHeight()).isGreaterThanOrEqualTo(edge.getMinimumSize().height);
+        assertThat(form.mission.getParent().getParent().getHeight())
+                .isGreaterThanOrEqualTo(form.mission.getParent().getParent().getMinimumSize().height);
+    }
+
+    private static void layout(java.awt.Container container) {
+        container.doLayout();
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof java.awt.Container inner) {
+                layout(inner);
+            }
+        }
+    }
+
+    private static javax.swing.AbstractButton button(java.awt.Container root, String text) {
+        for (java.awt.Component child : root.getComponents()) {
+            if (child instanceof javax.swing.AbstractButton b && text.equals(b.getText())) {
+                return b;
+            }
+            if (child instanceof java.awt.Container inner) {
+                javax.swing.AbstractButton found = button(inner, text);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
 }
