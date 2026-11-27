@@ -122,6 +122,18 @@ class PagePodcastsTest {
                 .containsExactly("Einleitung", "Ablauf", "Störungen");
         assertThat(material.stories().get(0).places()).containsExactly("im Buch „Erfundenes Buch“");
 
+        List<PagePodcasts.Span> spans = new java.util.ArrayList<>();
+        for (PagePodcasts.Part part : PagePodcasts.parts(book.page(), PagePodcasts.Reading.DEFAULT,
+                PagePodcasts.Kind.BOOK)) {
+            spans.add(new PagePodcasts.Span(part.start(), part.end()));
+        }
+        // Die Teile decken das ganze Buch lückenlos ab, damit die Ansicht es in diesen Stücken zeigen kann.
+        assertThat(spans.get(0).start()).isZero();
+        assertThat(spans.get(spans.size() - 1).end()).isEqualTo(markdown.length());
+        for (int i = 1; i < spans.size(); i++) {
+            assertThat(spans.get(i).start()).isEqualTo(spans.get(i - 1).end());
+        }
+
         AccessContext caller = AccessContext.technicalClient("app");
         assertThat(PagePodcasts.bookKey(caller, "ordner-1")).isNotEqualTo(PagePodcasts.bookKey(caller, "ordner-2"))
                 .isNotEqualTo(PagePodcasts.key(caller, "wiki", "ordner-1"));
