@@ -69,6 +69,8 @@ final class ChatReadAloud {
     private final List<AssistantMarkdownMessage> answers = new ArrayList<>();
     private final AWTEventListener doubleClicks = this::mouseEvent;
     private ReadAloudBinding binding;
+    /** Die Skala um den Knopf: oben Geschwindigkeit, unten satzweise springen (nur bei laufender Wiedergabe). */
+    private final com.aresstack.spaceharvester.app.ui.controls.ReadAloudDial dial;
     /** Warum ohne Sprachausgabe nicht vorgelesen wird (Tooltip des gesperrten Knopfs). */
     private String unavailable = NO_SPEECH_TIP;
     /** Play gedrückt und nicht beendet: neue Antworten werden vorgelesen (wie im EAC). */
@@ -88,6 +90,7 @@ final class ChatReadAloud {
         orb.setName("chat.readAloudOrb");
         orb.setVisible(false);
         orb.addActionListener(event -> toggle());
+        dial = ReadAloudSpeed.dial(orb, () -> this.binding, this::jump);
         // Doppelklicks auf die Antworten: die Textblöcke entstehen beim Rendern neu, daher ein Hörer für den Verlauf.
         transcript.addHierarchyListener(event -> {
             long flags = event.getChangeFlags();
@@ -127,6 +130,7 @@ final class ChatReadAloud {
             deferred = null;
         }
         this.binding = binding;
+        ReadAloudSpeed.bind(dial, binding);
         unavailable = reason == null || reason.isBlank() ? NO_SPEECH_TIP : reason;
         orb.setVisible(true);
         style();
@@ -263,6 +267,15 @@ final class ChatReadAloud {
         return offset < 0 ? null : ReadAloudStart.place(shown.toString(), offset + paragraphStart, paragraph);
     }
 
+    /** Springt beim Vorlesen um {@code sentences} Sätze vor (negativ: zurück), in derselben Antwort. */
+    void jump(int sentences) {
+        if (binding == null || !speaking || reading == null || sentences == 0) {
+            return;
+        }
+        int target = marker.jumpTarget(sentences);
+        speak(reading, marker.spoken(), target, marker.shownBlock(), marker.shownAnchor(target));
+    }
+
     /** Liest {@code speech} ab {@code start} vor; ein laufendes Vorlesen endet vorher (dieselbe Sprachausgabe). */
     private void speak(AssistantMarkdownMessage bubble, String speech, int start) {
         speak(bubble, speech, start, null, 0);
@@ -350,6 +363,7 @@ final class ChatReadAloud {
     }
 
     private void style() {
+        dial.setActive(binding != null && speaking && !paused);
         if (binding == null) {
             orb.setState(PodcastOrb.State.PLAY);
             orb.setEnabled(false);
