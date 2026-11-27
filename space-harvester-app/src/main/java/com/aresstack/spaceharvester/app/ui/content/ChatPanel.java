@@ -304,6 +304,11 @@ public final class ChatPanel extends JPanel {
     private final Feedback feedback = new Feedback();
     private final JPanel chips = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
     private final List<Path> attachments = new ArrayList<>();
+    /**
+     * Bilder, die das Vision-Modell schon beim Anhängen liest (Angelo 27.11.2026: „sobald ich das Bild anfüge“), damit
+     * die Frage nach dem Senden nicht erst darauf wartet. Nur auf dem EDT verändert.
+     */
+    private final java.util.Map<Path, EarlyImage> earlyImages = new java.util.HashMap<>();
     private final PlaceholderTextArea editor = new PlaceholderTextArea(PLACEHOLDER, 3, 40);
     private final ComposerButton model = new ComposerButton(ComposerIcons.chevronDown(), NO_MODEL, false, MODEL_TIP);
     private final ComposerButton effort = new ComposerButton(ChatIcons.thought(), EFFORTS.get(1), false,
@@ -1361,7 +1366,7 @@ public final class ChatPanel extends JPanel {
      * Chat ohne Bereich, Angelo 24.11.2026).
      */
     private void updateSend() {
-        send.setEnabled(turn != null || toolScope != null || selection == null || settled);
+        send.setEnabled(!readingAttachments && (turn != null || toolScope != null || selection == null || settled));
     }
 
     // ------------------------------------------------------------------ Schnellaktionen
@@ -2119,6 +2124,7 @@ public final class ChatPanel extends JPanel {
             return;
         }
         attachments.add(file);
+        startImageReading(file);
         JPanel chip = new JPanel(new BorderLayout(4, 0));
         chip.setOpaque(true);
         chip.setBackground(Comic.SURFACE);
@@ -2131,6 +2137,7 @@ public final class ChatPanel extends JPanel {
         ComposerButton remove = ComposerButton.iconButton(ComposerIcons.close(), "Anhang entfernen");
         remove.addActionListener(e -> {
             attachments.remove(file);
+            earlyImages.remove(file);
             chips.remove(chip);
             chips.setVisible(!attachments.isEmpty());
             chips.revalidate();
@@ -2143,6 +2150,79 @@ public final class ChatPanel extends JPanel {
         chips.revalidate();
         composer.repaint();
         attach.setToolTipText(ATTACH + " (" + attachments.size() + " vorgemerkt)");
+    }
+
+    /** Ein Bild, das schon beim Anhängen gelesen wird: mit welchem Vision-Modell, und sein Text. */
+    record EarlyImage(String model, java.util.concurrent.CompletableFuture<String> text) {
+    }
+
+    /**
+     * Startet das Lesen eines Bildanhangs sofort, ohne die Frage (die steht noch nicht fest); beim Senden wird nur noch
+     * auf das Ergebnis gewartet. Ohne Vision-Modell oder für andere Dateien nichts.
+     */
+    private void startImageReading(Path file) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || file.getFileName() == null
+                || !com.aresstack.spaceharvester.app.chat.AttachmentImages.isImage(file.getFileName().toString())) {
+            return;
+        }
+        String model = runtime.workspace().visionModel().orElse(null);
+        if (model == null) {
+            return;
+        }
+        earlyImages.put(file, new EarlyImage(model, readImageEarly(file, new AttachmentImageReading(model,
+                runtime.workspace()::describeAttachmentImage), imageReaders())));
+    }
+
+    /**
+     * Die Threads der Vorab-Lesung, höchstens „Parallele Dateien“ zugleich wie beim Senden: Ein Bild wird ganz geladen,
+     * bevor es auf das Vision-Modell wartet, also dürfen nicht beliebig viele gleichzeitig im Speicher liegen. Ändert
+     * sich die Einstellung, gilt sie für die nächsten Bilder; angefangene laufen zu Ende.
+     */
+    private java.util.concurrent.ExecutorService imageReaders() {
+        int limit = Math.max(1, parallel("files", FILES_DEFAULT));
+        if (imageReaders == null || imageReadersLimit != limit) {
+            if (imageReaders != null) {
+                imageReaders.shutdown();
+            }
+            imageReaders = java.util.concurrent.Executors.newFixedThreadPool(limit, work -> {
+                Thread thread = new Thread(work, "chat-bild");
+                thread.setDaemon(true);
+                return thread;
+            });
+            imageReadersLimit = limit;
+        }
+        return imageReaders;
+    }
+
+    private java.util.concurrent.ExecutorService imageReaders;
+    private int imageReadersLimit;
+
+    /** Liest {@code file} auf {@code readers}; die Grenze des Vision-Modells ({@code ai.parallel}) gilt dort. */
+    static java.util.concurrent.CompletableFuture<String> readImageEarly(Path file, AttachmentImageReading images,
+                                                                        java.util.concurrent.Executor readers) {
+        return java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+            try {
+                return com.aresstack.spaceharvester.app.chat.AttachmentImages.read(file, null, images.model(),
+                        images.reader());
+            } catch (java.io.IOException unreadable) {
+                throw new java.util.concurrent.CompletionException(unreadable);
+            }
+        }, readers);
+    }
+
+    /** Die schon gestarteten Bildlesungen für {@code images}; eine mit einem anderen Vision-Modell zählt nicht. */
+    private java.util.Map<Path, java.util.concurrent.CompletableFuture<String>> earlyFor(
+            AttachmentImageReading images) {
+        java.util.Map<Path, java.util.concurrent.CompletableFuture<String>> early = new java.util.HashMap<>();
+        if (images != null && images.model() != null) {
+            earlyImages.forEach((file, read) -> {
+                if (images.model().equals(read.model())) {
+                    early.put(file, read.text());
+                }
+            });
+        }
+        return early;
     }
 
     /**
@@ -2184,18 +2264,24 @@ public final class ChatPanel extends JPanel {
         AppRuntime runtime = context.runtime();
         AttachmentImageReading images = runtime == null ? null : new AttachmentImageReading(
                 runtime.workspace().visionModel().orElse(null), runtime.workspace()::describeAttachmentImage);
+        java.util.Map<Path, java.util.concurrent.CompletableFuture<String>> early = earlyFor(images);
+        // Senden ging; bis die Anhänge gelesen sind, wartet die Frage sichtbar, ein zweites Senden gibt es nicht.
         readingAttachments = true;
         editor.setEditable(false);
+        updateSend();
+        send.setToolTipText(WAITING_FOR_ATTACHMENTS);
         status.setText(com.aresstack.spaceharvester.app.chat.AttachmentImages.anyImage(files) && images != null
                 && images.model() != null ? READING_IMAGES_STATUS : READING_ATTACHMENTS_STATUS);
         // Die Frage gehört dem Chat, in dem sie gestellt wurde: Wechselt der Benutzer währenddessen den Chat (oder
         // löscht ihn), geht sie nicht in einen anderen.
         String startedChat = chat.id();
         Thread reading = new Thread(() -> {
-            String asked = withAttachments(text, files, room, images);
+            String asked = withAttachments(text, files, room, images, early);
             SwingUtilities.invokeLater(() -> {
                 readingAttachments = false;
                 editor.setEditable(true);
+                send.setToolTipText("Senden (Enter)");
+                updateSend();
                 if (!startedChat.equals(chat.id())) {
                     status.setText(CHAT_CHANGED_WHILE_READING);
                     return;
@@ -2208,8 +2294,10 @@ public final class ChatPanel extends JPanel {
         reading.start();
     }
 
-    static final String READING_ATTACHMENTS_STATUS = "Anhänge werden gelesen …";
-    static final String READING_IMAGES_STATUS = "Bild wird vom Vision-Modell gelesen …";
+    static final String READING_ATTACHMENTS_STATUS = "Anhänge werden gelesen … die Frage geht danach von selbst hinaus";
+    static final String READING_IMAGES_STATUS = "Bild wird vom Vision-Modell gelesen … die Frage geht danach von selbst "
+            + "hinaus";
+    static final String WAITING_FOR_ATTACHMENTS = "Wartet, bis die Anhänge gelesen sind";
     static final String CHAT_CHANGED_WHILE_READING = "Nicht gesendet: Der Chat wurde gewechselt, während die Anhänge "
             + "gelesen wurden";
     /** Bildangaben im Bild ohne Vision-Modell: wohin der Benutzer gehen muss. */
@@ -2349,6 +2437,7 @@ public final class ChatPanel extends JPanel {
         showChatName();
         editor.setText("");
         attachments.clear();
+        earlyImages.clear();
         chips.removeAll();
         chips.setVisible(false);
         attach.setToolTipText(ATTACH);
@@ -2484,6 +2573,12 @@ public final class ChatPanel extends JPanel {
      * Chips bleibt.
      */
     static String withAttachments(String text, List<Path> files, int room, AttachmentImageReading images) {
+        return withAttachments(text, files, room, images, java.util.Map.of());
+    }
+
+    /** Wie oben; Bilder aus {@code early} werden schon gelesen, auf sie wird nur gewartet. */
+    static String withAttachments(String text, List<Path> files, int room, AttachmentImageReading images,
+                                  java.util.Map<Path, java.util.concurrent.CompletableFuture<String>> early) {
         if (files.isEmpty()) {
             return text;
         }
@@ -2500,7 +2595,8 @@ public final class ChatPanel extends JPanel {
             List<java.util.concurrent.Future<?>> running = new ArrayList<>();
             for (int i = 0; i < files.size(); i++) {
                 int index = i;
-                running.add(pool.submit(() -> contents[index] = attachmentText(files.get(index), each, text, images)));
+                running.add(pool.submit(() -> contents[index] = attachmentText(files.get(index), each, text, images,
+                        early.get(files.get(index)))));
             }
             for (java.util.concurrent.Future<?> future : running) {
                 try {
@@ -2529,13 +2625,31 @@ public final class ChatPanel extends JPanel {
      * Ein Bild liest das Vision-Modell ab (Angelo 27.11.2026); scheitert es, steht der Grund da, damit das Chat-Modell
      * ihn nennen kann statt zu raten.
      */
-    private static String imageText(Path file, int room, String question, AttachmentImageReading images) {
+    private static String imageText(Path file, int room, String question, AttachmentImageReading images,
+                                    java.util.concurrent.CompletableFuture<String> early) {
         if (images == null || images.model() == null) {
             return NO_VISION_MODEL;
         }
         try {
-            return ChatKnowledge.excerpt(com.aresstack.spaceharvester.app.chat.AttachmentImages.read(file, question,
-                    images.model(), images.reader()), room);
+            String read;
+            if (early != null) {
+                try {
+                    read = early.get();
+                } catch (java.util.concurrent.ExecutionException e) {
+                    if (e.getCause() instanceof java.io.IOException unreadable) {
+                        throw unreadable;
+                    }
+                    throw e.getCause() instanceof RuntimeException failed ? failed
+                            : new IllegalStateException(e.getCause());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("unterbrochen", e);
+                }
+            } else {
+                read = com.aresstack.spaceharvester.app.chat.AttachmentImages.read(file, question, images.model(),
+                        images.reader());
+            }
+            return ChatKnowledge.excerpt(read, room);
         } catch (java.io.IOException unreadable) {
             return "(Bild nicht lesbar: " + unreadable.getMessage() + ")";
         } catch (RuntimeException failed) {
@@ -2548,12 +2662,13 @@ public final class ChatPanel extends JPanel {
      * Der Text einer angehängten Datei, so weit er in die Anfrage passt ({@code room}, {@link ChatRoom}; früher fest
      * 12.000 Zeichen); was nicht passt, steht als gekürzt da.
      */
-    private static String attachmentText(Path file, int room, String question, AttachmentImageReading images) {
+    private static String attachmentText(Path file, int room, String question, AttachmentImageReading images,
+                                         java.util.concurrent.CompletableFuture<String> early) {
         try {
             // Dokumente (PDF, Word, Excel …) wie die Vorschau im Command Deck über den Tika-Adapter des Core.
             String name = file.getFileName() == null ? "" : file.getFileName().toString();
             if (com.aresstack.spaceharvester.app.chat.AttachmentImages.isImage(name)) {
-                return imageText(file, room, question, images);
+                return imageText(file, room, question, images, early);
             }
             String content = com.aresstack.spaceharvester.app.deck.DocumentPreviewStore.isDocument(name)
                     ? new com.aresstack.spaceharvester.app.deck.DocumentPreviewStore().load(file.toString()).text()
