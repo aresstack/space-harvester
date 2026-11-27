@@ -115,7 +115,9 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
     void storedProgramSearch(com.aresstack.spaceharvester.app.ui.AppContext context,
                              java.util.function.BooleanSupplier active) {
         var action = new StoredProgramSearchAction(context, this, active,
-                busy -> com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.busy(storedProgramSearch, busy));
+                busy -> com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.busy(storedProgramSearch, busy),
+                "Rechtsklick auf eine Bibliothek › „Indexieren (Regel anlegen)“; danach sind ihre Programme hier "
+                        + "durchsuchbar.");
         storedProgramSearch.setVisible(true);
         storedProgramSearch.addActionListener(event -> action.open());
     }

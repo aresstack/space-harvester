@@ -66,6 +66,12 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
             com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.create();
     private final EditorSessions editors;
     private FtpNavigationObserver navigation = FtpNavigationObserver.NONE;
+    private FtpSourceLink sourceLink = FtpSourceLink.NONE;
+    static final String ADD_SOURCE_TIP = "Als Wissensquelle hinzufügen: das gezeigte Verzeichnis ohne Formular "
+            + "eintragen (gleicher Server und KeePass-Eintrag); synchronisiert wird erst per Klick im Space Harvester";
+    private final com.aresstack.spaceharvester.app.ui.IconButton addSource =
+            new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.SOURCE_ADD,
+                    ADD_SOURCE_TIP);
     /** Der Stand der gewählten Sitzung für die Statuszeile der App (links); leer beim Formular. */
     private final StatusLabel status = new StatusLabel();
     private volatile FtpSession selected;
@@ -99,6 +105,12 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         var headActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         headActions.setOpaque(false);
         storedCobolSearch.setVisible(false);
+        addSource.setVisible(false);
+        addSource.addActionListener(e -> {
+            FtpSessionView view = activeSessionView();
+            if (view != null) addSource(view.datasets().current());
+        });
+        headActions.add(addSource);
         headActions.add(storedCobolSearch);
         headActions.add(DeckCredentials.button(this::editCredentials));
         JPanel head = DeckBars.head(pills, headActions);
@@ -262,9 +274,25 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
     void storedCobolSearch(com.aresstack.spaceharvester.app.ui.AppContext context,
                            java.util.function.BooleanSupplier active) {
         var action = new StoredProgramSearchAction(context, this, active,
-                busy -> com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.busy(storedCobolSearch, busy));
+                busy -> com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.busy(storedCobolSearch, busy),
+                "Verzeichnis öffnen und oben „Als Wissensquelle hinzufügen“ klicken (oder Rechtsklick in der Liste). "
+                        + "Danach die Quelle im Space Harvester per Klick synchronisieren; ihre Programme sind dann hier "
+                        + "durchsuchbar.");
         storedCobolSearch.setVisible(true);
         storedCobolSearch.addActionListener(event -> action.open());
+    }
+
+    /** Woher „Als Wissensquelle hinzufügen“ die Wissensquellen der App nimmt; ohne Aufruf kein Knopf. */
+    public void sourceLink(FtpSourceLink link) {
+        sourceLink = java.util.Objects.requireNonNull(link);
+        addSource.setVisible(link != FtpSourceLink.NONE && selected != null);
+    }
+
+    /** Trägt {@code location} der gewählten Sitzung als Wissensquelle ein (Knopf oben, Rechtsklick in der Liste). */
+    void addSource(String location) {
+        FtpSession session = selected;
+        if (session == null) return;
+        sourceLink.add(this, session, location, status::show);
     }
 
     public void navigationObserver(FtpNavigationObserver observer) {
@@ -285,6 +313,7 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         pillOf.put(session, pill);
         FtpSessionView view = new FtpSessionView(session,
                 () -> toggle.select(FtpSessionView.JOBS), editors, navigation);
+        view.sourceAdder(this::addSource);
         view.show(toggle.selected());
         viewOf.put(session, view);
         center.add(view, session.id());
@@ -328,6 +357,7 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
         // Ohne Sitzung gibt es nichts umzuschalten; die Wippe bleibt sichtbar, aber gedimmt.
         toggle.button(FtpSessionView.DATASETS).setEnabled(session != null);
         toggle.button(FtpSessionView.JOBS).setEnabled(session != null);
+        addSource.setVisible(sourceLink != FtpSourceLink.NONE && session != null);
         viewOf.forEach((other, view) -> {
             if (other != session) {
                 view.statusTo(null);
