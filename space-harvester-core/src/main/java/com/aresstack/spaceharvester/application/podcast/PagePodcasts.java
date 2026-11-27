@@ -219,7 +219,8 @@ public final class PagePodcasts {
 
     /**
      * Wovon Thema {@code topic} erzählt, als Stellen im Text der Seite: Die Leseansicht markiert sie gelb, solange das
-     * Thema läuft, und stellt das Bild des Themas daneben (Angelo 23.11.2026). Das sind die Teile der Seite, die das
+     * Thema läuft, und stellt das Bild des Themas daneben (Angelo 23.11.2026). Ein gekürzter Teil nur so weit, wie sein
+     * Text an das Modell ging. Das sind die Teile der Seite, die das
      * Thema erzählt (Unterseiten haben hier keine Stelle), bei Einstieg und Abschluss der Anfang der Seite, den der
      * Überblick zitiert. Leer ohne Plan oder ohne lesbare Seite. Liest Seite und Datei, nie auf dem EDT.
      */
@@ -232,11 +233,11 @@ public final class PagePodcasts {
         if (page.isEmpty()) {
             return List.of();
         }
+        String all = page.get().text().text();
         List<Span> spans = new ArrayList<>();
         List<Part> parts = parts(page.get(), MAX_SECTIONS);
         for (int story : told(plan.get().topics().get(topic), parts)) {
-            Part part = parts.get(story - 1);
-            spans.add(new Span(part.start(), part.end()));
+            spans.add(read(all, parts.get(story - 1), SECTION_CHARS));
         }
         return List.copyOf(spans);
     }
@@ -267,11 +268,18 @@ public final class PagePodcasts {
         plan.topics().forEach(topic -> told.addAll(told(topic, parts)));
         List<Span> spans = new ArrayList<>();
         for (int story : told) {
-            Part part = parts.get(story - 1);
-            String body = all.substring(part.start(), part.end());
-            spans.add(new Span(part.start(), part.start() + reached(body, sectionText(body, SECTION_CHARS))));
+            spans.add(read(all, parts.get(story - 1), SECTION_CHARS));
         }
         return List.copyOf(spans);
+    }
+
+    /**
+     * Die Stelle eines Teils, soweit sein Text an das Modell ging: Gelb (laufendes Thema) und Grau (nie erzählt) teilen
+     * dieselbe Grenze und überdecken sich nie.
+     */
+    static Span read(String all, Part part, int limit) {
+        String body = all.substring(part.start(), part.end());
+        return new Span(part.start(), part.start() + reached(body, sectionText(body, limit)));
     }
 
     /**

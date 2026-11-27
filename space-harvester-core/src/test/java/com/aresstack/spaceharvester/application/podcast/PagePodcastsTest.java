@@ -175,6 +175,9 @@ class PagePodcastsTest {
         String sent = PagePodcasts.material(root, List.of(), List.of()).stories().get(1).text();
         assertThat(sent).endsWith("…");
         assertThat(text.substring(told.start(), told.end())).isEqualTo(sent.substring(0, sent.length() - 1));
+        // Gelb endet an derselben Grenze: das Laufende verdeckt nie das Grau dahinter
+        assertThat(PagePodcasts.read(text, PagePodcasts.parts(root, PagePodcasts.MAX_SECTIONS).get(1),
+                PagePodcasts.SECTION_CHARS)).isEqualTo(told);
     }
 
     @Test
