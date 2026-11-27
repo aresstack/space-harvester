@@ -111,7 +111,7 @@ public final class PodcastExport {
         AudioFormat format = format(parts);
         context.phase(COMPONENT, "WAV schreiben");
         context.discovered(parts.size());
-        replaceWhenDone(target, temporary -> {
+        replaceWhenDone(target, context, temporary -> {
             try (RandomAccessFile out = new RandomAccessFile(temporary.toFile(), "rw")) {
                 out.setLength(0);
                 out.write(wavHeader(format, 0));
@@ -123,6 +123,7 @@ public final class PodcastExport {
                     try (AudioInputStream in = open(part.audio(), format)) {
                         int read;
                         while ((read = in.read(buffer)) > 0) {
+                            context.checkpoint();
                             out.write(buffer, 0, read);
                             bytes += read;
                         }
@@ -211,17 +212,21 @@ public final class PodcastExport {
         return header.array();
     }
 
-    /** Schreibt in die Nachbardatei {@code .part} und ersetzt erst danach das Ziel; scheitert es, bleibt nichts liegen. */
-    static void replaceWhenDone(Path target, Writer writer) throws Exception {
+    /**
+     * Schreibt in eine eigene Nachbardatei ({@code Name…part}, je Export eine neue, damit zwei Exporte auf dasselbe Ziel
+     * sich nicht in die Quere kommen) und ersetzt erst danach das Ziel, wenn bis dahin kein Abbruch kam; scheitert
+     * es, bleibt nichts liegen.
+     */
+    static void replaceWhenDone(Path target, JobContext context, Writer writer) throws Exception {
         Objects.requireNonNull(target, "target");
         Path absolute = target.toAbsolutePath();
-        if (absolute.getParent() != null) {
-            Files.createDirectories(absolute.getParent());
-        }
-        Path temporary = absolute.resolveSibling(absolute.getFileName() + ".part");
+        Path directory = absolute.getParent() == null ? absolute.toAbsolutePath().getRoot() : absolute.getParent();
+        Files.createDirectories(directory);
+        Path temporary = Files.createTempFile(directory, absolute.getFileName() + ".", ".part");
         boolean done = false;
         try {
             writer.write(temporary);
+            context.checkpoint();
             Files.move(temporary, absolute, StandardCopyOption.REPLACE_EXISTING);
             done = true;
         } finally {

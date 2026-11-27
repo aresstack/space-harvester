@@ -62,7 +62,7 @@ class PodcastExportTest {
         assertThat(written.getFrameLength() / 24000.0).isCloseTo(4.5, org.assertj.core.data.Offset.offset(0.01));
         assertThat(context.discovered.get()).isEqualTo(3);
         assertThat(context.processed.get()).isEqualTo(3);
-        assertThat(Files.exists(dir.resolve("out/Podcast Test.wav.part"))).isFalse();
+        assertThat(leftovers(dir.resolve("out"))).isEmpty();
     }
 
     @Test
@@ -77,7 +77,39 @@ class PodcastExportTest {
                 .isInstanceOf(JobCancelledException.class);
 
         assertThat(Files.exists(target)).isFalse();
-        assertThat(Files.exists(dir.resolve("Podcast.wav.part"))).isFalse();
+        assertThat(leftovers(dir)).isEmpty();
+    }
+
+    @Test
+    void cancelAfterTheLastPartStillPublishesNothing() throws Exception {
+        Podcast podcast = podcast(part(0, "Eins", tone("a.wav", 24000, 0.5), null));
+        Path target = dir.resolve("Podcast.wav");
+        Counting context = new Counting();
+        // Der Abbruch kommt, nachdem der letzte Abschnitt kopiert ist: das Ziel darf trotzdem nicht entstehen.
+        context.cancelWhenProcessed = 1;
+
+        assertThatThrownBy(() -> run(PodcastExport.task(podcast, target, PodcastExport.Format.WAV, null), context))
+                .isInstanceOf(JobCancelledException.class);
+
+        assertThat(Files.exists(target)).isFalse();
+        assertThat(leftovers(dir)).isEmpty();
+    }
+
+    @Test
+    void twoExportsToTheSameFileUseTheirOwnTemporaryFile() throws Exception {
+        Path target = dir.resolve("Podcast.wav");
+        java.util.List<Path> temporaries = new java.util.ArrayList<>();
+        PodcastExport.replaceWhenDone(target, new Counting(), first -> {
+            temporaries.add(first);
+            PodcastExport.replaceWhenDone(target, new Counting(), second -> {
+                temporaries.add(second);
+                Files.writeString(second, "zwei");
+            });
+            Files.writeString(first, "eins");
+        });
+        assertThat(temporaries.get(0)).isNotEqualTo(temporaries.get(1));
+        assertThat(Files.readString(target)).isEqualTo("eins");
+        assertThat(leftovers(dir)).isEmpty();
     }
 
     @Test
@@ -146,6 +178,12 @@ class PodcastExportTest {
         }
     }
 
+    private static List<Path> leftovers(Path directory) throws Exception {
+        try (java.util.stream.Stream<Path> files = Files.list(directory)) {
+            return files.filter(file -> file.getFileName().toString().endsWith(".part")).toList();
+        }
+    }
+
     private static Color center(Path video, double second) throws Exception {
         try (SeekableByteChannel channel = NIOUtils.readableChannel(video.toFile())) {
             FrameGrab grab = FrameGrab.createFrameGrab(channel);
@@ -201,6 +239,7 @@ class PodcastExportTest {
         final AtomicLong processed = new AtomicLong();
         final AtomicInteger checkpoints = new AtomicInteger();
         int cancelAfter = -1;
+        long cancelWhenProcessed = -1;
 
         @Override
         public String jobId() {
@@ -209,7 +248,8 @@ class PodcastExportTest {
 
         @Override
         public void checkpoint() {
-            if (cancelAfter >= 0 && checkpoints.incrementAndGet() > cancelAfter) {
+            if (cancelAfter >= 0 && checkpoints.incrementAndGet() > cancelAfter
+                    || cancelWhenProcessed >= 0 && processed.get() >= cancelWhenProcessed) {
                 throw new JobCancelledException(jobId());
             }
         }

@@ -82,7 +82,7 @@ public final class PodcastVideo {
         AudioFormat format = PodcastExport.format(parts);
         context.phase(PodcastExport.COMPONENT, "Video schreiben");
         context.discovered(parts.size());
-        PodcastExport.replaceWhenDone(target, temporary -> encode(parts, format, temporary, options, context));
+        PodcastExport.replaceWhenDone(target, context, temporary -> encode(parts, format, temporary, options, context));
     }
 
     private static void encode(List<Podcast.Part> parts, AudioFormat format, Path temporary, Options options,
