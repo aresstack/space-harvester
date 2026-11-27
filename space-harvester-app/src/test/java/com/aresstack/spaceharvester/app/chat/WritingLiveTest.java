@@ -99,7 +99,8 @@ class WritingLiveTest {
         chats.save(folder, chat);
         ChatArtifactStore store = new ChatArtifactStore(chats);
         store.createGraphic(folder, chat.id(), "Beetplan", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" "
-                + "height=\"40\"><rect width=\"80\" height=\"40\" fill=\"#8c8\"/></svg>", ChatArtifact.Origin.AI);
+                + "height=\"40\"><rect width=\"80\" height=\"30\" fill=\"#8c8\"/><text x=\"2\" y=\"38\">Legende: grün = Beet"
+                + "</text></svg>", ChatArtifact.Origin.AI);
 
         Turn flyer = turn(workspace, store, folder, chat.id(), List.of(), "Erstelle einen kurzen Flyer „Gartenfest "
                 + "im Kleingartenverein“ (Termin Samstag 14 Uhr, Kuchenbuffet, Pflanzentausch) und binde die Grafik G1 "
@@ -112,6 +113,20 @@ class WritingLiveTest {
         assertThat(flyer.answer).contains("artefakt:" + document.id());
         assertThat(flyer.answer.length()).as("Antwort verweist nur").isLessThan(document.content().length());
         assertThat(flyer.calls).as("nicht erst suchen").doesNotContain(ChatTools.SEARCH);
+
+        // Angelo 27.11.2026: Legende entfernen änderte nicht G1, sondern legte eine zweite Grafik an; im Dokument
+        // standen dann alte und neue Grafik untereinander.
+        List<ChatRecord.Message> history = new ArrayList<>(List.of(ChatRecord.Message.user(flyer.question, 1),
+                ChatRecord.Message.assistant(flyer.answer, false, 2)));
+        Turn legend = turn(workspace, store, folder, chat.id(), history, "Entferne in der Grafik die Legende.");
+        List<ChatArtifact> graphics = store.list(folder, chat.id()).stream()
+                .filter(artifact -> artifact.kind() == ChatArtifact.Kind.GRAPHIC).toList();
+        System.out.println("[live] Grafik nach Legende: " + store.read(folder, chat.id(), "G1").current().svg());
+        assertThat(graphics).as("keine zweite Grafik").hasSize(1);
+        assertThat(store.read(folder, chat.id(), "G1").current().svg()).doesNotContain("Legende");
+        String after = store.read(folder, chat.id(), document.id()).content();
+        assertThat(after.split("artefakt:G", -1)).as("die Grafik genau einmal im Dokument").hasSize(2);
+        assertThat(legend.calls).doesNotContain(DocumentChatTools.GRAPHIC_CREATE, DocumentChatTools.GRAPHIC_DRAW);
     }
 
     @Test
