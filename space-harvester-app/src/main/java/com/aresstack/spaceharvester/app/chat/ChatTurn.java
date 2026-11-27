@@ -1881,9 +1881,12 @@ public final class ChatTurn {
         }
         var tools = writing;
         // Ohne Schreibumgebung kann das Modell kein Artefakt anlegen und soll das auch nicht behaupten (Angelo 27.11.).
-        all = (all == null || all.isBlank() ? "" : all + "\n\n")
-                + (tools != null ? tools.rules()
-                : com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools.WRITING_OFF);
+        // Die Perspektiven mit eigenen Werkzeugen (Command Deck) behalten ihren Systemhinweis unverändert.
+        if (tools != null || custom == null) {
+            all = (all == null || all.isBlank() ? "" : all + "\n\n")
+                    + (tools != null ? tools.rules()
+                    : com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools.WRITING_OFF);
+        }
         return all;
     }
 
