@@ -448,8 +448,7 @@ final class BasketResearchForm {
         if (missing <= 0) {
             return;
         }
-        java.awt.Rectangle screen = window.getGraphicsConfiguration() == null ? null
-                : window.getGraphicsConfiguration().getBounds();
+        java.awt.Rectangle screen = Dialogs.usableScreen(window);
         int height = window.getHeight() + missing;
         if (screen != null) {
             height = Math.min(height, screen.height);
