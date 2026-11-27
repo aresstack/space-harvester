@@ -498,6 +498,33 @@ class ChatPanelTest {
     }
 
     @Test
+    void anotherBrowserChoiceUnlocksTheGlobeWithoutRestart() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        String before = BrowserExecutables.configured(BrowserSettings.DEFAULT_CHANNEL);
+        // Erst fehlt der Browser (der gewählte Ort existiert nicht), dann ist er da.
+        BrowserExecutables.use(BrowserSettings.DEFAULT_CHANNEL, home.resolve("fehlt").toString());
+        try {
+            boolean[] enabled = new boolean[2];
+            ChatPanel[] panel = new ChatPanel[1];
+            SwingUtilities.invokeAndWait(() -> {
+                panel[0] = new ChatPanel(context);
+                enabled[0] = panel[0].webSearchEnabled();
+            });
+            BrowserExecutables.use(BrowserSettings.DEFAULT_CHANNEL,
+                    Files.writeString(home.resolve("msedge"), "").toString());
+            SwingUtilities.invokeAndWait(() -> {
+                context.browserChannelChanged();
+                enabled[1] = panel[0].webSearchEnabled();
+            });
+            assertThat(enabled).containsExactly(false, true);
+        } finally {
+            BrowserExecutables.use(BrowserSettings.DEFAULT_CHANNEL, before);
+        }
+    }
+
+    @Test
     void withWebSearchAndInternalSearchBothOnTheMessageAboveWarnsAndGoesAwayWhenOneIsOff() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));

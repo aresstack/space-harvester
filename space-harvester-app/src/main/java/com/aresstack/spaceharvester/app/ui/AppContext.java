@@ -264,6 +264,8 @@ public final class AppContext {
     private volatile String proxyPasswordUser;
     private final SecretVault vault;
     private final List<Consumer<AppContext>> listeners = new ArrayList<>();
+    /** Wer nach einer anderen Browserwahl neu prüfen muss, ob es die Websuche gibt (die Weltkugel des Chats). */
+    private final List<Runnable> browserListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final Map<String, Connection> connections = new ConcurrentHashMap<>();
     private volatile AppSettings settings;
     private volatile AppRuntime runtime;
@@ -774,6 +776,17 @@ public final class AppContext {
         if (old != null) {
             old.shutdown();
         }
+        Runnable notify = () -> browserListeners.forEach(Runnable::run);
+        if (SwingUtilities.isEventDispatchThread()) {
+            notify.run();
+        } else {
+            SwingUtilities.invokeLater(notify);
+        }
+    }
+
+    /** Meldet sich für {@link #browserChannelChanged}; läuft auf dem EDT. */
+    public void onBrowserChanged(Runnable listener) {
+        browserListeners.add(listener);
     }
 
     /** Die KeePass-Anbindung (KeePassRPC); fragt beim Koppeln nach dem Einmal-Passwort aus KeePass. */

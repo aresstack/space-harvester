@@ -703,6 +703,7 @@ public final class ChatPanel extends JPanel {
         webBudget.getAccessibleContext().setAccessibleName(WEB_BUDGET_LABEL);
         webBudget.addActionListener(e -> openWebPopup());
         showWebState();
+        context.onBrowserChanged(this::showWebState);
         mic.setAccent(ResearchUiPalette.RECORDING_ORANGE);
         mic.addActionListener(e -> toggleDictation());
         discardButton.addActionListener(e -> discardDictation());
@@ -1893,6 +1894,11 @@ public final class ChatPanel extends JPanel {
     }
 
     /** Ob der Browser startbar ist; ohne bleibt der Knopf gesperrt und sagt warum. */
+    /** Für Tests: ob die Weltkugel bedienbar ist. */
+    boolean webSearchEnabled() {
+        return web.isEnabled();
+    }
+
     private boolean webAvailable() {
         return context.webBrowser() != null;
     }
