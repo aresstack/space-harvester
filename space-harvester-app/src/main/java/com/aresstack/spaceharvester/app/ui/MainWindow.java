@@ -1430,6 +1430,11 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     @Override
+    public void openBook(String folderId) {
+        explorer.openBook(folderId);
+    }
+
+    @Override
     public void newBookEdition(String folderId) {
         explorer.newBookEdition(folderId);
     }

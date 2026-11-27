@@ -198,7 +198,17 @@ public final class BookJob {
      */
     public static JobTask write(Session session, CornerstoneSurvey.Chosen chosen, Path data, Path output,
                                 String fileName, Consumer<Path> written) {
+        return write(session, chosen, data, output, fileName, written, folderId -> { });
+    }
+
+    /**
+     * Wie {@link #write(Session, CornerstoneSurvey.Chosen, Path, Path, String, Consumer)}; {@code published} bekommt nach
+     * dem Ablegen der Auflage die Ordner-ID, noch im Auftrag (etwa um das Buch-Artefakt des Projekts nachzuziehen).
+     */
+    public static JobTask write(Session session, CornerstoneSurvey.Chosen chosen, Path data, Path output,
+                                String fileName, Consumer<Path> written, Consumer<String> published) {
         Objects.requireNonNull(session.prepared, "prepared");
+        Objects.requireNonNull(published, "published");
         return JobTask.blocking(context -> {
             context.rootTitle(session.folderName);
             context.phase(TITLE, "Gliederung");
@@ -226,6 +236,13 @@ public final class BookJob {
                         report, session.reader.sources(), session.members());
                 LOG.log(System.Logger.Level.INFO, "Buch: Auflage {0} am Ordner abgelegt, {1} Seiten",
                         edition.number(), edition.sources().size());
+                try {
+                    published.accept(session.folderId);
+                } catch (RuntimeException e) {
+                    // Das Buch liegt als Auflage und Datei vor; das Artefakt zieht beim nächsten Öffnen nach.
+                    LOG.log(System.Logger.Level.WARNING, "Buch-Artefakt nicht nachgezogen ({0})",
+                            e.getClass().getSimpleName());
+                }
             }
             Path book = save(output, fileName, ".md", bookText);
             save(output, fileName + " – Missionsbericht", ".txt", report);

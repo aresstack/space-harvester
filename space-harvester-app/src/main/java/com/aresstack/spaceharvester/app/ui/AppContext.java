@@ -134,6 +134,22 @@ public final class AppContext {
         default void newBookEdition(String folderId) {
         }
 
+        /**
+         * Öffnet ein globales Artefakt eines Projekts in der Mitte (ADR 0047 §5), etwa das Buch eines Ordners; ohne
+         * eigene Umsetzung nichts.
+         */
+        default void openArtifact(String projectId, String artifactId) {
+        }
+
+        /** Ob {@link #openArtifact} etwas öffnet; ohne Ziel zeigt die App „Buch öffnen“ nicht an. */
+        default boolean opensArtifacts() {
+            return false;
+        }
+
+        /** „Buch öffnen“ am Favoritenordner (ADR 0044 Nachtrag N5); ohne eigene Umsetzung nichts. */
+        default void openBook(String folderId) {
+        }
+
         /** Zeigt eine Quelle unter Quellen zum Bearbeiten; ohne eigene Umsetzung nur die Quellen. */
         default void editSource(String sourceId) {
             show(Section.SOURCES);
@@ -958,6 +974,62 @@ public final class AppContext {
 
     public com.aresstack.spaceharvester.app.project.ProjectStore projects() {
         return projects;
+    }
+
+    /**
+     * Die Bücher der Favoritenordner als Artefakte der Projekte (ADR 0044 Nachtrag, ADR 0047): Ordner zum Artefakt,
+     * Artefakt zum Ordner, „veraltet“. Dieselben Seiten wie „Buch schreiben“ (der Ordner samt Unterordnern), derselbe
+     * Stand wie in der Ablage.
+     */
+    private final com.aresstack.spaceharvester.app.research.BookArtifacts bookArtifacts =
+            new com.aresstack.spaceharvester.app.research.BookArtifacts(
+                    () -> settings() == null || settings().storage() == null ? null
+                            : settings().storage().dataDirectory(),
+                    projectId -> projects().artifacts(projectId),
+                    folderId -> {
+                        java.util.List<com.aresstack.spaceharvester.app.research.BookEditions.Source> pages =
+                                new java.util.ArrayList<>();
+                        for (Favorites.Favorite favorite : favorites().favoritesIn(folderId, true)) {
+                            if (favorite.pageId() != null) {
+                                pages.add(new com.aresstack.spaceharvester.app.research.BookEditions.Source(
+                                        favorite.sourceId(), favorite.pageId(), null));
+                            }
+                        }
+                        return pages;
+                    },
+                    source -> {
+                        AppRuntime current = runtime();
+                        return current == null ? null
+                                : new com.aresstack.spaceharvester.app.research.WorkspacePageStock(
+                                        current.workspace(), null).version(
+                                        new com.aresstack.spaceharvester.application.snapshot.PageKey(
+                                                source.sourceId(), source.pageId()));
+                    }, this::chatArtifacts);
+
+    public com.aresstack.spaceharvester.app.research.BookArtifacts bookArtifacts() {
+        return bookArtifacts;
+    }
+
+    /**
+     * Der eine Artefakt-Speicher der App (ADR 0047): Chat und Buch schreiben über ihn, damit seine Meldungen jede offene
+     * Ansicht erreichen. Artefakte gehören immer dem Projekt, auch dem Standardprojekt.
+     */
+    private volatile com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore chatArtifacts;
+
+    public com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore chatArtifacts() {
+        com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore store = chatArtifacts;
+        if (store == null) {
+            synchronized (this) {
+                store = chatArtifacts;
+                if (store == null) {
+                    store = new com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore(
+                            new com.aresstack.spaceharvester.app.chat.ChatStore(this::chatsDirectory));
+                    store.projects(projects()::artifacts);
+                    chatArtifacts = store;
+                }
+            }
+        }
+        return store;
     }
 
     /** Der Ordner aller Chats im Datenordner der App; {@code null} ohne Einstellungen. */

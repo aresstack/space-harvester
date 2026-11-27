@@ -744,6 +744,11 @@ public final class Explorer {
         }
     }
 
+    /** „Buch öffnen“ am Favoritenordner. */
+    public void openBook(String folderId) {
+        favorites.openBook(folderId);
+    }
+
     /** „Neue Auflage erzeugen“ des Buchs am Favoritenordner. */
     public void newBookEdition(String folderId) {
         favorites.newEdition(folderId);
