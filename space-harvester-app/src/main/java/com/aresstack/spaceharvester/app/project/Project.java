@@ -14,8 +14,11 @@ import java.util.Objects;
  * @param name   Anzeigename, frei wählbar, darf mehrfach vorkommen; beim Standardprojekt immer {@link #DEFAULT_NAME}
  * @param target wohin ein Klick auf den Projektnamen unten in der Ecke führt (F6); {@code null}, solange keines gesetzt
  *               ist; beim Standardprojekt immer {@code null}
+ * @param output wohin Exporte und Downloads des Projekts gehen ({@link ProjectOutput}); nie {@code null}, Vorgabe
+ *               {@link ProjectOutput#standard()}; beim Standardprojekt ohne Wirkung, dort gilt immer der Ausgabeordner
+ *               der Einstellungen
  */
-public record Project(String id, String name, ProjectTarget target) {
+public record Project(String id, String name, ProjectTarget target, ProjectOutput output) {
 
     /** Die feste Kennung des Standardprojekts. */
     public static final String DEFAULT_ID = "standard";
@@ -27,6 +30,12 @@ public record Project(String id, String name, ProjectTarget target) {
         boolean standard = DEFAULT_ID.equals(id);
         name = standard ? DEFAULT_NAME : name == null || name.isBlank() ? "Projekt" : name.strip();
         target = standard ? null : target;
+        output = output == null ? ProjectOutput.standard() : output;
+    }
+
+    /** Ein Projekt mit der Vorgabe für Exporte und Downloads. */
+    public Project(String id, String name, ProjectTarget target) {
+        this(id, name, target, null);
     }
 
     /** Das Standardprojekt. */
@@ -40,10 +49,14 @@ public record Project(String id, String name, ProjectTarget target) {
     }
 
     public Project withName(String newName) {
-        return new Project(id, newName, target);
+        return new Project(id, newName, target, output);
     }
 
     public Project withTarget(ProjectTarget newTarget) {
-        return new Project(id, name, newTarget);
+        return new Project(id, name, newTarget, output);
+    }
+
+    public Project withOutput(ProjectOutput newOutput) {
+        return new Project(id, name, target, newOutput);
     }
 }

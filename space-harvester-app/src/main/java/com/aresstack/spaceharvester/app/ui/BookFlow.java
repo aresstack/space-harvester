@@ -333,7 +333,7 @@ final class BookFlow {
             return;
         }
         Path output = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings
-                .defaultOutputDirectory() : context.settings().outputDirectory();
+                .defaultOutputDirectory() : context.exportDirectory();
         CornerstoneSurvey.Chosen chosen = view.chosen(session.prepared().basketHints());
         // Das Buch gehört dem Projekt, das beim Schreiben aktiv ist (ADR 0047), auch wenn später gewechselt wird.
         String projectId = context.projects().active().id();
