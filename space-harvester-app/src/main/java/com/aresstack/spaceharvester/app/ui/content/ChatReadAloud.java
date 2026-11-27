@@ -244,7 +244,7 @@ final class ChatReadAloud {
             return false;
         }
         active = true;
-        speak(bubble, speech, start);
+        speak(bubble, speech, start, text, element.getStartOffset());
         return true;
     }
 
@@ -265,6 +265,12 @@ final class ChatReadAloud {
 
     /** Liest {@code speech} ab {@code start} vor; ein laufendes Vorlesen endet vorher (dieselbe Sprachausgabe). */
     private void speak(AssistantMarkdownMessage bubble, String speech, int start) {
+        speak(bubble, speech, start, null, 0);
+    }
+
+    /** Wie oben; die Hervorhebung sucht ab {@code shownFrom} in {@code block} (der angeklickte Absatz). */
+    private void speak(AssistantMarkdownMessage bubble, String speech, int start, JTextComponent block,
+                       int shownFrom) {
         String source = speech.substring(Math.max(0, Math.min(start, speech.length())));
         String cleaned = SpeakableText.of(source);
         if (cleaned.isBlank()) {
@@ -278,7 +284,7 @@ final class ChatReadAloud {
         if (deferred == bubble) {
             deferred = null;
         }
-        marker.start(speech, speech.length() - source.length(), cleaned.length());
+        marker.start(speech, speech.length() - source.length(), cleaned.length(), block, shownFrom);
         style();
         binding.speak(cleaned, () -> true, () -> {
             if (run == mine) {

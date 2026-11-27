@@ -85,6 +85,19 @@ final class ReadAloudMarker {
     }
 
     /**
+     * Wie {@link #start(String, int, int)}; der erste Satz wird ab {@code offset} in {@code block} gesucht, nicht vom
+     * Anfang. Nach einem Doppelklick auf eine Überschrift, die auch im Inhaltsverzeichnis steht, markiert die
+     * Hervorhebung so die angeklickte Stelle und rollt nicht zum Verzeichnis zurück.
+     */
+    void start(String spoken, int start, int cleanedLength, JTextComponent block, int offset) {
+        start(spoken, start, cleanedLength);
+        if (block != null) {
+            marked = block; // ohne Marke: nur der Ausgangspunkt der Suche
+            markEnd = Math.max(0, offset);
+        }
+    }
+
+    /**
      * Ein Stück erklingt: ungefähr die Zeichen {@code [from, to)} des an die Sprachausgabe gegangenen Texts, etwa
      * {@code millis} lang. Seine Sätze werden nacheinander hervorgehoben, jeder anteilig zu seiner Länge.
      */

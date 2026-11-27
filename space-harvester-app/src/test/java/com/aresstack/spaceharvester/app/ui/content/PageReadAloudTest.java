@@ -83,6 +83,15 @@ class PageReadAloudTest {
             });
             assertThat(fake.await(3)).isTrue();
             assertThat(fake.spoken.get(2)).isEqualTo("Störungen\nBei Störungen die Bereitschaft anrufen.");
+            // die Hervorhebung bleibt an der angeklickten Überschrift, nicht im Inhaltsverzeichnis
+            int[] markAt = new int[] {-1};
+            SwingUtilities.invokeAndWait(() -> {
+                reading.playing(0, "Störungen".length(), 0);
+                for (javax.swing.text.Highlighter.Highlight highlight : pane.getHighlighter().getHighlights()) {
+                    markAt[0] = highlight.getStartOffset();
+                }
+            });
+            assertThat(markAt[0]).isEqualTo(TEXT.indexOf("\nStörungen\nBei") + 1);
 
             // eine andere Seite beendet das Vorlesen
             SwingUtilities.invokeAndWait(() -> reading.speechText("Eine andere Seite."));

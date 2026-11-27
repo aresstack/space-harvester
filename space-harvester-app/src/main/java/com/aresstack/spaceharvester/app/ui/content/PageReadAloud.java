@@ -136,7 +136,7 @@ final class PageReadAloud {
         if (speechText.isBlank()) {
             return;
         }
-        speak(0);
+        speak(0, 0);
     }
 
     /**
@@ -166,7 +166,7 @@ final class PageReadAloud {
         if (start < 0) {
             return false;
         }
-        speak(start);
+        speak(start, element.getStartOffset());
         return true;
     }
 
@@ -183,14 +183,17 @@ final class PageReadAloud {
         }
     }
 
-    /** Liest den Text ab {@code start} vor; ein laufendes Vorlesen endet vorher (dieselbe Sprachausgabe). */
-    private void speak(int start) {
+    /**
+     * Liest den Text ab {@code start} vor; ein laufendes Vorlesen endet vorher (dieselbe Sprachausgabe). Die
+     * Hervorhebung sucht ab {@code shownFrom} in der Anzeige (der angeklickte Absatz).
+     */
+    private void speak(int start, int shownFrom) {
         String spoken = speechText.substring(start);
         Object mine = new Object();
         run = mine;
         speaking = true;
         paused = false;
-        marker.start(speechText, start, spoken.length());
+        marker.start(speechText, start, spoken.length(), text, shownFrom);
         style();
         binding.speak(spoken, allowed, () -> {
             if (run == mine) {
