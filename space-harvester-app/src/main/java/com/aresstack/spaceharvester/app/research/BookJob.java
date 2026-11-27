@@ -81,6 +81,20 @@ public final class BookJob {
             return basket.fence();
         }
 
+        /** Die Seiten des Ordners, aus denen der Lauf schreibt (für „veraltet“ der Auflage). */
+        List<BookEditions.Source> members() {
+            List<BookEditions.Source> members = new java.util.ArrayList<>();
+            for (var ref : basket.sources()) {
+                try {
+                    var key = PageRefs.key(ref);
+                    members.add(new BookEditions.Source(key.sourceId(), key.pageId(), null));
+                } catch (RuntimeException notAPage) {
+                    // keine Seite der Ablage: zählt nicht
+                }
+            }
+            return members;
+        }
+
         /** Die Vorbereitung; {@code null}, solange sie nicht fertig ist. */
         public BookRun.Preparation prepared() {
             return prepared;
@@ -209,7 +223,7 @@ public final class BookJob {
             String report = result.report(ZoneId.systemDefault());
             if (data != null) {
                 BookEditions.Edition edition = BookEditions.add(data, session.folderId, Instant.now(), bookText,
-                        report, session.reader.sources());
+                        report, session.reader.sources(), session.members());
                 LOG.log(System.Logger.Level.INFO, "Buch: Auflage {0} am Ordner abgelegt, {1} Seiten",
                         edition.number(), edition.sources().size());
             }

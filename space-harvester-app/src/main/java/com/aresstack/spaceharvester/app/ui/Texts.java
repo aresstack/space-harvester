@@ -23,6 +23,13 @@ public final class Texts {
      * Warum Seiten „veraltet“ sind: Die Quelle hat eine neuere Version, der Inhalt ist noch nicht geladen, meist weil
      * die Betriebsart der Quelle „Nur katalogisieren“ ist.
      */
+    /** „Neue Auflage erzeugen“ eines Buchs: Rechtsklick am Ordner und Knopf in der Leseansicht. */
+    public static final String NEW_EDITION = "Neue Auflage erzeugen";
+    public static final String NEW_EDITION_TIP = "Schreibt das Buch mit den gemerkten Angaben neu; die bisherige "
+            + "Auflage bleibt lesbar";
+    /** Hinweis an einem Buch, dessen Seiten sich seit der Auflage geändert haben. */
+    public static final String BOOK_STALE = "Seiten des Buchs haben sich seither geändert";
+
     public static final String OUTDATED_WHY = "Veraltet: In der Quelle gibt es eine neuere Version, der Inhalt ist noch "
             + "nicht geladen, meist wegen der Betriebsart „Nur katalogisieren“. Ändern unter Quellen › „Diese Quelle "
             + "anpassen …“ › Betriebsart.";

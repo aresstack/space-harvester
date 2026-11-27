@@ -692,6 +692,30 @@ public final class PageDetailPanel extends JPanel {
         areaView.books(folderId -> context.settings() == null || context.settings().storage() == null ? null
                 : com.aresstack.spaceharvester.app.research.BookEditions.latest(
                         context.settings().storage().dataDirectory(), folderId).orElse(null));
+        // Geänderte Seiten seit der Auflage: gemerkter Stand gegen den jetzigen in der Ablage (kein Abfragen; die
+        // Ansicht prüft nur, wenn eine Quelle eine Änderung meldet oder der Ordner neu gezeigt wird).
+        areaView.staleness((folderId, shown) -> {
+            var runtime = context.runtime();
+            if (runtime == null) {
+                return false;
+            }
+            // Dieselben Seiten, aus denen „Buch schreiben“ liest (FavoritesBasket: der Ordner samt Unterordnern).
+            List<com.aresstack.spaceharvester.app.research.BookEditions.Source> members = new java.util.ArrayList<>();
+            for (var favorite : context.favorites().favoritesIn(folderId, true)) {
+                if (favorite.pageId() != null) {
+                    members.add(new com.aresstack.spaceharvester.app.research.BookEditions.Source(favorite.sourceId(),
+                            favorite.pageId(), null));
+                }
+            }
+            var stock = new com.aresstack.spaceharvester.app.research.WorkspacePageStock(runtime.workspace(), null);
+            return com.aresstack.spaceharvester.app.research.BookEditions.stale(shown, members, source -> stock.version(
+                    new com.aresstack.spaceharvester.application.snapshot.PageKey(source.sourceId(), source.pageId())));
+        });
+        areaView.onNewEdition(folderId -> {
+            if (context.navigator() != null) {
+                context.navigator().newBookEdition(folderId);
+            }
+        });
         this.sourceProperties = new SourcePropertiesView(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context::settings);
         sourceProperties.secretState((current, entry) -> com.aresstack.spaceharvester.app.ui.SecretState.of(current,
