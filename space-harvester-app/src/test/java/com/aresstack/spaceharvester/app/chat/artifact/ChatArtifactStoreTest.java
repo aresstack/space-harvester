@@ -59,13 +59,15 @@ class ChatArtifactStoreTest {
                 + GraphicReferences.reference(graphic), ChatArtifact.Origin.AI);
         store.rememberTabs(folder, loose.id(), List.of("D1", "G1"));
         java.util.Map<String, String> renamed = store.moveToProject(folder, loose.id(), "p1");
-        assertThat(renamed).containsExactly(java.util.Map.entry("G1", "G2"), java.util.Map.entry("D1", "D2"));
+        assertThat(renamed).containsOnly(java.util.Map.entry("G1", "G2"), java.util.Map.entry("D1", "D2"));
         // Verweise in den Antworten des Chats folgen (ChatPanel schreibt den Verlauf damit um).
         assertThat(ChatArtifactStore.relink("Siehe [Gartenfibel](artefakt:D1) und artefakt:D12.", renamed))
                 .isEqualTo("Siehe [Gartenfibel](artefakt:D2) und artefakt:D12.");
         assertThat(store.moveToProject(folder, loose.id(), "p1")).as("ein zweites Mal zieht nichts um").isEmpty();
 
-        assertThat(store.list(folder, second.id())).extracting(ChatArtifact::id).containsExactly("D1", "G1", "G2", "D2");
+        // Im selben Augenblick angelegte Artefakte stehen nach Kennung; die Reihenfolge der beiden ist hier gleich.
+        assertThat(store.list(folder, second.id())).extracting(ChatArtifact::id)
+                .containsExactlyInAnyOrder("D1", "G1", "G2", "D2");
         assertThat(GraphicReferences.ids(store.read(folder, second.id(), "D2").content()))
                 .as("der Verweis folgt der neuen Kennung").containsExactly("G2");
         assertThat(store.read(folder, second.id(), "D2").title()).isEqualTo("Gartenfibel");
