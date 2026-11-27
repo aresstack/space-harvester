@@ -121,8 +121,8 @@ class TextContextMenuTest {
             }
 
             @Override
-            public void quote(String text) {
-                quoted.add(text);
+            public void quote(String text, String reference) {
+                quoted.add(reference == null ? text : reference + " | " + text);
             }
         };
         try {
@@ -136,6 +136,14 @@ class TextContextMenuTest {
                         TextContextMenu.SELECT_ALL);
                 item(menu, TextContextMenu.QUOTE).doClick();
                 assertThat(quoted).containsExactly("Nachtlauf");
+
+                // Ein Bereich mit Bezug (ADR 0045 §7: Artefakt und Abschnitt) gibt ihn dem Zitat mit.
+                javax.swing.JPanel section = new javax.swing.JPanel();
+                section.putClientProperty(TextContextMenu.QUOTE_REFERENCE, "Dokument D1, Abschnitt a2");
+                section.add(page);
+                item(TextContextMenu.menu(page), TextContextMenu.QUOTE).doClick();
+                assertThat(quoted).containsExactly("Nachtlauf", "Dokument D1, Abschnitt a2 | Nachtlauf");
+                page.select(4, 13);
 
                 // Ohne Markierung, im Passwortfeld und in der Chat-Eingabe selbst gibt es kein Zitieren.
                 page.select(0, 0);

@@ -61,7 +61,12 @@ public final class DocumentChatTools {
             kein Dokument: grafik_zeichnen (Thema und Inhalt, gezeichnet vom Bildmodell) oder grafik_anlegen (du \
             lieferst das SVG selbst). Ein Dokument nur, wenn er auch Text haben möchte; dann die Grafik mit \
             grafik_einbinden in den passenden Abschnitt. Ein SVG nie in den Text eines Abschnitts schreiben.
+            - Beginnt ein Zitat in der Nachricht mit „(Bezug: Dokument D…, Abschnitt a…)“ oder „(Bezug: Grafik G…)“, \
+            meint der Benutzer genau diese Stelle: lies diesen Abschnitt und ändere nur dort.
             - Antworte am Ende kurz, was du im Dokument getan hast; wiederhole das Dokument nicht in der Antwort.""";
+
+    /** Das Wort vor dem Bezug eines Zitats aus einem Artefakt (ADR 0045 §7), wie es {@link #RULES} nennen. */
+    public static final String QUOTE_REFERENCE = "Bezug:";
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final String DOC = "\"dokument\":{\"type\":\"string\",\"description\":\"Kennung des Dokuments, "
