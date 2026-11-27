@@ -42,6 +42,8 @@ final class ArtifactView extends JPanel {
     private final Path folder;
     private final String chatId;
     private final String artifactId;
+    /** Der Ordner des Besitzers (Chat oder Projekt), aus dem die Ansicht liest. */
+    private final Path owner;
     private final JPanel column = new JPanel();
     private final JScrollPane scroll;
     private final Map<String, JComponent> blocks = new LinkedHashMap<>();
@@ -75,6 +77,7 @@ final class ArtifactView extends JPanel {
         this.folder = folder;
         this.chatId = chatId;
         this.artifactId = artifactId;
+        this.owner = store.owner(folder, chatId);
         setBackground(Comic.SURFACE);
         column.setLayout(new BoxLayout(column, BoxLayout.Y_AXIS));
         column.setOpaque(false);
@@ -124,7 +127,8 @@ final class ArtifactView extends JPanel {
     }
 
     private void changed(ChatArtifactStore.Event event) {
-        if (!chatId.equals(event.chatId()) || !java.util.Objects.equals(folder, event.folder())) {
+        // Ein Projekt teilt seine Artefakte mit allen seinen Chats (ADR 0043, F3): maßgeblich ist der Besitzer.
+        if (!java.util.Objects.equals(owner, event.owner())) {
             return;
         }
         if (!artifactId.equals(event.artifact().id())) {
