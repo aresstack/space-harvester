@@ -77,6 +77,7 @@ final class RecordingCollector {
                 if (target.size() == 0) {
                     target.add(step);
                 } else {
+                    step = step.withIdOf(target.last());
                     target.replace(target.size() - 1, step);
                 }
                 return step;

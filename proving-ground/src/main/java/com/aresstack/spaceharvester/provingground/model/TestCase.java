@@ -67,6 +67,16 @@ public final class TestCase {
         steps.add(to, step);
     }
 
+    /** Position of the step with this id, or -1. */
+    public int indexOf(String stepId) {
+        for (int i = 0; i < steps.size(); i++) {
+            if (steps.get(i).id().equals(stepId)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     /** The last step, or null. */
     public TestStep last() {
         return steps.isEmpty() ? null : steps.get(steps.size() - 1);
