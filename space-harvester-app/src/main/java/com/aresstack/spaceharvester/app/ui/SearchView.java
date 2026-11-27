@@ -109,6 +109,10 @@ public final class SearchView implements View {
     static final String SYNONYMS = "Synonyme der Fachbegriffe einbeziehen";
     /** Suchmethode „Fachbegriffe“ (W8). */
     static final String TERM_PAGES = "Seiten zu Fachbegriffen einbeziehen";
+    /** Suchmethode „Nur Überschriften durchsuchen“. */
+    static final String HEADINGS_ONLY = "Nur Überschriften durchsuchen";
+    static final String HEADINGS_ONLY_TIP = "Sucht nur in Seitentiteln und Überschriften, nicht im Fließtext; nur im "
+            + "lokalen Index und immer als Schlagwortsuche";
     /** Ein Satz, wie bei den Nachbarseiten. */
     static final String TERM_PAGES_TIP = "Nennt die Anfrage einen bestätigten Fachbegriff, kommen Seiten dazu, auf "
             + "denen der Wissensgraph Aussagen zu ihm belegt";
@@ -179,6 +183,11 @@ public final class SearchView implements View {
      * erhalten ({@link SearchMethods}).
      */
     final JCheckBox termPages = checkBox(TERM_PAGES, TERM_PAGES_TIP);
+    /**
+     * Suchmethode „Nur Überschriften durchsuchen“ (Angelo 27.11.2026): Seitentitel und alle Überschriften, kein
+     * Fließtext. Die Stellung bleibt erhalten ({@link SearchMethods}).
+     */
+    final JCheckBox headingsOnly = checkBox(HEADINGS_ONLY, HEADINGS_ONLY_TIP);
     /** Die Suche, nach deren Stapel die Seiten zu Fachbegriffen noch gesucht werden; -1 ohne. */
     private int termPagesFor = -1;
     /** Stopp der laufenden Suche nach Seiten zu Fachbegriffen (Schlagwortmodus) oder {@code null}. */
@@ -463,6 +472,11 @@ public final class SearchView implements View {
                 // Nur sinnvoll mit Fachbegriffen: fehlen sie im Bereich, sagt die Suche es gleich (Angelo 27.11.2026).
                 checkTechnicalTerms(TERM_PAGES);
             }
+        });
+        headingsOnly.setSelected(SearchMethods.user().headingsOnly());
+        headingsOnly.addItemListener(e -> {
+            SearchMethods.user().headingsOnly(headingsOnly.isSelected());
+            mode();
         });
         glossarySynonyms.setSelected(SearchMethods.user().glossarySynonyms());
         glossarySynonyms.addItemListener(e -> {
@@ -830,12 +844,14 @@ public final class SearchView implements View {
             wordKindBoxes.values().forEach(box -> options.add(menuItem(box)));
             options.addSeparator();
             options.add(caption("Suchmethoden"));
+            options.add(menuItem(headingsOnly));
             options.add(menuItem(technicalTerms));
             options.add(menuItem(wordSynonyms));
         } else {
             // Die Suchmethoden als Gruppe (UX-Manager 21.11.2026); weitere kommen hier dazu.
             options.add(caption("Suchmethoden"));
             options.add(menuItem(semantic));
+            options.add(menuItem(headingsOnly));
             options.add(menuItem(neighbors));
             options.add(menuItem(glossarySynonyms));
             options.add(menuItem(termPages));
@@ -1045,7 +1061,7 @@ public final class SearchView implements View {
         }
         KeywordSearch.Query q = new KeywordSearch.Query(searchedText, missing.size() == 1 ? missing.iterator().next()
                 : null, missing.size() > 1 ? missing : Set.of(), Set.of(), Set.of()).ofKinds(chosenKinds())
-                .withGlossarySynonyms(synonymsOn());
+                .withGlossarySynonyms(synonymsOn()).withHeadingsOnly(headingsOnly.isSelected());
         // Eigene Anfragenummer: Antworten der vorigen Suche (Neusortieren, Nachbarn, Ladestand) dürfen die
         // nachgesuchte Quelle nicht mehr überschreiben. Bis 23.11.2026 kam ein spätes Neusortieren der alten Quelle
         // nach dem ersten Stapel an, setzte deren (leeren) Cursor und „Weitere laden“ blieb aus (CI 45213208517).
@@ -1587,7 +1603,7 @@ public final class SearchView implements View {
 
     record SearchLocation(String text, List<Explorer.Scope> area, boolean words, boolean technical, boolean semantic,
                           boolean neighbors, boolean synonyms, boolean termPages, Set<DocumentKind> kinds, String label,
-                          Set<WordSearch.Kind> wordKinds, boolean wordSynonyms) {
+                          Set<WordSearch.Kind> wordKinds, boolean wordSynonyms, boolean headingsOnly) {
         SearchLocation {
             area = List.copyOf(area);
             kinds = Set.copyOf(kinds);
@@ -1607,7 +1623,7 @@ public final class SearchView implements View {
             searchLocationListener.accept(new SearchLocation(text, area, words, technicalTerms.isSelected(),
                     semantic.isSelected(), neighbors.isSelected(), glossarySynonyms.isSelected(), termPages.isSelected(),
                     selectedKinds, "Suche: " + visitName(new Visit(text, area)), chosenWordKinds(),
-                    wordSynonyms.isSelected()));
+                    wordSynonyms.isSelected(), headingsOnly.isSelected()));
         }
     }
 
@@ -1628,6 +1644,7 @@ public final class SearchView implements View {
             neighbors.setSelected(location.neighbors());
             glossarySynonyms.setSelected(location.synonyms());
             termPages.setSelected(location.termPages());
+            headingsOnly.setSelected(location.headingsOnly());
             kindBoxes.forEach((kind, box) -> box.setSelected(location.kinds().contains(kind)));
             search();
         } finally {
@@ -1998,8 +2015,11 @@ public final class SearchView implements View {
     private void mode() {
         boolean terms = technicalOn();
         modeLabel.setText(terms ? TECHNICAL_TERMS_MODE + (wordSynonyms.isSelected() ? " + Synonyme" : "")
-                : words ? WORDS_MODE + (wordSynonyms.isSelected() ? " + Synonyme" : "")
-                : (semantic.isSelected() ? "Modus: Semantische Suche" : "Modus: Schlagwortsuche")
+                : words ? WORDS_MODE + (headingsOnly.isSelected() ? " + nur Überschriften" : "")
+                + (wordSynonyms.isSelected() ? " + Synonyme" : "")
+                : (semantic.isSelected() && !headingsOnly.isSelected() ? "Modus: Semantische Suche"
+                        : "Modus: Schlagwortsuche")
+                + (headingsOnly.isSelected() ? " + nur Überschriften" : "")
                 + (neighbors.isSelected() && neighbors.isEnabled() ? " + Nachbarseiten" : "")
                 + (synonymsOn() ? " + Synonyme" : "")
                 + (termPagesOn() ? " + Fachbegriffe" : ""));
@@ -2131,6 +2151,47 @@ public final class SearchView implements View {
         if (kinds.contains(WordSearch.Kind.VERBS)) {
             checkVerbs(search);
         }
+        if (headingsOnly.isSelected() && !text.isEmpty()) {
+            // „Nur Überschriften durchsuchen“ (Angelo 27.11.2026): nur Wörter der Seiten, deren Titel oder Überschriften
+            // den Suchtext enthalten; dieselbe Schlagwortsuche wie die Seitensuche, nur im lokalen Index.
+            Set<String> sources = searchedSources();
+            KeywordSearch.Query q = new KeywordSearch.Query(text, sources.size() == 1 ? sources.iterator().next()
+                    : null, sources.size() > 1 ? sources : Set.of(), Set.of(), Set.of())
+                    .ofKinds(chosenKinds()).withHeadingsOnly(true);
+            wordStatus("Überschriften werden durchsucht …");
+            Background.run(() -> headingPages(runtime, q), pages -> {
+                if (mine == wordRequest) {
+                    runWords(runtime, search.only(pages), kinds, text, mine);
+                }
+            }, error -> {
+                if (mine == wordRequest) {
+                    feedback.problem(error);
+                }
+            });
+            return;
+        }
+        runWords(runtime, search, kinds, text, mine);
+    }
+
+    /** Alle Seiten, deren Titel oder Überschriften die Anfrage treffen, Stapel für Stapel dem Cursor nach. */
+    private static com.aresstack.spaceharvester.application.snapshot.PageSet headingPages(AppRuntime runtime,
+                                                                                         KeywordSearch.Query q) {
+        Map<String, Set<String>> pages = new LinkedHashMap<>();
+        String core = java.util.UUID.randomUUID().toString();
+        String cursor = null;
+        do {
+            KeywordSearch.Results results = runtime.workspace().keywordSearchIn(core, q, cursor, KeywordSearch.MAX_LIMIT,
+                    null);
+            for (KeywordSearch.Hit hit : results.hits()) {
+                pages.computeIfAbsent(hit.sourceId(), id -> new LinkedHashSet<>()).add(hit.pageId());
+            }
+            cursor = results.nextCursor();
+        } while (cursor != null);
+        return com.aresstack.spaceharvester.application.snapshot.PageSet.of(pages);
+    }
+
+    /** Startet die Liste: mit dem Suchtext, bei „Synonyme der Fachbegriffe“ auch mit deren Synonymen. */
+    private void runWords(AppRuntime runtime, WordSearch search, Set<WordSearch.Kind> kinds, String text, int mine) {
         if (!wordSynonyms.isSelected() || text.isEmpty()) {
             wordsPanel.search(search, kinds, List.of(text));
             return;
@@ -2520,7 +2581,8 @@ public final class SearchView implements View {
                 }
             }) : Set.of();
             q = new KeywordSearch.Query(text, sourceId, sources.size() > 1 ? sources : Set.of(), spaces, excluded)
-                    .ofKinds(chosenKinds()).withGlossarySynonyms(synonymsOn());
+                    .ofKinds(chosenKinds()).withGlossarySynonyms(synonymsOn())
+                    .withHeadingsOnly(headingsOnly.isSelected());
         } catch (InvalidQueryException invalid) {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
@@ -2567,7 +2629,8 @@ public final class SearchView implements View {
     /** Startet die gebaute Anfrage: Schlagwortsuche oder semantisch. */
     private void run(AppRuntime runtime, KeywordSearch.Query q, String text) {
         started(runtime, text);
-        if (semantic.isSelected()) {
+        // Nur Überschriften kann allein die Schlagwortsuche; die Vektoren gehören zum ganzen Inhalt.
+        if (semantic.isSelected() && !q.headingsOnly()) {
             progressive(runtime, q);
             checkSynonyms(runtime, q, request);
             return;

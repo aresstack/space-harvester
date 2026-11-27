@@ -346,6 +346,15 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   Ablage der Bildanalyse (ADR 0021, `Assets.storedDescription`, eingestelltes Modell); Indexieren ruft nie ein Modell
   auf, beschrieben wird nur auf Abruf (`Assets.describe`, danach im Index), ohne Beschreibung steht nur der Dateiname
   darin, keine OCR. Der Wissensindex (Passagen, Embeddings) bleibt Seiten vorbehalten.
+- **Überschriften in der Rangfolge:** Der Volltextindex führt die Überschriften einer Seite (`PageText.Section`,
+  bei Confluence `h1`–`h6`) zusätzlich zum Fließtext: Ihre Wörter zählen wie der Titel, und eine Überschrift, die
+  nach Zerlegung (ohne Groß-/Kleinschreibung und Satzzeichen) genau der Anfrage entspricht, stellt ihre Seite an den
+  Anfang, der Auszug steht dann an der Überschrift. Einträge von vorher schreibt das nächste Indizieren der Seite
+  einmal nach (wie den Medientyp), ohne den Index neu aufzubauen.
+  Suchmethode „Nur Überschriften durchsuchen“ (`KeywordSearch.Query#withHeadingsOnly`, REST `headingsOnly`, App
+  Häkchen in den Suchoptionen, normale Suche und Wortsuche): nur Seitentitel und Überschriften der Seiten
+  (`PageTextIndex.Fields.HEADINGS`), kein Fließtext, keine Anhänge und keine Online-Suche der Quelle, die den
+  Fließtext mitträfe; der Auszug steht an der passenden Überschrift.
 - **Index je Dokument und Abschnitt (ADR 0026, AP4b, `page-text-index/v3`):** Ist die strukturierte Extraktion
   abgelegt, bekommt ein Dokument-Anhang je abgelegtem Abschnitt einen Eintrag, jede lesbare enthaltene Datei
   (Anhang einer Mail, Eintrag eines Archivs) ebenso mit ihrer Teilkennung (`PartId#value`) und ihrem Anzeigenamen;

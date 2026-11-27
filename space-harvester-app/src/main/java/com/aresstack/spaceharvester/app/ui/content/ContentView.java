@@ -137,7 +137,7 @@ public final class ContentView implements View {
         body.add(middleDeck, BorderLayout.CENTER);
         middleDeck.add(detail, PAGE_MIDDLE);
         java.util.function.Supplier<java.nio.file.Path> output =
-                () -> context.settings() == null ? null : context.settings().outputDirectory();
+                context::exportDirectory;
         java.util.function.Consumer<String> status =
                 text -> statusInfo.show(com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(text));
         // Unter „Export“ nur noch Exporte (Entwurf UX 27.11.2026); derselbe Baustein ohne Chat.
@@ -548,6 +548,16 @@ public final class ContentView implements View {
 
     private ChatSidebar chatSidebar;
 
+    /** Die Analysen als Seitenleiste rechts; das Hauptfenster stellt sie zwischen Chat und Aufträge. */
+    public AnalysesSidebar analysesSidebar() {
+        if (analysesSidebar == null) {
+            analysesSidebar = new AnalysesSidebar(detail);
+        }
+        return analysesSidebar;
+    }
+
+    private AnalysesSidebar analysesSidebar;
+
     /** Ob die Reiter ihre Auswahl zeigen: nur, solange die Mitte die Seitenansicht zeigt ({@link PillTabs#showSelection}). */
     public void tabsActive(boolean active) {
         detail.tabs().showSelection(active && !artifactsFront);
@@ -562,12 +572,14 @@ public final class ContentView implements View {
         detail.export().selection(selection);
         detail.chat().onResolved(resolved -> detail.graph().within(resolved == null ? null : resolved.pages()));
         detail.chat().selection(selection);
+        // Die Analysen der Auswahl stehen in der Seitenleiste auch neben der Suche: Sie folgen der Auswahl wie Chat
+        // und Export. Welche Ebene sie zeigen (Seite oder Auswahl), bleibt bei der offenen Seite in der Mitte.
+        detail.standing().selection(selection);
+        detail.overviewSelection(selection);
         if (searchFront) {
             return;
         }
         folder = selection instanceof ExportPanel.Selection.Collection collection ? collection : null;
-        detail.standing().selection(selection);
-        detail.overviewSelection(selection);
         // Eine Seite zeigt unter „Analysen“ ihre eigenen Analysen, jede weitere Ebene den Stand der Auswahl.
         detail.wide(selection == null || selection.global() || !selection.page());
         // Die globale Auswahl (alle Wissensquellen) lässt Brotkrumen und Einmalcode-Abfrage, wie sie sind; die Mitte

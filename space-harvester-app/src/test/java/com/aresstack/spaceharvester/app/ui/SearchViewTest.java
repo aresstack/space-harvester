@@ -751,7 +751,7 @@ class SearchViewTest {
             List<String> items = find(view[0].options, AbstractButton.class).stream().map(AbstractButton::getText)
                     .toList();
             assertThat(items).contains("Alpha", "PDF", "Akronyme", "Bezeichner", "Verben", SearchView.TECHNICAL_TERMS,
-                    SearchView.SYNONYMS).doesNotContain(SearchView.SEMANTIC, SearchView.NEIGHBORS,
+                    SearchView.SYNONYMS, SearchView.HEADINGS_ONLY).doesNotContain(SearchView.SEMANTIC, SearchView.NEIGHBORS,
                     SearchView.TERM_PAGES);
             assertThat(view[0].wordKindBoxes.get(WordSearch.Kind.ACRONYMS).isSelected()).isTrue();
             assertThat(view[0].wordKindBoxes.get(WordSearch.Kind.IDENTIFIERS).isSelected()).isTrue();

@@ -61,6 +61,26 @@ class PageTextIndexingTest {
         }
     }
 
+    /** Eine Confluence-Überschrift, die genau der Anfrage entspricht, stellt ihre Seite nach oben. */
+    @Test
+    void aConfluenceHeadingMatchingTheQueryPutsItsPageOnTop() {
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            PageTextIndexing texts = new PageTextIndexing(List.of(new ConfluenceStorageTextProjector()), index);
+            String filler = "<p>" + "Füllwort ".repeat(60) + "</p>";
+            assertThat(texts.index(TestSnapshots.page("wiki", "1", "DEV", null, "1", TestSnapshots.json(
+                    "{\"body\":{\"storage\":{\"value\":\"<p>Störungsmeldung hier, Störungsmeldung dort.</p>\"}}}"))))
+                    .isTrue();
+            assertThat(texts.index(TestSnapshots.page("wiki", "2", "DEV", null, "1", TestSnapshots.json(
+                    "{\"body\":{\"storage\":{\"value\":\"" + filler + "<h2>Störungsmeldung</h2><p>Erst anrufen.</p>"
+                            + filler + "\"}}}")))).isTrue();
+
+            List<PageTextIndex.Match> hits = index.search("störungsmeldung", Set.of("wiki"), SearchSpaces.all(), 10);
+
+            assertThat(hits).extracting(PageTextIndex.Match::pageId).containsExactly("2", "1");
+            assertThat(hits.get(0).snippet()).contains("Störungsmeldung Erst anrufen.");
+        }
+    }
+
     @Test
     void aCachedPageMissingFromTheIndexIsIndexedBeforeItsVersionCounts() {
         try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {

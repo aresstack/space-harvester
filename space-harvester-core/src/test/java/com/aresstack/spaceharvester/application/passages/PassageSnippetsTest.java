@@ -7,7 +7,9 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.query.DocumentKind;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
+import com.aresstack.spaceharvester.application.snapshot.PageSet;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
@@ -39,6 +41,17 @@ class PassageSnippetsTest {
                     "Der Server startet um acht. Der Server läuft stabil. Der Server stoppt nachts.");
             assertThat(match.title()).isEqualTo("Seite");
         });
+    }
+
+    /** Nur Überschriften: der Auszug des Index steht an der Überschrift und wird nicht durch einen Absatz ersetzt. */
+    @Test
+    void headingsOnlyKeepsTheExcerptOfTheIndex() {
+        stored.add(semantic(PassageProcessorTest.TEXT));
+
+        List<PageTextIndex.Match> matches = snippets.search("server nachts", Set.of("wiki"), null, null, Set.of(),
+                PageTextIndex.Fields.HEADINGS, 10);
+
+        assertThat(matches).singleElement().satisfies(match -> assertThat(match.snippet()).isEqualTo(WINDOW));
     }
 
     @Test
@@ -164,6 +177,12 @@ class PassageSnippetsTest {
         public List<Match> search(String query, Set<String> sourceIds, SearchSpaces spaces, int limit) {
             return List.of(new Match(KEY.sourceId(), KEY.pageId(), "S", "Seite", window, attachmentId,
                     attachmentId == null ? null : "plan.pdf"));
+        }
+
+        @Override
+        public List<Match> search(String query, Set<String> sourceIds, SearchSpaces spaces, PageSet pages,
+                                  Set<DocumentKind> kinds, Fields fields, int limit) {
+            return search(query, sourceIds, spaces, limit);
         }
 
         @Override

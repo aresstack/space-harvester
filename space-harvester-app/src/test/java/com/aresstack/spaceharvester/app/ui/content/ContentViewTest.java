@@ -71,7 +71,7 @@ class ContentViewTest {
         view = onEdt(() -> new ContentView(context));
     }
 
-    /** Bild für die Abnahme: Quelle links gewählt, „Analysen“ zeigt die drei Unterreiter des Stands. */
+    /** Bild für die Abnahme: Quelle links gewählt, die Analysen stehen als Seitenleiste rechts neben der Mitte. */
     @Test
     void renderSourceAnalyses() throws Exception {
         String directory = System.getenv("SCREENSHOTS_DIR");
@@ -80,7 +80,7 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         onEdt(() -> {
             view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
-            detail.tabs().select("Analysen");
+            detail.analysesShown(true);
             return null;
         });
         Thread.sleep(2000);
@@ -89,7 +89,16 @@ class ContentViewTest {
             page.add(view.tabBar(), java.awt.BorderLayout.NORTH);
             page.add(view.component(), java.awt.BorderLayout.CENTER);
             page.add(detail.footTools(), java.awt.BorderLayout.SOUTH);
-            AnalysisTabsScreenshotTest.write(page, Path.of(directory, "analysen-quelle-1280.png"), 640);
+            AnalysesSidebar sidebar = view.analysesSidebar();
+            sidebar.setBorder(javax.swing.BorderFactory.createMatteBorder(0, 1, 0, 0, com.aresstack.spaceharvester.app.ui.Comic.LINE));
+            javax.swing.JPanel window = new javax.swing.JPanel(new java.awt.BorderLayout());
+            window.setBackground(com.aresstack.spaceharvester.app.ui.Comic.SURFACE);
+            window.add(page, java.awt.BorderLayout.CENTER);
+            window.add(sidebar, java.awt.BorderLayout.EAST);
+            AnalysisTabsScreenshotTest.write(window, Path.of(directory, "analysen-quelle-1280.png"), 640);
+            assertThat(sidebar.filterButton().isSelected()).isFalse();
+            sidebar.filter(true);
+            AnalysisTabsScreenshotTest.write(window, Path.of(directory, "analysen-quelle-filter-1280.png"), 640);
             return null;
         });
     }
@@ -129,18 +138,18 @@ class ContentViewTest {
 
         onEdt(() -> {
             view.folder(top, "Betrieb");
-            detail.tabs().select("Analysen");
+            detail.analysesShown(true);
             return null;
         });
 
         assertThat(onEdt(() -> detail.folderSubfolders().isSelected())).isTrue();
         assertThat(onEdt(() -> detail.folderSubfolders().isEnabled())).isTrue();
         // Unter „Analysen“ trägt die Leiste die Unterreiter des Stands (Angelo 24.11.2026), die Checkbox rechts daneben.
-        assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.standingFoot());
-        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.standingFoot())))
+        assertThat(onEdt(() -> detail.analysesFoot().getComponent(0))).isSameAs(detail.analysisFoot());
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.analysisFoot())))
                 .isTrue();
-        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.standing().tabs().button("Aussagen"),
-                detail.standingFoot()))).as("Reiterzeile unten, nicht mehr über dem Inhalt").isTrue();
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.analysisRow().tabs().button("Aussagen"),
+                detail.analysisFoot()))).as("Reiterzeile unten, nicht mehr über dem Inhalt").isTrue();
         assertThat(onEdt(() -> detail.export().selection().roots(null)))
                 .containsExactly(notes.root(), handbook.root()); // Baumreihenfolge: Unterordner zuerst angelegt
 
@@ -165,14 +174,13 @@ class ContentViewTest {
             view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
         });
-        assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.standingFoot());
+        assertThat(onEdt(() -> detail.analysesFoot().getComponent(0))).isSameAs(detail.analysisFoot());
         // Rechts in der Ecke steht dann nur die ?-Hilfe des Reiters, nicht die Checkbox des Ordners.
-        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.standingFoot())))
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.analysisFoot())))
                 .isFalse();
-        // Für den Fehlerfall, versteckt hinter dem Dreieck: die Kennzahlen des Knotens neu aufbauen.
-        assertThat(onEdt(() -> detail.moreButton().isEnabled())).isTrue();
-        assertThat(onEdt(() -> allMenuEntries(detail)))
-                .containsExactly(PageDetailPanel.REBUILD_COUNTS, "—", PageDetailPanel.NEW_EXPORT);
+        // Für den Fehlerfall, versteckt hinter dem Dreieck der Seitenleiste: die Kennzahlen des Knotens neu aufbauen.
+        assertThat(onEdt(() -> detail.analysesMenu().stream().map(javax.swing.JMenuItem::getText).toList()))
+                .containsExactly(PageDetailPanel.REBUILD_COUNTS);
     }
 
     @Test
@@ -431,9 +439,9 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         // #499: Hauptreiter und darunter die zweite Reiterzeile „Analysen“; kein bisheriger Reiter fehlt.
         assertThat(onEdt(() -> detail.tabs().names()))
-                .containsExactly("Leseansicht", "Podcast-Ansicht", "Anhänge", "Analysen", "Info", "Export");
+                .containsExactly("Leseansicht", "Podcast-Ansicht", "Anhänge", "Info", "Export");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
-                .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph", "Beziehungen");
+                .containsExactly("Absätze", "Statistik", "Verweise", "Bilder", "Aussagen", "Graph", "Beziehungen");
         // „Info“ hat die Eigenschaften als ersten Unterreiter (Angelo, 19.11.2026); „Beziehungen“ steht unter
         // „Analysen“ (Angelo, 20.11.2026).
         assertThat(onEdt(() -> detail.advancedTabs().names())).containsExactly("Eigenschaften",
@@ -452,7 +460,7 @@ class ContentViewTest {
                 tips.add(button.getToolTipText());
             }
             return tips;
-        })).containsExactly("Leseansicht", "Podcast-Ansicht", "Anhänge", "Analysen", "Info", "Export");
+        })).containsExactly("Leseansicht", "Podcast-Ansicht", "Anhänge", "Info", "Export");
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
         // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
         // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
@@ -486,40 +494,43 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.sourceProperties().showsAll())).isFalse();
         assertThat(onEdt(view::crumbs)).isEqualTo("handbuch");
         // Der Stand (ADR 0032) hat kein eigenes Symbol: „Analysen“ zeigt ihn, solange links keine Seite gewählt ist
-        // (Quelle, Space, Wissensquellen-Kopf), mit Hilfe als ?-Knopf oben rechts (Angelo 17.11.2026).
+        // (Quelle, Space, Wissensquellen-Kopf). Seit 27.11.2026 in der Seitenleiste rechts; die Mitte bleibt, wie sie ist.
         onEdt(() -> {
-            detail.tabs().select("Analysen");
+            detail.tabs().select("Leseansicht");
+            detail.analysesShown(true);
             return null;
         });
         assertThat(onEdt(() -> detail.showsStanding())).isTrue();
         // EINE Reiterzeile (AT 17.11.2026): „Begriffe“ vorn wie auf der Seite, dahinter die Reiter des Stands.
         assertThat(onEdt(() -> detail.standing().isVisible())).isTrue();
         // Fachglossar, Graph und die Beziehungen der Auswahl hinten in derselben Zeile (BG2c).
-        assertThat(onEdt(() -> detail.standing().tabs().names())).containsExactly("Begriffe", "Aussagen",
+        assertThat(onEdt(() -> detail.standing().tabs().names())).containsExactly("Statistik", "Aussagen",
                 "Zuerst lesen", "Mögliche Widersprüche", "Fachglossar", "Graph", "Beziehungen");
-        assertThat(onEdt(() -> detail.standing().tabs().selected())).isEqualTo("Begriffe");
+        assertThat(onEdt(() -> detail.standing().tabs().selected())).isEqualTo("Statistik");
         // Die Reiter zeigen Symbole, der Name steht im Tooltip (Angelo 27.11.2026).
-        assertThat(onEdt(() -> detail.standing().tabs().names().stream()
-                .map(name -> detail.standing().tabs().button(name))
+        assertThat(onEdt(() -> detail.analysisRow().tabs().names())).as("eine Reiterzeile für jede Ebene")
+                .isEqualTo(onEdt(() -> detail.standing().tabs().names()));
+        assertThat(onEdt(() -> detail.analysisRow().tabs().names().stream()
+                .map(name -> detail.analysisRow().tabs().button(name))
                 .allMatch(button -> button.getIcon() != null && button.getText() == null))).isTrue();
-        assertThat(onEdt(() -> detail.standing().tabs().button("Zuerst lesen").getToolTipText()))
+        assertThat(onEdt(() -> detail.analysisRow().tabs().button("Zuerst lesen").getToolTipText()))
                 .isEqualTo("Zuerst lesen");
         assertThat(onEdt(() -> detail.overviewTerms().showsSelection())).isTrue();
         assertThat(onEdt(() -> detail.overviewTerms().title())).isEqualTo("Begriffe in handbuch");
-        assertThat(onEdt(() -> detail.selectedTab())).isEqualTo(PageDetailPanel.OVERVIEW_TERMS);
+        assertThat(onEdt(() -> detail.analysesTab())).isEqualTo(PageDetailPanel.OVERVIEW_TERMS);
         onEdt(() -> {
             detail.standing().tabs().select("Aussagen");
             return null;
         });
-        assertThat(onEdt(() -> detail.selectedTab())).isEqualTo("Stand");
+        assertThat(onEdt(() -> detail.analysesTab())).isEqualTo("Stand");
         // Die ?-Hilfe steht unten rechts in der Leiste der Reiter, nicht mehr oben (Angelo 27.11.2026).
-        assertThat(onEdt(() -> shownHelp(detail.footTools()))).isEqualTo(1);
+        assertThat(onEdt(() -> shownHelp(detail.analysesFoot()))).isEqualTo(1);
         // Fachglossar: seine Werkzeuge oben rechts, der Papierkorb des Stands nicht; Stand in der Statuszeile getrennt.
         onEdt(() -> {
             detail.standing().tabs().select("Fachglossar");
             return null;
         });
-        assertThat(onEdt(() -> detail.selectedTab())).isEqualTo(PageDetailPanel.OVERVIEW_GLOSSARY);
+        assertThat(onEdt(() -> detail.analysesTab())).isEqualTo(PageDetailPanel.OVERVIEW_GLOSSARY);
         assertThat(onEdt(() -> detail.overviewGlossary().addButton().isVisible())).isTrue();
         assertThat(onEdt(() -> detail.standing().deleteAnalysesButton().isVisible())).isFalse();
         onEdt(() -> {
@@ -551,7 +562,7 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> detail.showsStanding())).isFalse();
         assertThat(onEdt(() -> detail.standing().isVisible())).isFalse();
-        assertThat(onEdt(() -> detail.selectedTab())).isEqualTo("Absätze");
+        assertThat(onEdt(() -> detail.analysesTab())).isEqualTo("Absätze");
         // Der Wissensquellen-Kopf: wieder der Stand.
         onEdt(() -> {
             view.selection(ExportPanel.Selection.ALL);
@@ -560,7 +571,7 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.showsStanding())).isTrue();
         // Ohne Seite (BG2b): die Beziehungen der Auswahl als Reiter „Beziehungen“ beim Stand unter „Analysen“.
         onEdt(() -> {
-            detail.tabs().select("Analysen");
+            detail.analysesShown(true);
             detail.standing().tabs().select("Beziehungen");
             return null;
         });
@@ -751,7 +762,7 @@ class ContentViewTest {
     }
 
     private static javax.swing.Icon[] barIcons(PageDetailPanel detail) {
-        return java.util.stream.Stream.of("Leseansicht", "Podcast-Ansicht", "Anhänge", "Analysen", "Info", "Export").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
+        return java.util.stream.Stream.of("Leseansicht", "Podcast-Ansicht", "Anhänge", "Info", "Export").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
     }
 
     @Test
@@ -879,6 +890,7 @@ class ContentViewTest {
         List<String> pages = context.runtime().workspace().liveMetadata("handbuch", space, null, 10).entries().stream()
                 .map(entry -> entry.page().pageId()).toList();
         onEdt(() -> {
+            detail.analysesShown(false);
             detail.analysisTabs().select("Verweise");
             view.openPage("handbuch", pages.get(0));
             return null;
@@ -886,11 +898,11 @@ class ContentViewTest {
         await(() -> detail.shownPage() != null);
         assertThat(onEdt(() -> detail.references().hint())).as("Unterreiter verdeckt").isBlank();
         onEdt(() -> {
-            detail.tabs().select("Analysen");
+            detail.analysesShown(true);
             return null;
         });
         assertThat(onEdt(() -> detail.references().hint())).isNotBlank();
-        assertThat(onEdt(detail::selectedTab)).isEqualTo("Verweise");
+        assertThat(onEdt(detail::analysesTab)).isEqualTo("Verweise");
 
         // Haupt- und Unterreiter bleiben beim Laden der nächsten Seite; der sichtbare Unterreiter lädt nach.
         onEdt(() -> {
@@ -899,17 +911,17 @@ class ContentViewTest {
         });
         await(() -> detail.shownPage() != null && pages.get(1).equals(detail.shownPage().header().metadata().pageId()));
         await(() -> !detail.references().hint().isBlank());
-        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Analysen");
+        assertThat(onEdt(() -> detail.analysesShown())).isTrue();
         assertThat(onEdt(() -> detail.analysisTabs().selected())).isEqualTo("Verweise");
 
-        // Ein Unterreiter über seinen Namen wählt auch den Hauptreiter „Analysen“.
+        // Ein Reiter der Analysen über seinen Namen zeigt die Analysen in der Seitenleiste; die Mitte bleibt.
         onEdt(() -> {
             detail.selectTab("Podcast-Ansicht");
             detail.selectTab("Absätze");
             return null;
         });
-        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Analysen");
-        assertThat(onEdt(detail::selectedTab)).isEqualTo("Absätze");
+        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Podcast-Ansicht");
+        assertThat(onEdt(detail::analysesTab)).isEqualTo("Absätze");
     }
 
     @Test

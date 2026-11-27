@@ -110,6 +110,8 @@ public final class WordSearch {
     private final ExportPanel.Selection selection;
     private final AppRuntime runtime;
     private final TermOrigin origin;
+    /** Nur diese Seiten (etwa die mit dem Suchtext in einer Überschrift) oder {@code null} ohne weitere Grenze. */
+    private volatile PageSet only;
 
     /**
      * @param selection der Bereich der Suche, wie links gewählt und in den Suchoptionen angehakt
@@ -134,6 +136,36 @@ public final class WordSearch {
 
     /** Kennung der Sammlung „Bereich der Suche“; kein Favoriten-Ordner trägt sie. */
     static final String AREA = "search-area";
+
+    /**
+     * Grenzt die Wortsuche weiter ein, etwa auf die Seiten, deren Titel oder Überschriften den Suchtext enthalten
+     * („Nur Überschriften durchsuchen“, Angelo 27.11.2026); {@code null} hebt die Grenze auf.
+     */
+    public WordSearch only(PageSet pages) {
+        this.only = pages;
+        return this;
+    }
+
+    /** Die Seiten der Wortsuche: der Bereich, geschnitten mit {@link #only}. */
+    PageSet pages() {
+        PageSet area = terms.pages();
+        PageSet limit = only;
+        if (limit == null) {
+            return area;
+        }
+        if (area == null) {
+            return limit;
+        }
+        Map<String, Set<String>> both = new LinkedHashMap<>();
+        for (String source : limit.sourceIds()) {
+            Set<String> pages = new LinkedHashSet<>(limit.pagesOf(source));
+            pages.retainAll(area.pagesOf(source));
+            if (!pages.isEmpty()) {
+                both.put(source, pages);
+            }
+        }
+        return PageSet.of(both);
+    }
 
     /** Die Wurzeln des Bereichs. */
     public List<Root> roots() {
@@ -173,7 +205,7 @@ public final class WordSearch {
         String text = q == null || q.isBlank() ? null : q;
         return cursor -> {
             TermQueries.TermList list = workspace.terms(new TermQueries.TermSearch(null, null, termKind, text, false,
-                    STEP, cursor, null, origin).within(terms.pages()));
+                    STEP, cursor, null, origin).within(pages()));
             return new Pager.Page<>(list.terms().stream().map(term -> Word.of(term, kind)).toList(),
                     list.nextCursor());
         };
@@ -182,7 +214,7 @@ public final class WordSearch {
     private Pager.Fetch<Word> verbs(String q) {
         String text = q == null || q.isBlank() ? null : q;
         return cursor -> {
-            VerbQueries.VerbList list = workspace.verbs(terms.pages(), text, STEP, cursor);
+            VerbQueries.VerbList list = workspace.verbs(pages(), text, STEP, cursor);
             return new Pager.Page<>(list.verbs().stream().map(Word::of).toList(), list.nextCursor());
         };
     }
@@ -197,7 +229,7 @@ public final class WordSearch {
             do {
                 TermQueries.OccurrenceList list = workspace.occurrences(new TermQueries.OccurrenceSearch(
                         word.term().normalized(), word.term().kind(), null, null, TermQueries.MAX_LIMIT, cursor, 0,
-                        origin).within(terms.pages()));
+                        origin).within(pages()));
                 all.addAll(list.occurrences());
                 cursor = list.nextCursor();
             } while (cursor != null);
@@ -209,7 +241,8 @@ public final class WordSearch {
                                 one.count() + 1));
             }
         } else {
-            for (VerbQueries.Occurrence occurrence : terms.verbOccurrences(word.verb())) {
+            for (VerbQueries.Occurrence occurrence : workspace.verbOccurrences(pages(), word.verb(),
+                    TermQueries.MAX_LIMIT)) {
                 var page = occurrence.page();
                 byPage.merge(page.key().sourceId() + "/" + page.key().pageId(),
                         new Place(page.key().sourceId(), page.spaceKey(), page.key().pageId(), page.title(), 1),

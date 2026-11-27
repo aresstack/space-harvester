@@ -103,10 +103,16 @@ public final class MainWindow implements AppContext.Navigator {
     static final String SIDE_JOBS_KEY = "sidebar.right.jobs";
     private static final String SIDE_CHAT = "chat";
     private static final String SIDE_JOBS = "jobs";
+    private static final String SIDE_ANALYSES = "analyses";
+    /** Die Leisten in der Reihenfolge ihrer gemerkten Nummer ({@link #SIDE_JOBS_KEY}): 0 Chat, 1 Aufträge, 2 Analysen. */
+    private static final java.util.List<String> SIDE_MODES = java.util.List.of(SIDE_CHAT, SIDE_JOBS, SIDE_ANALYSES);
+    static final String ANALYSES_TOOLTIP = "Analysen zur Auswahl links ein- oder ausklappen";
+    private com.aresstack.spaceharvester.app.ui.content.AnalysesSidebar analysesSidebar;
+    private ComposerToggleButton analysesToggle;
     /** Die rechte Seitenleiste zeigt entweder den Chat oder die Aufträge (Angelo 22.11.2026). */
     private final java.awt.CardLayout sideModes = new java.awt.CardLayout();
     private final JPanel sideDeck = new JPanel(sideModes);
-    private boolean sideJobs;
+    private String sideMode = SIDE_CHAT;
     /** Die Leiste über die ganze Arbeitsfläche („Groß anzeigen“); der Explorer bleibt. */
     private boolean chatLarge;
     static final String CHAT_TOOLTIP = "Chat (Strg+J)";
@@ -501,7 +507,7 @@ public final class MainWindow implements AppContext.Navigator {
                 for (java.awt.event.ActionListener listener : button.getActionListeners()) {
                     button.removeActionListener(listener);
                 }
-                button.addActionListener(e -> sideOpen(button.isSelected(), true));
+                button.addActionListener(e -> sideOpen(button.isSelected(), SIDE_JOBS));
             } else {
                 navGroup.add(button);
             }
@@ -515,8 +521,16 @@ public final class MainWindow implements AppContext.Navigator {
         chatToggle.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         chatToggle.getAccessibleContext().setAccessibleName(
                 com.aresstack.spaceharvester.app.ui.content.ChatSidebar.TITLE);
-        chatToggle.addActionListener(e -> sideOpen(chatToggle.isSelected(), false));
+        chatToggle.addActionListener(e -> sideOpen(chatToggle.isSelected(), SIDE_CHAT));
         trailing.add(chatToggle, 0);
+        // Die Analysen stehen als dritte Leiste zwischen Chat und Aufträgen (Angelo 27.11.2026).
+        analysesToggle = new ComposerToggleButton(
+                com.aresstack.spaceharvester.app.ui.content.AnalysesSidebar.icon(), null, ANALYSES_TOOLTIP);
+        analysesToggle.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
+        analysesToggle.getAccessibleContext().setAccessibleName(
+                com.aresstack.spaceharvester.app.ui.content.AnalysesSidebar.TITLE);
+        analysesToggle.addActionListener(e -> sideOpen(analysesToggle.isSelected(), SIDE_ANALYSES));
+        trailing.add(analysesToggle, 1);
         // Die Reiter der Seitenansicht schalten die Mitte um: ein Klick zeigt Inhalte, auch aus einem anderen Bereich.
         JComponent tabBar = content.tabBar();
         tabBar.setBorder(BorderFactory.createEmptyBorder(0, TAB_GAP, 0, 0));
@@ -624,11 +638,22 @@ public final class MainWindow implements AppContext.Navigator {
         work.add(deckHolder, BorderLayout.CENTER);
         work.add(workFoot, BorderLayout.SOUTH);
         chatSidebar = content.chatSidebar();
-        chatSidebar.onCollapse(() -> sideOpen(false, sideJobs));
-        activities.sidebar(() -> chatLarge(!chatLarge), () -> sideOpen(false, sideJobs));
+        chatSidebar.onCollapse(() -> sideOpen(false, sideMode));
+        activities.sidebar(() -> chatLarge(!chatLarge), () -> sideOpen(false, sideMode));
+        analysesSidebar = content.analysesSidebar();
+        analysesSidebar.onCollapse(() -> sideOpen(false, sideMode));
+        analysesSidebar.onOpen(() -> sideOpen(true, SIDE_ANALYSES));
+        // Ein Sprung zu einer Fundstelle oder Seite soll sie zeigen: die große Ansicht wird wieder zur Leiste.
+        analysesSidebar.onRevealMiddle(() -> {
+            if (chatLarge && analysesOpen()) {
+                chatLarge(false);
+            }
+        });
+        analysesSidebar.enlargeButton().addActionListener(e -> chatLarge(!chatLarge));
         sideDeck.setBackground(Comic.SURFACE);
         sideDeck.add(chatSidebar, SIDE_CHAT);
         sideDeck.add(activities.component(), SIDE_JOBS);
+        sideDeck.add(analysesSidebar, SIDE_ANALYSES);
         chatSidebar.chat().onAnswer(this::chatAnswered);
         // Command Deck: anderer Reiter, anderer Hinweis und andere Vorschläge im Chat.
         if (commandDeck != null) {
@@ -689,7 +714,7 @@ public final class MainWindow implements AppContext.Navigator {
                 @Override
                 public void mouseClicked(java.awt.event.MouseEvent event) {
                     if (event.getClickCount() == 2) {
-                        sideOpen(!chatOpen, sideJobs);
+                        sideOpen(!chatOpen, sideMode);
                     }
                 }
             });
@@ -706,10 +731,10 @@ public final class MainWindow implements AppContext.Navigator {
                 WindowSizes.recallInt(CHAT_WIDTH_KEY, chatWidth));
         chatOpen = WindowSizes.recallInt(CHAT_OPEN_KEY, 0) == 1;
         chatLarge = WindowSizes.recallInt(CHAT_LARGE_KEY, 0) == 1;
-        sideJobs = WindowSizes.recallInt(SIDE_JOBS_KEY, 0) == 1;
-        chatToggle.setSelected(chatOpen && !sideJobs);
-        nav.get(AppContext.Section.ACTIVITIES).setSelected(chatOpen && sideJobs);
-        sideModes.show(sideDeck, sideJobs ? SIDE_JOBS : SIDE_CHAT);
+        int recalled = WindowSizes.recallInt(SIDE_JOBS_KEY, 0);
+        sideMode = recalled >= 0 && recalled < SIDE_MODES.size() ? SIDE_MODES.get(recalled) : SIDE_CHAT;
+        selectSideToggles();
+        sideModes.show(sideDeck, sideMode);
         placeChat();
         split = new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
                 side, chatSplit, 200, 520, WindowSizes.recallInt(LEFT_WIDTH_KEY, SIDEBAR_WIDTH));
@@ -878,42 +903,60 @@ public final class MainWindow implements AppContext.Navigator {
      * Teiler). Zugeklappt bleibt nur der schmale Teiler; der Zustand und die Breite gelten auch nach dem Neustart.
      */
     void chatOpen(boolean open) {
-        sideOpen(open, false);
+        sideOpen(open, SIDE_CHAT);
     }
 
     /** Klappt die Seitenleiste mit den Aufträgen auf oder zu (Knopf oben rechts, Strg+Ziffer). */
     void jobsOpen(boolean open) {
-        sideOpen(open, true);
+        sideOpen(open, SIDE_JOBS);
+    }
+
+    /** Klappt die Seitenleiste mit den Analysen auf oder zu (Knopf oben rechts zwischen Chat und Aufträgen). */
+    void analysesOpen(boolean open) {
+        sideOpen(open, SIDE_ANALYSES);
+    }
+
+    boolean analysesOpen() {
+        return chatOpen && SIDE_ANALYSES.equals(sideMode);
+    }
+
+    ComposerToggleButton analysesToggle() {
+        return analysesToggle;
+    }
+
+    private void selectSideToggles() {
+        chatToggle.setSelected(chatOpen && SIDE_CHAT.equals(sideMode));
+        analysesToggle.setSelected(chatOpen && SIDE_ANALYSES.equals(sideMode));
+        nav.get(AppContext.Section.ACTIVITIES).setSelected(chatOpen && SIDE_JOBS.equals(sideMode));
     }
 
     /**
-     * Die rechte Seitenleiste zeigt den Chat oder die Aufträge: der Knopf des einen blendet das andere aus, ein
+     * Die rechte Seitenleiste zeigt den Chat, die Analysen oder die Aufträge: der Knopf des einen blendet das andere aus, ein
      * zweiter Klick auf den aktiven Knopf klappt die Leiste zu (Angelo 22.11.2026). Breite und „groß“ gelten für
      * beide; was zuletzt offen war, gilt auch nach dem Neustart.
      */
-    private void sideOpen(boolean open, boolean jobs) {
+    private void sideOpen(boolean open, String mode) {
         chatOpen = open;
         if (open) {
-            sideJobs = jobs;
-            WindowSizes.rememberInt(SIDE_JOBS_KEY, jobs ? 1 : 0);
-            sideModes.show(sideDeck, jobs ? SIDE_JOBS : SIDE_CHAT);
+            sideMode = mode;
+            WindowSizes.rememberInt(SIDE_JOBS_KEY, SIDE_MODES.indexOf(mode));
+            sideModes.show(sideDeck, mode);
         }
-        chatToggle.setSelected(open && !sideJobs);
-        nav.get(AppContext.Section.ACTIVITIES).setSelected(open && sideJobs);
-        if (open && !sideJobs) {
+        selectSideToggles();
+        if (chatOpen()) {
             chatUnread(false);
         }
         WindowSizes.rememberInt(CHAT_OPEN_KEY, open ? 1 : 0);
         placeChat();
-        if (open && sideJobs) {
+        if (jobsOpen()) {
             activities.shown();
-        } else if (open) {
+        } else if (chatOpen()) {
             chatSidebar.chat().focusEditor();
         }
     }
 
     boolean jobsOpen() {
-        return chatOpen && sideJobs;
+        return chatOpen && SIDE_JOBS.equals(sideMode);
     }
 
     /** Eine Antwort ist fertig: Ist die Leiste zu, zeigt der Chat-Knopf einen Punkt, bis sie aufgeklappt wird. */
@@ -935,7 +978,7 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     boolean chatOpen() {
-        return chatOpen && !sideJobs;
+        return chatOpen && SIDE_CHAT.equals(sideMode);
     }
 
     /**
@@ -961,10 +1004,12 @@ public final class MainWindow implements AppContext.Navigator {
         try {
             int min = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH;
             sideDeck.setMinimumSize(new Dimension(chatOpen ? min : 0, 0));
-            chatSidebar.shown(chatOpen && !sideJobs);
-            activities.sidebarShown(chatOpen && sideJobs);
+            chatSidebar.shown(chatOpen());
+            activities.sidebarShown(jobsOpen());
+            analysesSidebar.shown(analysesOpen());
             boolean large = chatOpen && chatLarge;
             chatSidebar.large(large);
+            analysesSidebar.large(large);
             activities.large(large);
             // Groß: die Arbeitsfläche weicht ganz, die Teilung gibt der Leiste dann allen Platz und zeigt keinen Teiler.
             chatSplit.getLeftComponent().setVisible(!large);
@@ -1383,6 +1428,11 @@ public final class MainWindow implements AppContext.Navigator {
     public void editSource(String sourceId) {
         show(AppContext.Section.SOURCES);
         sources.select(sourceId);
+    }
+
+    @Override
+    public void openBook(String folderId) {
+        explorer.openBook(folderId);
     }
 
     @Override

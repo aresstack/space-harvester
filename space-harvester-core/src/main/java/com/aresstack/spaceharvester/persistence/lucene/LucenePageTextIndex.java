@@ -100,6 +100,16 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     private static final String DOCUMENT_KEY = "documentKey";
     private static final String PART_ID = "partId";
     private static final String PART_TITLE = "partTitle";
+    /** Überschriften der Seite als Wörter; zählen in der Rangfolge wie der Titel. */
+    private static final String HEADING = "heading";
+    /** Jede Überschrift als Ganzes, so zerlegt wie die Anfrage ({@link #normalized}): exakte Überschrift oben. */
+    private static final String HEADING_EXACT = "headingExact";
+    /** Gespeichert je Überschrift: ihre zerlegte Form, {@link #SEPARATOR}, ihre Zeichenposition im Text. */
+    private static final String HEADING_START = "headingStart";
+    /** Gespeichertes Kennzeichen: der Eintrag führt die Überschriften (Einträge von vorher werden nachgeschrieben). */
+    private static final String HEADINGS_INDEXED = "headingsIndexed";
+    /** Gewicht eines Worts in Titel, Dateiname oder Überschrift gegenüber dem Fließtext. */
+    private static final float TITLE_BOOST = 2f;
     private static final String SECTION = "section";
     private static final String PAGE_KIND = "page";
     private static final String ATTACHMENT_KIND = "attachment";
@@ -223,6 +233,17 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         doc.add(new StringField(SPACE_KEY, entry.spaceKey(), Field.Store.YES));
         doc.add(new TextField(TITLE, entry.title(), Field.Store.YES));
         doc.add(new TextField(TEXT, text, Field.Store.YES));
+        for (PageTextIndex.Heading heading : entry.headings()) {
+            doc.add(new TextField(HEADING, heading.text(), Field.Store.NO));
+            String exact = normalized(heading.text());
+            // Längere Überschriften als ein Lucene-Wort fassen kann, finden sich weiter über ihre Wörter.
+            if (!exact.isEmpty() && exact.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+                    <= IndexWriter.MAX_TERM_LENGTH) {
+                doc.add(new StringField(HEADING_EXACT, exact, Field.Store.NO));
+                doc.add(new StoredField(HEADING_START, exact + SEPARATOR + heading.start()));
+            }
+        }
+        doc.add(new StoredField(HEADINGS_INDEXED, Boolean.TRUE.toString()));
         doc.add(new StoredField(HAS_TEXT, Boolean.toString(
                 !terms(text.substring(Math.min(text.length(), entry.metadataPrefixChars()))).isEmpty())));
         doc.add(new StoredField(INPUT_SHA256, entry.inputSha256()));
@@ -455,6 +476,13 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     }
 
     @Override
+    public boolean headingsKnown(PageKey key) {
+        Objects.requireNonNull(key, "key");
+        requireOpen();
+        return stored(id(key), HEADINGS_INDEXED).isPresent();
+    }
+
+    @Override
     public Optional<String> inputSha256(PageKey key) {
         Objects.requireNonNull(key, "key");
         requireOpen();
@@ -539,6 +567,19 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     @Override
     public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, PageSet within,
                               Set<DocumentKind> kinds, int limit) {
+        return search(text, sourceIds, spaces, within, kinds, Fields.ALL, limit);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Mit {@link Fields#HEADINGS} zählen nur Seiten, und nur ihr Titel und ihre Überschriften; die Rangfolge und
+     * die exakte Überschrift oben bleiben wie sonst.
+     */
+    @Override
+    public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, PageSet within,
+                              Set<DocumentKind> kinds, Fields fields, int limit) {
+        Objects.requireNonNull(fields, "fields");
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(sourceIds, "sourceIds");
         Objects.requireNonNull(spaces, "spaces");
@@ -547,7 +588,8 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
             throw new IllegalArgumentException("limit muss zwischen 1 und " + MAX_LIMIT + " liegen");
         }
         requireOpen();
-        List<String> terms = terms(text.length() > MAX_QUERY_LENGTH ? text.substring(0, MAX_QUERY_LENGTH) : text);
+        String bounded = text.length() > MAX_QUERY_LENGTH ? text.substring(0, MAX_QUERY_LENGTH) : text;
+        List<String> terms = terms(bounded);
         if (terms.isEmpty() || sourceIds.isEmpty() || within != null && within.isEmpty()) {
             return List.of();
         }
@@ -568,22 +610,45 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         for (String excluded : spaces.excluded()) {
             query.add(new TermQuery(new Term(SPACE_KEY, excluded)), BooleanClause.Occur.MUST_NOT);
         }
+        boolean headingsOnly = fields == Fields.HEADINGS;
+        if (headingsOnly) {
+            query.add(new TermQuery(new Term(KIND, PAGE_KIND)), BooleanClause.Occur.FILTER);
+        }
         for (String term : terms) {
-            query.add(new TermQuery(new Term(TEXT, term)), BooleanClause.Occur.SHOULD);
-            query.add(new BoostQuery(new TermQuery(new Term(TITLE, term)), 2f), BooleanClause.Occur.SHOULD);
-            query.add(new BoostQuery(new TermQuery(new Term(PART_TITLE, term)), 2f), BooleanClause.Occur.SHOULD);
+            if (!headingsOnly) {
+                query.add(new TermQuery(new Term(TEXT, term)), BooleanClause.Occur.SHOULD);
+                query.add(new BoostQuery(new TermQuery(new Term(PART_TITLE, term)), TITLE_BOOST),
+                        BooleanClause.Occur.SHOULD);
+            }
+            query.add(new BoostQuery(new TermQuery(new Term(TITLE, term)), TITLE_BOOST), BooleanClause.Occur.SHOULD);
+            query.add(new BoostQuery(new TermQuery(new Term(HEADING, term)), TITLE_BOOST), BooleanClause.Occur.SHOULD);
         }
         query.setMinimumNumberShouldMatch(1);
         Set<String> wanted = Set.copyOf(terms);
         BooleanQuery built = query.build();
+        // Eine Überschrift, die genau der Anfrage entspricht, steht oben (wie exakte Treffer zu Seitennummern, #1661),
+        // in denselben Grenzen wie die übrige Rangfolge; darunter die normale Liste.
+        String exact = normalized(bounded);
+        BooleanQuery exactQuery = exact.isEmpty() ? null : new BooleanQuery.Builder()
+                .add(built, BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(HEADING_EXACT, exact)), BooleanClause.Occur.MUST).build();
         return read(searcher -> {
             // Je Seite nur ihr bestes Dokument: so viele Dokumente lesen, bis genug Seiten beisammen sind.
             int documents = Math.min(limit * 2, MAX_DOCUMENTS);
             while (true) {
                 TopDocs top = searcher.search(built, documents);
+                ScoreDoc[] exactHits = exactQuery == null ? new ScoreDoc[0]
+                        : searcher.search(exactQuery, documents).scoreDocs;
+                Set<Integer> exactDocs = new java.util.HashSet<>();
+                for (ScoreDoc hit : exactHits) {
+                    exactDocs.add(hit.doc);
+                }
+                List<ScoreDoc> ordered = new ArrayList<>(exactHits.length + top.scoreDocs.length);
+                ordered.addAll(List.of(exactHits));
+                ordered.addAll(List.of(top.scoreDocs));
                 StoredFields stored = searcher.storedFields();
                 Map<String, Match> pages = new java.util.LinkedHashMap<>();
-                for (ScoreDoc hit : top.scoreDocs) {
+                for (ScoreDoc hit : ordered) {
                     if (pages.size() == limit) {
                         break;
                     }
@@ -595,7 +660,10 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
                     if (!kinds.isEmpty() && !kinds.contains(kind(doc))) {
                         continue;
                     }
-                    String snippet = window(doc.get(TEXT), wanted);
+                    // Exakte Überschrift oder nur Überschriften gesucht: Auszug an der passenden Überschrift.
+                    int heading = exactDocs.contains(hit.doc) ? headingStart(doc, exact)
+                            : headingsOnly ? headingStart(doc, wanted) : -1;
+                    String snippet = heading >= 0 ? window(doc.get(TEXT), heading) : window(doc.get(TEXT), wanted);
                     // Nur für ausgelieferte Treffer: je Wort und Feld ein Blick in die Postings dieses Dokuments.
                     Words words = words(searcher, hit.doc, terms);
                     pages.put(page, (ATTACHMENT_KIND.equals(doc.get(KIND))
@@ -706,8 +774,12 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         if (text == null || text.isEmpty()) {
             return "";
         }
-        int at = firstToken(text, terms);
-        if (at < 0) {
+        return window(text, firstToken(text, terms));
+    }
+
+    /** Ein Textfenster wie {@link #window(String, Set)}, um die Zeichenposition {@code at}; leer bei {@code at < 0}. */
+    private static String window(String text, int at) {
+        if (text == null || text.isEmpty() || at < 0) {
             return "";
         }
         int start = Math.max(0, at - WINDOW / 3);
@@ -720,6 +792,47 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         }
         String window = SPACES.matcher(text.substring(start, end)).replaceAll(" ").strip();
         return (start > 0 ? "… " : "") + window + (end < text.length() ? " …" : "");
+    }
+
+    /**
+     * Ein Text so zerlegt wie die Anfrage, alle Wörter in ihrer Reihenfolge mit einem Leerzeichen dazwischen: so
+     * vergleicht die Suche eine Überschrift als Ganzes, ohne Rücksicht auf Groß-/Kleinschreibung und Satzzeichen.
+     */
+    private String normalized(String text) {
+        List<String> words = new ArrayList<>();
+        try (TokenStream tokens = analyzer.tokenStream(TEXT, text)) {
+            CharTermAttribute term = tokens.addAttribute(CharTermAttribute.class);
+            tokens.reset();
+            while (tokens.incrementToken()) {
+                words.add(term.toString());
+            }
+            tokens.end();
+        } catch (IOException e) {
+            throw new PageCacheException("Text nicht zerlegbar", e);
+        }
+        return String.join(" ", words);
+    }
+
+    /** Zeichenposition der ersten Überschrift des Dokuments mit einem der Suchwörter, sonst -1. */
+    private static int headingStart(Document doc, Set<String> terms) {
+        for (String stored : doc.getValues(HEADING_START)) {
+            int split = stored.lastIndexOf(SEPARATOR);
+            if (split > 0 && java.util.Arrays.stream(stored.substring(0, split).split(" ")).anyMatch(terms::contains)) {
+                return Integer.parseInt(stored.substring(split + 1));
+            }
+        }
+        return -1;
+    }
+
+    /** Zeichenposition der Überschrift {@code exact} (zerlegte Form) im Text des Dokuments, sonst -1. */
+    private static int headingStart(Document doc, String exact) {
+        for (String stored : doc.getValues(HEADING_START)) {
+            int split = stored.lastIndexOf(SEPARATOR);
+            if (split > 0 && stored.substring(0, split).equals(exact)) {
+                return Integer.parseInt(stored.substring(split + 1));
+            }
+        }
+        return -1;
     }
 
     /** Zeichenposition des ersten Worts im Text, das eines der Suchwörter ist, sonst -1. */

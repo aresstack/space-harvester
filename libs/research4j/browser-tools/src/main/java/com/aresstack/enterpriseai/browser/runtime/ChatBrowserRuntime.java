@@ -228,7 +228,9 @@ public final class ChatBrowserRuntime implements ChatBrowserPort {
                 String raw = tabId == null ? currentOrNew(connection) : rawOf(connection, tabId);
                 snapshots.remove(raw);
                 remember(connection, raw);
-                return connection.search(raw, query, engines);
+                // The block lists of the chat's profile (Intern/Extern) hold for the search too: refused engines
+                // are not visited and refused hits never reach the model.
+                return connection.search(raw, query, engines, url -> guard.refuses(conversation, url));
             }, true);
         }
 

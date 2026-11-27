@@ -97,4 +97,40 @@ final class AnalysisTabIcons {
             }
         };
     }
+
+    /** Absätze: vier Zeilen, die letzte kürzer. */
+    static Icon passages() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawLine(2, 3, 13, 3);
+                g2.drawLine(2, 6, 13, 6);
+                g2.drawLine(2, 9, 13, 9);
+                g2.drawLine(2, 12, 8, 12);
+            }
+        };
+    }
+
+    /** Verweise: zwei Kettenglieder. */
+    static Icon references() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawRoundRect(1, 6, 7, 4, 4, 4);
+                g2.drawRoundRect(7, 6, 7, 4, 4, 4);
+            }
+        };
+    }
+
+    /** Bilder: ein Rahmen mit Berg und Sonne. */
+    static Icon images() {
+        return new StrokeIcon() {
+            @Override
+            protected void paint(Graphics2D g2) {
+                g2.drawRoundRect(2, 3, 11, 10, 2, 2);
+                g2.drawOval(4, 5, 2, 2);
+                g2.drawPolyline(new int[] {3, 7, 9, 12}, new int[] {12, 8, 10, 7}, 4);
+            }
+        };
+    }
 }

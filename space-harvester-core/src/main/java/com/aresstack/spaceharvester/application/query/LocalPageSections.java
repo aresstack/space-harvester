@@ -26,7 +26,7 @@ public final class LocalPageSections {
         String input = PageTextIndexing.entryState(snapshot.payload().rawSha256(), metadata);
         String mediaType = reference.originalMediaType();
         if (index.inputSha256(snapshot.key()).filter(input::equals).isPresent()
-                && index.contentStateKnown(snapshot.key())) {
+                && index.contentStateKnown(snapshot.key()) && index.headingsKnown(snapshot.key())) {
             return false;
         }
         if (reference.extractionKey() == null) {
@@ -64,8 +64,15 @@ public final class LocalPageSections {
                 .mapToObj(offset -> {
                     String chunk = text.substring(offset, Math.min(offset + size, text.length()));
                     int nameChars = Math.min(chunk.length(), Math.max(0, prefix.length() - offset));
+                    // Überschriften gehören zu dem Stück, in dem sie beginnen, mit ihrer Stelle darin.
+                    java.util.List<PageTextIndex.Heading> headings = section.headings().stream()
+                            .filter(heading -> prefix.length() + heading.start() >= offset
+                                    && prefix.length() + heading.start() < offset + chunk.length())
+                            .map(heading -> new PageTextIndex.Heading(heading.text(),
+                                    prefix.length() + heading.start() - offset))
+                            .toList();
                     return new PageTextIndex.Entry(snapshot.key(), metadata.partitionKey(), metadata.title(),
-                            chunk, input, mediaType, nameChars);
+                            chunk, input, mediaType, nameChars, headings);
                 });
     }
 }

@@ -425,7 +425,7 @@ public final class ExportPanel extends JPanel {
         setOpaque(false);
         openOutput.addActionListener(e -> {
             if (context.settings() != null) {
-                SettingsView.open(context.settings().outputDirectory(), feedback);
+                SettingsView.open(context.exportDirectory(), feedback);
             }
         });
         toggleNotices.addActionListener(e -> {
@@ -738,7 +738,7 @@ public final class ExportPanel extends JPanel {
             }
             return;
         }
-        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
+        Path directory = context.exportDirectory();
         Map<Selection, String> preferred = Map.copyOf(lastOutput);
         Map<com.aresstack.spaceharvester.application.holdings.Selection.Root, String> names = favoriteNames();
         Background.run(() -> gather(runtime, current, directory, watchedJobs, watchedSource, preferred, names),
@@ -1083,7 +1083,7 @@ public final class ExportPanel extends JPanel {
 
     private void renderOutput(Data data) {
         ExportDatasetInfo dataset = data.dataset();
-        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
+        Path directory = context.exportDirectory();
         outputFiles = data.files();
         boolean other = dataset == null || shownDataset == null
                 || !shownDataset.exportId().equals(dataset.exportId());
@@ -1238,7 +1238,7 @@ public final class ExportPanel extends JPanel {
                 || !confirmed(allQuestion(Format.title(format)))) {
             return;
         }
-        Path directory = context.settings().outputDirectory();
+        Path directory = context.exportDirectory();
         starting = current;
         startingFormat = format;
         exportStatus(Format.title(format) + " wird eingeplant …", Severity.INFO, false);
@@ -1411,7 +1411,7 @@ public final class ExportPanel extends JPanel {
                 || !confirmed(allQuestion(sourceTitle(kind)))) {
             return;
         }
-        Path directory = context.settings().outputDirectory();
+        Path directory = context.exportDirectory();
         com.aresstack.spaceharvester.application.metadata.AnalyticsQueries queries =
                 context.settings().analytics().toQueries();
         sourceStarting = new Pending(current, kind);
@@ -1445,7 +1445,7 @@ public final class ExportPanel extends JPanel {
         if (export == null) {
             return;
         }
-        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
+        Path directory = context.exportDirectory();
         String file = SourceQueryExports.fileName(job.type(), job.partitionKey(), job.rootPageId(), job.id());
         long open = sourceJobs.values().stream().filter(export::equals).count();
         if (job.state() == JobState.COMPLETED) {
@@ -1484,7 +1484,7 @@ public final class ExportPanel extends JPanel {
         if (runtime == null || context.settings() == null || current == null) {
             return;
         }
-        Path directory = context.settings().outputDirectory();
+        Path directory = context.exportDirectory();
         starting = current;
         startingFormat = format;
         exportStatus(Format.title(format) + " wird eingeplant …", Severity.INFO, false);

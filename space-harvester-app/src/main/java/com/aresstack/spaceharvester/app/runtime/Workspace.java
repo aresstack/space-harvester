@@ -3975,6 +3975,19 @@ public final class Workspace {
         return harvester.podcasts().renew(caller, summary);
     }
 
+    /**
+     * Löscht den Podcast einer Zusammenfassung (ADR 0047, lokales Artefakt); die Zusammenfassung bleibt. Wirft, während
+     * der Podcast entsteht. Nie auf dem EDT.
+     */
+    public boolean deletePodcast(com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
+        return harvester.podcasts().delete(summary);
+    }
+
+    /** Ob der Podcast einer Zusammenfassung jetzt gelöscht werden kann (kein laufender Auftrag). */
+    public boolean podcastDeletable(com.aresstack.spaceharvester.application.changelog.UpdateSummary summary) {
+        return harvester.podcasts().deletable(summary);
+    }
+
     /** Meldet jede abgelegte Stufe eines Podcasts (Plan, Abschnitte, Audio), auf einem Thread des Core. */
     public Subscription subscribePodcast(String key, Runnable listener) {
         return harvester.podcasts().subscribe(key, listener);
@@ -4104,6 +4117,19 @@ public final class Workspace {
         return harvester.pagePodcasts().startBook(caller, book);
     }
 
+    /**
+     * Löscht einen Erklär-Podcast ({@link #pagePodcastKey} oder {@link #bookPodcastKey}; ADR 0047, lokales Artefakt).
+     * Wirft, während er entsteht. Nie auf dem EDT.
+     */
+    public boolean deletePagePodcast(String key) {
+        return harvester.pagePodcasts().delete(key);
+    }
+
+    /** Ob ein Erklär-Podcast jetzt gelöscht werden kann (kein laufender Auftrag). */
+    public boolean pagePodcastDeletable(String key) {
+        return harvester.pagePodcasts().deletable(key);
+    }
+
     /** Meldet jede abgelegte Stufe eines Erklär-Podcasts, auf einem Thread des Core. */
     public Subscription subscribePagePodcast(String key, Runnable listener) {
         return harvester.pagePodcasts().subscribe(key, listener);
@@ -4129,6 +4155,19 @@ public final class Workspace {
     public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> areaSummary(
             String sourceId, String spaceKey) {
         return harvester.changeLog().areaSummary(caller, area(sourceId, spaceKey));
+    }
+
+    /**
+     * Löscht die Bereichszusammenfassung einer Auswahl (ADR 0047, lokales Artefakt); die Leseansicht erfährt es über
+     * {@link #subscribeChangeLog}. Wirft, während sie entsteht. Nie auf dem EDT.
+     */
+    public boolean deleteAreaSummary(com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return harvester.changeLog().deleteAreaSummary(caller, selection);
+    }
+
+    /** Ob die Bereichszusammenfassung einer Auswahl jetzt gelöscht werden kann (kein laufendes „Zusammenfassen“). */
+    public boolean areaSummaryDeletable(com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return harvester.changeLog().areaSummaryDeletable(caller, selection);
     }
 
     /** Ob Bereichszusammenfassungen gehen (Chat-Modell eingestellt). */
