@@ -162,11 +162,11 @@ public final class ChatPanel extends JPanel {
             + "überarbeitet sie Abschnitt für Abschnitt; sie erscheinen in der Mitte";
     static final String WRITE_ON = "Schreiben ist an: Der Assistent arbeitet an den Dokumenten dieses Chats (Klick: aus)";
     static final String WEB_LABEL = "Websuche";
-    static final String WEB = "Websuche für diesen Chat einschalten: Der Assistent sucht mit einem eigenen Firefox im "
+    static final String WEB = "Websuche für diesen Chat einschalten: Der Assistent sucht mit einem eigenen Browser im "
             + "Web und im Intranet";
     static final String WEB_ON = "Websuche für diesen Chat ist an (Klick: aus)";
-    static final String WEB_UNAVAILABLE = "Websuche nicht verfügbar: Firefox nicht gefunden (Pfad mit "
-            + "-Denterpriseai.firefox=... angeben)";
+    static final String WEB_UNAVAILABLE = "Websuche nicht verfügbar: Der gewählte Browser lässt sich nicht starten "
+            + "(Einstellungen › Browser)";
     static final String WEB_BUDGET_LABEL = "Browser-Einstellungen";
     /** Kein Rundenbudget mehr (Angelo 26.11.2026): Der Chat sucht, bis er fertig ist; am Pfeil bleibt der Browser. */
     static final String WEB_BUDGET_TIP = "Browser-Einstellungen: Profil, Verzögerung, menschliche Eingabe";
@@ -703,6 +703,7 @@ public final class ChatPanel extends JPanel {
         webBudget.getAccessibleContext().setAccessibleName(WEB_BUDGET_LABEL);
         webBudget.addActionListener(e -> openWebPopup());
         showWebState();
+        context.onBrowserChanged(this::showWebState);
         mic.setAccent(ResearchUiPalette.RECORDING_ORANGE);
         mic.addActionListener(e -> toggleDictation());
         discardButton.addActionListener(e -> discardDictation());
@@ -793,7 +794,7 @@ public final class ChatPanel extends JPanel {
         // Klick auf die Wellen: zwischen „erst komplett“ und „live mitschreiben“ umschalten, auch während der Aufnahme.
         waveform.setLive(LiveDictationSettings.live(), LIVE_MODE, COMPLETE_MODE);
         waveform.onToggle(() -> LiveDictationSettings.live(!LiveDictationSettings.live()));
-        LiveDictationSettings.listen(() -> SwingUtilities.invokeLater(() -> {
+        LiveDictationSettings.listenWhileDisplayable(waveform, () -> SwingUtilities.invokeLater(() -> {
             boolean live = LiveDictationSettings.live();
             dictation.setLive(live);
             waveform.setLive(live, LIVE_MODE, COMPLETE_MODE);
@@ -1892,18 +1893,23 @@ public final class ChatPanel extends JPanel {
         return webOn;
     }
 
-    /** Ob es Firefox gibt; ohne bleibt der Knopf gesperrt und sagt warum. */
+    /** Ob der Browser startbar ist; ohne bleibt der Knopf gesperrt und sagt warum. */
+    /** Für Tests: ob die Weltkugel bedienbar ist. */
+    boolean webSearchEnabled() {
+        return web.isEnabled();
+    }
+
     private boolean webAvailable() {
         return context.webBrowser() != null;
     }
 
-    /** Knopf und Pfeil zeigen den Zustand: an hervorgehoben, ohne Firefox gesperrt mit Grund. */
+    /** Knopf und Pfeil zeigen den Zustand: an hervorgehoben, ohne Browser gesperrt mit Grund. */
     private void showWebState() {
         boolean available = webAvailable();
         web.setEnabled(available);
         webBudget.setEnabled(available);
         web.setEmphasized(webOn);
-        web.setToolTipText(!available ? WEB_UNAVAILABLE : webOn ? WEB_ON : WEB);
+        web.setToolTipText(!available ? unavailableTip() : webOn ? WEB_ON : WEB);
         webBudget.setToolTipText(WEB_BUDGET_TIP);
     }
 
@@ -1974,9 +1980,15 @@ public final class ChatPanel extends JPanel {
         return lastWebPopup;
     }
 
+    /** Der Hinweis der ausgegrauten Weltkugel, mit dem Grund des letzten Startversuchs. */
+    private static String unavailableTip() {
+        String why = com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser.unavailable();
+        return why.isEmpty() ? WEB_UNAVAILABLE : WEB_UNAVAILABLE + ": " + why;
+    }
+
     /**
      * Die Websuche eines Turns: Browser-Werkzeuge des Chats, Regeln, Budget und das Ende (schließt den Browser und
-     * lässt die Karte platzen); {@code null}, wenn sie aus ist oder Firefox fehlt.
+     * lässt die Karte platzen); {@code null}, wenn sie aus ist oder der Browser fehlt.
      */
     private ChatTurn.WebSearch webSearchFor(String chatId, WebSearchCard card, TurnListener listener) {
         com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser browser = webOn ? context.webBrowser() : null;
@@ -2795,13 +2807,14 @@ public final class ChatPanel extends JPanel {
             // Fokus und Öffnen gelten nur, solange die Mitte noch den Chat dieses Zugs zeigt (Chatwechsel im Lauf).
             ArtifactHost host = artifactHost;
             String turnChat = target.id();
+            // Grafiken über dieselben Zeilen „Bildgenerierung“ wie Podcast und Chat-Schaubild (keine neue Zeile).
             turn.writing(new com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools(artifacts, targetNode,
                     turnChat, () -> showsArtifactsOf(host, targetNode, turnChat) ? host.focus() : null,
                     changed -> SwingUtilities.invokeLater(() -> {
                         if (showsArtifactsOf(host, targetNode, turnChat)) {
                             host.open(changed.id());
                         }
-                    })));
+                    }), runtime.workspace()::composeDiagram));
         }
         listener.turn = turn;
         send.setText(STOP);
@@ -3123,7 +3136,7 @@ public final class ChatPanel extends JPanel {
         }
 
         /**
-         * Eine Wolke je Werkzeugaufruf wie im EAC. Der erste Browser-Aufruf startet Firefox: seine Wolke heißt
+         * Eine Wolke je Werkzeugaufruf wie im EAC. Der erste Browser-Aufruf startet den Browser: seine Wolke heißt
          * „Browser wird gestartet“ und verschwindet, sobald er fertig ist; alle weiteren Browser-Schritte zeigt die
          * Karte „Browserrecherche“.
          */

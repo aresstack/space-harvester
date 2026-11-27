@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.askai.browser.playwright.BrowserExecutables;
+import com.aresstack.spaceharvester.app.chat.browser.BrowserSettings;
 import com.aresstack.spaceharvester.app.chat.ChatNode;
 import com.aresstack.spaceharvester.app.chat.ChatRecord;
 import com.aresstack.spaceharvester.app.chat.ChatStore;
@@ -496,14 +498,41 @@ class ChatPanelTest {
     }
 
     @Test
+    void anotherBrowserChoiceUnlocksTheGlobeWithoutRestart() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        String before = BrowserExecutables.configured(BrowserSettings.DEFAULT_CHANNEL);
+        // Erst fehlt der Browser (der gewählte Ort existiert nicht), dann ist er da.
+        BrowserExecutables.use(BrowserSettings.DEFAULT_CHANNEL, home.resolve("fehlt").toString());
+        try {
+            boolean[] enabled = new boolean[2];
+            ChatPanel[] panel = new ChatPanel[1];
+            SwingUtilities.invokeAndWait(() -> {
+                panel[0] = new ChatPanel(context);
+                enabled[0] = panel[0].webSearchEnabled();
+            });
+            BrowserExecutables.use(BrowserSettings.DEFAULT_CHANNEL,
+                    Files.writeString(home.resolve("msedge"), "").toString());
+            SwingUtilities.invokeAndWait(() -> {
+                context.browserChannelChanged();
+                enabled[1] = panel[0].webSearchEnabled();
+            });
+            assertThat(enabled).containsExactly(false, true);
+        } finally {
+            BrowserExecutables.use(BrowserSettings.DEFAULT_CHANNEL, before);
+        }
+    }
+
+    @Test
     void withWebSearchAndInternalSearchBothOnTheMessageAboveWarnsAndGoesAwayWhenOneIsOff() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
-        // Ein Firefox, den nichts startet: Die Weltkugel braucht nur seinen Pfad.
-        Path firefox = Files.writeString(home.resolve("firefox"), "");
-        String before = System.getProperty("enterpriseai.firefox");
-        System.setProperty("enterpriseai.firefox", firefox.toString());
+        // Ein Edge, den nichts startet: Die Weltkugel braucht nur seinen Pfad.
+        Path edge = Files.writeString(home.resolve("msedge"), "");
+        String before = BrowserExecutables.configured(BrowserSettings.DEFAULT_CHANNEL);
+        BrowserExecutables.use(BrowserSettings.DEFAULT_CHANNEL, edge.toString());
         try {
             String[] texts = new String[3];
             boolean[] visible = new boolean[3];
@@ -526,11 +555,7 @@ class ChatPanelTest {
             assertThat(texts[1]).contains(ChatPanel.BOTH_ON_WARNING);
             assertThat(texts[2]).contains("Download ließ sich nicht starten");
         } finally {
-            if (before == null) {
-                System.clearProperty("enterpriseai.firefox");
-            } else {
-                System.setProperty("enterpriseai.firefox", before);
-            }
+            BrowserExecutables.use(BrowserSettings.DEFAULT_CHANNEL, before);
         }
     }
 

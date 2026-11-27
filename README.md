@@ -267,7 +267,6 @@ Java-21-Gradle-Multimodulprojekt (Gradle Wrapper 8.14.3, Spring Boot 4.1.1). Ein
 | `space-harvester-app` | Swing-Desktop-App direkt auf dem Core, ohne REST und ohne Spring-Kontext |
 | `enterprise-ai-sources` | unveränderte Kopie der Quelladapter des Enterprise AI Client ([UPSTREAM.md](enterprise-ai-sources/UPSTREAM.md)) |
 | `enterprise-ai-keepass` | unveränderte Kopie der KeePassRPC-Anbindung des Enterprise AI Client; nur die App hängt davon ab |
-| `enterprise-ai-browser` | unveränderte Kopie des chatgebundenen Browsers (Firefox über WebDriver BiDi) des Enterprise AI Client für die Websuche im Chat; nur die App wird davon abhängen |
 | `comic-controls` | unveränderte Kopie der Bedienelemente des Enterprise AI Client für die App |
 | `document-export` | Word-, PDF- und Markdown-Ausgabe des Enterprise AI Client als Bibliothek ohne Swing (angepasste Kopie) |
 | `nlp-parser` | deutsches Dependency Parsing nach Universal Dependencies mit MaltParser ([ADR 0005](docs/adr/0005-deutsches-ud-parsing.md)) |

@@ -264,6 +264,8 @@ public final class AppContext {
     private volatile String proxyPasswordUser;
     private final SecretVault vault;
     private final List<Consumer<AppContext>> listeners = new ArrayList<>();
+    /** Wer nach einer anderen Browserwahl neu prüfen muss, ob es die Websuche gibt (die Weltkugel des Chats). */
+    private final List<Runnable> browserListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final Map<String, Connection> connections = new ConcurrentHashMap<>();
     private volatile AppSettings settings;
     private volatile AppRuntime runtime;
@@ -747,8 +749,9 @@ public final class AppContext {
     }
 
     /**
-     * Der Browser der Websuche im Chat (Firefox über WebDriver BiDi, wie im Enterprise AI Client), beim ersten Gebrauch
-     * angelegt; {@code null} ohne Firefox. Die Profile je Chat liegen im Datenordner unter {@code browser-profiles}.
+     * Der Browser der Websuche im Chat (Research4j über Playwright, ADR 0046; Edge, Chrome oder Camoufox nach
+     * Einstellungen › Browser), beim ersten Gebrauch angelegt; {@code null}, wenn der gewählte Browser fehlt. Die
+     * Profile je Chat liegen im Datenordner unter {@code browser-profiles}.
      */
     public synchronized com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser webBrowser() {
         if (!webBrowserLocated) {
@@ -760,6 +763,30 @@ public final class AppContext {
                     com.aresstack.spaceharvester.app.chat.browser.BrowserSettings.shared());
         }
         return webBrowser;
+    }
+
+    /** Nach einer anderen Browserwahl: offene Chat-Browser schließen, der nächste Gebrauch startet den neuen. */
+    public void browserChannelChanged() {
+        com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser old;
+        synchronized (this) {
+            old = webBrowser;
+            webBrowser = null;
+            webBrowserLocated = false;
+        }
+        if (old != null) {
+            old.shutdown();
+        }
+        Runnable notify = () -> browserListeners.forEach(Runnable::run);
+        if (SwingUtilities.isEventDispatchThread()) {
+            notify.run();
+        } else {
+            SwingUtilities.invokeLater(notify);
+        }
+    }
+
+    /** Meldet sich für {@link #browserChannelChanged}; läuft auf dem EDT. */
+    public void onBrowserChanged(Runnable listener) {
+        browserListeners.add(listener);
     }
 
     /** Die KeePass-Anbindung (KeePassRPC); fragt beim Koppeln nach dem Einmal-Passwort aus KeePass. */

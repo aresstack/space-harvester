@@ -268,6 +268,19 @@ final class AiSettingsPanel {
             AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS);
     final JSpinner podcastWorkers = countSpinner(1, AiServiceSettings.Speech.MAX_PODCAST_WORKERS, 1,
             AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS);
+    /**
+     * Grenzen der Skala um den Vorlese-Knopf unter „Erweitert“ (Angelo 27.11.2026: keine fest eingebauten Werte):
+     * langsamstes und schnellstes Tempo, Raster und Sätze am Ende der Sprung-Hälfte. Gespeichert im App-Zustand, gilt
+     * beim nächsten Einblenden der Skala.
+     */
+    final JSpinner readAloudRateMin = countSpinner(
+            com.aresstack.spaceharvester.app.speech.ReadAloudRate.MIN_PERCENT,
+            com.aresstack.spaceharvester.app.speech.ReadAloudRate.NORMAL_PERCENT, 5);
+    static final String READ_ALOUD_DIAL_LABEL = "Vorlesen – Regler";
+    static final String READ_ALOUD_DIAL_HELP = "Die Skala erscheint beim Vorlesen, wenn die Maus auf den runden "
+            + "Knopf kommt. Obere Hälfte: Sprechgeschwindigkeit, oben normal, links bis zum langsamsten, rechts bis zum "
+            + "schnellsten Tempo, im eingestellten Raster (Doppelklick oben = normal). Untere Hälfte: nach links ziehen "
+            + "springt beim Loslassen satzweise zurück, nach rechts vor, am Ende der Skala um die eingestellten Sätze.";
     static final String PODCAST_TIMING_LABEL = "Podcast – Sprechen";
     static final String PODCAST_PAUSE_UNIT = "ms Pause";
     static final String PODCAST_ATTEMPTS_UNIT = "Versuche";
@@ -711,6 +724,7 @@ final class AiSettingsPanel {
                     podcastAttempts, Comic.text(PODCAST_ATTEMPTS_UNIT), podcastWorkers,
                     Comic.text(PODCAST_WORKERS_UNIT), new HelpButton(Dialogs.CLOSE_SIZE, PODCAST_TIMING_LABEL,
                             PODCAST_TIMING_HELP)), null);
+            modelRows.add(READ_ALOUD_DIAL_LABEL, readAloudDialRow(), null);
             advanced.addActionListener(e -> advanced(!advancedOpen()));
             advanced(false);
         }
@@ -1824,8 +1838,8 @@ final class AiSettingsPanel {
         live.setSelected(com.aresstack.spaceharvester.app.speech.LiveDictationSettings.live());
         live.addActionListener(e -> com.aresstack.spaceharvester.app.speech.LiveDictationSettings.live(
                 live.isSelected()));
-        com.aresstack.spaceharvester.app.speech.LiveDictationSettings.listen(() -> javax.swing.SwingUtilities
-                .invokeLater(() -> live.setSelected(
+        com.aresstack.spaceharvester.app.speech.LiveDictationSettings.listenWhileDisplayable(live,
+                () -> javax.swing.SwingUtilities.invokeLater(() -> live.setSelected(
                         com.aresstack.spaceharvester.app.speech.LiveDictationSettings.live())));
         return Comic.row(live, new HelpButton(Dialogs.CLOSE_SIZE, LIVE_DICTATION_LABEL, LIVE_DICTATION_HELP));
     }
@@ -1854,6 +1868,33 @@ final class AiSettingsPanel {
         return Comic.row(step, Comic.text("ms Takt,"), window, Comic.text("s Fenster,"), first,
                 Comic.text("ms Anlauf"),
                 new HelpButton(Dialogs.CLOSE_SIZE, LIVE_DICTATION_TUNING_LABEL, LIVE_DICTATION_HELP));
+    }
+
+    /** Die Grenzen der Skala um den Vorlese-Knopf unter „Erweitert“; jede Änderung wird gleich gemerkt. */
+    private javax.swing.JComponent readAloudDialRow() {
+        com.aresstack.spaceharvester.app.speech.ReadAloudRate rates =
+                com.aresstack.spaceharvester.app.speech.ReadAloudRate.shared();
+        com.aresstack.spaceharvester.app.speech.ReadAloudRate.Limits limits = rates.limits();
+        readAloudRateMin.setValue(limits.minPercent());
+        JSpinner min = readAloudRateMin;
+        JSpinner max = countSpinner(com.aresstack.spaceharvester.app.speech.ReadAloudRate.NORMAL_PERCENT,
+                com.aresstack.spaceharvester.app.speech.ReadAloudRate.MAX_PERCENT, 5, limits.maxPercent());
+        JSpinner step = countSpinner(1, com.aresstack.spaceharvester.app.speech.ReadAloudRate.MAX_STEP_PERCENT, 1,
+                limits.stepPercent());
+        JSpinner jump = countSpinner(1, com.aresstack.spaceharvester.app.speech.ReadAloudRate.MAX_JUMP_SENTENCES, 1,
+                limits.jumpSentences());
+        javax.swing.event.ChangeListener save = e -> rates.limits(
+                new com.aresstack.spaceharvester.app.speech.ReadAloudRate.Limits(
+                        ((Number) min.getValue()).intValue(), ((Number) max.getValue()).intValue(),
+                        ((Number) step.getValue()).intValue(), ((Number) jump.getValue()).intValue()));
+        min.addChangeListener(save);
+        max.addChangeListener(save);
+        step.addChangeListener(save);
+        jump.addChangeListener(save);
+        // Das langsamste Tempo steht vorn: an ihm erkennt „Erweitert“ die Zeile.
+        return Comic.row(min, Comic.text("bis"), max, Comic.text("% Tempo, Raster"), step,
+                Comic.text("%, Sprung bis"), jump, Comic.text("Sätze"),
+                new HelpButton(Dialogs.CLOSE_SIZE, READ_ALOUD_DIAL_LABEL, READ_ALOUD_DIAL_HELP));
     }
 
     private static JSpinner countSpinner(int minimum, int maximum, int step, int initial) {
@@ -2325,6 +2366,7 @@ final class AiSettingsPanel {
         modelRows.visible(checkParallel, open);
         modelRows.visible(podcastPause, open);
         modelRows.visible(liveDictationStep, open);
+        modelRows.visible(readAloudRateMin, open);
         Comic.disclose(advanced, open);
         models.repaint();
         models.revalidate();

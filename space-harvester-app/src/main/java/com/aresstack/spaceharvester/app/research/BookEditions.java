@@ -36,18 +36,35 @@ public final class BookEditions {
             .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).build();
     private static final Pattern NAME = Pattern.compile("auflage-(\\d+)\\.json");
 
-    /** Wer von einer neuen Auflage hören will (Beobachter statt Abfragen); bekommt die Ordner-ID. */
-    private static final List<java.util.function.Consumer<String>> LISTENERS =
+    /**
+     * Wer von einer neuen Auflage hören will (Beobachter statt Abfragen); bekommt die Ordner-ID. Schwach gehalten: stark
+     * hält den Beobachter nur, was {@link #onAdded} zurückgibt, so hält diese Liste keine geschlossene Ansicht fest.
+     */
+    private static final List<java.lang.ref.WeakReference<java.util.function.Consumer<String>>> LISTENERS =
             new java.util.concurrent.CopyOnWriteArrayList<>();
 
     private BookEditions() {
     }
 
-    /** Meldet jede neue Auflage mit ihrer Ordner-ID, bis {@link AutoCloseable#close()}. */
+    /**
+     * Meldet jede neue Auflage mit ihrer Ordner-ID, bis {@link AutoCloseable#close()} oder bis niemand mehr die Rückgabe
+     * hält; der Aufrufer hält sie, solange er hören will.
+     */
     public static AutoCloseable onAdded(java.util.function.Consumer<String> listener) {
         Objects.requireNonNull(listener, "listener");
-        LISTENERS.add(listener);
-        return () -> LISTENERS.remove(listener);
+        java.lang.ref.WeakReference<java.util.function.Consumer<String>> held =
+                new java.lang.ref.WeakReference<>(listener);
+        LISTENERS.removeIf(reference -> reference.get() == null);
+        LISTENERS.add(held);
+        return new AutoCloseable() {
+            // Hält den Beobachter stark, solange die Anmeldung gehalten wird.
+            private final java.util.function.Consumer<String> strong = listener;
+
+            @Override
+            public void close() {
+                LISTENERS.remove(held);
+            }
+        };
     }
 
     /** Eine Seite, aus der das Buch geschrieben ist; {@code version} {@code null}, wenn die Ablage keine kennt. */
@@ -86,7 +103,12 @@ public final class BookEditions {
             try {
                 Files.writeString(target, JSON.writeValueAsString(edition), StandardCharsets.UTF_8,
                         StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-                for (java.util.function.Consumer<String> listener : LISTENERS) {
+                for (java.lang.ref.WeakReference<java.util.function.Consumer<String>> reference : LISTENERS) {
+                    java.util.function.Consumer<String> listener = reference.get();
+                    if (listener == null) {
+                        LISTENERS.remove(reference);
+                        continue;
+                    }
                     try {
                         listener.accept(folderId);
                     } catch (RuntimeException ignored) {

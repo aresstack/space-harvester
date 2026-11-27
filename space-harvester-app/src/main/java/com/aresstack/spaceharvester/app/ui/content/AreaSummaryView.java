@@ -99,6 +99,13 @@ final class AreaSummaryView extends JPanel {
     private static final java.util.concurrent.atomic.AtomicLong VIEWS = new java.util.concurrent.atomic.AtomicLong();
     static final String NO_FAVORITES = "Der Ordner hat noch keine Favoriten.";
 
+    /** Die Hälften des Umschalters an einem Ordner mit Buch (Architekt 27.11.2026, Vorgabe Buch). */
+    static final String BOOK = "Buch";
+    static final String BOOK_TIP = "Buch: das aus diesem Ordner geschriebene Buch. Bereich: der Überblick über den "
+            + "Ordner, entsteht nur per Klick auf „Zusammenfassen“";
+    /** Im App-State je Ordner gemerkt: 1 = Buch (Vorgabe), 0 = Bereich. */
+    static final String BOOK_KEY = "summary.book.";
+
     /** Was die Ansicht zeigt: zum Lesen oder zum Hören. */
     enum Mode { READ, LISTEN }
 
@@ -246,6 +253,8 @@ final class AreaSummaryView extends JPanel {
      */
     private BookEditions.Edition edition;
     private java.util.function.Function<String, BookEditions.Edition> books = folderId -> null;
+    /** Meldet, wenn sich ändert, ob der gezeigte Ordner ein Buch hat (für den Umschalter „Buch | Bereich“). */
+    private Runnable onBook = () -> { };
     /**
      * Der vorläufige Stand, solange der Überblick entsteht: die Themen der schon fertigen Teile, sofort gezeigt statt
      * hinter dem Schleier (Angelo: „Teilergebnisse sofort“); {@code null} ohne.
@@ -431,6 +440,7 @@ final class AreaSummaryView extends JPanel {
         target = next;
         summary = null;
         edition = null;
+        onBook.run();
         partial = null;
         empty = next != null && next.empty();
         failure = null;
@@ -540,7 +550,11 @@ final class AreaSummaryView extends JPanel {
             boolean same = found.summary() != null && found.summary().equals(summary)
                     && Objects.equals(found.edition(), edition);
             summary = found.summary();
+            boolean bookChanged = !Objects.equals(found.edition(), edition);
             edition = found.edition();
+            if (bookChanged) {
+                onBook.run();
+            }
             UpdateSummary interim = runningJob == null ? null : found.partial();
             boolean interimChanged = !Objects.equals(interim, partial);
             if (interimChanged) {
@@ -578,6 +592,7 @@ final class AreaSummaryView extends JPanel {
                 return;
             }
             edition = found.get();
+            onBook.run();
             offer();
             render();
         }, failure -> { });
@@ -598,6 +613,46 @@ final class AreaSummaryView extends JPanel {
     /** Die gezeigte Auflage des Buchs, {@code null} ohne. */
     BookEditions.Edition edition() {
         return edition;
+    }
+
+    void onBook(Runnable listener) {
+        onBook = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Ob am Ordner {@code folderId} „Buch“ gewählt ist (Vorgabe, je Ordner gemerkt). */
+    static boolean bookChosen(String folderId) {
+        return folderId == null
+                || com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(BOOK_KEY + folderId, 1) == 1;
+    }
+
+    /** Merkt die Wahl am Ordner; gilt für Lese- und Podcast-Ansicht. */
+    static void chooseBook(String folderId, boolean book) {
+        if (folderId != null) {
+            com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(BOOK_KEY + folderId, book ? 1 : 0);
+        }
+    }
+
+    /** Der Umschalter „Buch | Bereich“ für einen Ordner mit Buch. */
+    static SegmentedToggle bookToggle() {
+        SegmentedToggle toggle = new SegmentedToggle().segment(BOOK).segment(AREA);
+        toggle.setName("summary.book");
+        toggle.setToolTipText(BOOK_TIP);
+        toggle.button(BOOK).setToolTipText("Das aus diesem Ordner geschriebene Buch");
+        toggle.button(AREA).setToolTipText("Der Überblick über den Ordner; entsteht nur per Klick");
+        toggle.select(BOOK);
+        return toggle;
+    }
+
+    /** Ob gerade das Buch gezeigt wird: der Ordner hat eins und „Buch“ ist gewählt. */
+    boolean bookShown() {
+        return edition != null && bookChosen(target == null || target.folder() == null ? null
+                : target.folder().folderId());
+    }
+
+    /** Nach einem Klick auf den Umschalter: Buch oder Überblick zeigen. */
+    void bookChanged() {
+        offer();
+        render();
     }
 
     private void becameVisible() {
@@ -805,8 +860,8 @@ final class AreaSummaryView extends JPanel {
     /** Knopf „Zusammenfassen“, Einstieg und Ring nach dem Stand. */
     private void offer() {
         boolean possible = target != null && available && !empty && runningJob == null;
-        // Mit Buch zeigt die Leseansicht das Buch; „Zusammenfassen“ kommt mit dem Umschalter „Buch“ zurück.
-        summarize.setVisible(mode == Mode.READ && target != null && edition == null);
+        // Zeigt die Leseansicht das Buch, ist „Zusammenfassen“ weg; unter „Bereich“ startet es den Überblick.
+        summarize.setVisible(mode == Mode.READ && target != null && !bookShown());
         summarize.setEnabled(possible);
         summarize.setToolTipText(summary == null ? SUMMARIZE_TIP : RESUMMARIZE_TIP);
         summarize.getAccessibleContext().setAccessibleName(summary == null ? SourceUpdatesView.SUMMARIZE
@@ -829,7 +884,7 @@ final class AreaSummaryView extends JPanel {
             SummaryReport.add(reportBody, Comic.wrapped(failure, Comic.RED, 13.5f));
             reportBody.add(Box.createVerticalStrut(8));
         }
-        if (edition != null) {
+        if (bookShown()) {
             renderBook(edition);
         } else if (partial != null && runningJob != null) {
             // Ohne Schleier bleibt der Abbruch erreichbar: der Kreis „Esc“ vor dem Fortschritt, wie im Ring.
@@ -1018,12 +1073,12 @@ final class AreaSummaryView extends JPanel {
 
     /** Ob ein Überblick gezeigt wird, den man speichern kann. */
     boolean hasSummary() {
-        return summary != null || edition != null;
+        return summary != null || bookShown();
     }
 
     /** Der Überblick als Text für die Zwischenablage. */
     String copyText() {
-        if (edition != null) {
+        if (bookShown()) {
             return bookMeta(edition) + "\n\n" + edition.book();
         }
         if (summary == null) {

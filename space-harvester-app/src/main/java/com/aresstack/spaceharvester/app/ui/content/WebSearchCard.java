@@ -15,7 +15,7 @@ final class WebSearchCard {
 
     static final String TITLE = "Browserrecherche";
     static final String WORKING = "Browser arbeitet …";
-    /** Die Wolke, solange der erste Browser-Aufruf Firefox startet (wie im EAC). */
+    /** Die Wolke, solange der erste Browser-Aufruf den Browser startet (wie im EAC). */
     static final String STARTING = "Browser wird gestartet";
 
     /** Legt die Blase mit Titel und Text im Verlauf an. */
@@ -106,8 +106,8 @@ final class WebSearchCard {
             case OPENED -> "„" + label + "“ geöffnet";
             case BACK -> "Zurück zu „" + label + "“";
             case ACTED -> label;
-            case CHALLENGE -> "login".equals(label) ? "Anmeldung nötig: bitte im Firefox anmelden"
-                    : "Prüfseite: bitte im Firefox lösen";
+            case CHALLENGE -> "login".equals(label) ? "Anmeldung nötig: bitte im Browserfenster anmelden"
+                    : "Prüfseite: bitte im Browserfenster lösen";
             case LINKS -> step.count() + (step.count() == 1 ? " Link" : " Links")
                     + (label.isEmpty() ? " erkannt" : " passend zu „" + label + "“");
             case SKIPPED -> "„" + label + "“ übersprungen (nicht freigegeben)";

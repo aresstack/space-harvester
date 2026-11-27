@@ -75,4 +75,28 @@ class ArtifactExportTest {
             pool.shutdownNow();
         }
     }
+
+    @Test
+    void embeddedGraphicsGoIntoEveryFormat() throws Exception {
+        ChatStore chats = new ChatStore(() -> home.resolve("chats"));
+        ChatNode node = new ChatNode("wiki", null, null);
+        ChatRecord chat = ChatRecord.fresh(1).plus(ChatRecord.Message.user("x", 1), 1);
+        chats.save(node, chat);
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        Path folder = chats.folder(node);
+        store.createGraphic(folder, chat.id(), "Beet", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" "
+                + "height=\"20\"><rect width=\"40\" height=\"20\" fill=\"#8c8\"/></svg>", ChatArtifact.Origin.AI);
+        ChatArtifact document = store.createDocument(folder, chat.id(), "Plan",
+                "## Beet\n\nDrei Reihen.\n\n![Beet](artefakt:G1)", ChatArtifact.Origin.AI);
+        Path out = home.resolve("ausgabe");
+
+        Path markdown = ArtifactExport.write(document, ChatExport.Format.MARKDOWN, out,
+                id -> store.read(folder, chat.id(), id));
+        Path word = ArtifactExport.write(document, ChatExport.Format.WORD, out, id -> store.read(folder, chat.id(), id));
+
+        assertThat(Files.readString(markdown)).contains("````svg").contains("<rect").doesNotContain("artefakt:");
+        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(word.toFile())) {
+            assertThat(zip.stream().map(java.util.zip.ZipEntry::getName)).anyMatch(name -> name.startsWith("word/media/"));
+        }
+    }
 }
