@@ -724,8 +724,19 @@ public final class MainWindow implements AppContext.Navigator {
         statusBox.add(status, BorderLayout.CENTER);
         statusBox.add(statusClose, BorderLayout.EAST);
         statusClose.setVisible(false);
+        // Unten in der Ecke: „© Jahr AresStack“ bzw. das aktive Projekt, rechts der Pfeil zur Projektwahl (ADR 0043 F6).
+        CopyrightLink corner = new CopyrightLink();
+        ProjectChooser projectChooser = new ProjectChooser(context, surface);
+        corner.chooser(projectChooser::show, projectChooser::open);
+        corner.show(context.projects().active());
+        Runnable showProject = () -> javax.swing.SwingUtilities.invokeLater(
+                () -> corner.show(context.projects().active()));
+        context.projects().addListener(showProject);
+        // Das Fenster steht vor dem Laden der Einstellungen; erst danach ist der Datenordner und damit das gewählte
+        // Projekt bekannt.
+        context.onChange(ignored -> showProject.run());
         statusLine = new StatusLine(jobStatus.model(), StatusLine.alerts(signInNotice, networkNotice, proxyNotice), viewStatus,
-                statusBox, jobStatus, new CopyrightLink());
+                statusBox, jobStatus, corner);
         JComponent foot = statusLine;
         JPanel bottom = new JPanel(new BorderLayout());
         bottom.setOpaque(false);

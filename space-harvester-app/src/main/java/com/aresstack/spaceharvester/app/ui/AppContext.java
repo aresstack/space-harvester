@@ -940,6 +940,25 @@ public final class AppContext {
     private final Favorites favorites = new Favorites(() -> settings() == null ? null
             : settings().storage().dataDirectory().resolve(Favorites.FILE));
 
+    /**
+     * Die Projekte und das aktive Projekt der ganzen App (ADR 0043, Nachtrag F6), Ordner {@code projekte} im Datenordner
+     * der App. Ein Speicher für alle Perspektiven; Wechsel werden über seine Beobachter gemeldet.
+     */
+    private final com.aresstack.spaceharvester.app.project.ProjectStore projects =
+            new com.aresstack.spaceharvester.app.project.ProjectStore(() -> settings() == null ? null
+                    : settings().storage().dataDirectory()
+                    .resolve(com.aresstack.spaceharvester.app.project.ProjectStore.FOLDER));
+
+    public com.aresstack.spaceharvester.app.project.ProjectStore projects() {
+        return projects;
+    }
+
+    /** Der Ordner aller Chats im Datenordner der App; {@code null} ohne Einstellungen. */
+    public java.nio.file.Path chatsDirectory() {
+        return settings() == null ? null
+                : settings().storage().dataDirectory().resolve(com.aresstack.spaceharvester.app.chat.ChatStore.FOLDER);
+    }
+
     /** Anzeigename einer Wissensquelle (etwa für den Pfad eines Favoriten); ohne Laufzeit oder Titel ihre Kennung. */
     public String sourceTitle(String id) {
         AppRuntime runtime = runtime();
