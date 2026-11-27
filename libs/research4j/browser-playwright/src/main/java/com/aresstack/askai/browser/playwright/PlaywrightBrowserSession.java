@@ -127,15 +127,6 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
         return pageEngines;
     }
 
-    /**
-     * The engines a search with {@code engineIds} visits ({@code null}: the configured ones), in order; a wrong id is
-     * refused as {@link #search(String, List)} refuses it.
-     */
-    java.util.List<com.aresstack.askai.browser.search.engine.BrowserSearchEngine> searchEngines(
-            List<String> engineIds) throws BrowserException {
-        return engineIds == null ? enginesToVisit() : selectEngines(engineIds);
-    }
-
     /** The engines named by the running web_search call, or null (then the settings' enabled engines). */
     private java.util.List<com.aresstack.askai.browser.search.engine.BrowserSearchEngine> callEngines;
 
@@ -205,7 +196,10 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
         java.util.List<com.aresstack.askai.browser.search.engine.BrowserSearchEngine> selected =
                 new ArrayList<com.aresstack.askai.browser.search.engine.BrowserSearchEngine>();
         for (String raw : engineIds) {
-            String id = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT);
+            String trimmed = raw == null ? "" : raw.trim();
+            // A search page's URL is taken as it is (paths and parameters may be case-sensitive); catalog ids not.
+            String id = com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog.isSearchPage(trimmed)
+                    ? trimmed : trimmed.toLowerCase(java.util.Locale.ROOT);
             com.aresstack.askai.browser.search.engine.BrowserSearchEngine engine =
                     com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog.byId(id);
             if (engine == null) {

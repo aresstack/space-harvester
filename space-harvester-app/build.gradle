@@ -72,10 +72,13 @@ dependencies {
     // KeePass koppeln und Einträge lesen/anlegen wie im Enterprise AI Client; nur die App, nie der Core
     implementation project(':enterprise-ai-keepass')
     // Websuche im Chat (ADR 0046): die Browser-Werkzeuge aus Research4j (browser-tools) und ihre Engine auf
-    // Playwright (browser-playwright, Edge als Vorgabe). Research4j startet keinen Browser selbst; das macht die
+    // Playwright (browser-playwright, Firefox als Vorgabe). Research4j startet keinen Browser selbst; das macht die
     // Browser-Laufzeit, die auch den GraalVM-25-Stapel von playwright4j aus dem Klassenpfad der App heraushält.
     implementation libs.research4j.browser.tools
     implementation libs.research4j.browser.playwright
+    // Die Suche aus Ask AI im eigenen Suchbrowser (Angelo 27.11.2026): Suchmaschinenliste mit Prioritäten, Google im
+    // Serp4j-Suchbrowser, die übrigen Suchmaschinen und Suchseiten des Hauses über die Recherche-Suche.
+    implementation libs.research4j.agent.runtime
     implementation project(':browser-runtime')
     playwrightDriver project(path: ':browser-runtime', configuration: 'driverProcess')
     implementation libs.snakeyaml

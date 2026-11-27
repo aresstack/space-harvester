@@ -3113,13 +3113,47 @@ public final class Explorer {
         if (scope == null) {
             return;
         }
+        analyze(scope, analysisWhere(item));
+    }
+
+    /**
+     * „Analysieren“ für Bereiche, etwa den der Wortsuche (Angelo 27.11.2026: fehlen dort Verben, fragt die Suche, ob
+     * analysiert werden soll): derselbe Ablauf wie im Kontextmenü, je Bereich einmal; leer heißt jede Quelle.
+     */
+    public void analyze(List<Scope> scopes) {
+        List<Scope> area = scopes.isEmpty() && context.runtime() != null
+                ? context.runtime().workspace().sources().stream().map(source -> new Scope(source.id(), null)).toList()
+                : scopes;
+        for (Scope scope : area) {
+            if (scope.sourceId() == null) {
+                continue;
+            }
+            StatementAnalysisJobs.Scope analysis = scope.pageId() != null
+                    ? new StatementAnalysisJobs.Scope.Subtree(scope.sourceId(), scope.spaceKey(), scope.pageId())
+                    : scope.spaceKey() != null ? new StatementAnalysisJobs.Scope.Space(scope.sourceId(),
+                    scope.spaceKey()) : new StatementAnalysisJobs.Scope.Source(scope.sourceId());
+            analyze(analysis, analysisWhere(scope));
+        }
+    }
+
+    /** Wo analysiert wird, für einen Bereich ohne Knoten im Baum. */
+    static String analysisWhere(Scope scope) {
+        if (scope.pageId() != null) {
+            return "Seite „" + (scope.pageTitle() == null ? scope.pageId() : scope.pageTitle())
+                    + "“ samt allen Unterseiten (Quelle " + scope.sourceId()
+                    + (scope.spaceKey() == null ? "" : " · Space " + scope.spaceKey()) + ")";
+        }
+        return scope.spaceKey() != null ? "Space " + scope.spaceKey() + " der Quelle " + scope.sourceId()
+                + " mit allen Seiten" : "Quelle " + scope.sourceId() + " mit allen Spaces und Seiten";
+    }
+
+    private void analyze(StatementAnalysisJobs.Scope scope, String where) {
         if (scope instanceof StatementAnalysisJobs.Scope.SinglePage) {
             startAnalysis(scope, new StatementAnalysisJobs.Options(false, StatementAnalysisJobs.Options.DEFAULT
                     .maxPages(), null, analyzerSetting()));
             return;
         }
         notice("Umfang der Analyse wird ermittelt …", Severity.INFO);
-        String where = analysisWhere(item);
         Background.run(() -> analyses.estimate(scope, ANALYSIS_LIMIT), estimate -> {
             if (estimate.exact() && estimate.pages() == 0) {
                 notice("Keine Seiten zum Analysieren", Severity.INFO);

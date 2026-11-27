@@ -2,6 +2,7 @@ package com.aresstack.enterpriseai.browser.runtime;
 
 import com.aresstack.enterpriseai.astu.chat.ChatConversationId;
 import com.aresstack.enterpriseai.browser.api.BrowserAccessGuard;
+import com.aresstack.enterpriseai.browser.api.WebSearchPort;
 import com.aresstack.enterpriseai.browser.api.BrowserAction;
 import com.aresstack.enterpriseai.browser.api.BrowserActResult;
 import com.aresstack.enterpriseai.browser.api.BrowserBatchPage;
@@ -74,6 +75,7 @@ public final class ChatBrowserRuntime implements ChatBrowserPort {
     private final BrowserEngine engine;
     private final BrowserProfileStore profiles;
     private final BrowserAccessGuard guard;
+    private final WebSearchPort webSearch;
     private static final int MAX_LINK_TEXT = 160;
     private static final int MAX_HISTORY = 50;
 
@@ -84,12 +86,19 @@ public final class ChatBrowserRuntime implements ChatBrowserPort {
     }
 
     public ChatBrowserRuntime(BrowserEngine engine, BrowserProfileStore profiles, BrowserAccessGuard guard) {
-        if (engine == null || profiles == null || guard == null) {
-            throw new IllegalArgumentException("engine, profiles and guard must not be null");
+        this(engine, profiles, guard, WebSearchPort.NONE);
+    }
+
+    /** @param webSearch the search of the chats, in a search browser of its own ({@link WebSearchPort#NONE}: none) */
+    public ChatBrowserRuntime(BrowserEngine engine, BrowserProfileStore profiles, BrowserAccessGuard guard,
+                              WebSearchPort webSearch) {
+        if (engine == null || profiles == null || guard == null || webSearch == null) {
+            throw new IllegalArgumentException("engine, profiles, guard and webSearch must not be null");
         }
         this.engine = engine;
         this.profiles = profiles;
         this.guard = guard;
+        this.webSearch = webSearch;
     }
 
     @Override
@@ -222,16 +231,11 @@ public final class ChatBrowserRuntime implements ChatBrowserPort {
         }
 
         @Override
-        public synchronized String search(final String tabId, final String query, final List<String> engines)
-                throws BrowserException {
-            return call(connection -> {
-                String raw = tabId == null ? currentOrNew(connection) : rawOf(connection, tabId);
-                snapshots.remove(raw);
-                remember(connection, raw);
-                // The block lists of the chat's profile (Intern/Extern) hold for the search too: refused engines
-                // are not visited and refused hits never reach the model.
-                return connection.search(raw, query, engines, url -> guard.refuses(conversation, url));
-            }, true);
+        public String search(final String query, final List<String> engines) throws BrowserException {
+            // In the search browser, not in this chat's tabs (no lock of this browser is held while it searches).
+            // The block lists of the chat's profile (Intern/Extern) hold for the search too: refused engines are
+            // not visited and refused hits never reach the model.
+            return webSearch.search(conversation, query, engines, url -> guard.refuses(conversation, url));
         }
 
         @Override

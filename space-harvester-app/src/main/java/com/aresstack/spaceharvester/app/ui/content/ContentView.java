@@ -579,6 +579,7 @@ public final class ContentView implements View {
     public void selection(ExportPanel.Selection selection) {
         exportTabs.showPage();
         detail.export().selection(selection);
+        detail.localArtifacts(selection);
         detail.chat().onResolved(resolved -> detail.graph().within(resolved == null ? null : resolved.pages()));
         detail.chat().selection(selection);
         // Die Analysen der Auswahl stehen in der Seitenleiste auch neben der Suche: Sie folgen der Auswahl wie Chat

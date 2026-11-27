@@ -20,7 +20,8 @@ import java.util.List;
  * Einstellungen › Browser, übernommen aus {@code BrowserTab} des Enterprise AI Client: die Zugriffsregeln der
  * Websuche im Chat je Profil. Jeder Chat nutzt Extern (Vorgabe) oder Intern (Umschalter im Menü am Pfeil der
  * Weltkugel); beide Profile haben dieselben Felder: Modus (standardmäßig blockieren mit Whitelist oder
- * standardmäßig erlauben mit Blacklist), beide Regellisten und die Such-URLs, die der Chat im Systemhinweis bekommt.
+ * standardmäßig erlauben mit Blacklist), beide Regellisten und die Suchmaschinen des Profils (Tabelle aus Ask AI;
+ * Intern nur Suchseiten des Hauses). {@code browser_search} sucht damit im Suchbrowser, nicht im Fenster des Chats.
  * Jede Änderung (Auswahl oder Verlassen eines Felds) wird sofort gespeichert. Nur auf dem EDT.
  */
 public final class BrowserSettingsPanel {
@@ -30,8 +31,13 @@ public final class BrowserSettingsPanel {
     static final String ALLOW_LABEL = "Standardmäßig erlauben — nur Websites aus der Blacklist werden blockiert.";
     static final String RULE_HINT = "Eine Regel je Zeile: example.org = genau dieser Host, *.example.org = "
             + "Subdomains; Blacklist gewinnt immer";
-    static final String SEARCH_HINT = "Eine Such-URL je Zeile, {query} steht für die Suchbegriffe. "
-            + "Der Chat bekommt sie bei eingeschalteter Websuche.";
+    static final String ENGINES_HINT = "Der Chat sucht damit im eigenen Suchbrowser; Priorität 0 zuerst, Zeilen "
+            + "gleicher Priorität zusammen. Das Fenster des Chats öffnet danach nur die Treffer.";
+    static final String INTERNAL_ENGINES_HINT = "Nur Suchseiten des Hauses (etwa das Unternehmensportal), keine "
+            + "öffentlichen Suchmaschinen. Weiß man nicht, wo etwas steht: mehrere mit gleicher Priorität.";
+    static final String SEARCH_WINDOW_LABEL = "Suchbrowser sichtbar";
+    static final String SEARCH_WINDOW_HINT = "Zeigt das Fenster, in dem der Chat sucht (etwa um eine Sicherheitsabfrage "
+            + "zu lösen). Gilt ab dem nächsten Start des Suchbrowsers.";
     static final String NOTE = "Jeder Chat nutzt das Profil Extern oder Intern (Umschalter im Menü am Pfeil der "
             + "Weltkugel, Standard Extern). Bei „Standardmäßig blockieren“ fragt der Chat bei unbekannten Websites "
             + "nach: Einmal erlauben, Immer erlauben, Immer verbieten oder Abbrechen. „Immer“ trägt den Host in das "
@@ -47,6 +53,8 @@ public final class BrowserSettingsPanel {
     final JComboBox<String> channel = Comic.combo(value -> BrowserSettings.CHANNELS.getOrDefault(
             String.valueOf(value), String.valueOf(value)));
     private final JPanel engine = new JPanel(new BorderLayout(0, 6));
+    /** Ob der Suchbrowser ein Fenster zeigt. */
+    final javax.swing.JCheckBox searchWindow = Comic.checkBox(SEARCH_WINDOW_LABEL);
     private Runnable channelChanged = () -> { };
 
     /** Die gleichen Felder eines Profils. */
@@ -57,13 +65,15 @@ public final class BrowserSettingsPanel {
         final JRadioButton allowByDefault = radio(ALLOW_LABEL);
         final JTextArea whitelist = area();
         final JTextArea blacklist = area();
-        final JTextArea searchUrls = area();
+        final SearchEngineTable engines;
         final JPanel panel = new JPanel(new BorderLayout(0, 6));
         /** Was zuletzt geladen oder gespeichert wurde. */
         BrowserAccessConfig loaded;
 
         Profile(BrowserProfile profile) {
             this.profile = profile;
+            boolean internalProfile = profile == BrowserProfile.INTERNAL;
+            engines = new SearchEngineTable("Suchmaschinen " + profile.label(), internalProfile);
             ButtonGroup group = new ButtonGroup();
             group.add(blockByDefault);
             group.add(allowByDefault);
@@ -72,12 +82,17 @@ public final class BrowserSettingsPanel {
             rows.add("Modus", modes(), null);
             rows.add("Whitelist", scroll(whitelist, "Whitelist " + profile.label()), RULE_HINT);
             rows.add("Blacklist", scroll(blacklist, "Blacklist " + profile.label()), RULE_HINT);
-            rows.add("Such-URLs", scroll(searchUrls, "Such-URLs " + profile.label()), SEARCH_HINT);
+            rows.add("Suchmaschinen", engines, internalProfile ? INTERNAL_ENGINES_HINT : ENGINES_HINT);
             panel.setOpaque(false);
             panel.add(rows, BorderLayout.CENTER);
             blockByDefault.addActionListener(e -> save(this));
             allowByDefault.addActionListener(e -> save(this));
-            for (JTextArea area : new JTextArea[] {whitelist, blacklist, searchUrls}) {
+            engines.onChange(selection -> {
+                if (!loading) {
+                    settings.saveEngines(profile, selection);
+                }
+            });
+            for (JTextArea area : new JTextArea[] {whitelist, blacklist}) {
                 area.addFocusListener(new java.awt.event.FocusAdapter() {
                     @Override
                     public void focusLost(java.awt.event.FocusEvent e) {
@@ -106,7 +121,7 @@ public final class BrowserSettingsPanel {
                 }
                 whitelist.setText(lines(config.allow()));
                 blacklist.setText(lines(config.block()));
-                searchUrls.setText(lines(config.searchUrls()));
+                engines.set(settings.engines(profile));
             } finally {
                 loading = false;
             }
@@ -114,8 +129,9 @@ public final class BrowserSettingsPanel {
         }
 
         BrowserAccessConfig config() {
+            // Die alten Such-URLs bleiben, wie sie sind: BrowserSettings übernimmt sie in die Suchmaschinen.
             return new BrowserAccessConfig(allowByDefault.isSelected(), rules(whitelist.getText()),
-                    rules(blacklist.getText()), urls(searchUrls.getText()), null);
+                    rules(blacklist.getText()), loaded == null ? List.of() : loaded.searchUrls(), null);
         }
     }
 
@@ -149,6 +165,13 @@ public final class BrowserSettingsPanel {
         channel.getAccessibleContext().setAccessibleName(ENGINE_HEADING);
         SettingDialogs.Rows engineRows = new SettingDialogs.Rows();
         engineRows.add("Browser", channel, CHANNEL_HINT);
+        searchWindow.getAccessibleContext().setAccessibleName(SEARCH_WINDOW_LABEL);
+        engineRows.add("Suche", searchWindow, SEARCH_WINDOW_HINT);
+        searchWindow.addActionListener(e -> {
+            if (!loading) {
+                settings.saveSearchWindowShown(searchWindow.isSelected());
+            }
+        });
         engine.setOpaque(false);
         engine.add(engineRows, BorderLayout.CENTER);
         channel.addActionListener(e -> saveChannel());
@@ -179,6 +202,7 @@ public final class BrowserSettingsPanel {
         loading = true;
         try {
             channel.setSelectedItem(settings.channel());
+            searchWindow.setSelected(settings.searchWindowShown());
             changesAllowed.setText(lines(remembered.allow()));
             changesBlocked.setText(lines(remembered.block()));
         } finally {
@@ -301,19 +325,5 @@ public final class BrowserSettingsPanel {
             }
         }
         return rules;
-    }
-
-    /** Eine Such-URL je Zeile (URLs dürfen Kommas enthalten); Leeres und Doppeltes entfällt. */
-    static List<String> urls(String text) {
-        List<String> urls = new ArrayList<>();
-        if (text != null) {
-            for (String part : text.split("\\s+")) {
-                String trimmed = part.trim();
-                if (!trimmed.isEmpty() && !urls.contains(trimmed)) {
-                    urls.add(trimmed);
-                }
-            }
-        }
-        return urls;
     }
 }

@@ -225,7 +225,12 @@ public final class McpLayoutRepairClient {
         }
         Map<String, Object> args = new java.util.LinkedHashMap<String, Object>();
         args.put("query", query);
-        args.put("engines", String.join(",", engineIds));
+        // A search page's URL may carry commas: each id goes escaped, as the engine table stores it.
+        List<String> escaped = new java.util.ArrayList<String>();
+        for (String id : engineIds) {
+            escaped.add(com.aresstack.askai.browser.search.engine.BrowserSearchEngineSelection.escapeId(id));
+        }
+        args.put("engines", String.join(",", escaped));
         return args;
     }
 
