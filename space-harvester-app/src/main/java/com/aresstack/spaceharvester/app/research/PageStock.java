@@ -40,6 +40,14 @@ public interface PageStock {
     /** Die Seite aus dem Cache oder von der Quelle geholt; leer, wenn sie danach nicht lokal liegt. Wirft beim Abruf. */
     Optional<Page> page(PageKey key);
 
+    /**
+     * Die Version der abgelegten Seite (Stand der Quellen einer Buchauflage); {@code null}, wenn die Ablage keine
+     * kennt. Fragt nie die Quelle.
+     */
+    default String version(PageKey key) {
+        return null;
+    }
+
     /** Die Unterseiten in der Reihenfolge der Quelle; leer bei Quellen ohne Seitenbaum. */
     List<Child> children(PageKey key, String spaceKey);
 

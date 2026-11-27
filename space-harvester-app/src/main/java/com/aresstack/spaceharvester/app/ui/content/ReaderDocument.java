@@ -236,11 +236,10 @@ final class ReaderDocument {
                         + (acronyms.warnings().isEmpty() ? "" : " · " + String.join("; ", acronyms.warnings()));
             }
             case STALE -> "Die Akronym-Analyse gehört zu einer anderen Fassung oder Prozessorversion und wird nicht "
-                    + "markiert. „Analyse neu berechnen“ aktualisiert sie.";
-            case FAILED -> "Die Akronym-Analyse ist fehlgeschlagen; nichts markiert. „Analyse neu berechnen“ "
-                    + "versucht es erneut.";
-            case MISSING -> "Für diese Seite gibt es noch keine Akronym-Analyse. Sie entsteht beim Abgleich oder über "
-                    + "„Analyse neu berechnen“.";
+                    + "markiert, bis sie neu berechnet ist (Auftragsliste).";
+            case FAILED -> "Die Akronym-Analyse ist fehlgeschlagen; nichts markiert. Ein Klick auf den Stand unter "
+                    + "Begriffe versucht es erneut.";
+            case MISSING -> "Für diese Seite gibt es noch keine Akronym-Analyse; sie wird berechnet (Auftragsliste).";
         };
     }
 

@@ -103,6 +103,11 @@ final class SummaryReport {
     private final List<Runnable> unmark = new ArrayList<>();
     /** Die Themen, von denen der Podcast gerade erzählt; bleiben markiert, auch wenn der Bericht neu gezeichnet wird. */
     private List<Integer> followed = List.of();
+    /**
+     * Die Themen, von denen der ganze Podcast erzählt; die übrigen sind grau hinterlegt (Angelo 27.11.2026).
+     * {@code null} ohne Podcast: dann ist nichts grau.
+     */
+    private java.util.Set<Integer> covered;
     /** Der Text jedes gezeigten Themas (Nummer in {@link UpdateSummary#statements()}), in der Reihenfolge des Berichts. */
     private final Map<Integer, TextWithPicture> bodies = new java.util.LinkedHashMap<>();
     /** Die gerade gezeigte Zusammenfassung, für Space-Namen der Themen. */
@@ -427,7 +432,19 @@ final class SummaryReport {
         return markFollowed();
     }
 
-    /** Markiert die Themen, denen der Podcast gerade folgt, und nur diese; das erste markierte Teil oder null. */
+    /**
+     * Merkt sich, von welchen Themen der ganze Podcast erzählt, und hinterlegt die übrigen grau (Angelo 27.11.2026:
+     * „damit man sofort sehen kann, was nicht abgedeckt war im Podcast“); leer = ohne Podcast, nichts grau.
+     */
+    void cover(java.util.Optional<List<Integer>> statements) {
+        covered = statements.map(java.util.Set::copyOf).orElse(null);
+        markFollowed();
+    }
+
+    /**
+     * Markiert die Themen, denen der Podcast gerade folgt, gelb und nur diese, und hinterlegt grau, wovon der ganze
+     * Podcast nie erzählt; das erste gelb markierte Teil oder null.
+     */
     JComponent markFollowed() {
         unmark.forEach(Runnable::run);
         unmark.clear();
@@ -441,22 +458,41 @@ final class SummaryReport {
                     continue;
                 }
                 first = first == null ? part : first;
-                mark(part);
+                mark(part, PODCAST_MARK);
+            }
+        }
+        for (JComponent part : uncovered()) {
+            if (seen.add(part)) {
+                mark(part, Comic.PODCAST_GAP);
             }
         }
         return first;
     }
 
-    private void mark(JComponent part) {
+    /** Die Teile, die zu keinem Thema gehören, von dem der Podcast erzählt; ohne Podcast keine. */
+    private List<JComponent> uncovered() {
+        if (covered == null) {
+            return List.of();
+        }
+        java.util.Set<JComponent> told = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        covered.forEach(number -> told.addAll(topicParts.getOrDefault(number, List.of())));
+        List<JComponent> gaps = new ArrayList<>();
+        java.util.Set<JComponent> seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        topicParts.values().forEach(parts -> parts.stream().filter(part -> !told.contains(part) && seen.add(part))
+                .forEach(gaps::add));
+        return gaps;
+    }
+
+    private void mark(JComponent part, Color color) {
         if (part instanceof TextWithPicture body) {
-            body.highlight(PODCAST_MARK);
+            body.highlight(color);
             unmark.add(() -> body.highlight(null));
             return;
         }
         if (part instanceof javax.swing.text.JTextComponent text) {
             try {
                 Object tag = text.getHighlighter().addHighlight(0, text.getDocument().getLength(),
-                        new javax.swing.text.DefaultHighlighter.DefaultHighlightPainter(PODCAST_MARK));
+                        new javax.swing.text.DefaultHighlighter.DefaultHighlightPainter(color));
                 unmark.add(() -> text.getHighlighter().removeHighlight(tag));
             } catch (javax.swing.text.BadLocationException e) {
                 // ein leerer Text braucht keine Markierung
@@ -466,7 +502,7 @@ final class SummaryReport {
         boolean opaque = part.isOpaque();
         Color background = part.getBackground();
         part.setOpaque(true);
-        part.setBackground(PODCAST_MARK);
+        part.setBackground(color);
         part.repaint();
         unmark.add(() -> {
             part.setOpaque(opaque);
@@ -486,17 +522,29 @@ final class SummaryReport {
 
     /** Gelb markierte Teile (für Tests). */
     List<String> marked() {
+        return marked(PODCAST_MARK);
+    }
+
+    /** Grau hinterlegte Teile, von denen der Podcast nie erzählt (für Tests). */
+    List<String> gaps() {
+        return marked(Comic.PODCAST_GAP);
+    }
+
+    private List<String> marked(Color color) {
         List<String> marked = new ArrayList<>();
         for (List<JComponent> parts : topicParts.values()) {
             for (JComponent part : parts) {
                 if (part instanceof TextWithPicture body) {
-                    if (body.highlighted()) {
+                    if (color.equals(body.highlightColor())) {
                         marked.add(body.text());
                     }
-                } else if (part instanceof javax.swing.text.JTextComponent text
-                        && text.getHighlighter().getHighlights().length > 0) {
-                    marked.add(text.getText());
-                } else if (part.isOpaque() && PODCAST_MARK.equals(part.getBackground())) {
+                } else if (part instanceof javax.swing.text.JTextComponent text) {
+                    if (java.util.Arrays.stream(text.getHighlighter().getHighlights()).anyMatch(highlight ->
+                            highlight.getPainter() instanceof javax.swing.text.DefaultHighlighter.DefaultHighlightPainter
+                                    painter && color.equals(painter.getColor()))) {
+                        marked.add(text.getText());
+                    }
+                } else if (part.isOpaque() && color.equals(part.getBackground())) {
                     // Leseansicht: Zeile mit Beschriftung vorn; Podcast-Ansicht: Überschrift oder Seitenzeile
                     marked.add(part instanceof JLabel label ? label.getText()
                             : part.getComponent(0) instanceof JLabel label ? label.getText()

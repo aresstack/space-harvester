@@ -213,6 +213,80 @@ class AreaSummaryViewTest {
         assertThat(listen.summary()).isEqualTo(actions.stored);
     }
 
+    /** Angelo: „Teilergebnisse sofort“. Fertige Teile stehen gleich da, ohne Schleier; das Ende ersetzt sie. */
+    @Test
+    void finishedPartsShowAtOnceWithoutTheVeilAndTheEndReplacesThem() throws Exception {
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        view.folder(folder("ordner-teile", Root.space("wiki", "BAU")));
+        assertThat(view.busy()).isTrue();
+
+        actions.partialNow = overview("selection-teile");
+        view.reload();
+        assertThat(view.busy()).as("vorläufiger Stand: kein Schleier").isFalse();
+        assertThat(view.summary()).isNull();
+        assertThat(String.join("\n", view.texts())).contains(AreaSummaryView.PARTIAL, "Ablage");
+
+        actions.partialNow = null;
+        actions.stored = overview("selection-teile");
+        shared.jobs.forEach(listener -> listener.changed(SourceUpdatesViewTest.FakeActions.job("job-area-1",
+                JobState.COMPLETED)));
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(view.summary()).isEqualTo(actions.stored);
+        assertThat(String.join("\n", view.texts())).doesNotContain(AreaSummaryView.PARTIAL);
+    }
+
+    @Test
+    void aFolderWithABookShowsItsNewestEditionInsteadOfTheOverviewAndNeverStartsTheModel() throws Exception {
+        // Die Markdown-Darstellung des Chats verlangt den Swing-Thread, wie in der App.
+        javax.swing.SwingUtilities.invokeAndWait(this::showsTheBook);
+    }
+
+    private void showsTheBook() {
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        view.zone(java.time.ZoneId.of("Europe/Berlin"));
+        com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
+                new com.aresstack.spaceharvester.app.research.BookEditions.Edition(2, AT, "# Erfundenes Buch\n\nText.",
+                        "Bericht", List.of(new com.aresstack.spaceharvester.app.research.BookEditions.Source("wiki",
+                        "1", "v1")));
+        view.books(id -> "ordner-buch".equals(id) ? edition : null);
+
+        view.folder(folder("ordner-buch", Root.space("wiki", "BAU")));
+
+        assertThat(view.edition()).isEqualTo(edition);
+        assertThat(view.texts()).contains("Buch, 2. Auflage vom 24.11.2026, 10:00, aus 1 Seite");
+        assertThat(view.copyText()).contains("# Erfundenes Buch");
+        assertThat(actions.summarized).isEmpty();
+        assertThat(view.summarizeOffered()).isFalse();
+    }
+
+    @Test
+    void aFolderWithoutFavoritesStillShowsItsBook() throws Exception {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+            com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
+                    new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, "# Buch", "", List.of());
+            view.books(id -> edition);
+
+            view.folder(folder("ordner-leer"));
+
+            assertThat(view.edition()).isEqualTo(edition);
+            assertThat(view.texts()).doesNotContain(AreaSummaryView.NO_FAVORITES);
+            assertThat(actions.summarized).isEmpty();
+        });
+    }
+
+    @Test
+    void theListeningViewKeepsTheOverviewForNow() {
+        AreaSummaryView view = view(AreaSummaryView.Mode.LISTEN, true);
+        actions.stored = overview("selection-abc");
+        view.books(id -> new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, "Buch", "",
+                List.of()));
+
+        view.folder(folder("ordner-a", Root.space("wiki", "BAU")));
+
+        assertThat(view.edition()).isNull();
+    }
+
     @Test
     void anEmptyFolderSaysSoWithoutAskingTheModel() {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
@@ -275,6 +349,7 @@ class AreaSummaryViewTest {
     private final class FakeArea implements AreaSummaryView.Actions {
 
         UpdateSummary stored;
+        UpdateSummary partialNow;
         boolean available = true;
         boolean failEmpty;
         RuntimeException failWith;
@@ -290,6 +365,11 @@ class AreaSummaryViewTest {
         @Override
         public boolean available() {
             return available;
+        }
+
+        @Override
+        public UpdateSummary partial(AreaSummaryView.Target target) {
+            return partialNow;
         }
 
         @Override
