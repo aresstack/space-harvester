@@ -59,6 +59,38 @@ class ArtifactTabsTest {
     }
 
     @Test
+    void theChipOnlyCountsWhatIsUnseenInTheProjectOfTheOpenChat() throws Exception {
+        // Erfunden: zwei Chats in zwei Projekten; die KI ändert eines in „Garten“, man wechselt nach „Umzug“.
+        ChatStore chats = new ChatStore(() -> home.resolve("chats"));
+        ChatNode node = new ChatNode("wiki", null, null);
+        ChatRecord garden = ChatRecord.fresh(1).plus(ChatRecord.Message.user("Schreib", 1), 1);
+        ChatRecord moving = ChatRecord.fresh(2).plus(ChatRecord.Message.user("Plan", 2), 2);
+        chats.save(node, garden);
+        chats.save(node, moving);
+        Path folder = chats.folder(node);
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.projects(id -> home.resolve("projekte").resolve(id).resolve("artefakte"));
+        store.moveToProject(folder, garden.id(), "garten");
+        store.moveToProject(folder, moving.id(), "umzug");
+        store.createDocument(folder, garden.id(), "Gartenfibel", "# Gartenfibel", ChatArtifact.Origin.AI);
+        java.util.List<Integer> counts = new java.util.ArrayList<>();
+        ArtifactTabs[] tabs = new ArtifactTabs[1];
+        SwingUtilities.invokeAndWait(() -> {
+            tabs[0] = new ArtifactTabs(store, new JLabel("Kein Artefakt"), () -> null, text -> { }, null);
+            tabs[0].onUnseen(counts::add);
+            tabs[0].front(false);
+            tabs[0].chat(folder, garden.id());
+            tabs[0].changed("D1");
+            tabs[0].chat(folder, moving.id());
+            // Unter „Artefakte“ in „Umzug“ bleibt die Änderung in „Garten“ ungesehen.
+            tabs[0].front(true);
+            tabs[0].front(false);
+            tabs[0].chat(folder, garden.id());
+        });
+        assertThat(counts).containsExactly(1, 0, 1);
+    }
+
+    @Test
     void anArtifactIsDeletedAfterAskingAndComesBackFromTheTrash() throws Exception {
         // ADR 0047: Löschen am Artefakt nach „wirklich löschen?“; bis zum nächsten Start wiederherstellbar.
         ChatStore chats = new ChatStore(() -> home.resolve("chats"));

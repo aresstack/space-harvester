@@ -92,7 +92,10 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     private volatile String selected;
     /** Ob diese Fläche vorn steht; nur die Artefakt-Mitte wird je verdeckt. */
     private boolean front = true;
-    private int unseen;
+    /** Je Projekt (Ordner seiner Artefakte), wie viele Artefakte die KI ungesehen geändert hat. */
+    private final Map<Path, Integer> unseen = new java.util.HashMap<>();
+    /** Die zuletzt gemeldete Zahl am Chip; gemeldet wird nur eine Änderung. */
+    private int shownUnseen;
     private java.util.function.IntConsumer unseenChanged = count -> { };
 
     private record Tab(ClosableTab pill, ArtifactView view) {
@@ -175,6 +178,8 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
             }
         }
         refreshStrip();
+        // Der Chip zählt nur, was im Projekt des Chats ungesehen ist.
+        publishUnseen();
         // Export-Reiter gehören nicht zum Chat: der gewählte bleibt vorn.
         if (showingExport != null && exports.containsKey(showingExport)) {
             selectExport(showingExport);
@@ -221,8 +226,11 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         if (!tabs.containsKey(id) && add(id) != null) {
             remember();
         }
-        unseen++;
-        unseenChanged.accept(unseen);
+        Path owner = store.owner(folder, chatId);
+        if (owner != null) {
+            unseen.merge(owner, 1, Integer::sum);
+        }
+        publishUnseen();
         status.accept((artifact.kind() == ChatArtifact.Kind.GRAPHIC ? "Grafik" : "Dokument") + " „"
                 + artifact.title() + "“ " + (artifact.revision() <= 1 ? "angelegt" : "geändert"));
     }
@@ -230,10 +238,24 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     /** Ob die Artefakt-Mitte vorn steht; beim Öffnen verschwindet die Zahl am Chip. */
     void front(boolean shown) {
         front = shown;
-        if (shown && unseen > 0) {
-            unseen = 0;
-            unseenChanged.accept(0);
+        if (shown && unseenHere() > 0) {
+            unseen.remove(store.owner(folder, chatId));
+            publishUnseen();
         }
+    }
+
+    private void publishUnseen() {
+        int count = unseenHere();
+        if (count != shownUnseen) {
+            shownUnseen = count;
+            unseenChanged.accept(count);
+        }
+    }
+
+    /** Ungesehene Änderungen im Projekt des offenen Chats. */
+    private int unseenHere() {
+        Path owner = folder == null || chatId == null ? null : store.owner(folder, chatId);
+        return owner == null ? 0 : unseen.getOrDefault(owner, 0);
     }
 
     /** Meldet, wie viele Artefakte seit dem letzten Blick neu oder geändert sind (Chip an „Artefakte“). */

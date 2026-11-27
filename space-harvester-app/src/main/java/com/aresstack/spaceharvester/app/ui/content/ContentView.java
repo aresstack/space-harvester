@@ -54,6 +54,8 @@ public final class ContentView implements View {
     static final String NO_ARTIFACT = "Kein Artefakt geöffnet: links eines wählen";
     /** Die untere Leiste: unter „Artefakte“ die Formate des Artefakts vorn, sonst die der Seitenansicht. */
     private final JPanel tools = new JPanel(new BorderLayout());
+    /** Ob die Werkzeuge vorn die Zeile füllen ({@link View#TOOLS_FILL}), gespiegelt auf die Hülle, die die Suchleiste sieht. */
+    private final java.beans.PropertyChangeListener fillMirror = event -> mirrorFill((JComponent) event.getSource());
     private boolean artifactsFront;
     private JPanel north;
     /** Wünscht die Artefakt-Mitte (Klick auf einen Verweis im Chat): links auf „Artefakte“ schalten. */
@@ -254,12 +256,30 @@ public final class ContentView implements View {
         if (tools.getComponentCount() == 1 && tools.getComponent(0) == shown) {
             return;
         }
+        if (tools.getComponentCount() == 1 && tools.getComponent(0) instanceof JComponent old) {
+            old.removePropertyChangeListener(View.TOOLS_FILL, fillMirror);
+        }
         tools.removeAll();
         if (shown != null) {
             tools.add(shown, BorderLayout.CENTER);
+            shown.addPropertyChangeListener(View.TOOLS_FILL, fillMirror);
         }
+        mirrorFill(shown);
+    }
+
+    /** Die Suchleiste fragt nur die Hülle, ob die Werkzeuge die Zeile füllen; sie folgt dem gezeigten Inhalt. */
+    private void mirrorFill(JComponent shown) {
+        tools.putClientProperty(View.TOOLS_FILL, shown != null && Boolean.TRUE.equals(shown.getClientProperty(
+                View.TOOLS_FILL)));
         tools.revalidate();
         tools.repaint();
+    }
+
+    /** Wer ausdrücklich eine Seite oder Quelle öffnet, während die Artefakte vorn stehen, holt die Seite zurück. */
+    private void pageRequested() {
+        if (artifactsFront) {
+            pageWanted.run();
+        }
     }
 
     /** Für Tests: die Artefakt-Mitte. */
@@ -277,6 +297,7 @@ public final class ContentView implements View {
 
     /** Ein Space wurde gewählt (z. B. „Inhalte öffnen“ eines Auftrags): ohne Seite, die wählt man im Explorer. */
     public void openSpace(String sourceId, String spaceKey) {
+        pageRequested();
         allSources = false;
         // Ein Space hat dieselbe Seite wie die Quelle, als Ausschnitt seiner Updates (ADR-0030-Nachtrag, TZ5).
         if (!detail.showsLevel(sourceId, spaceKey)) {
@@ -295,6 +316,7 @@ public final class ContentView implements View {
     }
 
     public void openSource(String sourceId, String title) {
+        pageRequested();
         allSources = false;
         if (!detail.showsLevel(sourceId, null)) {
             detail.showSource(sourceId, title);
@@ -307,6 +329,7 @@ public final class ContentView implements View {
 
     /** Öffnet eine Seite (aus dem Explorer, der Suche, einem Auftrag). */
     public void openPage(String sourceId, String pageId) {
+        pageRequested();
         if (!Objects.equals(sourceId, this.sourceId)) {
             this.spaceKey = null;
         }
@@ -320,6 +343,7 @@ public final class ContentView implements View {
      * unter ihm, nie die vorher gezeigte Seite (Angelo 26.11.2026); schon gezeigt, bleibt er.
      */
     public void openContainer(String sourceId, String spaceKey, String pageId, String title) {
+        pageRequested();
         allSources = false;
         String space = spaceKey == null || spaceKey.isBlank() ? null : spaceKey;
         if (!detail.showsLevel(sourceId, ChangeLevel.key(space, pageId))) {
@@ -335,6 +359,7 @@ public final class ContentView implements View {
      * {@code sourceId} ist die Quelle des Aufrufers (z. B. eines Suchtreffers); maßgeblich ist die ID selbst.
      */
     public void openProgram(String sourceId, String pageId, String rawSha256, int line) {
+        pageRequested();
         if (!Objects.equals(sourceId, this.sourceId)) {
             this.spaceKey = null;
         }
@@ -344,6 +369,7 @@ public final class ContentView implements View {
     }
 
     public void openPassage(String sourceId, String passageId) {
+        pageRequested();
         String source = PassageId.looksLike(passageId) ? PassageId.parse(passageId).sourceId() : sourceId;
         if (!Objects.equals(source, this.sourceId)) {
             this.spaceKey = null;
@@ -388,9 +414,7 @@ public final class ContentView implements View {
         exportTabs.showPage();
         // Öffnet sich eine Seite (etwa über einen Quellen-Link im Chat), während die Artefakte vorn stehen, kommt die
         // Seite nach vorn und links „Wissensquellen“.
-        if (artifactsFront) {
-            pageWanted.run();
-        }
+        pageRequested();
         this.sourceId = sourceId;
         this.spaceKey = spaceKey == null || spaceKey.isBlank() ? null : spaceKey;
         renderCrumbs();
@@ -591,6 +615,7 @@ public final class ContentView implements View {
 
     /** Zeigt den Reiter „Export“ für die Auswahl links, etwa aus „Inhalte öffnen“ eines Auftrags. */
     public void showExport() {
+        pageRequested();
         detail.showExport();
     }
 

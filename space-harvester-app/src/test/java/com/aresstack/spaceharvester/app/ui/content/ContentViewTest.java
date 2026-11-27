@@ -224,6 +224,32 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.isVisible())).isTrue();
         assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(detail.footTools(), view.tools())))
                 .isTrue();
+        // Die Suchleiste fragt die Hülle, ob die Werkzeuge die Zeile füllen: sie folgt dem gezeigten Inhalt.
+        String fill = com.aresstack.spaceharvester.app.ui.View.TOOLS_FILL;
+        onEdt(() -> {
+            detail.footTools().putClientProperty(fill, Boolean.TRUE);
+            return null;
+        });
+        assertThat(onEdt(() -> view.tools().getClientProperty(fill))).isEqualTo(Boolean.TRUE);
+        onEdt(() -> {
+            detail.footTools().putClientProperty(fill, Boolean.FALSE);
+            return null;
+        });
+        assertThat(onEdt(() -> view.tools().getClientProperty(fill))).isEqualTo(Boolean.FALSE);
+
+        // Wer ausdrücklich eine Seitenansicht anfordert (etwa „Inhalte öffnen“ eines Auftrags), holt die Seite zurück.
+        int[] wanted = {0};
+        onEdt(() -> {
+            view.onPageWanted(() -> {
+                wanted[0]++;
+                view.showArtifacts(false);
+            });
+            view.showArtifacts(true);
+            view.showExport();
+            return null;
+        });
+        assertThat(wanted[0]).isEqualTo(1);
+        assertThat(onEdt(view::artifactsShown)).isFalse();
     }
 
     @Test
