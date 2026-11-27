@@ -2357,6 +2357,18 @@ public final class Workspace {
      * Der Chat-Port des KI-Dienstes für den Reiter „Chat“ (streamend, {@code POST /chat/completions}) mit den
      * wirksamen Einstellungen; {@code null} ohne Dienst oder Chat-Modell. Der Chat selbst lebt in der App (ADR 0012).
      */
+    /**
+     * „Korb füllen“ (Buchfunktion Phase 3, Arbeitszweig): startet den Auftrag auf Klick des Benutzers, vor jedem
+     * wartenden Hintergrund. Der Auftrag selbst kommt aus {@code app.research.BasketResearchJob}.
+     */
+    public JobStatus startBasketResearch(com.aresstack.spaceharvester.application.jobs.JobTask task) {
+        JobStatus status = harvester.jobs().submitInteractive(JobType.RESEARCH,
+                com.aresstack.spaceharvester.application.jobs.Jobs.ALL_SOURCES, null, null, caller.jobOwner(),
+                java.util.Map.of(), task);
+        activities.remember(status.id());
+        return status;
+    }
+
     public AiChat aiChat() {
         return harvester.aiChat();
     }

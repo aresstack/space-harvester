@@ -147,6 +147,12 @@ final class FavoritesView {
             }
         });
         newFolder.addActionListener(e -> tree.createFolder());
+        tree.folderItems((id, menu) -> {
+            javax.swing.JMenuItem fill = new javax.swing.JMenuItem(BasketResearchForm.TITLE + " …");
+            fill.setToolTipText("Recherche im Wissensbestand legt passende Seiten als Favoriten in diesen Ordner");
+            fill.addActionListener(e -> fillBasket(id));
+            menu.add(fill);
+        });
         component.setOpaque(false);
         JScrollPane scroll = Comic.scroll(view);
         scroll.setBorder(BorderFactory.createEmptyBorder());
@@ -156,6 +162,42 @@ final class FavoritesView {
     JComponent component() {
         return component;
     }
+
+    /**
+     * „Korb füllen“ (Buchfunktion Phase 3, Arbeitszweig): fragt Auftrag und Weidezaun und startet die Recherche als
+     * Auftrag; der Ordner ist der Korb. Nur auf diesen Klick, nie im Hintergrund.
+     */
+    private void fillBasket(String folderId) {
+        Favorites favorites = context.favorites();
+        String name = favorites.folder(folderId).map(Favorites.Folder::name).orElse("Ordner");
+        var runtime = context.runtime();
+        var ai = context.settings() == null ? null : context.settings().ai();
+        String model = ai == null ? null : ai.chatModel();
+        var chat = runtime == null ? null : runtime.workspace().aiChat();
+        if (chat == null || model == null || model.isBlank()) {
+            Dialogs.view(component, BasketResearchForm.TITLE, Comic.note("Für die Recherche braucht es einen "
+                    + "KI-Dienst mit Chat-Modell (Einstellungen › KI-Dienst)."));
+            return;
+        }
+        var fence = new BasketResearchForm().ask(component, name);
+        if (fence.isEmpty()) {
+            return;
+        }
+        var workspace = runtime.workspace();
+        // Kapazität des Chat-Modells laut KI-Einstellungen (Parallelität); bei einer GPU 1, beim Clouddienst mehr.
+        int capacity = ai.parallel() == null ? 1 : Math.max(1, ai.parallel());
+        var basket = new com.aresstack.spaceharvester.app.research.FavoritesBasket(favorites, folderId,
+                context::sourceTitle);
+        // Nachdenken aus (kein reasoning_effort), wie die übrigen Analyseschritte; Sprache der Oberfläche.
+        var task = com.aresstack.spaceharvester.app.research.BasketResearchJob.task(
+                new com.aresstack.spaceharvester.app.research.AiChatModel(chat, model, null,
+                        ai.contextTokens() == null ? 0 : ai.contextTokens()),
+                new com.aresstack.spaceharvester.app.research.WorkspacePageStock(workspace, null), basket, name,
+                fence.get(), SearchView.LIMIT,
+                com.aresstack.research4j.basket.BasketResearch.Settings.defaults("de", capacity, capacity));
+        workspace.startBasketResearch(task);
+    }
+
 
     /** „Neuer Ordner“ für die Fußleiste des Explorers (Angelo 24.11.: unten in der Leiste, keine eigene Leiste oben). */
     IconButton newFolderButton() {
