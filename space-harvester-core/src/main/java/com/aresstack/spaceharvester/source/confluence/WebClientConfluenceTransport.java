@@ -172,10 +172,16 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
     @Override
     public CompletionStage<RoutedHttpPort.Response> requestOnceAsync(String method, URI uri,
             Map<String, String> headers, int maxBytes, Duration timeout) {
+        return requestOnceAsync(method, uri, headers, null, maxBytes, timeout);
+    }
+
+    @Override
+    public CompletionStage<RoutedHttpPort.Response> requestOnceAsync(String method, URI uri,
+            Map<String, String> headers, byte[] body, int maxBytes, Duration timeout) {
         HttpMethod verb = HttpMethod.valueOf(method);
         return Mono.defer(() -> closed.get()
                         ? Mono.<ConfluenceHttpResponse>error(new IOException("Transport ist geschlossen"))
-                        : once(uri, headers, maxBytes, Identity.CLIENT, verb))
+                        : once(uri, headers, maxBytes, Identity.CLIENT, verb, body))
                 .map(response -> new RoutedHttpPort.Response(response.status(), response.body(), response.location()))
                 .timeout(timeout, Mono.defer(() -> Mono.error(new SocketTimeoutException(
                         "Request timeout after " + timeout.toMillis() + " ms"))))
@@ -210,6 +216,11 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
 
     private Mono<ConfluenceHttpResponse> once(URI uri, Map<String, String> headers, int maxBytes,
                                               Identity identity, HttpMethod method) {
+        return once(uri, headers, maxBytes, identity, method, null);
+    }
+
+    private Mono<ConfluenceHttpResponse> once(URI uri, Map<String, String> headers, int maxBytes,
+                                              Identity identity, HttpMethod method, byte[] body) {
         String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
         if (!"https".equals(scheme) && !"http".equals(scheme)) {
             return Mono.error(new IOException("nur http/https unterstützt: " + uri.getScheme()));
@@ -219,11 +230,11 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         }
         return Mono.fromCallable(() -> routes.routeFor(uri))
                 .subscribeOn(routeScheduler)
-                .flatMap(route -> send(uri, route, headers, maxBytes, identity, method));
+                .flatMap(route -> send(uri, route, headers, maxBytes, identity, method, body));
     }
 
     private Mono<ConfluenceHttpResponse> send(URI uri, HttpRoute route, Map<String, String> headers, int maxBytes,
-                                              Identity identity, HttpMethod method) {
+                                              Identity identity, HttpMethod method, byte[] body) {
         if (route == null) {
             return Mono.error(new IOException("keine Routenentscheidung für " + uri.getHost()));
         }
@@ -237,14 +248,17 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         } catch (IOException e) {
             return Mono.error(e);
         }
-        return client.method(method)
+        WebClient.RequestBodySpec request = client.method(method)
                 .uri(uri)
                 .headers(sent -> {
                     if (userAgent != null) {
                         sent.set("User-Agent", userAgent);
                     }
                     headers.forEach(sent::set);
-                })
+                });
+        // Ein Formular (BSCW-Suche) geht als fertiger Körper mit; sonst ohne Körper wie bisher.
+        WebClient.RequestHeadersSpec<?> ready = body == null ? request : request.bodyValue(body);
+        return ready
                 .exchangeToMono(response -> read(response, maxBytes))
                 .doOnError(error -> {
                     if (connectFailure(error)) {
