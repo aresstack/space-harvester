@@ -62,7 +62,8 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
     private final JPanel center = new JPanel(cards);
     private final FtpConnectForm form;
     private final SegmentedToggle toggle = new SegmentedToggle();
-    private final javax.swing.JButton storedCobolSearch = new javax.swing.JButton("Programmsuche");
+    private final com.aresstack.spaceharvester.app.ui.IconButton storedCobolSearch =
+            com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.create();
     private final EditorSessions editors;
     private FtpNavigationObserver navigation = FtpNavigationObserver.NONE;
     /** Der Stand der gewählten Sitzung für die Statuszeile der App (links); leer beim Formular. */
@@ -261,9 +262,8 @@ public final class FtpWorkspace extends JPanel implements DeckBars.FootTools {
     void storedCobolSearch(com.aresstack.spaceharvester.app.ui.AppContext context,
                            java.util.function.BooleanSupplier active) {
         var action = new StoredProgramSearchAction(context, this, active,
-                busy -> storedCobolSearch.setText(busy ? "Suche abbrechen" : "Programmsuche"));
+                busy -> com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.busy(storedCobolSearch, busy));
         storedCobolSearch.setVisible(true);
-        storedCobolSearch.setToolTipText("Gespeicherte COBOL-, JCL- und Natural-Analysen durchsuchen; erneut klicken zum Abbrechen");
         storedCobolSearch.addActionListener(event -> action.open());
     }
 

@@ -519,7 +519,8 @@ public final class PageDetailPanel extends JPanel {
     private boolean originalProgramShown;
     private final javax.swing.JButton recomputeProgram = new javax.swing.JButton("Programmanalyse berechnen");
     private final javax.swing.JButton recomputeBusiness = new javax.swing.JButton("Fachliche KI-Analyse");
-    private final javax.swing.JButton searchPrograms = new javax.swing.JButton("Programmsuche");
+    private final com.aresstack.spaceharvester.app.ui.IconButton searchPrograms =
+            com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.create();
     private java.util.concurrent.Future<?> programSearchTask;
     private int programSearchGeneration;
     private ProgramFocus pendingProgramFocus;
@@ -2694,14 +2695,14 @@ public final class PageDetailPanel extends JPanel {
         String source = sourceId;
         int current = request;
         int generation = ++programSearchGeneration;
-        searchPrograms.setText("Suche abbrechen");
+        com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.busy(searchPrograms, true);
         feedback.working("Gespeicherte Programmanalysen werden gelesen …");
         var sources = runtime.workspace().programSearchSources();
         programSearchTask = Background.start(() -> runtime.workspace().storedProgramSearch(java.util.Set.copyOf(sources),
                 () -> Thread.currentThread().isInterrupted()), snapshot -> {
             if (current != request || context.runtime() != runtime || generation != programSearchGeneration) return;
             programSearchTask = null;
-            searchPrograms.setText("Programmsuche");
+            com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.busy(searchPrograms, false);
             feedback.clear();
             new StoredProgramSearchDialog(snapshot, sources, source).show(this).ifPresent(fact -> {
                 if (current == request && context.runtime() == runtime) openStoredProgramHit(runtime, fact, current);
@@ -2709,7 +2710,7 @@ public final class PageDetailPanel extends JPanel {
         }, error -> {
             if (current != request || context.runtime() != runtime || generation != programSearchGeneration) return;
             programSearchTask = null;
-            searchPrograms.setText("Programmsuche");
+            com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.busy(searchPrograms, false);
             feedback.problem(error);
         });
     }
@@ -2720,7 +2721,7 @@ public final class PageDetailPanel extends JPanel {
             programSearchTask.cancel(true);
             programSearchTask = null;
         }
-        searchPrograms.setText("Programmsuche");
+        com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.busy(searchPrograms, false);
     }
 
     private void openStoredProgramHit(AppRuntime runtime,

@@ -36,7 +36,8 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
      * Stand dieses Bereichs links in der Statuszeile der App (über {@code CommandDeck}): Zustand, Hinweise, Fehler rot
      * ({@code StatusNote.Tone.ERROR}). Lange Texte kürzt das Label selbst, der volle Text steht im Tooltip.
      */
-    private final javax.swing.JButton storedProgramSearch = new javax.swing.JButton("Programmsuche");
+    private final com.aresstack.spaceharvester.app.ui.IconButton storedProgramSearch =
+            com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.create();
     private final com.aresstack.spaceharvester.app.ui.controls.StatusLabel statusInfo =
             new com.aresstack.spaceharvester.app.ui.controls.StatusLabel();
 
@@ -114,9 +115,8 @@ public final class NdvWorkspace extends JPanel implements DeckBars.FootTools {
     void storedProgramSearch(com.aresstack.spaceharvester.app.ui.AppContext context,
                              java.util.function.BooleanSupplier active) {
         var action = new StoredProgramSearchAction(context, this, active,
-                busy -> storedProgramSearch.setText(busy ? "Suche abbrechen" : "Programmsuche"));
+                busy -> com.aresstack.spaceharvester.app.ui.controls.ProgramSearchButtons.busy(storedProgramSearch, busy));
         storedProgramSearch.setVisible(true);
-        storedProgramSearch.setToolTipText("Gespeicherte COBOL-, JCL- und Natural-Analysen durchsuchen");
         storedProgramSearch.addActionListener(event -> action.open());
     }
 
