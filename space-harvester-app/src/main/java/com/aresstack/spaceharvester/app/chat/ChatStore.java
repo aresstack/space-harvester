@@ -261,6 +261,36 @@ public final class ChatStore {
         return entries;
     }
 
+    /** Der Chat-Ordner auf der Platte, normalisiert; {@code null}, solange die App keinen Datenordner kennt. */
+    public Path rootPath() {
+        Path base = root == null ? null : root.get();
+        return base == null ? null : base.toAbsolutePath().normalize();
+    }
+
+    /** Ein Chat, der noch einen eigenen Artefakt-Ordner hat: Bereich (relativ) und Kennung. */
+    public record ArtifactFolder(Path folder, String chatId) {
+    }
+
+    /**
+     * Die Chats mit eigenem Artefakt-Ordner (Ablage vor ADR 0047, als im Standardprojekt der Chat besaß); nicht die
+     * gelöschten. Nur lesen, nichts ändern.
+     */
+    public synchronized List<ArtifactFolder> artifactFolders() {
+        List<ArtifactFolder> found = new ArrayList<>();
+        Path base = root.get();
+        if (base == null || !Files.isDirectory(base)) {
+            return found;
+        }
+        Path absolute = base.toAbsolutePath().normalize();
+        for (Path tree : artifactTrees(base, ARTIFACTS)) {
+            String name = tree.getFileName().toString();
+            Path parent = tree.toAbsolutePath().normalize().getParent();
+            found.add(new ArtifactFolder(absolute.relativize(parent), name.substring(0, name.length()
+                    - ARTIFACTS.length())));
+        }
+        return found;
+    }
+
     /** Löscht alle Chats aller Bereiche endgültig, auch die vorläufig gelöschten; liefert ihre Kennungen. */
     public synchronized List<String> deleteAll() {
         List<String> ids = new ArrayList<>();

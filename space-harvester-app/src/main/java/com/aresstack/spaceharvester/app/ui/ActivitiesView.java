@@ -340,7 +340,7 @@ public final class ActivitiesView implements View {
         expandAll.addActionListener(e -> setAllGroups(false));
         collapseAll.addActionListener(e -> setAllGroups(true));
         enlarge.addActionListener(e -> enlargeAction.run());
-        JPanel listTools = Comic.row(hint, deleteFinished, enlarge, moreJobs);
+        JPanel listTools = Comic.row(deleteFinished, enlarge, moreJobs);
         // „Alle anhalten“ und „Alle abbrechen“ sind Aktionen und stehen mittig in der Werkzeugleiste unten
         // (tools(), Angelo 22.11.2026); oben bleibt Platz für die Wippe.
         pauseAll.addActionListener(e -> pauseOrResumeAll());
@@ -352,25 +352,23 @@ public final class ActivitiesView implements View {
         global.add(cancelAll);
         // Auf- und Zuklappen stehen gleich rechts der Lupe, die beiden Aktionen mittig in der ganzen Leiste.
         JPanel folding = Comic.row(expandAll, collapseAll);
-        JPanel globalRow = new JPanel(new ToolsLayout(folding, global));
+        // Die Hilfe steht unten rechts in der Ecke der Leiste, nicht mehr in der Kopfzeile (Angelo 27.11.2026).
+        JPanel globalRow = new JPanel(new ToolsLayout(folding, global, hint));
         globalRow.setOpaque(false);
         globalRow.putClientProperty(View.TOOLS_FILL, Boolean.TRUE);
         globalRow.add(folding);
         globalRow.add(global);
+        globalRow.add(hint);
         tools = globalRow;
         JPanel listHead = new JPanel();
-        // Reicht die Breite nicht (Leiste an ihrer Mindestbreite), weichen Hilfe und Besen; „Fertige löschen“ steht
+        // Reicht die Breite nicht (Leiste an ihrer Mindestbreite), weicht der Besen; „Fertige löschen“ steht
         // dann im Menü hinter dem Dreieck.
         int fullTools = listTools.getPreferredSize().width;
-        hint.setVisible(false);
         deleteFinished.setVisible(false);
         int saved = fullTools - listTools.getPreferredSize().width;
-        hint.setVisible(true);
         deleteFinished.setVisible(true);
-        listHead.setLayout(new HeadLayout(listTitle, listTools, saved, tight -> {
-            hint.setVisible(!tight);
-            deleteFinished.setVisible(!tight);
-        }));
+        listHead.setLayout(new HeadLayout(listTitle, listTools, saved,
+                tight -> deleteFinished.setVisible(!tight)));
         listHead.setOpaque(false);
         // Dieselbe Kopfzeile wie der Chat und die Seitenansicht: gleiche Höhe, Linie darunter (Angelo 22.11.2026).
         listHead.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
@@ -2645,10 +2643,13 @@ public final class ActivitiesView implements View {
 
         private final Component west;
         private final Component center;
+        /** Steht rechtsbündig am Ende der Zeile, also unten rechts in der Ecke der Leiste. */
+        private final Component east;
 
-        ToolsLayout(Component west, Component center) {
+        ToolsLayout(Component west, Component center, Component east) {
             this.west = west;
             this.center = center;
+            this.east = east;
         }
 
         @Override
@@ -2662,18 +2663,26 @@ public final class ActivitiesView implements View {
             Container bar = javax.swing.SwingUtilities.getAncestorOfClass(FindBar.class, parent);
             int middle = bar == null ? parent.getWidth() / 2
                     : javax.swing.SwingUtilities.convertPoint(bar, bar.getWidth() / 2, 0, parent).x;
+            // Reicht die Breite nicht für alles (Leiste an ihrer Mindestbreite), weicht die Hilfe wie zuvor in der
+            // Kopfzeile; die Aktionen behalten ihren Platz.
+            java.awt.Dimension eastSize = east.getPreferredSize();
+            boolean fits = westSize.width + GAP + centerSize.width + GAP + eastSize.width <= parent.getWidth();
+            int right = fits ? parent.getWidth() - eastSize.width : parent.getWidth();
+            east.setBounds(right, (height - eastSize.height) / 2, fits ? eastSize.width : 0, eastSize.height);
+            int room = fits ? right - GAP : right;
             int x = Math.max(westSize.width + GAP, middle - centerSize.width / 2);
-            x = Math.max(westSize.width + GAP, Math.min(x, parent.getWidth() - centerSize.width));
+            x = Math.max(westSize.width + GAP, Math.min(x, room - centerSize.width));
             center.setBounds(x, (height - centerSize.height) / 2,
-                    Math.max(0, Math.min(centerSize.width, parent.getWidth() - x)), centerSize.height);
+                    Math.max(0, Math.min(centerSize.width, room - x)), centerSize.height);
         }
 
         @Override
         public java.awt.Dimension preferredLayoutSize(Container parent) {
             java.awt.Dimension westSize = west.getPreferredSize();
             java.awt.Dimension centerSize = center.getPreferredSize();
-            return new java.awt.Dimension(westSize.width + GAP + centerSize.width,
-                    Math.max(westSize.height, centerSize.height));
+            java.awt.Dimension eastSize = east.getPreferredSize();
+            return new java.awt.Dimension(westSize.width + GAP + centerSize.width + GAP + eastSize.width,
+                    Math.max(Math.max(westSize.height, centerSize.height), eastSize.height));
         }
 
         @Override

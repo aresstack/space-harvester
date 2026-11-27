@@ -28,9 +28,9 @@ import java.util.regex.Pattern;
  * (die Ansicht) oder auf den neuesten Stand (die Werkzeuge, denn eine Änderung des Benutzers gilt für das nächste
  * Werkzeug, Abschnitt 3). Papierkorb, Wiederherstellen und Löschen gehen mit dem Chat ({@link ChatStore}).
  *
- * <p>Besitzer (ADR 0043, F3): Im Standardprojekt gehören die Artefakte dem Chat; gehört der Chat zu einem anderen
- * Projekt, gehören sie dem Projekt und liegen in dessen Ordner ({@link #projects}), und alle Chats des Projekts
- * arbeiten darauf. Die offenen Reiter bleiben je Chat.
+ * <p>Besitzer (ADR 0047, ersetzt ADR 0043 F3): Artefakte gehören immer dem Projekt des Chats, auch dem
+ * Standardprojekt, und liegen in dessen Ordner ({@link #projects}); alle Chats des Projekts arbeiten darauf, auch ein
+ * neuer. Ältere Artefakte in Chat-Ordnern ziehen einmal um ({@link #adoptAll}). Die offenen Reiter bleiben je Chat.
  *
  * <p>Wer zuschaut, bekommt jede Änderung gemeldet ({@link #addListener}, ADR 0027: kein Polling). In Logs stehen nie
  * Texte aus Artefakten, nur die Ausnahmeklasse (Abschnitt 9).
@@ -74,7 +74,7 @@ public final class ChatArtifactStore {
 
     private final ChatStore chats;
     private final List<Consumer<Event>> listeners = new CopyOnWriteArrayList<>();
-    /** Der Artefakt-Ordner eines Projekts; {@code null} für das Standardprojekt und unbekannte Projekte. */
+    /** Der Artefakt-Ordner eines Projekts; {@code null}, solange keiner bekannt ist (dann besitzt der Chat). */
     private volatile java.util.function.Function<String, Path> projectArtifacts = projectId -> null;
     /** Das Projekt der Chats, die gerade offen sind (auch ein noch nicht gespeicherter); sonst steht es im Chat. */
     private final Map<String, String> projectOf = new ConcurrentHashMap<>();
@@ -100,17 +100,74 @@ public final class ChatArtifactStore {
     }
 
     /**
-     * Der Ordner, in dem die Artefakte des Chats liegen: der des Projekts, wenn der Chat zu einem Projekt außer dem
-     * Standardprojekt gehört, sonst der des Chats; {@code null} ohne Datenordner.
+     * Der Ordner, in dem die Artefakte des Chats liegen: immer der seines Projekts, auch im Standardprojekt (ADR 0047);
+     * der Ordner des Chats nur, solange kein Projektordner bekannt ist. {@code null} ohne Datenordner.
      */
     public Path owner(Path folder, String chatId) {
+        Path project = projectArtifacts.apply(projectOf(folder, chatId));
+        return project != null ? project : chats.artifacts(folder, chatId);
+    }
+
+    /** Das Projekt des Chats; ohne eines das Standardprojekt. */
+    private String projectOf(Path folder, String chatId) {
         String projectId = chatId == null ? null : projectOf.get(chatId);
         if (projectId == null && chatId != null) {
             com.aresstack.spaceharvester.app.chat.ChatRecord record = chats.load(folder, chatId);
             projectId = record == null ? null : record.projectId();
         }
-        Path project = projectId == null || projectId.isEmpty() ? null : projectArtifacts.apply(projectId);
-        return project != null ? project : chats.artifacts(folder, chatId);
+        return projectId == null || projectId.isEmpty()
+                ? com.aresstack.spaceharvester.app.project.Project.DEFAULT_ID : projectId;
+    }
+
+    /**
+     * Der einmalige Umzug (ADR 0047): Artefakte, die noch in Chat-Ordnern liegen, ziehen in den Ordner ihres Projekts,
+     * mit freien Kennungen; Verweise zwischen ihnen, die offenen Reiter und die Verweise im Verlauf des Chats folgen.
+     * Nur lokal, ohne Netz und ohne KI; danach findet ein weiterer Aufruf nichts mehr.
+     *
+     * @return die Zahl der umgezogenen Artefakte
+     */
+    public int adoptAll() {
+        return adoptAllByChat().values().stream().mapToInt(Map::size).sum();
+    }
+
+    /** Welche Chat-Datenordner in diesem Programmlauf schon umgezogen sind (einmal je Datenordner). */
+    private static final java.util.Set<Path> ADOPTED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Der einmalige Umzug, beim ersten Zugriff auf einen bekannten Datenordner; ohne Datenordner (die Einstellungen
+     * sind noch nicht geladen) geschieht nichts und der nächste Aufruf versucht es wieder.
+     *
+     * @return je Chat die neuen Kennungen (alt → neu), damit ein schon geladener Chat seinen Verlauf nachzieht
+     */
+    public Map<String, Map<String, String>> adoptOnce() {
+        Path root = chats.rootPath();
+        if (root == null || !ADOPTED.add(root)) {
+            return Map.of();
+        }
+        return adoptAllByChat();
+    }
+
+    private Map<String, Map<String, String>> adoptAllByChat() {
+        Map<String, Map<String, String>> moved = new LinkedHashMap<>();
+        for (com.aresstack.spaceharvester.app.chat.ChatStore.ArtifactFolder each : chats.artifactFolders()) {
+            // Ein Chat, dessen Umzug scheitert, bleibt unverändert liegen und hält die übrigen nicht auf.
+            try {
+                Map<String, String> renamed = moveToProject(each.folder(), each.chatId(),
+                        projectOf(each.folder(), each.chatId()));
+                if (renamed.isEmpty()) {
+                    continue;
+                }
+                moved.put(each.chatId(), renamed);
+                com.aresstack.spaceharvester.app.chat.ChatRecord record = chats.load(each.folder(), each.chatId());
+                if (record != null && !record.isEmpty()) {
+                    chats.save(each.folder(), record.withTexts(text -> relink(text, renamed)));
+                }
+            } catch (RuntimeException failed) {
+                LOG.log(System.Logger.Level.WARNING, "Artefakte eines Chats nicht umgezogen (Bereich "
+                        + each.folder() + "): " + failed.getClass().getSimpleName());
+            }
+        }
+        return moved;
     }
 
     /**
@@ -126,7 +183,8 @@ public final class ChatArtifactStore {
         synchronized (LOCK) {
             chatProject(chatId, projectId);
             Path from = chats.artifacts(folder, chatId);
-            Path to = projectId == null ? null : projectArtifacts.apply(projectId);
+            Path to = projectArtifacts.apply(projectId == null || projectId.isEmpty()
+                    ? com.aresstack.spaceharvester.app.project.Project.DEFAULT_ID : projectId);
             List<ChatArtifact> own = from == null ? List.of() : listIn(from);
             if (to == null || to.equals(from)) {
                 return Map.of();
@@ -148,18 +206,34 @@ public final class ChatArtifactStore {
                 next.put(prefix, number + 1);
                 renamed.put(artifact.id(), prefix + number);
             }
-            Map<String, String> moved = new LinkedHashMap<>();
+            // Ganz oder gar nicht: erst alle Kopien schreiben; scheitert eine, bleibt der Chat, wie er war.
+            List<ChatArtifact> copies = new ArrayList<>();
             for (ChatArtifact artifact : own) {
                 ChatArtifact copy = renamed(artifact, renamed);
                 if (copy == null || !write(to, copy)) {
-                    continue;
+                    for (ChatArtifact written : copies) {
+                        try {
+                            Files.deleteIfExists(to.resolve(written.id() + SUFFIX));
+                        } catch (IOException e) {
+                            LOG.log(System.Logger.Level.WARNING, "Kopie nicht entfernt: "
+                                    + e.getClass().getSimpleName());
+                        }
+                    }
+                    LOG.log(System.Logger.Level.WARNING, "Artefakte eines Chats nicht umgezogen (Bereich " + folder
+                            + "); sie bleiben beim Chat.");
+                    return Map.of();
                 }
+                copies.add(copy);
+            }
+            Map<String, String> moved = new LinkedHashMap<>();
+            for (ChatArtifact artifact : own) {
                 try {
                     Files.deleteIfExists(from.resolve(artifact.id() + SUFFIX));
-                    moved.put(artifact.id(), copy.id());
                 } catch (IOException e) {
-                    LOG.log(System.Logger.Level.WARNING, "Artefakt nicht verschoben: " + e.getClass().getSimpleName());
+                    // Die Kopie gilt. Das Original (etwa gesperrt) bleibt liegen; ein späterer Umzug fände es noch einmal.
+                    LOG.log(System.Logger.Level.WARNING, "Original nicht entfernt: " + e.getClass().getSimpleName());
                 }
+                moved.put(artifact.id(), renamed.get(artifact.id()));
             }
             List<String> tabs = openTabs(folder, chatId).stream().map(moved::get)
                     .filter(java.util.Objects::nonNull).toList();
@@ -224,7 +298,7 @@ public final class ChatArtifactStore {
         }
     }
 
-    private static List<ChatArtifact> listIn(Path directory) {
+    static List<ChatArtifact> listIn(Path directory) {
         synchronized (LOCK) {
             List<ChatArtifact> artifacts = new ArrayList<>();
             if (directory == null || !Files.isDirectory(directory)) {

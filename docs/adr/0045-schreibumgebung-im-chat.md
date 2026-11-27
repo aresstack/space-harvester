@@ -34,6 +34,11 @@ die Bildgenerierung (`DiagramComposer`, Zeilen „Bildgenerierung – Plan“ un
 > Geändert am 27.11.2026 durch [ADR 0043](0043-projekte-als-wissensarbeitsbereich.md), Nachtrag „Chats und Artefakte
 > im Projekt“, Abschnitt F3: Gehört der Chat zu einem Projekt, ist das Projekt der Besitzer der Artefakte, und alle
 > Chats des Projekts arbeiten darauf. Ohne Projekt gilt dieser Abschnitt unverändert.
+>
+> Geändert am 27.11.2026 durch [ADR 0047](0047-artefakte-des-projekts.md): Besitzer ist immer das Projekt, auch das
+> Standardprojekt; ein Chat besitzt keine Artefakte mehr. Ein Artefakt wird einzeln gelöscht und geht nicht mehr mit
+> dem Chat in den Papierkorb. Ein geschriebenes Buch ist ein Dokument-Artefakt des Projekts
+> ([ADR 0044](0044-buch-als-ueberblick-eines-ordners.md), Nachtrag N1 und N4). Revisionen und „Rückgängig“ bleiben.
 
 Ein Chat kann beliebig viele Artefakte haben. Es gibt zwei Arten: **Dokument** (Markdown) und **Grafik** (SVG). Jedes
 Artefakt hat eine feste Kennung, einen Titel und eine Folge von Revisionen. Jede Änderung, ob von der KI oder vom
@@ -93,6 +98,11 @@ mitten im Chat umschaltbar. Nur bei eingeschaltetem Schalter bekommt das Modell 
 Ist er aus, bleiben die Artefakte sichtbar, bearbeitbar und exportierbar; die KI ändert dann nichts daran.
 
 ### 5. Ort: Schreibansicht im Reiter „Export“, Chat rechts
+
+> Geändert am 27.11.2026 durch [ADR 0047](0047-artefakte-des-projekts.md), Abschnitt 5: Die globalen Artefakte
+> stehen nicht mehr unter „Export“, sondern links unter „Wissensquellen | Artefakte“, und öffnen sich von dort in der
+> Mitte. Was hier über Artefakt-Reiter und die Liste der Artefakte im Menü „Weitere Aktionen zur Seite“ steht, gilt
+> nur noch, bis dieser Umzug gebaut ist. Alles zu Export-Reitern und zur unteren Leiste bleibt.
 
 > Geändert am 27.11.2026 nach drei Nachrichten von Angelo. Vorher öffnete sich ein Artefakt als Reiter über der ganzen
 > Mitte, in jeder Ansicht.

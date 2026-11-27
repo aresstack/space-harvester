@@ -472,7 +472,7 @@ public final class ChatPanel extends JPanel {
         store = new ChatStore(context::chatsDirectory);
         artifacts = new com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore(store);
         projects = context.projects();
-        // Artefakte gehören im Projekt dem Projekt, im Standardprojekt dem Chat (ADR 0043, F3).
+        // Artefakte gehören immer dem Projekt, auch dem Standardprojekt (ADR 0047).
         artifacts.projects(projects::artifacts);
         chat = freshChat(null);
         // Wechselt das aktive Projekt (Ecke unten) oder ändert sich eine Gruppe, folgt der Chat (ADR 0027, ohne Abfragen).
@@ -1877,6 +1877,13 @@ public final class ChatPanel extends JPanel {
      * sie ins Projekt um (ADR 0043 F3), und die Verweise in seinen Antworten folgen den neuen Kennungen.
      */
     private java.util.Map<String, String> adoptArtifacts() {
+        // Der einmalige Umzug (ADR 0047) beim ersten Zugriff mit bekanntem Datenordner, auf dem EDT vor allem anderen:
+        // ein schon geladener Chat zieht seine Verweise sofort nach, sonst überschriebe er die umgeschriebene Datei.
+        java.util.Map<String, String> early = artifacts.adoptOnce().getOrDefault(chat.id(), java.util.Map.of());
+        if (!early.isEmpty()) {
+            chat = chat.withTexts(text -> com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore.relink(
+                    text, early));
+        }
         java.util.Map<String, String> renamed = artifacts.moveToProject(home, chat.id(), chat.projectId());
         if (renamed.isEmpty()) {
             return renamed;

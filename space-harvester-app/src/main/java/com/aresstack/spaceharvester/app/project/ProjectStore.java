@@ -142,12 +142,13 @@ public final class ProjectStore {
     }
 
     /**
-     * Der Ordner der Artefakte eines Projekts (F3); {@code null} für das Standardprojekt, in dem die Chats ihre
-     * Artefakte selbst besitzen, und für ein unbekanntes oder gelöschtes Projekt.
+     * Der Ordner der Artefakte eines Projekts (F3, ADR 0047), auch des Standardprojekts; ein unbekanntes oder
+     * gelöschtes Projekt ist das Standardprojekt. {@code null} ohne Datenordner.
      */
     public Path artifacts(String projectId) {
         Project project = resolve(projectId);
-        Path folder = project.isDefault() ? null : folder(project.id());
+        // Auch das Standardprojekt besitzt seine Artefakte (ADR 0047); sein Ordner enthält sonst nichts.
+        Path folder = folder(project.id());
         return folder == null ? null : folder.resolve(ARTIFACTS);
     }
 
