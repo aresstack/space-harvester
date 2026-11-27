@@ -716,6 +716,11 @@ final class PodcastControl<S> {
     }
 
     /** Das Gezeigte (Zusammenfassung oder Seite), {@code null} ohne; etwas anderes beendet die Wiedergabe. */
+    /** Wofür der Podcast gerade steht, {@code null} ohne (für Tests). */
+    S shown() {
+        return summary;
+    }
+
     void summary(S shown) {
         Source<S> current = shown == null ? Source.none()
                 : Objects.requireNonNullElse(sources.get(), Source.<S>none());

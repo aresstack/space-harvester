@@ -106,6 +106,28 @@ class PagePodcastsTest {
     }
 
     @Test
+    void aBookIsToldByItsHeadingsAndKeyedByFolder() {
+        String markdown = "# Nachtlauf\n\nWozu es ihn gibt.\n\n## Ablauf\n\nErst Prüfung.\n\n### Schritte\n\nDrei.\n\n"
+                + "## Störungen\n\nBereitschaft anrufen.\n";
+        PagePodcasts.Book book = new PagePodcasts.Book("ordner-1", "Erfundenes Buch", markdown);
+
+        PageText text = book.text();
+        assertThat(text.sections()).extracting(PageText.Section::heading)
+                .containsExactly("Nachtlauf", "Ablauf", "Schritte", "Störungen");
+        assertThat(text.sections().get(1).end()).isEqualTo(markdown.indexOf("## Störungen"));
+        PodcastWriter.Material material = book.material(PagePodcasts.Reading.DEFAULT);
+        assertThat(material.overview()).startsWith("Das Buch „Erfundenes Buch“");
+        // die einzige Titelüberschrift ist die Einleitung, erzählt wird nach den Kapiteln darunter
+        assertThat(material.stories()).extracting(PodcastWriter.Story::title)
+                .containsExactly("Einleitung", "Ablauf", "Störungen");
+        assertThat(material.stories().get(0).places()).containsExactly("im Buch „Erfundenes Buch“");
+
+        AccessContext caller = AccessContext.technicalClient("app");
+        assertThat(PagePodcasts.bookKey(caller, "ordner-1")).isNotEqualTo(PagePodcasts.bookKey(caller, "ordner-2"))
+                .isNotEqualTo(PagePodcasts.key(caller, "wiki", "ordner-1"));
+    }
+
+    @Test
     void sectionsBecomePartsAndSubpagesAreStackedBelow() {
         String text = "Wozu es den Nachtlauf gibt.\nAblauf\nErst Prüfung, dann Start.\nSchritte\nDrei Schritte.\n"
                 + "Störungen\nBereitschaft anrufen.";

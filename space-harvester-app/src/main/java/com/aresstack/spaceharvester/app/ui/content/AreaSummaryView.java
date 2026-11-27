@@ -189,6 +189,11 @@ final class AreaSummaryView extends JPanel {
         /** Aufträge, Meldungen der Quelle, Podcast und Bilder wie bei den Updates. */
         SourceUpdatesView.Actions shared();
 
+        /** Der Podcast zum Buch eines Ordners (ADR 0044: der Podcast nutzt das Buch); ohne Laufzeit keiner. */
+        default PodcastControl.Source<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book> bookPodcasts() {
+            return PodcastControl.Source.none();
+        }
+
         static Actions of(Workspace workspace) {
             if (workspace == null) {
                 return null;
@@ -219,8 +224,131 @@ final class AreaSummaryView extends JPanel {
                 public SourceUpdatesView.Actions shared() {
                     return shared;
                 }
+
+                @Override
+                public PodcastControl.Source<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book> bookPodcasts() {
+                    return books;
+                }
+
+                private final PodcastControl.Source<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book> books = new PodcastControl.Source<>() {
+                    @Override
+                    public boolean available() {
+                        return workspace.pagePodcastsAvailable();
+                    }
+
+                    @Override
+                    public String key(com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
+                        return workspace.bookPodcastKey(book.folderId());
+                    }
+
+                    @Override
+                    public java.util.Optional<com.aresstack.spaceharvester.application.podcast.Podcast> podcast(
+                            com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
+                        return workspace.bookPodcast(book);
+                    }
+
+                    @Override
+                    public JobStatus start(com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
+                        return PodcastParallel.apply(workspace).startBookPodcast(book);
+                    }
+
+                    @Override
+                    public Subscription subscribe(String key, Runnable listener) {
+                        return workspace.subscribePagePodcast(key, listener);
+                    }
+
+                    @Override
+                    public java.util.Optional<String> transcript(com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
+                        return workspace.bookPodcastTranscript(book);
+                    }
+
+                    @Override
+                    public Subscription subscribeJobs(com.aresstack.spaceharvester.application.jobs.JobListener listener) {
+                        return workspace.subscribeJobs(listener);
+                    }
+                };
             };
         }
+    }
+
+    /**
+     * Was die Podcast-Ansicht vorliest: den Überblick oder, unter „Buch“, die neueste Auflage am Ordner (ADR 0044: der
+     * Podcast nutzt das Buch). Genau eins von beiden ist gesetzt.
+     */
+    record Heard(UpdateSummary summary, com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
+        Heard {
+            if ((summary == null) == (book == null)) {
+                throw new IllegalArgumentException("Überblick oder Buch");
+            }
+        }
+    }
+
+    /** Ein Podcast-Typ für beides: der Überblick über die Updates-Podcasts, das Buch über den Buch-Podcast. */
+    static PodcastControl.Source<Heard> heard(PodcastControl.Source<UpdateSummary> summaries,
+                                              PodcastControl.Source<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book> books) {
+        return new PodcastControl.Source<>() {
+            @Override
+            public boolean available() {
+                return summaries.available() || books.available();
+            }
+
+            @Override
+            public String key(Heard heard) {
+                return heard.book() != null ? books.key(heard.book()) : summaries.key(heard.summary());
+            }
+
+            @Override
+            public java.util.Optional<com.aresstack.spaceharvester.application.podcast.Podcast> podcast(Heard heard) {
+                return heard.book() != null ? books.podcast(heard.book()) : summaries.podcast(heard.summary());
+            }
+
+            @Override
+            public JobStatus start(Heard heard) {
+                return heard.book() != null ? books.start(heard.book()) : summaries.start(heard.summary());
+            }
+
+            @Override
+            public JobStatus renew(Heard heard) {
+                return heard.book() != null ? books.renew(heard.book()) : summaries.renew(heard.summary());
+            }
+
+            @Override
+            public boolean renewable() {
+                return summaries.renewable();
+            }
+
+            @Override
+            public Subscription subscribe(String key, Runnable listener) {
+                // Der Schlüssel gehört genau einem der beiden; der andere meldet zu ihm nie etwas.
+                Subscription first = summaries.subscribe(key, listener);
+                Subscription second = books.subscribe(key, listener);
+                return () -> {
+                    first.close();
+                    second.close();
+                };
+            }
+
+            @Override
+            public Subscription subscribeJobs(com.aresstack.spaceharvester.application.jobs.JobListener listener) {
+                return summaries.subscribeJobs(listener);
+            }
+
+            @Override
+            public List<Integer> focus(Heard heard, int topic) {
+                return heard.book() != null ? books.focus(heard.book(), topic) : summaries.focus(heard.summary(), topic);
+            }
+
+            @Override
+            public List<Integer> coverage(Heard heard, List<Integer> topics) {
+                return heard.book() != null ? books.coverage(heard.book(), topics)
+                        : summaries.coverage(heard.summary(), topics);
+            }
+
+            @Override
+            public java.util.Optional<String> transcript(Heard heard) {
+                return heard.book() != null ? books.transcript(heard.book()) : summaries.transcript(heard.summary());
+            }
+        };
     }
 
     private final Supplier<Actions> actions;
@@ -241,7 +369,10 @@ final class AreaSummaryView extends JPanel {
     private final javax.swing.JScrollPane reportScroll;
     private final BusyOverlay busy;
     private final SummaryReport summaryReport;
-    private final PodcastControl<UpdateSummary> podcast;
+    private final PodcastControl<Heard> podcast;
+    /** Der zuletzt gebaute Podcast-Typ zu seinen Teilen, damit die Steuerung denselben Typ wiedererkennt. */
+    private PodcastControl.Source<Heard> heardSource;
+    private Object heardOf;
     private final ReportPictures pictures;
     private Consumer<String> onStatus = text -> { };
     private BiConsumer<String, String> onOpen = (source, page) -> { };
@@ -307,10 +438,7 @@ final class AreaSummaryView extends JPanel {
         this.actions = Objects.requireNonNull(actions, "actions");
         this.runner = Objects.requireNonNull(runner, "runner");
         this.mode = Objects.requireNonNull(mode, "mode");
-        this.podcast = new PodcastControl<>(() -> {
-            Actions current = actions.get();
-            return current == null ? null : current.shared().podcasts();
-        }, runner);
+        this.podcast = new PodcastControl<>(this::heardSource, runner);
         this.pictures = new ReportPictures(this, runner, () -> onStatus, podcast::pictureClosed);
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
@@ -399,8 +527,33 @@ final class AreaSummaryView extends JPanel {
         return tools;
     }
 
-    PodcastControl<UpdateSummary> podcast() {
+    PodcastControl<Heard> podcast() {
         return podcast;
+    }
+
+    private PodcastControl.Source<Heard> heardSource() {
+        Actions current = actions.get();
+        if (current == null) {
+            return null;
+        }
+        PodcastControl.Source<UpdateSummary> summaries = current.shared().podcasts();
+        PodcastControl.Source<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book> books =
+                current.bookPodcasts();
+        List<Object> of = java.util.Arrays.asList(summaries, books);
+        if (heardSource == null || !of.equals(heardOf)) {
+            heardSource = heard(summaries, books);
+            heardOf = of;
+        }
+        return heardSource;
+    }
+
+    /** Was die Podcast-Ansicht gerade vorliest; {@code null} ohne Überblick und ohne gezeigtes Buch. */
+    private Heard heard() {
+        if (bookShown()) {
+            return new Heard(null, new com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book(
+                    target.folder().folderId(), target.folder().title(), edition.book()));
+        }
+        return summary == null ? null : new Heard(summary, null);
     }
 
     void podcastEvents(Consumer<com.aresstack.spaceharvester.app.event.ApplicationEvent<?>> events) {
@@ -560,8 +713,7 @@ final class AreaSummaryView extends JPanel {
         java.util.function.BiPredicate<String, BookEditions.Edition> staleOf = staleness;
         boolean running = runningJob != null;
         runner.run(() -> {
-            BookEditions.Edition book = mode == Mode.READ && of.folder() != null
-                    ? bookOf.apply(of.folder().folderId()) : null;
+            BookEditions.Edition book = of.folder() != null ? bookOf.apply(of.folder().folderId()) : null;
             return new Loaded(current.area(of), current.available(), running ? current.partial(of) : null, book,
                     book != null && staleOf.test(of.folder().folderId(), book));
         }, found -> {
@@ -586,7 +738,7 @@ final class AreaSummaryView extends JPanel {
                 offer();
             }
             if (!same && mode == Mode.LISTEN) {
-                podcast.summary(summary);
+                podcast.summary(heard());
             }
             if (!same || interimChanged) {
                 render();
@@ -605,7 +757,7 @@ final class AreaSummaryView extends JPanel {
      * Favoriten): dann zeigt die Leseansicht es; einen Überblick gibt es ohne Favoriten nicht.
      */
     private void bookOfEmptyFolder(Target of) {
-        if (mode != Mode.READ || of.folder() == null) {
+        if (of.folder() == null) {
             return;
         }
         int mine = ++generation;
@@ -619,6 +771,9 @@ final class AreaSummaryView extends JPanel {
             }
             edition = found.get().getKey();
             bookStale = found.get().getValue();
+            if (mode == Mode.LISTEN) {
+                podcast.summary(heard());
+            }
             onBook.run();
             offer();
             render();
@@ -703,6 +858,9 @@ final class AreaSummaryView extends JPanel {
 
     /** Nach einem Klick auf den Umschalter: Buch oder Überblick zeigen. */
     void bookChanged() {
+        if (mode == Mode.LISTEN) {
+            podcast.summary(heard());
+        }
         offer();
         render();
     }
