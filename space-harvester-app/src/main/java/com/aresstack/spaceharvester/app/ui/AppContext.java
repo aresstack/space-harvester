@@ -63,9 +63,11 @@ public final class AppContext {
         /**
          * Ob der Bereich einen eigenen Knopf in der Icon-Leiste hat. Inhalte hat keinen: Die Reiter der Seitenansicht
          * (Leseansicht, Text, …) stehen selbst in der Leiste und schalten die Mitte um; Status führt zur Diagnose.
+         * Die Suche hat auch keinen (Angelo, 27.11.2026): Sie ist die Mitte, solange kein Knopf gewählt ist; ein zweiter
+         * Klick auf den gewählten Knopf oder Enter im Suchfeld führt dorthin.
          */
         public boolean button() {
-            return toolbar() && this != CONTENT;
+            return toolbar() && this != CONTENT && this != SEARCH;
         }
 
         /**

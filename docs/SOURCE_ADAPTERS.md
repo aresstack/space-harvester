@@ -351,6 +351,11 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   nach Zerlegung (ohne Groß-/Kleinschreibung und Satzzeichen) genau der Anfrage entspricht, stellt ihre Seite an den
   Anfang, der Auszug steht dann an der Überschrift. Einträge von vorher schreibt das nächste Indizieren der Seite
   einmal nach (wie den Medientyp), ohne den Index neu aufzubauen.
+  Woher die Überschriften kommen: Confluence `h1`–`h6`; Markdown-Überschriften (Jira, lokale Markdown-Dokumente,
+  Buch); Formatvorlagen lokaler Dokumente (Word, HTML u. a.); bei FTP/NDV die Gliederung des Quelltexts aus
+  `mainframe-languages` (Job/Step, Division/Section/Paragraph, DEFINE DATA/Subroutine; `ProgramOutlineTextProjector`
+  der App); bei PDF die Schriftgröße (`PdfHeadings`: größer als der Fließtext, größte Schrift Ebene 1; fett allein,
+  auf mehreren Seiten wiederkehrende Kopfzeilen und Zeilen ohne Buchstaben zählen nicht).
   Suchmethode „Nur Überschriften durchsuchen“ (`KeywordSearch.Query#withHeadingsOnly`, REST `headingsOnly`, App
   Häkchen in den Suchoptionen, normale Suche und Wortsuche): nur Seitentitel und Überschriften der Seiten
   (`PageTextIndex.Fields.HEADINGS`), kein Fließtext, keine Anhänge und keine Online-Suche der Quelle, die den

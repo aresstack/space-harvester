@@ -175,4 +175,25 @@ public final class BrowserSearchEngine {
     public String toString() {
         return displayName + endpointTemplates;
     }
+
+    /**
+     * Two engines are the same when their id and endpoints are: a search page of the user's own is created anew on
+     * every lookup ({@link BrowserSearchEngineCatalog#byId}), and a table naming it twice must still visit it once.
+     */
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof BrowserSearchEngine)) {
+            return false;
+        }
+        BrowserSearchEngine engine = (BrowserSearchEngine) other;
+        return id.equals(engine.id) && endpointTemplates.equals(engine.endpointTemplates);
+    }
+
+    @Override
+    public int hashCode() {
+        return 31 * id.hashCode() + endpointTemplates.hashCode();
+    }
 }

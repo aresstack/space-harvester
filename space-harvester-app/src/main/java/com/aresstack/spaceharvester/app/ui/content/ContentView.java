@@ -526,6 +526,15 @@ public final class ContentView implements View {
     }
 
     /**
+     * Die Reiter der Icon-Leiste von Hand: {@code chosen} nach jedem Klick, der einen Reiter wählt, {@code again} beim
+     * zweiten Klick auf den gewählten, dunkel gezeigten Reiter (er wird abgewählt, Angelo 27.11.2026).
+     */
+    public void onTabClick(Runnable chosen, Runnable again) {
+        detail.tabs().alsoOnClick(name -> chosen.run());
+        detail.tabs().onAgain(name -> again.run());
+    }
+
+    /**
      * Die Werkzeuge der Seitenansicht in der unteren Leiste, je nach Reiter ({@link PageDetailPanel#footTools()}):
      * in der Leseansicht einer Datei „Speichern“ und „Öffnen“
      * neben der Lupe samt „Typ · Größe“ rechts, im Text eines Videos der Transkript-Knopf (Angelo, 19.11.2026).

@@ -147,18 +147,50 @@ public final class BrowserSearchEngineCatalog {
         return ENGINES;
     }
 
-    /** @return the engine with this id, or {@code null} when the id is unknown (e.g. an older config). */
+    /**
+     * @return the engine with this id, or {@code null} when the id is unknown (e.g. an older config). A search page
+     * of the user's own (an intranet portal, for example) has its search URL as id ({@link #isSearchPage}); it is
+     * searched like the {@code --search-url} engine, by its result URL.
+     */
     public static BrowserSearchEngine byId(String id) {
         if (id == null) {
             return null;
         }
         String wanted = id.trim();
+        if (isSearchPage(wanted)) {
+            return new BrowserSearchEngine(wanted, searchPageName(wanted), Collections.singletonList(wanted));
+        }
         for (BrowserSearchEngine engine : ENGINES) {
             if (engine.getId().equals(wanted)) {
                 return engine;
             }
         }
         return null;
+    }
+
+    /**
+     * Whether {@code id} names a search page of the user's own: an http(s) address with the {@code {query}}
+     * placeholder where the search words go, e.g. {@code https://portal.example/suche?q={query}}.
+     */
+    public static boolean isSearchPage(String id) {
+        if (id == null) {
+            return false;
+        }
+        String text = id.trim().toLowerCase(java.util.Locale.ROOT);
+        return (text.startsWith("https://") || text.startsWith("http://")) && text.contains("{query}");
+    }
+
+    /** The name a search page shows: its host. */
+    static String searchPageName(String searchUrl) {
+        String rest = searchUrl.substring(searchUrl.indexOf("//") + 2);
+        int end = rest.length();
+        for (char stop : new char[]{'/', '?', '#'}) {
+            int at = rest.indexOf(stop);
+            if (at >= 0 && at < end) {
+                end = at;
+            }
+        }
+        return rest.substring(0, end);
     }
 
     /** The single-endpoint engine an explicit {@code --search-url} template stands for. */

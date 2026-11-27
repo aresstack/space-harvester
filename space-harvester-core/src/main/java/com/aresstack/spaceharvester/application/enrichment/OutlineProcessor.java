@@ -14,10 +14,12 @@ public class OutlineProcessor implements EnrichmentProcessor {
     /**
      * {@code 2}: auch die Überschriften des leichten Markdowns der Quellen ohne Seitenliste (Jira, lokale
      * Markdown-Dokumente u. a., {@link PageText#markdownSections}); deren Gliederung war bisher leer.
+     * {@code 3}: auch die Gliederung von Großrechner-Quelltext aus FTP und NDV (Job/Step, Division/Section/Paragraph,
+     * DEFINE DATA/Subroutine), sofern die App sie als Projektor einbringt.
      */
     @Override
     public String version() {
-        return "2";
+        return "3";
     }
 
     /** Auch je Abschnitt eines Anhangs oder einer enthaltenen Datei (ADR 0026, AP9a); rechnet ohne Netz. */
