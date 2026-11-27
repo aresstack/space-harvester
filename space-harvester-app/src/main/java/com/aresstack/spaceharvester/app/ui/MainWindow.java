@@ -182,6 +182,46 @@ public final class MainWindow implements AppContext.Navigator {
         }
     };
 
+    /**
+     * Wo die Reiter der Mitte in der Kopfzeile enden sollen (Angelo 27.11.2026): mittig über dem mittleren Fenster;
+     * mit offener Seitenleiste rechts an dessen linkem Rand, also am linken Teiler, und sie wandern mit ihm. Negativ,
+     * solange es nichts auszurichten gibt (andere Perspektive, Seitenleiste groß, noch kein Layout).
+     */
+    private int tabsAnchor() {
+        if (harvesterNavigation == null || harvesterNavigation.getParent() != navigationSlot
+                || stage.getWidth() <= 0 || !stage.isVisible()
+                || javax.swing.SwingUtilities.getRoot(stage) != javax.swing.SwingUtilities.getRoot(top)) {
+            return -1;
+        }
+        int left = javax.swing.SwingUtilities.convertPoint(stage, 0, 0, top).x;
+        // Gemessen wird von Knopf zu Knopf, ohne die Abstände der Gruppe davor und dahinter.
+        int width = harvesterNavigation.getPreferredSize().width;
+        int[] span = {Integer.MAX_VALUE, Integer.MIN_VALUE};
+        buttonSpan(harvesterNavigation, harvesterNavigation, span);
+        if (span[0] > span[1]) {
+            return -1;
+        }
+        int tabs = span[1] - span[0];
+        int start = chatOpen ? left : left + (stage.getWidth() - tabs) / 2;
+        return start + tabs + Math.max(0, width - span[1]);
+    }
+
+    /** Linke und rechte Kante der sichtbaren Knöpfe unter {@code parent}, in den Koordinaten von {@code root}. */
+    private static void buttonSpan(java.awt.Container root, java.awt.Container parent, int[] span) {
+        for (Component child : parent.getComponents()) {
+            if (!child.isVisible() || child.getWidth() <= 0) {
+                continue;
+            }
+            if (child instanceof javax.swing.AbstractButton) {
+                int x = javax.swing.SwingUtilities.convertPoint(parent, child.getX(), 0, root).x;
+                span[0] = Math.min(span[0], x);
+                span[1] = Math.max(span[1], x + child.getWidth());
+            } else if (child instanceof java.awt.Container nested) {
+                buttonSpan(root, nested, span);
+            }
+        }
+    }
+
     /** Was der Doppelklick auf die Fensterleiste gerade tut. */
     static String windowBarTooltip(boolean maximized) {
         return maximized ? RESTORE_TOOLTIP : MAXIMIZE_TOOLTIP;
@@ -461,7 +501,7 @@ public final class MainWindow implements AppContext.Navigator {
         frame.setVisible(true);
         WindowPlacement.maximizeIfRemembered(frame);
         WindowPlacement.track(frame);
-        // Die App startet auf dem Suchreiter, ohne Auswahl, mit dem Chat als Suchagent (Angelo, 24.11.2026).
+        // Die App startet in der Suche, ohne Auswahl, mit dem Chat als Suchagent (Angelo, 24.11.2026).
         openSearchTab();
         return frame;
     }
@@ -533,11 +573,8 @@ public final class MainWindow implements AppContext.Navigator {
         // Die Reiter der Seitenansicht schalten die Mitte um: ein Klick zeigt Inhalte, auch aus einem anderen Bereich.
         JComponent tabBar = content.tabBar();
         tabBar.setBorder(BorderFactory.createEmptyBorder(0, TAB_GAP, 0, 0));
-        for (Component tab : tabBar.getComponents()) {
-            if (tab instanceof javax.swing.AbstractButton button) {
-                button.addActionListener(e -> show(AppContext.Section.CONTENT));
-            }
-        }
+        // Ein zweiter Klick auf den gezeigten Reiter wählt ihn ab: Ohne Auswahl zeigt die Mitte die Suche.
+        content.onTabClick(() -> show(AppContext.Section.CONTENT), this::openSearchTab);
         icons.add(tabBar);
         // Der Titel steht in der Mitte der linken Gruppe und ist ihr einziger kürzbarer Teil (HeaderLayout). Er ist
         // zugleich der Umschalter der Perspektiven (#1141); rechts daneben steht die Navigation der gewählten.
@@ -550,7 +587,7 @@ public final class MainWindow implements AppContext.Navigator {
         switcher.onSidebarToggle(this::toggleDrawer);
         com.aresstack.spaceharvester.app.ui.controls.ClickBurst.install(switcher.logo(), 5,
                 java.time.Duration.ofMillis(700), avenger::reveal);
-        west.add(switcher, BorderLayout.CENTER);
+        west.add(HeaderLayout.leading(switcher), BorderLayout.CENTER);
         navigationSlot.setOpaque(false);
         west.add(navigationSlot, BorderLayout.EAST);
         JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
@@ -565,7 +602,20 @@ public final class MainWindow implements AppContext.Navigator {
                 BorderFactory.createEmptyBorder(8, 16, 8, 10)));
         top.add(west, BorderLayout.WEST);
         top.add(east, BorderLayout.EAST);
-        // Ein Suchfeld für das ganze Fenster, mittig zwischen den Icon-Gruppen (#515).
+        // Die Reiter der Mitte stehen über dem mittleren Fenster (Angelo 27.11.2026) und wandern mit seinen Teilern.
+        ((HeaderLayout) top.getLayout()).anchor(this::tabsAnchor);
+        stage.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent event) {
+                top.revalidate();
+            }
+
+            @Override
+            public void componentMoved(java.awt.event.ComponentEvent event) {
+                top.revalidate();
+            }
+        });
+        // Ein Suchfeld für das ganze Fenster, rechtsbündig vor der Gruppe rechts (#515, Angelo 27.11.2026).
         searchSlot = SearchBarLayout.wrap(searchView.searchBar());
         top.add(searchSlot, BorderLayout.CENTER);
         ComicWindowDragger.install(top);
@@ -812,11 +862,25 @@ public final class MainWindow implements AppContext.Navigator {
                 section.title() + " (Strg+" + number + ")");
         button.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         button.getAccessibleContext().setAccessibleName(section.title());
-        button.addActionListener(e -> showByHand(section));
+        button.addActionListener(e -> clicked(section));
         return button;
     }
 
-    /** Ein Bereich, den der Benutzer selbst wählt (Knopf oder Strg+Zahl): der Suchreiter hebt die Auswahl auf. */
+    /**
+     * Ein Klick auf einen Bereichsknopf (Angelo, 27.11.2026): Der zweite Klick auf den gezeigten Bereich wählt ihn ab.
+     * Ohne Auswahl zeigt die Mitte die Suche; die Einstellungen über einer anderen Perspektive geben diese wieder frei.
+     */
+    private void clicked(AppContext.Section section) {
+        if (settingsOver != null && section == AppContext.Section.SETTINGS) {
+            leaveSettings();
+        } else if (section == current && settingsOver == null && perspectives.isCurrent(Perspectives.HARVESTER)) {
+            openSearchTab();
+        } else {
+            showByHand(section);
+        }
+    }
+
+    /** Ein Bereich, den der Benutzer selbst wählt (Knopf oder Strg+Zahl): die Suche von Hand hebt die Auswahl auf. */
     private void showByHand(AppContext.Section section) {
         if (section == AppContext.Section.SEARCH) {
             openSearchTab();
@@ -826,7 +890,7 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /**
-     * Der Suchreiter von Hand (Angelo, 24.11.2026): Die Auswahl der Wissensquellen verschwindet ganz, auch die globale;
+     * Die Suche von Hand (Strg+Zahl oder Abwählen des gezeigten Knopfs; Angelo, 24.11. und 27.11.2026): Die Auswahl der Wissensquellen verschwindet ganz, auch die globale;
      * gesucht wird überall, und der Chat arbeitet ohne Bereich nur mit den zugeschalteten Suchen, ohne die langsame
      * Suche im Bereich. Die Suche in der Titelleiste lässt die Auswahl dagegen stehen.
      */
@@ -1251,7 +1315,7 @@ public final class MainWindow implements AppContext.Navigator {
         if (changed && section == AppContext.Section.SEARCH && !history.restoring()) {
             history.preview();
             content.refreshHistoryNavigation();
-            // Gesucht wird in dem, was links gewählt ist; nur der Suchreiter von Hand hebt die Auswahl auf.
+            // Gesucht wird in dem, was links gewählt ist; nur die Suche von Hand hebt die Auswahl auf.
             searchView.scope(explorer.scopes());
         }
         // Keine zweite Leiste: Die Quellenkarten bzw. die Bereiche der Einstellungen ersetzen im Drawer den Explorer,

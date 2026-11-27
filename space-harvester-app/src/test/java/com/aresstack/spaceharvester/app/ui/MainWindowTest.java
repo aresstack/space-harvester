@@ -164,18 +164,21 @@ class MainWindowTest {
             });
             assertThat(png).isNotEmptyFile();
         }
-        // Oben nur Symbole; Name und Tastenkürzel stehen im Tooltip und für Bildschirmleser im Namen. Links die Suche
-        // und die Reiter der Seitenansicht, rechts Aufträge, dann Verwaltung und Einstellungen (Angelo,
+        // Oben nur Symbole; Name und Tastenkürzel stehen im Tooltip und für Bildschirmleser im Namen. Links
+        // die Reiter der Seitenansicht, rechts Aufträge, dann Verwaltung und Einstellungen (Angelo,
         // 13.11.2026); Inhalte hat keinen eigenen Knopf mehr.
         assertThat(find(surface[0], AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
-                .containsSubsequence("Suche", "Leseansicht", "Podcast-Ansicht", "Anhänge", "Info",
+                .as("Die Suche hat keinen Knopf mehr: sie ist die Mitte ohne gewählten Knopf (Angelo 27.11.2026)")
+                .doesNotContain("Suche")
+                .containsSubsequence("Leseansicht", "Podcast-Ansicht", "Anhänge", "Info",
                         "Export", "Chat", "Analysen", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
                 .doesNotContain("Inhalte")
                 .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen")
                 .as("Status ist kein Bereich mehr, sondern Einstellungen › Diagnose").doesNotContain("Status");
         assertThat(find(surface[0], AbstractButton.class).stream().map(AbstractButton::getToolTipText).toList())
-                .contains("Suche (Strg+1)", "Aufträge (Strg+3)", "Wissensquellen verwalten (Strg+4)",
+                .doesNotContain("Suche (Strg+1)")
+                .contains("Aufträge (Strg+3)", "Wissensquellen verwalten (Strg+4)",
                         "Einstellungen (Strg+5)")
                 .as("Begriffe stehen unter Analysen, kein eigener Bereich (BG2c)")
                 .noneMatch(tip -> tip != null && tip.startsWith("Begriffe (Strg+"))
@@ -791,8 +794,70 @@ class MainWindowTest {
     }
 
     @Test
+    void aSecondClickDeselectsTheShownButtonAndTheMiddleShowsTheSearch() throws Exception {
+        // Angelo 27.11.2026: kein Lupen-Reiter mehr. Ein zweiter Klick auf den gezeigten Knopf (Reiter der Mitte oder
+        // Bereich wie die Einstellungen) wählt ihn ab, dann zeigt die Mitte die Suche; Enter im Suchfeld ebenso.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            List<AbstractButton> buttons = find(surface, AbstractButton.class);
+            AbstractButton reading = named(buttons, "Leseansicht");
+            AbstractButton export = named(buttons, "Export");
+            AbstractButton settings = named(buttons, "Einstellungen");
+            AbstractButton sources = named(buttons, "Wissensquellen verwalten");
+
+            window.show(AppContext.Section.SEARCH);
+            reading.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.CONTENT);
+            assertThat(reading.isSelected()).isTrue();
+            reading.doClick();
+            assertThat(window.current()).as("zweiter Klick wählt ab").isEqualTo(AppContext.Section.SEARCH);
+            assertThat(List.of(reading, export, settings, sources)).noneMatch(AbstractButton::isSelected);
+            reading.doClick();
+            assertThat(window.current()).as("dritter Klick wählt wieder").isEqualTo(AppContext.Section.CONTENT);
+            export.doClick();
+            assertThat(window.current()).as("ein anderer Reiter schaltet um").isEqualTo(AppContext.Section.CONTENT);
+            assertThat(export.isSelected()).isTrue();
+
+            settings.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.SETTINGS);
+            assertThat(export.isSelected()).isFalse();
+            export.doClick();
+            assertThat(window.current()).as("aus einem anderen Bereich wählt der Klick den Reiter, er wählt nicht ab")
+                    .isEqualTo(AppContext.Section.CONTENT);
+            settings.doClick();
+            settings.doClick();
+            assertThat(window.current()).as("die Einstellungen lassen sich abwählen")
+                    .isEqualTo(AppContext.Section.SEARCH);
+            assertThat(settings.isSelected()).isFalse();
+            sources.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.SOURCES);
+            sources.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
+            assertThat(sources.isSelected()).isFalse();
+
+            settings.doClick();
+            window.search("betrieb");
+            assertThat(window.current()).as("Enter im Suchfeld wählt die Mitte ab")
+                    .isEqualTo(AppContext.Section.SEARCH);
+            assertThat(List.of(reading, export, settings, sources)).noneMatch(AbstractButton::isSelected);
+        });
+    }
+
+    private static AbstractButton named(List<AbstractButton> buttons, String name) {
+        return buttons.stream().filter(button -> name.equals(button.getAccessibleContext().getAccessibleName()))
+                .findFirst().orElseThrow();
+    }
+
+    @Test
     void theSearchTabByHandClearsTheSelectionAndLeavingItSelectsAllSources() throws Exception {
-        // Angelo 24.11.2026: Der Suchreiter von Hand hebt die Auswahl auf, die Suche in der Titelleiste nicht; wer die
+        // Angelo 24.11.2026: Die Suche von Hand (heute Strg+Zahl oder Abwählen) hebt die Auswahl auf, die Suche in der Titelleiste nicht; wer die
         // Suche ohne Auswahl verlässt, hat „Wissensquellen“ gewählt.
         Path config = home.resolve("app.yml");
         Files.writeString(config, """
@@ -967,8 +1032,10 @@ class MainWindowTest {
     }
 
     /**
-     * #515: Ein Suchfeld für das ganze Fenster steht mittig zwischen den Icon-Gruppen der Kopfzeile, ohne sie bei
-     * 960, 1280 oder 1920 px zu überdecken; Enter aus jedem Bereich zeigt die Trefferansicht. Wird es eng (800 px oder
+     * #515: Ein Suchfeld für das ganze Fenster steht in der Kopfzeile, seit 27.11.2026 (Angelo) rechtsbündig direkt vor
+     * der Gruppe rechts und höchstens {@link SearchBarLayout#MAX_WIDTH} breit, ohne die Icon-Gruppen bei
+     * 960, 1280 oder 1920 px zu überdecken; die Reiter der Mitte stehen mittig über dem mittleren Fenster, mit offener
+     * Seitenleiste rechts an dessen linkem Rand; Enter aus jedem Bereich zeigt die Trefferansicht. Wird es eng (800 px oder
      * breitere Schriften), kürzt die Kopfzeile den Titel, nie das Suchfeld und nie die Knöpfe.
      */
     @Test
@@ -1002,7 +1069,39 @@ class MainWindowTest {
                         .isLessThanOrEqualTo(west.getWidth());
                 assertThat(icons.getWidth()).as("Knöpfe ungekürzt bei %d", width)
                         .isEqualTo(icons.getPreferredSize().width);
+                assertThat(field.x + field.width).as("rechtsbündig vor der Gruppe rechts bei %d", width)
+                        .isGreaterThanOrEqualTo(east.getX() - 12);
             }
+            // Die Reiter der Mitte: zugeklappt mittig über dem mittleren Fenster, mit offener Seitenleiste an dessen
+            // linkem Rand (am linken Teiler).
+            surface.setSize(1920, 600);
+            java.awt.Component reading = find(surface, AbstractButton.class).stream()
+                    .filter(button -> "Leseansicht".equals(button.getAccessibleContext().getAccessibleName()))
+                    .findFirst().orElseThrow();
+            java.awt.Component export = find(surface, AbstractButton.class).stream()
+                    .filter(button -> "Export".equals(button.getAccessibleContext().getAccessibleName()))
+                    .findFirst().orElseThrow();
+            java.awt.Container middle = window.deck().getParent();
+            while (middle.getParent() != null && !(middle.getParent() instanceof javax.swing.JSplitPane)) {
+                middle = middle.getParent();
+            }
+            window.chatOpen(false);
+            layout(surface);
+            layout(surface);
+            int left = SwingUtilities.convertPoint(reading.getParent(), reading.getLocation(), surface).x;
+            int right = SwingUtilities.convertPoint(export.getParent(), export.getLocation(), surface).x
+                    + export.getWidth();
+            int stageLeft = SwingUtilities.convertPoint(middle, 0, 0, surface).x;
+            assertThat((left + right) / 2).as("mittig über der Mitte")
+                    .isCloseTo(stageLeft + middle.getWidth() / 2, org.assertj.core.data.Offset.offset(3));
+            window.chatOpen(true);
+            layout(surface);
+            layout(surface);
+            left = SwingUtilities.convertPoint(reading.getParent(), reading.getLocation(), surface).x;
+            stageLeft = SwingUtilities.convertPoint(middle, 0, 0, surface).x;
+            assertThat(left).as("am linken Rand der Mitte").isCloseTo(stageLeft,
+                    org.assertj.core.data.Offset.offset(3));
+            window.chatOpen(false);
             window.show(AppContext.Section.SETTINGS);
             javax.swing.JTextField field = (javax.swing.JTextField) ((java.awt.BorderLayout) bar.getLayout())
                     .getLayoutComponent(java.awt.BorderLayout.CENTER);
