@@ -25,9 +25,11 @@ und hängen von keinem der beiden Module ab.
 (`proasteion/platform/security-keepassrpc`, [UPSTREAM.md](../enterprise-ai-keepass/UPSTREAM.md)). Nur
 `:space-harvester-app` hängt davon ab; Core und Server kennen KeePass nicht und erhalten nur den aufgelösten Key.
 
-`:enterprise-ai-browser` ist die unveränderte Kopie des chatgebundenen Browsers des Enterprise AI Client (`browser-api`,
-`browser-runtime`, `browser-firefox` mit dem vendorten WD4J, [UPSTREAM.md](../enterprise-ai-browser/UPSTREAM.md)) für die
-Websuche im Chat. Nur `:space-harvester-app` soll davon abhängen; Core und Server kennen keinen Browser.
+Die Websuche im Chat kommt aus Research4j (ADR 0046): `research4j-browser-tools` (die 14 Browser-Werkzeuge des Chats,
+aus dem Enterprise AI Client übernommen) und `research4j-browser-playwright` (Edge, Chrome oder Camoufox über
+Playwright4j). Nur `:space-harvester-app` hängt davon ab; Core und Server kennen keinen Browser. Der Playwright-Treiber
+(GraalVM 25) läuft nur im Kindprozess: Er liegt im Bootjar unter `playwright-driver/` und nie im Klassenpfad der App;
+`graalLineCheck` prüft, dass dort nur eine GraalJS-Linie steht.
 
 `:document-export` ist die Word-Ausgabe des Enterprise AI Client (Apache POI, flexmark) als eigene Bibliothek ohne Swing,
 eine angepasste Kopie (siehe `document-export/UPSTREAM.md` und [CONVERTERS.md › Word](CONVERTERS.md#word)). Nur der Core

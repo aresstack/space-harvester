@@ -32,12 +32,17 @@ class ArtifactTabsTest {
                 ChatArtifact.Origin.AI);
 
         ArtifactTabs[] tabs = new ArtifactTabs[1];
+        int[] revealed = new int[1];
         SwingUtilities.invokeAndWait(() -> {
             tabs[0] = new ArtifactTabs(store, new JLabel("Seite"));
+            tabs[0].reveal(() -> revealed[0]++);
             tabs[0].chat(folder, chat.id());
             tabs[0].open("d1");
         });
         {
+            assertThat(revealed[0]).as("Öffnen holt die Export-Ansicht nach vorn").isEqualTo(1);
+            assertThat(tabs[0].artifacts()).extracting(ChatArtifact::id).as("für das Menü „Weitere Aktionen“")
+                    .containsExactly("D1");
             assertThat(tabs[0].openIds()).containsExactly("D1");
             assertThat(tabs[0].focus()).isEqualTo("D1");
             assertThat(tabs[0].selectedView().sectionOrder()).containsExactly("a1", "a2");
@@ -47,6 +52,33 @@ class ArtifactTabsTest {
             SwingUtilities.invokeAndWait(() -> { });
             assertThat(tabs[0].selectedView().highlighted()).containsExactly("a2");
             assertThat(tabs[0].selectedView().artifact().revision()).isEqualTo(2);
+
+            SwingUtilities.invokeAndWait(() -> tabs[0].undo());
+            assertThat(store.read(folder, chat.id(), "D1").document().section("a2").text())
+                    .as("Rückgängig holt den alten Stand als neue Revision").isEqualTo("Humus.");
+            assertThat(store.read(folder, chat.id(), "D1").revision()).isEqualTo(3);
+            assertThat(tabs[0].selectedView().highlighted()).containsExactly("a2");
+
+            SwingUtilities.invokeAndWait(() -> {
+                tabs[0].selectedView().edit("a2");
+                tabs[0].selectedView().editor().setText("## Boden\n\nSandiger Boden.");
+            });
+            store.edit(folder, chat.id(), "D1", ChatArtifactStore.ANY, ChatArtifact.Origin.AI, "",
+                    document -> document.replaceText("a1", "Von der KI."));
+            SwingUtilities.invokeAndWait(() -> tabs[0].selectedView().saveEdit());
+            assertThat(tabs[0].selectedView().editor()).as("inzwischen geändert: der Editor bleibt offen").isNotNull();
+            // Verwerfen und neu öffnen zeigt den neuen Stand; dann gilt das Übernehmen.
+            SwingUtilities.invokeAndWait(() -> tabs[0].selectedView().closeEditor());
+            SwingUtilities.invokeAndWait(() -> {
+                tabs[0].selectedView().edit("a2");
+                tabs[0].selectedView().editor().setText("## Boden\n\nSandiger Boden.");
+                tabs[0].selectedView().saveEdit();
+            });
+            assertThat(tabs[0].selectedView().editor()).isNull();
+            ChatArtifact edited = store.read(folder, chat.id(), "D1");
+            assertThat(edited.document().section("a2").text()).isEqualTo("Sandiger Boden.");
+            assertThat(edited.document().section("a1").text()).isEqualTo("Von der KI.");
+            assertThat(edited.current().origin()).isEqualTo(ChatArtifact.Origin.USER);
 
             SwingUtilities.invokeAndWait(() -> tabs[0].showPage());
             assertThat(tabs[0].focus()).as("links gewählt: die Seite kommt zurück").isNull();

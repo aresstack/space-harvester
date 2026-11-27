@@ -152,60 +152,120 @@ final class BookFlow {
     }
 
     /**
+     * „Neue Auflage erzeugen“ (Architekt 27.11.2026): startet „Buch schreiben“ ohne Fenster mit den am Ordner gemerkten
+     * Angaben; fertige Quellensteckbriefe kommen aus dem Gedächtnis am Ordner, die bisherige Auflage bleibt lesbar.
+     * Fehlt etwas, sagt ein Hinweis, was.
+     */
+    void newEdition(String folderId) {
+        BookJob.Session session;
+        try {
+            session = notedSession(folderId, IllegalStateException::new);
+        } catch (IllegalStateException missing) {
+            Dialogs.view(parent, BasketResearchForm.BOOK_TITLE, Comic.note("Neue Auflage geht nicht: "
+                    + missing.getMessage() + "."));
+            return;
+        }
+        context.runtime().workspace().startBook(folderId, session.folderName(), BookJob.prepare(session,
+                done -> SwingUtilities.invokeLater(() -> prepared(done))));
+    }
+
+    /**
+     * Die Sitzung aus den am Ordner gemerkten Angaben (Weidezaun, Länge, Fragen) und dem Chat-Modell der Einstellungen;
+     * fehlt etwas, wirft sie, was {@code fail} aus dem Grund macht.
+     */
+    private BookJob.Session notedSession(String folderId,
+                                         java.util.function.Function<String, ? extends RuntimeException> fail) {
+        String name = context.favorites().folder(folderId).map(Favorites.Folder::name).orElse("Ordner");
+        BookNotes notes = notes(folderId).orElseThrow(() -> fail.apply(
+                "zum Ordner sind keine Angaben gemerkt; bitte „Buch schreiben …“ am Ordner neu starten"));
+        var ai = context.settings() == null ? null : context.settings().ai();
+        var chat = context.runtime() == null ? null : context.runtime().workspace().aiChat();
+        if (chat == null || ai == null || ai.chatModel() == null || ai.chatModel().isBlank()) {
+            throw fail.apply("dafür braucht es einen KI-Dienst mit Chat-Modell");
+        }
+        AiChatModel model = new AiChatModel(chat, ai.chatModel(), null,
+                ai.contextTokens() == null ? 0 : ai.contextTokens());
+        return session(model, folderId, name, notes.fence(), notes.targetWords(), notes.questions());
+    }
+
+    /**
      * ▶ an einem abgebrochenen oder unterbrochenen „Buch schreiben“ (Angelo 27.11.2026): bereitet im selben Eintrag
      * mit den Angaben am Ordner neu vor; fertige Quellensteckbriefe kommen aus dem Gedächtnis am Ordner. Danach geht es
      * weiter wie nach jedem Vorbereiten.
      */
     JobStatus resume(JobStatus job) {
         Favorites favorites = context.favorites();
-        String folderId = folderOf(job, favorites);
+        String folderId = folderOf(job, favorites, this::notedAt);
         if (folderId == null) {
             throw new JobNotResumableException(job.id(), "der Favoritenordner des Buchs ist nicht mehr da");
         }
-        String name = favorites.folder(folderId).map(Favorites.Folder::name).orElse("Ordner");
-        BookNotes notes = notes(folderId).orElseThrow(() -> new JobNotResumableException(job.id(),
-                "zum Ordner sind keine Angaben gemerkt; bitte „Buch schreiben …“ am Ordner neu starten"));
-        var ai = context.settings() == null ? null : context.settings().ai();
-        var chat = context.runtime() == null ? null : context.runtime().workspace().aiChat();
-        if (chat == null || ai == null || ai.chatModel() == null || ai.chatModel().isBlank()) {
-            throw new JobNotResumableException(job.id(), "dafür braucht es einen KI-Dienst mit Chat-Modell");
-        }
-        AiChatModel model = new AiChatModel(chat, ai.chatModel(), null,
-                ai.contextTokens() == null ? 0 : ai.contextTokens());
-        BookJob.Session session = session(model, folderId, name, notes.fence(), notes.targetWords(),
-                notes.questions());
+        BookJob.Session session = notedSession(folderId, reason -> new JobNotResumableException(job.id(), reason));
         return context.runtime().workspace().rerunBook(job.id(), folderId, BookJob.prepare(session,
                 done -> SwingUtilities.invokeLater(() -> prepared(done))));
     }
 
     /**
-     * Der Ordner eines Buch-Auftrags: aus seinen Angaben, bei Aufträgen von vor dieser Angabe über den Ordnernamen in
-     * „Bereich“, wenn genau ein Ordner so heißt.
+     * Der Ordner eines Buch-Auftrags: aus seinen Angaben ({@link Workspace#BOOK_FOLDER}); bei älteren Aufträgen über den
+     * eindeutigen Ordnernamen in „Bereich“. Aufträge von vor 13:27 Uhr (27.11.2026) tragen weder Ordner-ID noch Bereich
+     * (der Titel eines Auftrags ohne Startseite wird nicht abgelegt): dann der Ordner, an dem Angaben für ein Buch gemerkt
+     * sind; sind es mehrere, der, dessen Angaben zuletzt vor dem Start des Auftrags gemerkt wurden („Buch schreiben …“
+     * merkt sie unmittelbar vor dem Start).
+     *
+     * @param notedAt wann am Ordner (ID) zuletzt Angaben für ein Buch gemerkt wurden; {@code null} ohne Angaben
      */
-    static String folderOf(JobStatus job, Favorites favorites) {
+    static String folderOf(JobStatus job, Favorites favorites,
+                           java.util.function.Function<String, java.time.Instant> notedAt) {
         String id = job.parameter(Workspace.BOOK_FOLDER);
         if (id != null && favorites.folder(id).isPresent()) {
             return id;
         }
-        String area = job.parameter(JobArea.PARAMETER);
-        if (area == null || !area.startsWith("Ordner „") || !area.endsWith("“")) {
-            return null;
+        String name = areaName(job.parameter(JobArea.PARAMETER));
+        if (name != null) {
+            List<String> matches = new ArrayList<>();
+            named(favorites.tree(), name, matches);
+            return matches.size() == 1 ? matches.get(0) : null;
         }
-        String name = area.substring("Ordner „".length(), area.length() - 1);
-        List<String> matches = new ArrayList<>();
-        named(favorites.tree(), name, matches);
-        return matches.size() == 1 ? matches.get(0) : null;
+        List<String> all = new ArrayList<>();
+        named(favorites.tree(), null, all);
+        java.time.Instant started = job.createdAt();
+        String best = null;
+        long bestDistance = Long.MAX_VALUE;
+        for (String folder : all) {
+            java.time.Instant noted = notedAt.apply(folder);
+            if (noted == null) {
+                continue;
+            }
+            // Vor dem Start gemerkt zählt voll, danach (spätere Änderung) nur nachrangig.
+            long distance = Math.abs(java.time.Duration.between(noted, started).toMillis())
+                    + (noted.isAfter(started.plusSeconds(60)) ? Long.MAX_VALUE / 2 : 0);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = folder;
+            }
+        }
+        return best;
+    }
+
+    private static String areaName(String area) {
+        return area == null || !area.startsWith("Ordner „") || !area.endsWith("“") ? null
+                : area.substring("Ordner „".length(), area.length() - 1);
     }
 
     private static void named(List<Favorites.Entry> entries, String name, List<String> matches) {
         for (Favorites.Entry entry : entries) {
             if (entry instanceof Favorites.Folder folder) {
-                if (name.equals(folder.name())) {
+                if (name == null || folder.name() != null && name.equals(folder.name().strip())) {
                     matches.add(folder.id());
                 }
                 named(folder.children(), name, matches);
             }
         }
+    }
+
+    /** Wann am Ordner zuletzt Angaben für ein Buch gemerkt wurden; {@code null} ohne. */
+    private java.time.Instant notedAt(String folderId) {
+        Path data = dataDirectory(context);
+        return data == null ? null : BookNotes.savedAt(data, folderId);
     }
 
     /** Eine Sitzung für den Ordner mit Weidezaun, Länge und Fragen; die Quellensteckbriefe bleiben am Ordner. */
@@ -295,7 +355,7 @@ final class BookFlow {
         Dialogs.view(parent, BasketResearchForm.BOOK_TITLE, body);
     }
 
-    private static Path dataDirectory(AppContext context) {
+    static Path dataDirectory(AppContext context) {
         return context.settings() == null || context.settings().storage() == null ? null
                 : context.settings().storage().dataDirectory();
     }

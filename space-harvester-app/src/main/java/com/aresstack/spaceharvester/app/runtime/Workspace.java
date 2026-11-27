@@ -1152,6 +1152,28 @@ public final class Workspace {
         return harvester.pageRecomputation().recompute(caller.jobOwner(), page.snapshot(), processor, state);
     }
 
+    /**
+     * Rechnet veraltete Analysen, die die Leseansicht braucht, selbsttätig beim Öffnen neu: derselbe Auftrag wie
+     * {@link #recomputeEnrichments} (Auftragsliste, abbrechbar), aber nur aus der gespeicherten Seite und nur für
+     * Prozessoren, die ohne Netz rechnen. Ohne sync-Freigabe oder ohne solchen Prozessor geschieht nichts.
+     *
+     * @param processorIds die veralteten Analysen, etwa {@code acronyms} und {@code passages}
+     * @return der Lauf oder {@code null}, wenn kein Auftrag entstand
+     * @throws com.aresstack.spaceharvester.application.jobs.JobCancelledException wenn der Auftrag abgebrochen wurde
+     */
+    public Enrichments.Run recomputeStaleLocally(String sourceId, String pageId,
+                                                 java.util.Collection<String> processorIds,
+                                                 java.util.function.Consumer<
+                                                         com.aresstack.spaceharvester.application.jobs.JobState> state) {
+        // Nur die gespeicherte Seite: kein Abruf und keine Prüfung bei der Quelle.
+        DeliveredPage page = cachedPage(sourceId, pageId).orElse(null);
+        if (page == null || !access.permits(caller,
+                ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC)) {
+            return null;
+        }
+        return harvester.pageRecomputation().recomputeLocal(caller.jobOwner(), page.snapshot(), processorIds, state);
+    }
+
     /** Gespeicherte Bilder und Beschreibungen einer gelieferten Seite ({@code GET …/images}); beschreibt nichts. */
     public PageImages images(DeliveredPage page) {
         return harvester.imageAnalysis().read(page.snapshot());
@@ -2402,6 +2424,24 @@ public final class Workspace {
     public JobStatus startBook(String folderId, String folderName,
                                com.aresstack.spaceharvester.application.jobs.JobTask task) {
         return startBookFunction(JobType.BOOK, folderId, folderName, task);
+    }
+
+    /**
+     * „Als WAV exportieren …“ oder „Als Video exportieren …“ am Podcast (Angelo 27.11.2026): auf Klick des Benutzers,
+     * auf der lokalen Spur, abbrechbar in der Auftragsliste. Die Arbeit kommt aus {@code app.podcast}; der Bereich ist
+     * der Titel des Podcasts.
+     *
+     * @param parameters Datei und Format ({@code app.podcast.PodcastExport})
+     */
+    public JobStatus startPodcastExport(String title, java.util.Map<String, String> parameters,
+                                        com.aresstack.spaceharvester.application.jobs.JobTask task) {
+        JobStatus status = harvester.jobs().submitInteractive(JobType.PODCAST_EXPORT,
+                com.aresstack.spaceharvester.application.jobs.Jobs.ALL_SOURCES, null, null, caller.jobOwner(),
+                com.aresstack.spaceharvester.application.jobs.JobArea.with(parameters,
+                        title == null || title.isBlank() ? null : "Podcast „" + title.strip() + "“"),
+                task);
+        activities.remember(status.id());
+        return status;
     }
 
     /** Angabe eines Buch-Auftrags: die ID seines Favoritenordners. */

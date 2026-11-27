@@ -22,8 +22,12 @@ public final class AppTimeouts {
         DOWNLOAD_RESPONSE("download-response-seconds", "Modell-Download: Antwort (Sekunden)",
                 "So lange wartet ein Modell-Download höchstens auf die Antwortköpfe des Servers; ein hängender "
                         + "Datenstrom endet über „Abbrechen“", 60, 1, 86_400),
-        FIREFOX_START("firefox-start-seconds", "Firefox-Start für den Chat (Sekunden)",
-                "So lange darf der Start von Firefox dauern, wenn der Chat Webseiten liest", 30, 1, 86_400),
+        // Schlüssel aus der Firefox-Zeit, damit eingestellte Werte bleiben (ADR 0046: der Browser ist jetzt Edge o. a.).
+        BROWSER_START("firefox-start-seconds", "Browser-Start für den Chat (Sekunden)",
+                "So lange darf der Start des Browsers dauern, wenn der Chat Webseiten liest", 30, 1, 86_400),
+        BROWSER_NAVIGATION("browser-navigation-seconds", "Seitenaufruf im Chat-Browser (Sekunden)",
+                "So lange darf eine Seite im Browser des Chats laden, bevor der Aufruf als zu langsam scheitert", 30,
+                1, 86_400),
         DIAGRAM_LABELS("diagram-labels-seconds", "Beschriftung von Code-Diagrammen (Sekunden)",
                 "So lange wartet die Beschriftung eines Code-Diagramms höchstens auf das Modell", 30, 1, 86_400),
         AUDIO_SILENCE("audio-silence-seconds", "Transkription: ohne Ton (Sekunden)",

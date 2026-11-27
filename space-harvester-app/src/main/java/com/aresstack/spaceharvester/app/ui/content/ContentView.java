@@ -112,9 +112,13 @@ public final class ContentView implements View {
         root.add(north, BorderLayout.NORTH);
         body.setOpaque(false);
         root.add(body, BorderLayout.CENTER);
-        // Artefakte des Chats als Reiter über der Arbeitsfläche (ADR 0045, Abschnitt 5); der Chat bleibt rechts.
-        artifactTabs = new ArtifactTabs(detail.chat().artifactStore(), detail);
-        body.add(artifactTabs.component(), BorderLayout.CENTER);
+        body.add(detail, BorderLayout.CENTER);
+        // Artefakte des Chats als Reiter, nur in der Export-Ansicht (ADR 0045, Abschnitt 5).
+        artifactTabs = new ArtifactTabs(detail.chat().artifactStore(), detail.export(),
+                () -> context.settings() == null ? null : context.settings().outputDirectory(),
+                text -> statusInfo.show(com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(text)),
+                () -> new ExportPanel(context));
+        detail.artifactTabs(artifactTabs);
         detail.chat().artifactHost(artifactTabs);
         context.onChange(ignored -> renderCrumbs());
         renderCrumbs();
@@ -269,7 +273,7 @@ public final class ContentView implements View {
 
     /** Nach dem Laden kennt die Seite ihren Space. */
     private void pageShown(String sourceId, String spaceKey) {
-        // Wählt der Benutzer links etwas, kommt die Seite zurück; offene Artefakt-Reiter bleiben stehen.
+        // Wählt der Benutzer links etwas, kommt der Export der Auswahl zurück; offene Artefakt-Reiter bleiben stehen.
         artifactTabs.showPage();
         this.sourceId = sourceId;
         this.spaceKey = spaceKey == null || spaceKey.isBlank() ? null : spaceKey;

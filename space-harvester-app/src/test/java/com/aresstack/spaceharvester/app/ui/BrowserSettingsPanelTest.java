@@ -51,6 +51,21 @@ class BrowserSettingsPanelTest {
                 .containsExactly("wetter.example", "karte.example");
     }
 
+    @Test
+    void edgeIsTheDefaultAndAnotherChoiceIsSavedAndReported() {
+        BrowserSettingsPanel panel = new BrowserSettingsPanel(settings);
+        int[] reported = new int[1];
+        panel.onChannelChanged(() -> reported[0]++);
+        assertThat(panel.channel.getSelectedItem()).isEqualTo(BrowserSettings.DEFAULT_CHANNEL);
+
+        panel.channel.setSelectedItem("chrome");
+        panel.load();
+
+        assertThat(settings.channel()).isEqualTo("chrome");
+        assertThat(panel.channel.getSelectedItem()).isEqualTo("chrome");
+        assertThat(reported[0]).as("Neuladen meldet nichts").isEqualTo(1);
+    }
+
     private static void leave(javax.swing.JTextArea area) {
         for (FocusListener listener : area.getFocusListeners()) {
             listener.focusLost(new FocusEvent(area, FocusEvent.FOCUS_LOST));

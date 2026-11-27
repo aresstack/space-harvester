@@ -32,8 +32,9 @@ public final class BrowserRules {
      *
      * @param profile    Name des aktiven Profils (Intern oder Extern)
      * @param searchUrls Such-URL-Vorlagen mit {@code {query}}, in Reihenfolge; leer gibt eine Regel ohne Such-URLs
+     * @param webSearch  ob der Chat {@code browser_search} hat (Profil Extern, ADR 0046)
      */
-    public static String browserProfile(String profile, Collection<String> searchUrls) {
+    public static String browserProfile(String profile, Collection<String> searchUrls, boolean webSearch) {
         StringBuilder text = new StringBuilder("[Browserprofil] Aktives Browserprofil: ").append(profile)
                 .append(". Die Freigaben (Whitelist/Blacklist) dieses Profils gelten für jede Adresse.");
         List<String> urls = new ArrayList<>();
@@ -44,17 +45,24 @@ public final class BrowserRules {
                 }
             }
         }
+        if (webSearch) {
+            text.append(" Braucht die Aufgabe eine freie Websuche und nennt keine Einstiegsseite, suche mit "
+                    + BrowserMcpTools.SEARCH + " und öffne die passenden Treffer. Nennt die Aufgabe eine Adresse, "
+                    + "öffne sie mit " + BrowserMcpTools.NAVIGATE + " und nutze die Suche dieser Website.");
+        }
         if (urls.isEmpty()) {
-            text.append(" Für dieses Profil sind keine Such-URLs eingestellt: nutze die Adresse aus der Aufgabe und "
-                    + "die Suche der Website.");
+            text.append(webSearch ? "" : " Für dieses Profil sind keine Such-URLs eingestellt: nutze die Adresse aus "
+                    + "der Aufgabe und die Suche der Website.");
             return text.toString();
         }
         text.append(" Such-URLs dieses Profils:");
         for (String url : urls) {
             text.append(' ').append(url);
         }
-        text.append(". Braucht die Aufgabe eine freie Websuche und nennt keine Einstiegsseite, öffne eine dieser "
-                + "URLs mit " + BrowserMcpTools.NAVIGATE + " und ersetze {query} durch die URL-kodierten "
+        text.append(webSearch ? ". Diese URLs nutzt du, wenn " + BrowserMcpTools.SEARCH + " nichts Passendes findet: "
+                + "öffne sie mit " + BrowserMcpTools.NAVIGATE + " und ersetze {query} durch die URL-kodierten "
+                + "Suchbegriffe." : ". Braucht die Aufgabe eine freie Websuche und nennt keine Einstiegsseite, öffne "
+                + "eine dieser URLs mit " + BrowserMcpTools.NAVIGATE + " und ersetze {query} durch die URL-kodierten "
                 + "Suchbegriffe; die erste ist die bevorzugte. Kennst du die Website schon, nutze deren eigene Suche.");
         return text.toString();
     }

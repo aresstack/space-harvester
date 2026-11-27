@@ -22,6 +22,8 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Erfundene Zusammenfassung über ein fiktives Projekt „Nordlicht“ im Space DEMO. */
@@ -279,6 +281,30 @@ class PodcastControlTest {
     }
 
     @Test
+    void offersTheExportOnlyWhenEveryPartIsVoiced(@org.junit.jupiter.api.io.TempDir Path dir) throws Exception {
+        // Angelo 27.11.2026: „Als WAV exportieren …“ und „Als Video exportieren …“ brauchen den ganzen Ton.
+        Path wav = dir.resolve("abschnitt.wav");
+        java.nio.file.Files.write(wav, new byte[0]);
+        source.parts = List.of(new Podcast.Part(0, 0, "Startseite", "Was neu ist", wav),
+                new Podcast.Part(1, -1, "Glossar", null, null));
+        onEdt(() -> {
+            control = control();
+            control.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
+            control.orb().doClick();
+            assertNull(control.exportable(), "ein Thema ist noch nicht vertont");
+        });
+        source.parts = List.of(new Podcast.Part(0, 0, "Startseite", "Was neu ist", wav),
+                new Podcast.Part(1, 0, "Glossar", "Glossar", wav));
+        onEdt(() -> {
+            control = control();
+            control.summary(summary("Das Projekt Nordlicht hat ein Glossar."));
+            control.orb().doClick();
+            assertNotNull(control.exportable());
+            assertEquals(2, control.exportable().parts().size());
+        });
+    }
+
+    @Test
     void offersTheTranscriptAsSoonAsThePodcastHasSegments() throws Exception {
         source.parts = List.of(new Podcast.Part(0, 0, "Startseite", "Was neu ist", null));
         source.transcript = "# Neues bei Nordlicht\n\n## Startseite\n\nGastgeber: Willkommen.\n";
@@ -362,6 +388,63 @@ class PodcastControlTest {
             });
         } finally {
             com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(PodcastControl.SUBTITLES_KEY, before);
+        }
+    }
+
+    /** Angelo 27.11.2026: Player in die Leiste unten minimieren und wieder aufklappen; die Wiedergabe läuft weiter. */
+    @Test
+    void minimizesThePlayerIntoTheBarAndExpandsItAgain() throws Exception {
+        int before = com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(PodcastControl.MINIMIZED_KEY, 0);
+        try {
+            onEdt(() -> {
+                com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(PodcastControl.MINIMIZED_KEY, 0);
+                control = control();
+                control.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
+                javax.swing.AbstractButton minimize = (javax.swing.AbstractButton) control.minimizeToggle();
+                assertTrue(SwingUtilities.isDescendingFrom(minimize, control.footTools()));
+                // Ohne Wiedergabe gibt es nichts zu minimieren.
+                assertFalse(minimize.isVisible());
+                control.orb().doClick();
+                assertTrue(minimize.isVisible());
+                assertEquals(PodcastControl.MINIMIZE, minimize.getToolTipText());
+                PodcastOrb.State playing = control.orb().state();
+
+                minimize.doClick();
+                assertTrue(events.getLast() instanceof TimelineEvent hidden && !hidden.getPayload().show()
+                        && hidden.getPayload().timeline() == control.timelineRow());
+                assertEquals(PodcastControl.EXPAND, minimize.getToolTipText());
+                assertTrue(minimize.isVisible());
+                assertFalse(control.subtitleToggle().isVisible());
+                assertEquals(playing, control.orb().state());
+                assertEquals(1, com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(
+                        PodcastControl.MINIMIZED_KEY, 0));
+
+                // Ein anderer Podcast startet minimiert, bis der Benutzer aufklappt.
+                PodcastControl<UpdateSummary> other = control();
+                other.summary(summary("Das Projekt Nordlicht hat eine neue Startseite."));
+                other.orb().doClick();
+                assertTrue(events.getLast() instanceof TimelineEvent quiet && !quiet.getPayload().show());
+                assertEquals(PodcastControl.EXPAND, other.minimizeToggle().getToolTipText());
+
+                // Der andere, schon laufende Podcast zeigt den gemeinsamen Zustand ebenfalls (Codex #1617).
+                assertEquals(PodcastControl.EXPAND, other.minimizeToggle().getToolTipText());
+                ((javax.swing.AbstractButton) other.minimizeToggle()).doClick();
+                assertEquals(PodcastControl.MINIMIZE, minimize.getToolTipText());
+                assertTrue(events.getLast() instanceof TimelineEvent otherShown && otherShown.getPayload().show()
+                        && otherShown.getPayload().timeline() == other.timelineRow());
+                ((javax.swing.AbstractButton) other.minimizeToggle()).doClick();
+                assertEquals(PodcastControl.EXPAND, minimize.getToolTipText());
+
+                minimize.doClick();
+                assertTrue(events.getLast() instanceof TimelineEvent shown && shown.getPayload().show()
+                        && shown.getPayload().timeline() == control.timelineRow());
+                assertEquals(PodcastControl.MINIMIZE, minimize.getToolTipText());
+                assertTrue(control.subtitleToggle().isVisible());
+                assertEquals(0, com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(
+                        PodcastControl.MINIMIZED_KEY, 1));
+            });
+        } finally {
+            com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(PodcastControl.MINIMIZED_KEY, before);
         }
     }
 

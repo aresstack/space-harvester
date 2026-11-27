@@ -127,6 +127,13 @@ public final class AppContext {
         default void openSource(String sourceId, String title) {
         }
 
+        /**
+         * „Neue Auflage erzeugen“ des Buchs am Favoritenordner (Architekt 27.11.2026), etwa aus der Leseansicht; ohne
+         * eigene Umsetzung nichts.
+         */
+        default void newBookEdition(String folderId) {
+        }
+
         /** Zeigt eine Quelle unter Quellen zum Bearbeiten; ohne eigene Umsetzung nur die Quellen. */
         default void editSource(String sourceId) {
             show(Section.SOURCES);
@@ -264,6 +271,8 @@ public final class AppContext {
     private volatile String proxyPasswordUser;
     private final SecretVault vault;
     private final List<Consumer<AppContext>> listeners = new ArrayList<>();
+    /** Wer nach einer anderen Browserwahl neu prüfen muss, ob es die Websuche gibt (die Weltkugel des Chats). */
+    private final List<Runnable> browserListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final Map<String, Connection> connections = new ConcurrentHashMap<>();
     private volatile AppSettings settings;
     private volatile AppRuntime runtime;
@@ -747,8 +756,9 @@ public final class AppContext {
     }
 
     /**
-     * Der Browser der Websuche im Chat (Firefox über WebDriver BiDi, wie im Enterprise AI Client), beim ersten Gebrauch
-     * angelegt; {@code null} ohne Firefox. Die Profile je Chat liegen im Datenordner unter {@code browser-profiles}.
+     * Der Browser der Websuche im Chat (Research4j über Playwright, ADR 0046; Edge, Chrome oder Camoufox nach
+     * Einstellungen › Browser), beim ersten Gebrauch angelegt; {@code null}, wenn der gewählte Browser fehlt. Die
+     * Profile je Chat liegen im Datenordner unter {@code browser-profiles}.
      */
     public synchronized com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser webBrowser() {
         if (!webBrowserLocated) {
@@ -760,6 +770,30 @@ public final class AppContext {
                     com.aresstack.spaceharvester.app.chat.browser.BrowserSettings.shared());
         }
         return webBrowser;
+    }
+
+    /** Nach einer anderen Browserwahl: offene Chat-Browser schließen, der nächste Gebrauch startet den neuen. */
+    public void browserChannelChanged() {
+        com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser old;
+        synchronized (this) {
+            old = webBrowser;
+            webBrowser = null;
+            webBrowserLocated = false;
+        }
+        if (old != null) {
+            old.shutdown();
+        }
+        Runnable notify = () -> browserListeners.forEach(Runnable::run);
+        if (SwingUtilities.isEventDispatchThread()) {
+            notify.run();
+        } else {
+            SwingUtilities.invokeLater(notify);
+        }
+    }
+
+    /** Meldet sich für {@link #browserChannelChanged}; läuft auf dem EDT. */
+    public void onBrowserChanged(Runnable listener) {
+        browserListeners.add(listener);
     }
 
     /** Die KeePass-Anbindung (KeePassRPC); fragt beim Koppeln nach dem Einmal-Passwort aus KeePass. */
@@ -913,6 +947,25 @@ public final class AppContext {
     private final Favorites favorites = new Favorites(() -> settings() == null ? null
             : settings().storage().dataDirectory().resolve(Favorites.FILE));
 
+    /**
+     * Die Projekte und das aktive Projekt der ganzen App (ADR 0043, Nachtrag F6), Ordner {@code projekte} im Datenordner
+     * der App. Ein Speicher für alle Perspektiven; Wechsel werden über seine Beobachter gemeldet.
+     */
+    private final com.aresstack.spaceharvester.app.project.ProjectStore projects =
+            new com.aresstack.spaceharvester.app.project.ProjectStore(() -> settings() == null ? null
+                    : settings().storage().dataDirectory()
+                    .resolve(com.aresstack.spaceharvester.app.project.ProjectStore.FOLDER));
+
+    public com.aresstack.spaceharvester.app.project.ProjectStore projects() {
+        return projects;
+    }
+
+    /** Der Ordner aller Chats im Datenordner der App; {@code null} ohne Einstellungen. */
+    public java.nio.file.Path chatsDirectory() {
+        return settings() == null ? null
+                : settings().storage().dataDirectory().resolve(com.aresstack.spaceharvester.app.chat.ChatStore.FOLDER);
+    }
+
     /** Anzeigename einer Wissensquelle (etwa für den Pfad eines Favoriten); ohne Laufzeit oder Titel ihre Kennung. */
     public String sourceTitle(String id) {
         AppRuntime runtime = runtime();
@@ -939,9 +992,13 @@ public final class AppContext {
         this.navigator = navigator;
     }
 
-    /** Ansichten melden sich hier, um nach jedem (Neu-)Start ihre Daten neu zu laden. */
-    public void onChange(Consumer<AppContext> listener) {
+    /**
+     * Ansichten melden sich hier, um nach jedem (Neu-)Start ihre Daten neu zu laden; wer vor der App endet (etwa ein
+     * geschlossener Export-Reiter), meldet sich mit der Rückgabe wieder ab.
+     */
+    public com.aresstack.spaceharvester.application.observe.Subscription onChange(Consumer<AppContext> listener) {
         listeners.add(listener);
+        return () -> listeners.remove(listener);
     }
 
     public Connection connection(String sourceId) {

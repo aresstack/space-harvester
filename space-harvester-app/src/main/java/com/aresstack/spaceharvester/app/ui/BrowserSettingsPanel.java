@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.app.chat.browser.BrowserSettings;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
+import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.JRadioButton;
@@ -34,8 +35,18 @@ public final class BrowserSettingsPanel {
     static final String NOTE = "Jeder Chat nutzt das Profil Extern oder Intern (Umschalter im Menü am Pfeil der "
             + "Weltkugel, Standard Extern). Bei „Standardmäßig blockieren“ fragt der Chat bei unbekannten Websites "
             + "nach: Einmal erlauben, Immer erlauben, Immer verbieten oder Abbrechen. „Immer“ trägt den Host in das "
-            + "aktive Profil ein. Auch das Ziel einer Weiterleitung wird geprüft. Firefox sucht die App am üblichen "
-            + "Ort oder unter -Denterpriseai.firefox=….";
+            + "aktive Profil ein. Auch das Ziel einer Weiterleitung wird geprüft.";
+
+    /** Überschrift der Browserwahl. */
+    public static final String ENGINE_HEADING = "Browser des Chats";
+    static final String CHANNEL_HINT = "Edge und Chrome nutzen den installierten Browser mit Proxy und Zertifikaten "
+            + "des Hauses. Camoufox wird beim ersten Start heruntergeladen. Gilt ab dem nächsten Browser-Start.";
+
+    /** Der Browser des Chats (ADR 0046). */
+    final JComboBox<String> channel = Comic.combo(value -> BrowserSettings.CHANNELS.getOrDefault(
+            String.valueOf(value), String.valueOf(value)));
+    private final JPanel engine = new JPanel(new BorderLayout(0, 6));
+    private Runnable channelChanged = () -> { };
 
     /** Die gleichen Felder eines Profils. */
     final class Profile {
@@ -131,6 +142,15 @@ public final class BrowserSettingsPanel {
 
     BrowserSettingsPanel(BrowserSettings settings) {
         this.settings = settings;
+        for (String key : BrowserSettings.CHANNELS.keySet()) {
+            channel.addItem(key);
+        }
+        channel.getAccessibleContext().setAccessibleName(ENGINE_HEADING);
+        SettingDialogs.Rows engineRows = new SettingDialogs.Rows();
+        engineRows.add("Browser", channel, CHANNEL_HINT);
+        engine.setOpaque(false);
+        engine.add(engineRows, BorderLayout.CENTER);
+        channel.addActionListener(e -> saveChannel());
         external = new Profile(BrowserProfile.EXTERNAL);
         internal = new Profile(BrowserProfile.INTERNAL);
         SettingDialogs.Rows rows = new SettingDialogs.Rows();
@@ -157,6 +177,7 @@ public final class BrowserSettingsPanel {
         var remembered = settings.changes();
         loading = true;
         try {
+            channel.setSelectedItem(settings.channel());
             changesAllowed.setText(lines(remembered.allow()));
             changesBlocked.setText(lines(remembered.block()));
         } finally {
@@ -179,6 +200,26 @@ public final class BrowserSettingsPanel {
         settings.saveChanges(allowed, blocked);
         loadedAllowed = allowed;
         loadedBlocked = blocked;
+    }
+
+    /** Speichert die Browserwahl, wenn der Benutzer sie geändert hat, und meldet sie (neuer Start mit dem neuen). */
+    private void saveChannel() {
+        Object chosen = channel.getSelectedItem();
+        if (loading || chosen == null || chosen.equals(settings.channel())) {
+            return;
+        }
+        settings.saveChannel(chosen.toString());
+        channelChanged.run();
+    }
+
+    /** Was nach einer anderen Browserwahl geschieht (die App startet die Chat-Browser neu). */
+    public void onChannelChanged(Runnable action) {
+        channelChanged = action == null ? () -> { } : action;
+    }
+
+    /** Die Wahl des Browsers. */
+    public JComponent engine() {
+        return engine;
     }
 
     /** Die gemerkten Antworten auf ändernde Aktionen. */

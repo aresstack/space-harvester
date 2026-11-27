@@ -73,6 +73,34 @@ public final class LiveDictationSettings {
         LISTENERS.add(listener);
     }
 
+    /** Hört nicht mehr zu. */
+    public static void unlisten(Runnable listener) {
+        LISTENERS.remove(listener);
+    }
+
+    /**
+     * Wie {@link #listen(Runnable)}, aber nur, solange {@code owner} angezeigt werden kann (in einem Fenster steckt).
+     * Ohne das hielt die feste Hörerliste jede je gebaute Einstellungsseite und jeden Chat mitsamt Fenster fest.
+     * Kommt {@code owner} wieder, läuft {@code listener} einmal, um verpasste Umschaltungen nachzuholen.
+     */
+    public static void listenWhileDisplayable(java.awt.Component owner, Runnable listener) {
+        java.util.Objects.requireNonNull(owner, "owner");
+        java.util.Objects.requireNonNull(listener, "listener");
+        if (owner.isDisplayable()) {
+            listen(listener);
+        }
+        owner.addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.DISPLAYABILITY_CHANGED) == 0) {
+                return;
+            }
+            unlisten(listener);
+            if (owner.isDisplayable()) {
+                listen(listener);
+                listener.run();
+            }
+        });
+    }
+
     private static int clamp(int value, int minimum, int maximum) {
         return Math.max(minimum, Math.min(maximum, value));
     }

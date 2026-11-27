@@ -23,6 +23,13 @@ public final class Texts {
      * Warum Seiten „veraltet“ sind: Die Quelle hat eine neuere Version, der Inhalt ist noch nicht geladen, meist weil
      * die Betriebsart der Quelle „Nur katalogisieren“ ist.
      */
+    /** „Neue Auflage erzeugen“ eines Buchs: Rechtsklick am Ordner und Knopf in der Leseansicht. */
+    public static final String NEW_EDITION = "Neue Auflage erzeugen";
+    public static final String NEW_EDITION_TIP = "Schreibt das Buch mit den gemerkten Angaben neu; die bisherige "
+            + "Auflage bleibt lesbar";
+    /** Hinweis an einem Buch, dessen Seiten sich seit der Auflage geändert haben. */
+    public static final String BOOK_STALE = "Seiten des Buchs haben sich seither geändert";
+
     public static final String OUTDATED_WHY = "Veraltet: In der Quelle gibt es eine neuere Version, der Inhalt ist noch "
             + "nicht geladen, meist wegen der Betriebsart „Nur katalogisieren“. Ändern unter Quellen › „Diese Quelle "
             + "anpassen …“ › Betriebsart.";
@@ -167,6 +174,7 @@ public final class Texts {
             case DOCUMENT_ANALYSIS -> "Dokument analysieren";
             case RESEARCH -> "Korb füllen";
             case BOOK -> "Buch schreiben";
+            case PODCAST_EXPORT -> "Podcast exportieren";
             case BACKGROUND -> "Hintergrund";
         };
     }
@@ -227,6 +235,10 @@ public final class Texts {
             String title = status.parameters().get(
                     com.aresstack.spaceharvester.application.background.BackgroundJobs.TITLE);
             return title == null || title.isBlank() ? type(status.type()) : backgroundTitle(title);
+        }
+        if (status.type() == JobType.PODCAST_EXPORT) {
+            return com.aresstack.spaceharvester.app.podcast.PodcastExport.Format.parse(status.parameters().get(
+                    com.aresstack.spaceharvester.app.podcast.PodcastExport.FORMAT_PARAMETER)).label() + " exportieren";
         }
         if (status.type() == JobType.PRESENTATION_EXPORT) {
             return com.aresstack.spaceharvester.application.presentation.VideoPresentations.Format.parse(

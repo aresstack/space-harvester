@@ -112,7 +112,7 @@ final class FavoritesView {
                 switch (tree.entryOf(value)) {
                     case Favorites.Folder folder -> {
                         setText(folder.name());
-                        setIcon(SidebarIcons.folder());
+                        setIcon(GroupMenu.folderIcon(SidebarIcons.folder(), folder.color()));
                     }
                     case Favorites.Bookmark bookmark -> {
                         Favorites.Favorite favorite = bookmark.favorite();
@@ -147,6 +147,7 @@ final class FavoritesView {
         });
         newFolder.addActionListener(e -> tree.createFolder());
         tree.folderItems((id, menu) -> {
+            menu.add(GroupMenu.colorMenu(favorites, id));
             javax.swing.JMenuItem fill = new javax.swing.JMenuItem(BasketResearchForm.TITLE + " …");
             fill.setToolTipText("Recherche im Wissensbestand legt passende Seiten als Favoriten in diesen Ordner");
             fill.addActionListener(e -> fillBasket(id));
@@ -155,6 +156,12 @@ final class FavoritesView {
             write.setToolTipText("Aus den Seiten dieses Ordners entsteht ein Buch zum Auftrag");
             write.addActionListener(e -> book.start(id));
             menu.add(write);
+            if (com.aresstack.spaceharvester.app.research.BookEditions.exists(BookFlow.dataDirectory(context), id)) {
+                javax.swing.JMenuItem again = new javax.swing.JMenuItem(Texts.NEW_EDITION);
+                again.setToolTipText(Texts.NEW_EDITION_TIP);
+                again.addActionListener(e -> book.newEdition(id));
+                menu.add(again);
+            }
             if (book.prepared(id)) {
                 javax.swing.JMenuItem choose = new javax.swing.JMenuItem(BookTermsView.TITLE + " …");
                 choose.setToolTipText("Die vorbereiteten Begriffe dieses Ordners wählen und das Buch schreiben");
@@ -170,6 +177,11 @@ final class FavoritesView {
 
     JComponent component() {
         return component;
+    }
+
+    /** „Neue Auflage erzeugen“ für den Ordner, etwa aus der Leseansicht. */
+    void newEdition(String folderId) {
+        book.newEdition(folderId);
     }
 
     /**

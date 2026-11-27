@@ -36,31 +36,57 @@ public final class BookEditions {
             .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).build();
     private static final Pattern NAME = Pattern.compile("auflage-(\\d+)\\.json");
 
-    /** Wer von einer neuen Auflage hören will (Beobachter statt Abfragen); bekommt die Ordner-ID. */
-    private static final List<java.util.function.Consumer<String>> LISTENERS =
+    /**
+     * Wer von einer neuen Auflage hören will (Beobachter statt Abfragen); bekommt die Ordner-ID. Schwach gehalten: stark
+     * hält den Beobachter nur, was {@link #onAdded} zurückgibt, so hält diese Liste keine geschlossene Ansicht fest.
+     */
+    private static final List<java.lang.ref.WeakReference<java.util.function.Consumer<String>>> LISTENERS =
             new java.util.concurrent.CopyOnWriteArrayList<>();
 
     private BookEditions() {
     }
 
-    /** Meldet jede neue Auflage mit ihrer Ordner-ID, bis {@link AutoCloseable#close()}. */
+    /**
+     * Meldet jede neue Auflage mit ihrer Ordner-ID, bis {@link AutoCloseable#close()} oder bis niemand mehr die Rückgabe
+     * hält; der Aufrufer hält sie, solange er hören will.
+     */
     public static AutoCloseable onAdded(java.util.function.Consumer<String> listener) {
         Objects.requireNonNull(listener, "listener");
-        LISTENERS.add(listener);
-        return () -> LISTENERS.remove(listener);
+        java.lang.ref.WeakReference<java.util.function.Consumer<String>> held =
+                new java.lang.ref.WeakReference<>(listener);
+        LISTENERS.removeIf(reference -> reference.get() == null);
+        LISTENERS.add(held);
+        return new AutoCloseable() {
+            // Hält den Beobachter stark, solange die Anmeldung gehalten wird.
+            private final java.util.function.Consumer<String> strong = listener;
+
+            @Override
+            public void close() {
+                LISTENERS.remove(held);
+            }
+        };
     }
 
     /** Eine Seite, aus der das Buch geschrieben ist; {@code version} {@code null}, wenn die Ablage keine kennt. */
     public record Source(String sourceId, String pageId, String version) {
     }
 
-    /** Eine Auflage. */
-    public record Edition(int number, Instant createdAt, String book, String report, List<Source> sources) {
+    /**
+     * Eine Auflage. {@code members} sind die Seiten des Ordners beim Schreiben (ohne Stand), {@code null} bei Auflagen,
+     * die sie noch nicht kannten; daran erkennt {@link #stale} hinzugekommene und entfernte Seiten (ADR 0044 §4).
+     */
+    public record Edition(int number, Instant createdAt, String book, String report, List<Source> sources,
+                          List<Source> members) {
 
         public Edition {
             book = book == null ? "" : book;
             report = report == null ? "" : report;
             sources = sources == null ? List.of() : List.copyOf(sources);
+            members = members == null ? null : List.copyOf(members);
+        }
+
+        public Edition(int number, Instant createdAt, String book, String report, List<Source> sources) {
+            this(number, createdAt, book, report, sources, null);
         }
     }
 
@@ -77,16 +103,27 @@ public final class BookEditions {
      */
     public static Edition add(Path dataDirectory, String folderId, Instant createdAt, String book, String report,
                               List<Source> sources) throws IOException {
+        return add(dataDirectory, folderId, createdAt, book, report, sources, null);
+    }
+
+    /** Wie {@link #add(Path, String, Instant, String, String, List)}, mit den Seiten des Ordners beim Schreiben. */
+    public static Edition add(Path dataDirectory, String folderId, Instant createdAt, String book, String report,
+                              List<Source> sources, List<Source> members) throws IOException {
         Path directory = directory(dataDirectory, folderId);
         Files.createDirectories(directory);
         for (int number = highest(directory) + 1; ; number++) {
             Edition edition = new Edition(number, Objects.requireNonNull(createdAt, "createdAt"), book, report,
-                    sources);
+                    sources, members);
             Path target = directory.resolve(String.format(java.util.Locale.ROOT, "auflage-%04d.json", number));
             try {
                 Files.writeString(target, JSON.writeValueAsString(edition), StandardCharsets.UTF_8,
                         StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-                for (java.util.function.Consumer<String> listener : LISTENERS) {
+                for (java.lang.ref.WeakReference<java.util.function.Consumer<String>> reference : LISTENERS) {
+                    java.util.function.Consumer<String> listener = reference.get();
+                    if (listener == null) {
+                        LISTENERS.remove(reference);
+                        continue;
+                    }
                     try {
                         listener.accept(folderId);
                     } catch (RuntimeException ignored) {
@@ -98,6 +135,53 @@ public final class BookEditions {
                 // nächste Nummer
             }
         }
+    }
+
+    /**
+     * Ob der Quellenstand seither abweicht (ADR 0044 §4): eine Seite des Ordners hinzugekommen oder entfernt, oder eine
+     * gelesene Seite in neuer Version. Verglichen wird der beim Lesen gemerkte Stand mit dem jetzigen; eine Seite ohne
+     * gemerkten oder ohne jetzigen Stand zählt nicht, weil daraus keine Änderung folgt. Die Seiten des Ordners zählen
+     * nur, wenn die Auflage sie kennt.
+     *
+     * @param members die jetzigen Seiten des Ordners (Stand egal), {@code null}, wenn unbekannt
+     */
+    public static boolean stale(Edition edition, java.util.Collection<Source> members,
+                                java.util.function.Function<Source, String> currentVersion) {
+        if (edition == null) {
+            return false;
+        }
+        Objects.requireNonNull(currentVersion, "currentVersion");
+        if (edition.members() != null && members != null && !pages(edition.members()).equals(pages(members))) {
+            return true;
+        }
+        for (Source source : edition.sources()) {
+            if (source.version() == null) {
+                continue;
+            }
+            String now;
+            try {
+                now = currentVersion.apply(source);
+            } catch (RuntimeException unknown) {
+                now = null;
+            }
+            if (now != null && !now.equals(source.version())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static java.util.Set<List<String>> pages(java.util.Collection<Source> sources) {
+        java.util.Set<List<String>> pages = new java.util.HashSet<>();
+        for (Source source : sources) {
+            pages.add(List.of(String.valueOf(source.sourceId()), String.valueOf(source.pageId())));
+        }
+        return pages;
+    }
+
+    /** Ob der Ordner schon eine Auflage hat; liest nur die Dateinamen. */
+    public static boolean exists(Path dataDirectory, String folderId) {
+        return dataDirectory != null && folderId != null && !files(directory(dataDirectory, folderId)).isEmpty();
     }
 
     /** Die neueste lesbare Auflage; leer ohne Buch. */

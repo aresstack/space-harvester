@@ -55,9 +55,10 @@ class BrowserSettingsTest {
 
     @Test
     void theProfileRuleNamesTheProfileAndItsSearchUrls() {
-        assertThat(BrowserRules.browserProfile("Extern", List.of(BrowserSettings.DEFAULT_EXTERNAL_SEARCH)))
+        assertThat(BrowserRules.browserProfile("Extern", List.of(BrowserSettings.DEFAULT_EXTERNAL_SEARCH), true))
                 .contains("Aktives Browserprofil: Extern").contains(BrowserSettings.DEFAULT_EXTERNAL_SEARCH)
-                .contains("browser_navigate");
-        assertThat(BrowserRules.browserProfile("Intern", List.of())).contains("keine Such-URLs");
+                .contains("browser_navigate").contains("browser_search");
+        assertThat(BrowserRules.browserProfile("Intern", List.of(), false)).contains("keine Such-URLs")
+                .doesNotContain("browser_search");
     }
 }

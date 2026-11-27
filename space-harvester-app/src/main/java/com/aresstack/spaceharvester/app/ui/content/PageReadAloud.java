@@ -48,6 +48,8 @@ final class PageReadAloud {
     /** Hebt den gerade gelesenen Satz hervor; die Ansicht ist hell, daher die gelbe Fläche des Podcasts. */
     private final ReadAloudMarker marker;
     private ReadAloudBinding binding;
+    /** Die Skala um den Knopf: oben Geschwindigkeit, unten satzweise springen (nur bei laufender Wiedergabe). */
+    private final com.aresstack.spaceharvester.app.ui.controls.ReadAloudDial dial;
     /** Der vorlesbare Text der gezeigten Seite; leer ohne. */
     private String speechText = "";
     /** Ob die gezeigte Seite noch vorgelesen werden darf; gefragt auf dem Lese-Thread. */
@@ -65,6 +67,7 @@ final class PageReadAloud {
         orb.setName("reading.readAloudOrb");
         orb.setVisible(false);
         orb.addActionListener(event -> toggle());
+        dial = ReadAloudSpeed.dial(orb, () -> this.binding, this::jump, marker);
         text.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {
@@ -93,6 +96,7 @@ final class PageReadAloud {
             stop();
         }
         this.binding = binding;
+        ReadAloudSpeed.bind(dial, binding);
         orb.setVisible(binding != null);
         style();
     }
@@ -183,6 +187,15 @@ final class PageReadAloud {
         }
     }
 
+    /** Springt beim Vorlesen um {@code sentences} Sätze vor (negativ: zurück). */
+    void jump(int sentences) {
+        if (binding == null || !speaking || sentences == 0) {
+            return;
+        }
+        int target = marker.jumpTarget(sentences);
+        speak(target, marker.shownAnchor(target));
+    }
+
     /**
      * Liest den Text ab {@code start} vor; ein laufendes Vorlesen endet vorher (dieselbe Sprachausgabe). Die
      * Hervorhebung sucht ab {@code shownFrom} in der Anzeige (der angeklickte Absatz).
@@ -251,6 +264,7 @@ final class PageReadAloud {
     private void style() {
         boolean hasText = !speechText.isBlank();
         boolean playing = speaking && !paused;
+        dial.setActive(playing);
         orb.setState(playing ? PodcastOrb.State.PAUSE : PodcastOrb.State.PLAY);
         orb.setEnabled(speaking || hasText);
         orb.setToolTipText(paused && speaking ? RESUME_TIP : playing ? PAUSE_TIP : hasText ? PLAY_TIP : NO_TEXT_TIP);

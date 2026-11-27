@@ -92,6 +92,7 @@ public final class BrowserChatTools {
     /** Was die Oberfläche während des Aufrufs zeigt. */
     public static String describe(String name) {
         return switch (name) {
+            case BrowserMcpTools.SEARCH -> "Sucht im Web";
             case BrowserMcpTools.TABS -> "Verwaltet die Browser-Tabs";
             case BrowserMcpTools.NAVIGATE -> "Öffnet eine Seite im Browser";
             case BrowserMcpTools.READ -> "Liest die Seite im Browser";

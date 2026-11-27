@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * auf dem Swing-Faden. Endet es nicht innerhalb der Frist, beendet ein Wächter die JVM trotzdem: Ein hängender Abruf
  * oder ein Pool, der auf seine Aufgaben wartet, darf das Beenden nicht verhindern (sonst bleibt der Prozess ohne
  * Fenster im Speicher und hält das JAR fest). Vor dem Ende werden alle Kindprozesse der App beendet, etwa der
- * Firefox der Websuche.</p>
+ * Browser der Websuche.</p>
  *
  * <p>Die Frist lässt sich mit {@code -Dspace-harvester.exit-timeout=<Sekunden>} einstellen.</p>
  */
