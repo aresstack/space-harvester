@@ -13,6 +13,8 @@
     Abschnitt 4
   - [ADR 0038](0038-indexbasierte-progressive-und-agentengestuetzte-suche.md): Suche
 - Ändert ADR 0034 in Abschnitt 1 (Einmaligkeit, Wurzel „nur Seite“). Alles andere aus ADR 0034 gilt weiter.
+- Ergänzt am 27.11.2026 um den Nachtrag „Chats und Artefakte im Projekt, Projekte mit Farbe“. Dieser Teil wird
+  vorgezogen und wartet nicht auf die Abnahme der Bibliotheken.
 
 ## Kontext
 
@@ -270,6 +272,67 @@ ergänzt die Abschnitte 6 und 7. Er ändert nichts an den Abschnitten 1 bis 5.
 `TopicClusterer` (`application.passages`) gruppiert Absätze eines einzelnen Dokuments rein nach Ähnlichkeit der
 Vektoren. Für das Material eines ganzen Projekts ist er nicht gebaut: Er vergleicht in jeder Runde alle Paare neu.
 Das Clustern über das Projektmaterial gehört zu Writing4j. `TopicClusterer` wird dafür weder umgebaut noch kopiert.
+
+## Nachtrag vom 27.11.2026: Chats und Artefakte im Projekt, Projekte mit Farbe
+
+Quelle: Angelos Nachricht vom 27.11.2026, 16:21 MEZ: „Ich möchte meinen Chats außerdem eine Farbe geben, so wie die
+Tabs in Firefox. Da kann ich ja auch Gruppen erstellen von Tabs. Und genauso möchte ich hier farbige Gruppen von Chats
+erstellen. Das sind dann quasi Projekte. […] Wenn ich an irgendwas gerade arbeite, dann reicht ja oftmals nicht nur
+ein Chat aus. Und dann könnten wir die Artefakte, die wir erzeugen, […] dem ganzen Projekt verfügbar machen.“
+
+Der Nachtrag ergänzt die Abschnitte 1, 2, 3 und 8 und ändert [ADR 0045](0045-schreibumgebung-im-chat.md) in
+Abschnitt 1. Er ändert nichts an den Favoriten.
+
+### F1. Eine farbige Gruppe von Chats ist ein Projekt
+- Es gibt nur einen Begriff „Projekt“. Die farbige Gruppe von Chats ist kein zweites Ding neben dem Projekt aus
+  Abschnitt 1, sondern dasselbe Projekt mit zwei weiteren Bestandteilen: **Chats** und **Artefakte**.
+- Ein Projekt hat neben ID und Namen eine **Farbe** aus einer festen Auswahl. Die Auswahl legt der UX-Manager fest.
+- Die Farbe kennzeichnet überall, was zum Projekt gehört: den Chat in der Liste, den Kopf des geöffneten Chats und
+  die Reiter der Artefakte.
+
+### F2. Chats im Projekt
+- Ein Chat gehört zu höchstens einem Projekt, wie ein Tab zu höchstens einer Gruppe. Ein Chat ohne Projekt bleibt
+  möglich und verhält sich wie heute.
+- Die Zugehörigkeit steht am Chat selbst (ein Feld mit der Projekt-ID). Sie geht mit dem Chat in den Papierkorb und
+  zurück. Verweist ein Chat auf ein Projekt, das es nicht mehr gibt, gilt er als Chat ohne Projekt.
+- Der Bereich eines Chats (`ChatNode`, was links gewählt ist) bleibt davon unberührt. Ein Projekt fasst Chats aus
+  verschiedenen Bereichen zusammen.
+- Bedienung:
+  - Am Chat: „Zu Projekt hinzufügen“ mit der Liste der Projekte und „Neues Projekt“, sowie „Aus Projekt entfernen“.
+  - Die Chat-Liste zeigt oben die Projekte in ihrer Farbe. Ein Projekt klappt zu seinen Chats auf und bietet „Neuer
+    Chat in diesem Projekt“. Darunter stehen wie heute „In diesem Bereich“ und „Übrige Chats“, dort nur noch Chats
+    ohne Projekt. Jeder Chat steht in der Liste genau einmal.
+  - Ein neuer Chat im Projekt beginnt im gerade gewählten Bereich.
+  - Am Projekt: „Umbenennen“, „Farbe ändern“, „Löschen“.
+
+### F3. Artefakte gehören dem Projekt
+- Ein Artefakt der Schreibumgebung (ADR 0045) hat genau einen Besitzer: den Chat, wenn dieser zu keinem Projekt
+  gehört, sonst das Projekt.
+- Alle Chats eines Projekts sehen, öffnen und bearbeiten dessen Artefakte. Die Werkzeuge der KI arbeiten in einem
+  Projekt-Chat auf den Artefakten des Projekts.
+- Kommt ein Chat mit eigenen Artefakten in ein Projekt, ziehen sie ins Projekt um. Verweise zwischen Artefakten
+  bleiben dabei gültig.
+- Verlässt ein Chat das Projekt oder wird er gelöscht, bleiben die Artefakte im Projekt.
+- Bearbeiten zwei Chats dasselbe Artefakt, gilt der Vertrag aus ADR 0045: ein Speicher, jede Änderung eine Revision,
+  nichts wird überschrieben.
+
+### F4. Ablage
+- Es gilt Abschnitt 3: je Projekt ein Ordner im Datenordner der App, darin je Bestandteil eine Datei mit
+  Versionsfeld, atomar geschrieben, Quarantäne statt Überschreiben.
+- Vorgezogen wird nur, was die Chats brauchen: das Projekt mit ID, Name und Farbe und der Bestandteil „Artefakte“.
+  Die Umwandlung der Favoritenliste in das Standardprojekt „Allgemein“ (Paket P1) bleibt, wo sie ist, und benutzt
+  später dieselbe Projektablage.
+
+### F5. Löschen eines Projekts
+- Nur nach „Projekt wirklich löschen?“ Ja/Nein. Die Frage nennt, wie viele Chats und Artefakte betroffen sind.
+- Die Chats bleiben erhalten und sind danach Chats ohne Projekt. Die Artefakte des Projekts gehen mit dem Projekt in
+  den Papierkorb und lassen sich wie ein gelöschter Chat bis zum Neustart wiederherstellen.
+
+### F6. Umsetzung, vorgezogen
+- K1: Projektablage (ID, Name, Farbe) und Projekt-ID am Chat. Reine Logik mit Tests.
+- K2: Chat-Liste mit Projekten, Zuordnen und Entfernen, neuer Chat im Projekt, Farbe an Chat und Reitern (K1).
+- K3: Besitzer eines Artefakts ist Chat oder Projekt, Umzug beim Beitritt (K1 und der Artefakt-Speicher aus
+  ADR 0045). Dieses Paket gehört zum Bau der Schreibumgebung, damit nur eine Stelle den Artefakt-Speicher ändert.
 
 ## Umsetzung
 
