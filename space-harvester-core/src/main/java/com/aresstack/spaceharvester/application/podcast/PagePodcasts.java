@@ -232,19 +232,89 @@ public final class PagePodcasts {
         if (page.isEmpty()) {
             return List.of();
         }
+        List<Span> spans = new ArrayList<>();
         List<Part> parts = parts(page.get(), MAX_SECTIONS);
-        List<Integer> stories = plan.get().topics().get(topic).stories();
+        for (int story : told(plan.get().topics().get(topic), parts)) {
+            Part part = parts.get(story - 1);
+            spans.add(new Span(part.start(), part.end()));
+        }
+        return List.copyOf(spans);
+    }
+
+    /**
+     * Was der ganze Podcast von der Seite erzählt, als Stellen im Text der Seite (Angelo 27.11.2026: „was nicht
+     * abgedeckt war im Podcast“ grau hinterlegen): die Teile aller Themen wie bei {@link #focus}, jeder aber nur so weit,
+     * wie sein Text an das Modell ging – was hinter dem gekürzten Ende steht, hat das Modell nie gesehen. Leer ohne
+     * Plan oder ohne lesbare Seite. Liest Seite und Datei, nie auf dem EDT.
+     */
+    public Optional<List<Span>> coverage(AccessContext caller, String sourceId, String pageId) {
+        Optional<PodcastPlan> plan = production.store().plan(key(caller, sourceId, pageId));
+        if (plan.isEmpty()) {
+            return Optional.empty();
+        }
+        Optional<Page> page = pages.page(caller, sourceId, pageId);
+        if (page.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(coverage(page.get(), plan.get()));
+    }
+
+    /** {@link #coverage(AccessContext, String, String)} ohne Lesen, in der Reihenfolge der Teile. */
+    static List<Span> coverage(Page page, PodcastPlan plan) {
+        String all = page.text().text();
+        List<Part> parts = parts(page, MAX_SECTIONS);
+        java.util.SortedSet<Integer> told = new java.util.TreeSet<>();
+        plan.topics().forEach(topic -> told.addAll(told(topic, parts)));
+        List<Span> spans = new ArrayList<>();
+        for (int story : told) {
+            Part part = parts.get(story - 1);
+            String body = all.substring(part.start(), part.end());
+            spans.add(new Span(part.start(), part.start() + reached(body, sectionText(body, SECTION_CHARS))));
+        }
+        return List.copyOf(spans);
+    }
+
+    /**
+     * Die Nummern (ab 1) der Teile der Seite, von denen das Thema erzählt; ohne eigene Teile (Einstieg, Abschluss)
+     * der erste, den der Überblick zitiert.
+     */
+    private static List<Integer> told(PodcastPlan.Topic topic, List<Part> parts) {
+        List<Integer> stories = topic.stories();
         if (stories.isEmpty() && !parts.isEmpty()) {
             stories = List.of(1);
         }
-        List<Span> spans = new ArrayList<>();
-        for (int story : stories) {
-            if (story >= 1 && story <= parts.size()) {
-                Part part = parts.get(story - 1);
-                spans.add(new Span(part.start(), part.end()));
-            }
+        return stories.stream().filter(story -> story >= 1 && story <= parts.size()).toList();
+    }
+
+    /** Der Text eines Teils, wie er an das Modell geht: Zahlentabellen raus, höchstens {@code limit} Zeichen. */
+    private static String sectionText(String body, int limit) {
+        return PodcastWriter.cut(PodcastTables.prune(body).strip(), limit);
+    }
+
+    /**
+     * Bis wohin im Text {@code body} der daraus gemachte Text {@code told} reicht ({@link #sectionText}): Das Kürzen
+     * lässt Zeilen unverändert, also wird jede Zeile von {@code told} der Reihe nach in {@code body} gesucht. Ohne
+     * Kürzung oder wenn eine Zeile nicht zu finden ist, gilt der ganze Teil.
+     */
+    static int reached(String body, String told) {
+        if (!told.endsWith("…")) {
+            return body.length();
         }
-        return List.copyOf(spans);
+        String kept = told.substring(0, told.length() - 1);
+        int at = 0;
+        int end = 0;
+        for (String line : kept.split("\n", -1)) {
+            if (line.isEmpty()) {
+                continue;
+            }
+            int found = body.indexOf(line, at);
+            if (found < 0) {
+                return body.length();
+            }
+            end = found + line.length();
+            at = end;
+        }
+        return end;
     }
 
     /**
@@ -462,8 +532,9 @@ public final class PagePodcasts {
         List<PodcastWriter.Story> stories = new ArrayList<>();
         String all = page.text().text();
         for (Part part : parts(page, MAX_SECTIONS)) {
-            stories.add(story(part.title(), all.substring(part.start(), part.end()), part.place(), page.pageId(),
-                    SECTION_CHARS));
+            stories.add(new PodcastWriter.Story(part.title(),
+                    sectionText(all.substring(part.start(), part.end()), SECTION_CHARS), List.of(part.place()),
+                    List.of(page.pageId())));
         }
         for (Subpage subpage : subpages) {
             Page child = subpage.page();
@@ -500,11 +571,6 @@ public final class PagePodcasts {
         }
         return new PodcastWriter.Material(overview.toString(), stories, "Seite „" + page.title() + "“",
                 PodcastWriter.Format.EXPLAINER);
-    }
-
-    private static PodcastWriter.Story story(String title, String body, String place, String pageId, int limit) {
-        return new PodcastWriter.Story(title, PodcastWriter.cut(PodcastTables.prune(body).strip(), limit),
-                List.of(place), List.of(pageId));
     }
 
     /** Die Fassung des Materials: ändert sich der Inhalt, ändert sie sich. */

@@ -4016,6 +4016,15 @@ public final class Workspace {
         return harvester.pagePodcasts().focus(caller, sourceId, pageId, topic);
     }
 
+    /**
+     * Was der ganze Erklär-Podcast einer Seite erzählt, als Stellen im Text der Seite; leer ohne Plan. Liest Seite und
+     * Datei, nie auf dem EDT.
+     */
+    public java.util.Optional<java.util.List<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span>>
+            pagePodcastCoverage(String sourceId, String pageId) {
+        return harvester.pagePodcasts().coverage(caller, sourceId, pageId);
+    }
+
     /** Startet den Erklär-Podcast einer Seite oder setzt ihn fort. */
     public JobStatus startPagePodcast(String sourceId, String pageId) {
         return harvester.pagePodcasts().start(caller, sourceId, pageId);
