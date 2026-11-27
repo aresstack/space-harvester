@@ -128,7 +128,7 @@ final class ReadAloudStart {
     }
 
     /** Ein Text mit jedem Leerraum-Lauf als einem Leerzeichen und der Rückabbildung auf die Originalstellen. */
-    private static final class Collapsed {
+    static final class Collapsed {
         final String text;
         private final int[] originals;
 

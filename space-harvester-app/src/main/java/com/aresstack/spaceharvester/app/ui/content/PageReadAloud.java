@@ -12,6 +12,7 @@ import java.awt.Point;
 import java.awt.event.HierarchyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -23,6 +24,8 @@ import java.util.Objects;
  *   <li>Ein Doppelklick auf ein Wort, während vorgelesen wird, liest sofort ab diesem Wort weiter („sonst liest er
  *   nachher das ganze Inhaltsverzeichnis“); daneben (Bild, Leerraum) ändert sich nichts ({@link ReadAloudStart}).</li>
  *   <li>Vorgelesen wird die kanonische Textfassung der Seite, nie die Darstellung, und nur mit KI-Freigabe.</li>
+ *   <li>Der gerade gelesene Satz ist gelb hinterlegt wie im Podcast und bleibt im Blick, ungefähr und nie Wort für
+ *   Wort; dieselbe Hervorhebung wie im Chat ({@link ReadAloudMarker}, Angelo 27.11.2026).</li>
  *   <li>Eine andere Seite, eine leere Ansicht oder ein anderer Reiter beenden das Vorlesen.</li>
  * </ul>
  *
@@ -42,6 +45,8 @@ final class PageReadAloud {
         case WAITING -> "Vorlesen wird vorbereitet";
         case FAILED -> "Vorlesen erneut versuchen";
     });
+    /** Hebt den gerade gelesenen Satz hervor; die Ansicht ist hell, daher die gelbe Fläche des Podcasts. */
+    private final ReadAloudMarker marker;
     private ReadAloudBinding binding;
     /** Der vorlesbare Text der gezeigten Seite; leer ohne. */
     private String speechText = "";
@@ -56,6 +61,7 @@ final class PageReadAloud {
 
     PageReadAloud(JTextComponent text) {
         this.text = Objects.requireNonNull(text, "text");
+        this.marker = new ReadAloudMarker(() -> List.of(text), ReadAloudMarker.fill());
         orb.setName("reading.readAloudOrb");
         orb.setVisible(false);
         orb.addActionListener(event -> toggle());
@@ -119,8 +125,10 @@ final class PageReadAloud {
             paused = !paused;
             if (paused) {
                 binding.pause();
+                marker.pause(); // die Marke wartet mit
             } else {
                 binding.resume();
+                marker.resume();
             }
             style();
             return;
@@ -128,7 +136,7 @@ final class PageReadAloud {
         if (speechText.isBlank()) {
             return;
         }
-        speak(speechText);
+        speak(0);
     }
 
     /**
@@ -158,7 +166,7 @@ final class PageReadAloud {
         if (start < 0) {
             return false;
         }
-        speak(speechText.substring(start));
+        speak(start);
         return true;
     }
 
@@ -175,31 +183,47 @@ final class PageReadAloud {
         }
     }
 
-    /** Liest {@code spoken} vor; ein laufendes Vorlesen endet vorher (dieselbe Sprachausgabe). */
-    private void speak(String spoken) {
+    /** Liest den Text ab {@code start} vor; ein laufendes Vorlesen endet vorher (dieselbe Sprachausgabe). */
+    private void speak(int start) {
+        String spoken = speechText.substring(start);
         Object mine = new Object();
         run = mine;
         speaking = true;
         paused = false;
+        marker.start(speechText, start, spoken.length());
         style();
         binding.speak(spoken, allowed, () -> {
             if (run == mine) {
                 run = null;
                 speaking = false;
                 paused = false;
+                marker.reset();
                 style();
             }
+        }, (from, to, millis) -> {
+            if (run == mine) {
+                playing(from, to, millis);
+            }
         });
+    }
+
+    /** Ein Stück erklingt: ungefähr die Zeichen {@code [from, to)} des Ausschnitts, etwa {@code millis} lang. */
+    void playing(int from, int to, long millis) {
+        if (speaking) {
+            marker.playing(from, to, millis);
+        }
     }
 
     /** Beendet das Vorlesen; idempotent. */
     void stop() {
         if (!speaking) {
+            marker.reset();
             return;
         }
         run = null;
         speaking = false;
         paused = false;
+        marker.reset();
         if (binding != null) {
             binding.stop();
         }
@@ -214,6 +238,11 @@ final class PageReadAloud {
     /** Ob angehalten ist (für Tests). */
     boolean paused() {
         return paused;
+    }
+
+    /** Der hervorgehobene Text; leer ohne (für Tests). */
+    String marked() {
+        return marker.marked();
     }
 
     private void style() {

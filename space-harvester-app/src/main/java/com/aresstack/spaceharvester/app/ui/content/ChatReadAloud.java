@@ -8,9 +8,6 @@ import com.aresstack.spaceharvester.application.podcast.SpeakableText;
 
 import javax.swing.JComponent;
 import javax.swing.SwingUtilities;
-import javax.swing.Timer;
-import javax.swing.text.BadLocationException;
-import javax.swing.text.DefaultHighlighter;
 import javax.swing.text.Element;
 import javax.swing.text.JTextComponent;
 import javax.swing.text.Utilities;
@@ -18,7 +15,6 @@ import java.awt.AWTEvent;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Point;
-import java.awt.Rectangle;
 import java.awt.Toolkit;
 import java.awt.event.AWTEventListener;
 import java.awt.event.HierarchyEvent;
@@ -26,8 +22,6 @@ import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Vorlesen im Chat (Angelo 23.11.2026: „Im Chat fehlt auch noch die Vorlesefunktion … das wollen wir nicht neu
@@ -61,12 +55,6 @@ final class ChatReadAloud {
             + "(Einstellungen › KI-Dienst; Ollama hat keine Sprachausgabe)";
     static final String NO_RUNTIME_TIP = "Vorlesen nicht möglich: der Space Harvester läuft noch nicht";
 
-    /** Satzgrenzen im gesprochenen Text: hinter Satzzeichen mit Leerraum und an jedem Zeilenwechsel. */
-    private static final Pattern BOUNDARY = Pattern.compile("(?<=[.!?…:;])[ \\t]+|\\n+");
-    private static final Pattern TRAILING_PUNCTUATION = Pattern.compile("[.!?…:;,]+$");
-    /** So viele Zeichen vom Satzanfang genügen, wenn der ganze Satz in der Anzeige anders steht. */
-    private static final int PROBE = 32;
-
     private final JComponent transcript;
     private final PodcastOrb orb = new PodcastOrb(state -> switch (state) {
         case PLAY -> "Antwort vorlesen";
@@ -75,7 +63,8 @@ final class ChatReadAloud {
         case FAILED -> "Vorlesen erneut versuchen";
     });
     /** Gelb wie die Marke des Podcasts, aber als Strich unter der Zeile: auf der farbigen Blase bleibt Text lesbar. */
-    private final DefaultHighlighter.DefaultHighlightPainter painter = new Underline(PagePodcastPictures.MARK);
+    private final ReadAloudMarker marker = new ReadAloudMarker(
+            () -> reading == null ? List.of() : texts(reading), ReadAloudMarker.underline());
     /** Die fertigen Antworten des gezeigten Chats in Reihenfolge. */
     private final List<AssistantMarkdownMessage> answers = new ArrayList<>();
     private final AWTEventListener doubleClicks = this::mouseEvent;
@@ -94,27 +83,11 @@ final class ChatReadAloud {
     private AssistantMarkdownMessage reading;
     /** Fertig geworden, während angehalten war: wird nach der laufenden Antwort vorgelesen. */
     private AssistantMarkdownMessage deferred;
-    private String spoken = "";
-    private int base;
-    /** Länge des vorgelesenen Ausschnitts vor und nach der Bereinigung (die Stände rechnen anteilig zurück). */
-    private int sourceLength;
-    private int cleanedLength;
-    /** Die Sätze des gerade erklingenden Stücks; der Takt schaltet sie anteilig zur Dauer weiter. */
-    private final Timer steps = new Timer(0, event -> nextStep());
-    private List<int[]> pending = List.of();
-    private long pendingMillis;
-    private int pendingCharacters;
-    /** Die Hervorhebung: Textkomponente und Kennung; {@code null} ohne. */
-    private JTextComponent marked;
-    private Object mark;
-    private int markEnd;
-
     ChatReadAloud(JComponent transcript) {
         this.transcript = Objects.requireNonNull(transcript, "transcript");
         orb.setName("chat.readAloudOrb");
         orb.setVisible(false);
         orb.addActionListener(event -> toggle());
-        steps.setRepeats(false);
         // Doppelklicks auf die Antworten: die Textblöcke entstehen beim Rendern neu, daher ein Hörer für den Verlauf.
         transcript.addHierarchyListener(event -> {
             long flags = event.getChangeFlags();
@@ -196,13 +169,11 @@ final class ChatReadAloud {
             paused = !paused;
             if (paused) {
                 binding.pause();
-                steps.stop(); // die Marke wartet mit
+                marker.pause();
             } else {
                 binding.resume();
                 active = true;
-                if (!pending.isEmpty()) {
-                    steps.restart();
-                }
+                marker.resume();
             }
             style();
             return;
@@ -307,18 +278,14 @@ final class ChatReadAloud {
         if (deferred == bubble) {
             deferred = null;
         }
-        spoken = speech;
-        base = speech.length() - source.length();
-        sourceLength = source.length();
-        cleanedLength = cleaned.length();
-        reset();
+        marker.start(speech, speech.length() - source.length(), cleaned.length());
         style();
         binding.speak(cleaned, () -> true, () -> {
             if (run == mine) {
                 run = null;
                 speaking = false;
                 paused = false;
-                reset();
+                marker.reset();
                 style();
                 AssistantMarkdownMessage next = deferred;
                 deferred = null;
@@ -333,183 +300,23 @@ final class ChatReadAloud {
         });
     }
 
-    /**
-     * Ein Stück erklingt: ungefähr die Zeichen {@code [from, to)} des bereinigten Texts, etwa {@code millis} lang. Seine
-     * Sätze werden nacheinander hervorgehoben, jeder anteilig zu seiner Länge.
-     */
+    /** Ein Stück erklingt: ungefähr die Zeichen {@code [from, to)} des bereinigten Texts, {@code millis} lang. */
     void playing(int from, int to, long millis) {
-        double ratio = cleanedLength == 0 ? 1 : (double) sourceLength / cleanedLength;
-        int start = base + (int) Math.round(from * ratio);
-        int end = base + (int) Math.round(to * ratio);
-        List<int[]> sentences = sentences(spoken, start, end);
-        steps.stop();
-        pending = new ArrayList<>(sentences);
-        pendingMillis = Math.max(0, millis);
-        pendingCharacters = sentences.stream().mapToInt(range -> range[1] - range[0]).sum();
-        nextStep();
-    }
-
-    private void nextStep() {
-        if (pending.isEmpty() || !speaking) {
-            return;
+        if (speaking) {
+            marker.playing(from, to, millis);
         }
-        int[] sentence = pending.remove(0);
-        markSentence(spoken.substring(sentence[0], sentence[1]));
-        if (!pending.isEmpty() && pendingCharacters > 0) {
-            int delay = (int) Math.min(Integer.MAX_VALUE,
-                    pendingMillis * (sentence[1] - sentence[0]) / pendingCharacters);
-            steps.setInitialDelay(Math.max(1, delay));
-            steps.restart();
-        }
-    }
-
-    /**
-     * Die Sätze zwischen {@code start} und {@code end}: beide Enden rücken an die nächste Satzgrenze, denn die
-     * Stände sind nur ungefähr.
-     */
-    static List<int[]> sentences(String text, int start, int end) {
-        List<Integer> bounds = new ArrayList<>();
-        bounds.add(0);
-        Matcher matcher = BOUNDARY.matcher(text);
-        while (matcher.find()) {
-            bounds.add(matcher.end());
-        }
-        bounds.add(text.length());
-        int from = nearest(bounds, Math.max(0, Math.min(start, text.length())));
-        int to = nearest(bounds, Math.max(0, Math.min(end, text.length())));
-        if (to <= from) {
-            to = bounds.stream().filter(bound -> bound > from).findFirst().orElse(text.length());
-        }
-        List<int[]> sentences = new ArrayList<>();
-        int previous = from;
-        for (int bound : bounds) {
-            if (bound > from && bound <= to) {
-                if (!text.substring(previous, bound).isBlank()) {
-                    sentences.add(new int[] {previous, bound});
-                }
-                previous = bound;
-            }
-        }
-        return sentences;
-    }
-
-    private static int nearest(List<Integer> bounds, int position) {
-        int best = 0;
-        for (int bound : bounds) {
-            if (Math.abs(bound - position) < Math.abs(best - position)) {
-                best = bound;
-            }
-        }
-        return best;
-    }
-
-    /** Hebt den Satz in der vorgelesenen Antwort hervor; steht er dort nicht wiederzufinden, bleibt die alte Marke. */
-    private void markSentence(String sentence) {
-        if (reading == null) {
-            return;
-        }
-        String needle = TRAILING_PUNCTUATION.matcher(collapse(sentence).trim()).replaceAll("").trim();
-        if (needle.isEmpty()) {
-            return;
-        }
-        List<JTextComponent> blocks = texts(reading);
-        int first = marked == null ? 0 : Math.max(0, blocks.indexOf(marked));
-        for (boolean probe : new boolean[] {false, true}) {
-            String wanted = probe ? probe(needle) : needle;
-            if (wanted.isEmpty()) {
-                continue;
-            }
-            for (int i = 0; i < blocks.size(); i++) {
-                JTextComponent block = blocks.get((first + i) % blocks.size());
-                int from = block == marked && i == 0 ? markEnd : 0;
-                if (mark(block, wanted, from, probe, needle.length())
-                        || (from > 0 && mark(block, wanted, 0, probe, needle.length()))) {
-                    return;
-                }
-            }
-        }
-    }
-
-    /** Der Anfang eines Satzes bis zur letzten Wortgrenze in {@link #PROBE} Zeichen; leer, wenn er kürzer ist. */
-    private static String probe(String needle) {
-        if (needle.length() <= PROBE) {
-            return "";
-        }
-        int cut = needle.lastIndexOf(' ', PROBE);
-        return (cut > 8 ? needle.substring(0, cut) : needle.substring(0, PROBE)).trim();
-    }
-
-    private boolean mark(JTextComponent block, String wanted, int from, boolean probe, int length) {
-        String content = slice(block, 0, block.getDocument().getLength());
-        if (content == null) {
-            return false;
-        }
-        Collapsed shown = Collapsed.of(content);
-        int at = shown.text.indexOf(wanted, shown.collapsedIndex(from));
-        if (at < 0) {
-            return false;
-        }
-        int start = shown.original(at);
-        int end = shown.original(at + (probe ? length : wanted.length()));
-        if (probe) {
-            // Nur der Anfang passte: bis höchstens zum Ende seines Absatzes.
-            Element paragraph = Utilities.getParagraphElement(block, start);
-            end = Math.min(Math.max(end, start + wanted.length()), paragraph.getEndOffset() - 1);
-        }
-        end = Math.max(start + 1, Math.min(end, content.length()));
-        unmark();
-        try {
-            mark = block.getHighlighter().addHighlight(start, end, painter);
-        } catch (BadLocationException e) {
-            return false;
-        }
-        marked = block;
-        markEnd = end;
-        follow(block, start, end);
-        return true;
-    }
-
-    /** Die Marke bleibt im Blick, ohne den Verlauf zu verreißen: gerollt wird nur, wenn sie draußen liegt. */
-    private static void follow(JTextComponent block, int start, int end) {
-        try {
-            Rectangle first = block.modelToView2D(start).getBounds();
-            Rectangle last = block.modelToView2D(Math.max(start, end - 1)).getBounds();
-            Rectangle area = first.union(last);
-            Rectangle visible = block.getVisibleRect();
-            if (!visible.contains(area)) {
-                block.scrollRectToVisible(area);
-            }
-        } catch (BadLocationException | RuntimeException e) {
-            // ohne Lage keine Bewegung
-        }
-    }
-
-    private void unmark() {
-        if (marked != null && mark != null) {
-            marked.getHighlighter().removeHighlight(mark);
-        }
-        marked = null;
-        mark = null;
-        markEnd = 0;
-    }
-
-    /** Keine Marke und kein Weiterschalten mehr (Vorlesen vorbei oder neu begonnen). */
-    private void reset() {
-        steps.stop();
-        pending = List.of();
-        unmark();
     }
 
     /** Beendet das Vorlesen; idempotent. Der Knopf bleibt aktiv, wenn er es war. */
     void stop() {
         if (!speaking) {
-            reset();
+            marker.reset();
             return;
         }
         run = null;
         speaking = false;
         paused = false;
-        reset();
+        marker.reset();
         if (binding != null) {
             binding.stop();
         }
@@ -533,16 +340,7 @@ final class ChatReadAloud {
 
     /** Der hervorgehobene Text; leer ohne (für Tests). */
     String marked() {
-        if (marked == null || mark == null) {
-            return "";
-        }
-        for (javax.swing.text.Highlighter.Highlight highlight : marked.getHighlighter().getHighlights()) {
-            if (highlight == mark) {
-                String text = slice(marked, highlight.getStartOffset(), highlight.getEndOffset());
-                return text == null ? "" : text;
-            }
-        }
-        return "";
+        return marker.marked();
     }
 
     private void style() {
@@ -579,97 +377,6 @@ final class ChatReadAloud {
     }
 
     private static String slice(JTextComponent text, int start, int end) {
-        try {
-            int length = text.getDocument().getLength();
-            int from = Math.max(0, Math.min(start, length));
-            int to = Math.max(from, Math.min(end, length));
-            return text.getDocument().getText(from, to - from);
-        } catch (BadLocationException e) {
-            return null;
-        }
-    }
-
-    private static String collapse(String text) {
-        return Collapsed.of(text).text;
-    }
-
-    /**
-     * Unterstreicht den Bereich mit einem dicken gelben Strich (Angelo 23.11.2026: „meinetwegen mit einer
-     * Unterkringelung … oder notfalls einfach wieder diese gelbe Hervorhebung“). Eine gelbe Fläche ließe weiße Schrift
-     * auf der grünen Blase verschwinden.
-     */
-    static final class Underline extends DefaultHighlighter.DefaultHighlightPainter {
-
-        static final int THICKNESS = 3;
-
-        Underline(java.awt.Color color) {
-            super(color);
-        }
-
-        @Override
-        public java.awt.Shape paintLayer(java.awt.Graphics g, int start, int end, java.awt.Shape bounds,
-                                         JTextComponent text, javax.swing.text.View view) {
-            Rectangle area;
-            if (start == view.getStartOffset() && end == view.getEndOffset()) {
-                area = bounds instanceof Rectangle rectangle ? rectangle : bounds.getBounds();
-            } else {
-                try {
-                    java.awt.Shape shape = view.modelToView(start, javax.swing.text.Position.Bias.Forward, end,
-                            javax.swing.text.Position.Bias.Backward, bounds);
-                    area = shape instanceof Rectangle rectangle ? rectangle : shape.getBounds();
-                } catch (BadLocationException e) {
-                    return null;
-                }
-            }
-            g.setColor(getColor());
-            g.fillRect(area.x, area.y + area.height - THICKNESS, Math.max(1, area.width), THICKNESS);
-            return area;
-        }
-    }
-
-    /** Ein Text mit jedem Leerraum-Lauf als einem Leerzeichen und der Rückabbildung auf die Originalstellen. */
-    private static final class Collapsed {
-        final String text;
-        private final int[] originals;
-
-        private Collapsed(String text, int[] originals) {
-            this.text = text;
-            this.originals = originals;
-        }
-
-        static Collapsed of(String source) {
-            StringBuilder text = new StringBuilder(source.length());
-            int[] originals = new int[source.length() + 1];
-            boolean space = false;
-            for (int i = 0; i < source.length(); i++) {
-                char c = source.charAt(i);
-                if (Character.isWhitespace(c) || Character.isSpaceChar(c)) {
-                    if (!space) {
-                        originals[text.length()] = i;
-                        text.append(' ');
-                        space = true;
-                    }
-                } else {
-                    originals[text.length()] = i;
-                    text.append(c);
-                    space = false;
-                }
-            }
-            originals[text.length()] = source.length();
-            return new Collapsed(text.toString(), originals);
-        }
-
-        int collapsedIndex(int index) {
-            for (int i = 0; i < text.length(); i++) {
-                if (originals[i] >= index) {
-                    return i;
-                }
-            }
-            return text.length();
-        }
-
-        int original(int collapsed) {
-            return originals[Math.max(0, Math.min(collapsed, text.length()))];
-        }
+        return ReadAloudMarker.slice(text, start, end);
     }
 }

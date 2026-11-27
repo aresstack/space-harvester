@@ -41,6 +41,14 @@ class PageReadAloudTest {
             assertThat(fake.spoken.get(0)).isEqualTo(TEXT);
             assertThat(reading.orb().getToolTipText()).isEqualTo(PageReadAloud.PAUSE_TIP);
 
+            // der gerade erklingende Satz wird hervorgehoben wie im Chat (gemeinsamer ReadAloudMarker)
+            int sentence = TEXT.indexOf("Erst prüft");
+            SwingUtilities.invokeAndWait(() -> reading.playing(sentence,
+                    sentence + "Erst prüft der Nachtlauf Nordlicht den Spool, dann startet er.".length(), 0));
+            String[] marked = new String[1];
+            SwingUtilities.invokeAndWait(() -> marked[0] = reading.marked());
+            assertThat(marked[0]).isEqualTo("Erst prüft der Nachtlauf Nordlicht den Spool, dann startet er");
+
             SwingUtilities.invokeAndWait(reading::toggle);
             assertThat(reading.paused()).isTrue();
             assertThat(fake.calls).contains("pause");
