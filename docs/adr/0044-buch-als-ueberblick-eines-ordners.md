@@ -129,8 +129,8 @@ N3, N5 und N7 sind Entscheidungen des Architekten, die daraus folgen.
 - Ein geschriebenes Buch ist ein Dokument-Artefakt nach ADR 0045: Abschnitte mit festen Kennungen und „Rückgängig“.
 - Es lässt sich nachbearbeiten wie jedes Dokument: vom Benutzer je Abschnitt, von der KI im Chat über die
   Abschnittswerkzeuge, wenn der Schalter „Schreiben“ an ist. Es gibt dafür keine eigenen Werkzeuge.
-- Es erscheint in der Exportansicht als schließbarer Reiter und steht dort bei den Artefakten seines Ordners
-  (ADR 0047, Abschnitt 5). Die untere Leiste zeigt bei einem Buch dieselben Formate wie bei jedem Dokument.
+- Es erscheint in der Exportansicht als schließbarer Reiter und ist an seinem Ordner zu finden (N5). Die untere
+  Leiste zeigt bei einem Buch dieselben Formate wie bei jedem Dokument.
 
 ### N2. Die Leseansicht zeigt wieder den Überblick
 - Das Buch verdrängt die Leseansicht nicht mehr. Die Leseansicht des Ordners zeigt den Überblick nach ADR 0034,
@@ -154,16 +154,15 @@ N3, N5 und N7 sind Entscheidungen des Architekten, die daraus folgen.
 ### N4. Besitzer
 - Das Buch gehört immer dem Projekt, das beim Schreiben aktiv war, auch im Standardprojekt „AresStack“ (ADR 0047,
   Abschnitt 2). Alle Chats des Projekts sehen und bearbeiten es. Eine eigene Ablage des Buchs am Ordner gibt es nicht.
-- Der Ordner ist die Herkunft des Artefakts (ADR 0047, Abschnitt 3). Darüber findet „Buch öffnen“ am Ordner das
-  Buch des aktiven Projekts.
+- Das Buch bleibt an seinem Ordner erreichbar (ADR 0047, Abschnitt 3): Die Buchverwaltung am Ordner hält je Projekt
+  die Kennung des Artefakts. Darüber findet „Buch öffnen“ am Ordner das Buch des aktiven Projekts.
 
 ### N5. Öffnen, „veraltet“ und neue Auflage
 - Ist „Buch schreiben“ fertig, öffnet sich das Buch als Reiter in „Export“, wie ein Artefakt, das die KI anlegt.
 - Das Rechtsklick-Menü des Ordners bekommt „Buch öffnen“. Ist links ein Ordner mit Buch gewählt, steht das Buch
-  bei dessen Artefakten an erster Stelle.
-- „veraltet“ und der Knopf „Neue Auflage erzeugen“ (Abschnitt 4) stehen am Reiter des Buchs und an seiner Zeile
-  bei den Artefakten des Ordners statt in der Leseansicht. Der Befehl im Rechtsklick-Menü des Ordners bleibt. Die Abweichung wird weiter
-  über die vorhandenen Beobachter erkannt und startet nie von selbst einen KI-Lauf.
+  im Menü „Weitere Aktionen zur Seite“ an erster Stelle.
+- „veraltet“ und der Knopf „Neue Auflage erzeugen“ (Abschnitt 4) stehen am Reiter des Buchs statt in der
+  Leseansicht. Der Befehl im Rechtsklick-Menü des Ordners bleibt. Die Abweichung wird weiter über die vorhandenen Beobachter erkannt und startet nie von selbst einen KI-Lauf.
 - Das bisherige Buch bleibt lesbar, bis das neue fertig ist. Dann ersetzt das neue den Inhalt.
 - Ist das Buch nachbearbeitet, fragt „Neue Auflage erzeugen“ vorher „wirklich?“ und sagt, dass die Änderungen
   überschrieben werden.
@@ -178,7 +177,7 @@ N3, N5 und N7 sind Entscheidungen des Architekten, die daraus folgen.
   Fassungen aufbewahrt.
 
 ### N7. Umsetzung
-1. Speicher der Artefakte: Besitzer ist immer das Projekt, Herkunft am Artefakt (ADR 0047, Schritt 1). Das baut genau
+1. Speicher der Artefakte: Besitzer ist immer das Projekt (ADR 0047, Schritt 1). Das baut genau
    ein Strang, der der Schreibumgebung.
 2. Buch als Artefakt des Projekts anlegen, Kennung in der Buchverwaltung, neueste vorhandene Auflage überführen, Buch
    öffnet sich in „Export“, „Neue Auflage erzeugen“ überschreibt.

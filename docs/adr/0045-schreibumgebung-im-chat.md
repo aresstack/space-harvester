@@ -131,8 +131,7 @@ Ist er aus, bleiben die Artefakte sichtbar, bearbeitbar und exportierbar; die KI
   entfällt. Ob Daten vorhanden sind, neu erzeugt oder erst geladen werden müssen, merkt sich die App intern und
   entscheidet es beim Klick wie bisher; angezeigt wird es nicht.
 - **Ohne offenen Reiter:** „Export“ zeigt die Export-Fläche für die Auswahl links, ohne Reiterzeile. Sie wandert wie
-  heute mit der Auswahl mit. Was dort von den Artefakten des gewählten Knotens
-  zu sehen sein soll, ist in [ADR 0047](0047-artefakte-des-projekts.md), Abschnitt 5, vorgeschlagen.
+  heute mit der Auswahl mit.
 - **Die untere Leiste folgt dem Reiter:** Die Knöpfe der Ausgabe stehen im Reiter „Export“ mittig in der unteren
   Leiste mit der Lupe. Was dort steht, hängt davon ab, was vorn ist:
   - Kein Reiter offen: alle Knöpfe der Ausgabe für die Auswahl links. Ein Klick startet den Auftrag und öffnet dafür
