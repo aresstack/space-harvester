@@ -118,6 +118,17 @@ public final class BrowserAccessService implements BrowserAccessGuard {
         }
     }
 
+    @Override
+    public boolean refuses(ChatConversationId chat, String url) {
+        BrowserProfile profile = profiles.apply(chat);
+        BrowserAccessPolicy current = policy.apply(profile == null ? BrowserProfile.EXTERNAL : profile);
+        if (current == null) {
+            current = BrowserAccessPolicy.defaults();
+        }
+        return BrowserAccessPolicy.hostOf(url) == null
+                || current.decide(url) == BrowserAccessPolicy.Verdict.BLOCKED;
+    }
+
     /** Persists the answer; a failed write still applies the answer to this call. */
     private void remember(BrowserProfile profile, boolean allow, String host) {
         try {

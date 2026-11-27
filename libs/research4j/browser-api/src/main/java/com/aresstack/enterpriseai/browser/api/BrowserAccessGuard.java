@@ -15,6 +15,15 @@ public interface BrowserAccessGuard {
      */
     void admit(ChatConversationId chat, String url) throws BrowserException;
 
+    /**
+     * Whether the block list of the chat's policy refuses {@code url}, without asking anyone. Used where the chat
+     * only sees addresses (search hits, the search engines a search visits): what is refused is left out, an
+     * unknown address is asked about only when it is opened ({@link #admit}).
+     */
+    default boolean refuses(ChatConversationId chat, String url) {
+        return false;
+    }
+
     /** A guard that admits every address. */
     static BrowserAccessGuard allowAll() {
         return (chat, url) -> { };

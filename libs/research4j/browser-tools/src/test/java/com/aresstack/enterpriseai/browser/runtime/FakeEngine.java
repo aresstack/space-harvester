@@ -128,9 +128,18 @@ final class FakeEngine implements BrowserEngine {
 
         final FakeProcess process;
         volatile boolean open = true;
+        /** The block list the last search was given. */
+        volatile java.util.function.Predicate<String> searchRefused;
 
         FakeConnection(FakeProcess process) {
             this.process = process;
+        }
+
+        @Override
+        public String search(String contextId, String query, List<String> engines,
+                             java.util.function.Predicate<String> refused) {
+            searchRefused = refused;
+            return "r1: Treffer — https://example.org/";
         }
 
         private void check() throws BrowserException {

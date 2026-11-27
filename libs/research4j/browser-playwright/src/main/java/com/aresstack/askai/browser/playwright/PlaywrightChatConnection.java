@@ -11,14 +11,20 @@ import com.aresstack.enterpriseai.browser.api.engine.RawLink;
 import com.aresstack.enterpriseai.browser.api.engine.RawPage;
 import com.aresstack.enterpriseai.browser.api.engine.RawScreenshot;
 import com.aresstack.enterpriseai.browser.api.engine.RawTab;
+import com.aresstack.askai.browser.WebSearchItem;
+import com.aresstack.askai.browser.WebSearchResult;
+import com.aresstack.askai.browser.search.engine.BrowserSearchEngine;
 import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.PlaywrightException;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
+import java.util.function.Predicate;
+import java.util.regex.Pattern;
 
 /**
  * The engine connection of the chat browser on Playwright: the Firefox adapter of the Enterprise AI Client
@@ -185,7 +191,8 @@ final class PlaywrightChatConnection implements BrowserConnection {
     }
 
     @Override
-    public String search(String contextId, String query, List<String> engines) throws BrowserException {
+    public String search(String contextId, String query, List<String> engines, Predicate<String> refused)
+            throws BrowserException {
         return onOwner(session -> {
             check();
             // The search of the research browser (engine catalog, SERP extraction, consent, challenge) on this tab,
@@ -196,7 +203,8 @@ final class PlaywrightChatConnection implements BrowserConnection {
                 // The session lives on between searches: a challenge the user solved or closed since releases its
                 // engine before this search selects engines.
                 session.challengeStatus();
-                return BrowserToolSet.renderSearch(session.search(query, engines), session.challengeStatus());
+                WebSearchResult result = session.search(query, admittedEngines(session, engines, refused));
+                return BrowserToolSet.renderSearch(withoutRefusedHits(result, refused), session.challengeStatus());
             } catch (com.aresstack.askai.browser.BrowserException e) {
                 throw new BrowserException(BrowserException.Kind.FAILED, "Websuche fehlgeschlagen: " + e.getMessage(),
                         e);
@@ -294,6 +302,49 @@ final class PlaywrightChatConnection implements BrowserConnection {
         Page page = tabs.page(contextId);
         session.useChatTab(page);
         return page;
+    }
+
+    /**
+     * The engines the search may visit under the chat's browser policy: {@code engines} itself when the policy refuses
+     * none of their pages, else the ids of the others. An engine is refused when the policy refuses one of its
+     * endpoints; when it refuses all of them, nothing is searched.
+     */
+    static List<String> admittedEngines(PlaywrightBrowserSession session, List<String> engines,
+                                        Predicate<String> refused)
+            throws BrowserException, com.aresstack.askai.browser.BrowserException {
+        List<BrowserSearchEngine> planned = session.searchEngines(engines);
+        List<String> admitted = new ArrayList<String>();
+        List<String> skipped = new ArrayList<String>();
+        for (BrowserSearchEngine engine : planned) {
+            boolean refusedEngine = false;
+            for (String endpoint : engine.getEndpointTemplates()) {
+                refusedEngine |= refused.test(ENDPOINT_PLACEHOLDER.matcher(endpoint).replaceAll(""));
+            }
+            (refusedEngine ? skipped : admitted).add(engine.getId());
+        }
+        if (skipped.isEmpty()) {
+            return engines;
+        }
+        if (admitted.isEmpty()) {
+            throw new BrowserException(BrowserException.Kind.BLOCKED, "Die Browser-Richtlinie sperrt alle "
+                    + "Suchmaschinen dieser Suche (" + String.join(", ", skipped) + "; Einstellungen → Browser).");
+        }
+        return admitted;
+    }
+
+    /** The placeholders of an endpoint template ({query}, {page}, ...), dropped before its address is checked. */
+    private static final Pattern ENDPOINT_PLACEHOLDER = Pattern.compile("\\{[^}]*}");
+
+    /** {@code result} without the hits the chat's browser policy refuses. */
+    static WebSearchResult withoutRefusedHits(WebSearchResult result, Predicate<String> refused) {
+        List<WebSearchItem> kept = new ArrayList<WebSearchItem>();
+        for (WebSearchItem item : result.getItems()) {
+            if (!refused.test(item.getUrl())) {
+                kept.add(item);
+            }
+        }
+        return kept.size() == result.getItems().size() ? result
+                : new WebSearchResult(kept, result.getProviderHosts(), result.getAttempts());
     }
 
     /** PDFs and downloads the chat's loads reach, handed to the research session that reads them. */

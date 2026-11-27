@@ -127,6 +127,15 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
         return pageEngines;
     }
 
+    /**
+     * The engines a search with {@code engineIds} visits ({@code null}: the configured ones), in order; a wrong id is
+     * refused as {@link #search(String, List)} refuses it.
+     */
+    java.util.List<com.aresstack.askai.browser.search.engine.BrowserSearchEngine> searchEngines(
+            List<String> engineIds) throws BrowserException {
+        return engineIds == null ? enginesToVisit() : selectEngines(engineIds);
+    }
+
     /** The engines named by the running web_search call, or null (then the settings' enabled engines). */
     private java.util.List<com.aresstack.askai.browser.search.engine.BrowserSearchEngine> callEngines;
 
