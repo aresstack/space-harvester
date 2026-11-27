@@ -2194,6 +2194,8 @@ public final class Explorer {
             filterToAddress(runtime, id, text);
             return;
         }
+        // Eine Seitennummer findet die Seite zusätzlich zu Titeln mit dieser Zahl (Angelo, 27.11.2026).
+        List<String> pageIds = SearchView.pageIdAddresses(List.copyOf(shownSources), text);
         String needle = text.toLowerCase(Locale.ROOT);
         Map<String, Match> found = new LinkedHashMap<>();
         Enumeration<?> all = top.breadthFirstEnumeration();
@@ -2205,6 +2207,18 @@ public final class Explorer {
             }
         }
         show(found, true);
+        if (runtime != null && !pageIds.isEmpty()) {
+            Background.run(() -> resolveAll(runtime, pageIds), resolved -> {
+                if (id == filterRequest) {
+                    // Die Seite zur Nummer steht vorn, Titeltreffer folgen.
+                    Map<String, Match> first = matches(resolved);
+                    first.putAll(found);
+                    found.clear();
+                    found.putAll(first);
+                    show(found, true);
+                }
+            }, error -> { });
+        }
         PageSearchQuery query;
         try {
             query = PageSearchQuery.of(null, List.of(), List.of(), text, null, null, null, null, null,
@@ -2254,10 +2268,7 @@ public final class Explorer {
             if (id != filterRequest) {
                 return;
             }
-            for (PageAddresses.Match match : resolution.matches()) {
-                found.putIfAbsent(match.sourceId() + "/" + match.pageId(), new Match(match.sourceId(),
-                        match.spaceKey(), match.pageId(), match.title(), where(match.sourceId(), match.spaceKey())));
-            }
+            found.putAll(matches(resolution));
             show(found, false);
             if (found.isEmpty()) {
                 note.setText("Keine Seite zu dieser Adresse" + (resolution.unavailableSources().isEmpty() ? ""
@@ -2269,6 +2280,33 @@ public final class Explorer {
                 note.setText("Adresse nicht auflösbar: " + error.getMessage());
             }
         });
+    }
+
+    /** Die Seiten zu mehreren Adressen; eine Adresse, die scheitert, fehlt nur. Im Hintergrund. */
+    private static List<PageAddresses.Match> resolveAll(AppRuntime runtime, List<String> addresses) {
+        List<PageAddresses.Match> found = new ArrayList<>();
+        for (String address : addresses) {
+            try {
+                found.addAll(runtime.workspace().resolveAddress(address).matches());
+            } catch (RuntimeException unavailable) {
+                // Nicht erreichbar: dann eben ohne diese Quelle.
+            }
+        }
+        return found;
+    }
+
+    /** Treffer der Adressauflösung als Zeilen; nur auf dem EDT ({@link #where} liest den Baum). */
+    private Map<String, Match> matches(PageAddresses.Resolution resolution) {
+        return matches(resolution.matches());
+    }
+
+    private Map<String, Match> matches(List<PageAddresses.Match> resolved) {
+        Map<String, Match> found = new LinkedHashMap<>();
+        for (PageAddresses.Match match : resolved) {
+            found.putIfAbsent(match.sourceId() + "/" + match.pageId(), new Match(match.sourceId(),
+                    match.spaceKey(), match.pageId(), match.title(), where(match.sourceId(), match.spaceKey())));
+        }
+        return found;
     }
 
     /** Die Titelsuche jeder Quelle ({@code PageNavigation.findByTitle}); eine Quelle, die scheitert, fehlt nur. */

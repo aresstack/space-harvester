@@ -183,6 +183,15 @@ class SearchViewTest {
     }
 
     @Test
+    void aPageNumberBecomesABookmarkForEverySource() {
+        assertThat(SearchView.pageIdAddresses(List.of("wiki", "handbuch"), " 4711\u200B"))
+                .containsExactly("space-harvester://wiki/page/4711", "space-harvester://handbuch/page/4711");
+        assertThat(SearchView.pageIdAddresses(List.of("wiki"), "Plan 4711")).isEmpty();
+        assertThat(SearchView.pageIdAddresses(List.of("wiki"), "DEV-4711")).isEmpty();
+        assertThat(SearchView.pageIdAddresses(List.of(), "4711")).isEmpty();
+    }
+
+    @Test
     void loadedPagesMoveUpButNoHitEverDisappears() {
         SearchView.HitsModel model = new SearchView.HitsModel();
         model.set(List.of(hit("a"), hit("b"), hit("c")));
