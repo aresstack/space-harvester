@@ -445,13 +445,7 @@ public final class SearchView implements View {
                 }
                 int row = table.getSelectedRow();
                 if (e.getClickCount() == 2 && row >= 0) {
-                    Hit hit = model.rows.get(table.convertRowIndexToModel(row));
-                    // Mit der Passage-ID seines Absatzes springt der Treffer dorthin, sonst öffnet er die Seite.
-                    if (hit.passageId() != null) {
-                        context.navigator().openPassage(hit.sourceId(), hit.passageId());
-                    } else {
-                        context.navigator().openPage(hit.sourceId(), hit.pageId());
-                    }
+                    open(model.rows.get(table.convertRowIndexToModel(row)));
                 }
             }
         });
@@ -556,6 +550,15 @@ public final class SearchView implements View {
         return true;
     }
 
+    /** Mit der Passage-ID seines Absatzes springt der Treffer dorthin, sonst öffnet er die Seite. */
+    private void open(Hit hit) {
+        if (hit.passageId() != null) {
+            context.navigator().openPassage(hit.sourceId(), hit.passageId());
+        } else {
+            context.navigator().openPage(hit.sourceId(), hit.pageId());
+        }
+    }
+
     /** Der Treffer unter der Maus oder {@code null}. */
     private Hit hitAt(MouseEvent e) {
         int row = table.rowAtPoint(e.getPoint());
@@ -595,7 +598,7 @@ public final class SearchView implements View {
     javax.swing.JPopupMenu hitMenu(Hit hit) {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
         javax.swing.JMenuItem open = new javax.swing.JMenuItem("Öffnen");
-        open.addActionListener(e -> context.navigator().openPage(hit.sourceId(), hit.pageId()));
+        open.addActionListener(e -> open(hit));
         menu.add(open);
         boolean favorite = isFavorite(hit);
         javax.swing.JMenuItem star = new javax.swing.JMenuItem(favorite ? "Favorit entfernen" : "Als Favorit markieren",
@@ -606,31 +609,45 @@ public final class SearchView implements View {
         return menu;
     }
 
+    /**
+     * Der Space des Treffers; ein vorläufiger Treffer kennt ihn nicht, dann der seines Favoriten (gleiche Quelle und
+     * Seite), sonst {@code null}.
+     */
+    private String spaceOf(Hit hit) {
+        if (hit.spaceKey() != null) {
+            return hit.spaceKey();
+        }
+        return context.favorites().all().stream()
+                .filter(f -> f.sourceId().equals(hit.sourceId()) && hit.pageId().equals(f.pageId()))
+                .map(Favorites.Favorite::spaceKey).findFirst().orElse(null);
+    }
+
     private boolean isFavorite(Hit hit) {
-        return hit.spaceKey() != null && context.favorites().contains(hit.sourceId(), hit.spaceKey(), hit.pageId());
+        String space = spaceOf(hit);
+        return space != null && context.favorites().contains(hit.sourceId(), space, hit.pageId());
     }
 
     private String groupOf(Hit hit) {
-        return hit.spaceKey() == null ? null
-                : context.favorites().groupOf(hit.sourceId(), hit.spaceKey(), hit.pageId()).orElse(null);
+        String space = spaceOf(hit);
+        return space == null ? null : context.favorites().groupOf(hit.sourceId(), space, hit.pageId()).orElse(null);
     }
 
     private com.aresstack.spaceharvester.app.group.GroupColor colorOf(Hit hit) {
-        return hit.spaceKey() == null ? null
-                : context.favorites().colorOf(hit.sourceId(), hit.spaceKey(), hit.pageId()).orElse(null);
+        String space = spaceOf(hit);
+        return space == null ? null : context.favorites().colorOf(hit.sourceId(), space, hit.pageId()).orElse(null);
     }
 
     /** Stern am Treffer: derselbe Weg wie der Stern im Baum (Pfad aus der Position der Seite). */
     void toggleFavorite(Hit hit) {
         if (hit != null) {
-            GroupMenu.pageFavorite(context, hit.sourceId(), hit.spaceKey(), hit.pageId(), hit.title(),
+            GroupMenu.pageFavorite(context, hit.sourceId(), spaceOf(hit), hit.pageId(), hit.title(),
                     context.favorites()::toggle);
         }
     }
 
     /** „Gruppe zuordnen“ am Treffer: Favorit in dieser Gruppe, aus einer anderen wandert er heraus. */
     void assignGroup(Hit hit, String groupId) {
-        GroupMenu.pageFavorite(context, hit.sourceId(), hit.spaceKey(), hit.pageId(), hit.title(),
+        GroupMenu.pageFavorite(context, hit.sourceId(), spaceOf(hit), hit.pageId(), hit.title(),
                 favorite -> context.favorites().assign(favorite, groupId));
     }
 
