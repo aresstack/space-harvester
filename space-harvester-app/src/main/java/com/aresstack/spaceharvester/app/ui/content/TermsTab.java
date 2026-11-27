@@ -1387,6 +1387,8 @@ final class TermsTab extends JPanel {
             moreBelow();
         } else {
             // Der gewählte Abschnitt lädt jetzt selbst; ist er schon vollständig, setzt more() nur den Hinweis.
+            // Der Hinweis des vorigen Abschnitts („keine Akronyme erkannt“) gilt nicht mehr, solange noch geladen wird.
+            hint.setText(" ");
             more();
         }
         revalidate();
