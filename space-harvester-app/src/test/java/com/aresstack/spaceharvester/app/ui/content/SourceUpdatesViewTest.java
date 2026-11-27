@@ -755,6 +755,41 @@ class SourceUpdatesViewTest {
     }
 
     @Test
+    void topicsThePodcastNeverTellsAreGreyAndTheYellowStillComesOnTop() {
+        actions.stored = new UpdateSummary("wiki", ChangeUpdate.OPEN, null, "Zwei Neuerungen im Beispielarchiv.",
+                List.of(new SummaryStatement("Das Archiv wird auf ein neues Format umgestellt.",
+                                List.of(new SummaryPage("20", "Neue Seite", "BAU")), "Archivumstellung", null),
+                        new SummaryStatement("Die Suche findet jetzt auch Anhänge.",
+                                List.of(new SummaryPage("21", "Suche", "BAU")), "Suche in Anhängen", null)),
+                "update-summary-v2:gpt-test", SECOND, 0, false, Map.of("BAU", "Bauwesen Beispiel"));
+        summary.source("wiki", "Confluence HaVdB");
+        summary.clickUpdate("Seit dem letzten Update");
+
+        // ohne Podcast ist nichts grau
+        assertThat(summary.podcastGaps()).isEmpty();
+
+        // der Podcast erzählt den Überblick und die Archivumstellung, nie die Suche
+        summary.coverPodcast(java.util.Optional.of(List.of(
+                com.aresstack.spaceharvester.application.podcast.UpdatePodcasts.OVERVIEW, 0)));
+
+        assertThat(summary.podcastGaps()).containsExactlyInAnyOrder("Suche in Anhängen",
+                "Die Suche findet jetzt auch Anhänge.");
+        assertThat(summary.podcastMarked()).isEmpty();
+
+        summary.followPodcast(List.of(0));
+
+        assertThat(summary.podcastMarked()).containsExactlyInAnyOrder("Archivumstellung",
+                "Das Archiv wird auf ein neues Format umgestellt.");
+        assertThat(summary.podcastGaps()).as("das Grau bleibt neben dem Gelb").containsExactlyInAnyOrder(
+                "Suche in Anhängen", "Die Suche findet jetzt auch Anhänge.");
+
+        summary.coverPodcast(java.util.Optional.empty());
+
+        assertThat(summary.podcastGaps()).isEmpty();
+        assertThat(summary.podcastMarked()).hasSize(2);
+    }
+
+    @Test
     void theReportStaysOnTheMarkedTopicWhenItIsLaidOutAgain() throws Exception {
         // Angelo 23.11.2026: „er hat das Gelbe markiert und dann scrollt er aber aus dem Bereich weg, nach unten“
         List<SummaryStatement> statements = new ArrayList<>();

@@ -32,13 +32,27 @@ import java.util.function.Consumer;
 final class ArtifactTabs implements ChatPanel.ArtifactHost {
 
     static final String CLOSE = "Reiter schließen (auch Mittelklick auf den Reiter)";
+    static final String UNDO = "Letzte Änderung rückgängig machen";
+    static final String EXPORT = "Exportieren (Ablage im Ausgabeordner)";
+    static final String SVG_LABEL = "SVG";
     private static final String PAGE = "seite";
     private static final String ARTIFACT = "artefakt";
 
     private final ChatArtifactStore store;
     private final JPanel root = new JPanel(new BorderLayout());
+    private final JPanel strip = new JPanel(new BorderLayout());
     // Umbrechend mit mitwachsender Höhe, damit bei vielen oder langen Reitern keiner abgeschnitten wird.
-    private final JPanel strip = new JPanel(new WrapLayout(FlowLayout.LEFT, 4, 4));
+    private final JPanel pills = new JPanel(new WrapLayout(FlowLayout.LEFT, 4, 4));
+    /** Rechts in der Reiterzeile, nur bei gewähltem Artefakt: Rückgängig und Export (ADR 0045, Abschnitt 8). */
+    private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 3, 4));
+    private final com.aresstack.spaceharvester.app.ui.controls.FlatIconButton undo =
+            new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(
+                    com.aresstack.spaceharvester.app.ui.Glyph.UNDO, UNDO);
+    private final com.aresstack.spaceharvester.app.ui.controls.FlatIconButton export =
+            new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(
+                    com.aresstack.spaceharvester.app.ui.Glyph.EXPORT, EXPORT);
+    private final java.util.function.Supplier<Path> output;
+    private final Consumer<String> status;
     private final CardLayout cards = new CardLayout();
     private final JPanel center = new JPanel(cards);
     private final JPanel artifactSlot = new JPanel(new BorderLayout());
@@ -53,7 +67,27 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     }
 
     ArtifactTabs(ChatArtifactStore store, JComponent page) {
+        this(store, page, () -> null, text -> { });
+    }
+
+    /**
+     * @param output der Ausgabeordner der Einstellungen ({@code null} ohne)
+     * @param status zeigt eine Meldung in der Statuszeile
+     */
+    ArtifactTabs(ChatArtifactStore store, JComponent page, java.util.function.Supplier<Path> output,
+                 Consumer<String> status) {
         this.store = store;
+        this.output = output;
+        this.status = status;
+        pills.setOpaque(false);
+        actions.setOpaque(false);
+        actions.add(undo);
+        actions.add(export);
+        actions.setVisible(false);
+        undo.addActionListener(event -> undo());
+        export.addActionListener(event -> showExportMenu());
+        strip.add(pills, BorderLayout.CENTER);
+        strip.add(actions, BorderLayout.EAST);
         strip.setOpaque(true);
         strip.setBackground(Comic.SURFACE);
         strip.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE));
@@ -83,7 +117,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         tabs.values().forEach(tab -> tab.view().dispose());
         tabs.clear();
         group = new ButtonGroup();
-        strip.removeAll();
+        pills.removeAll();
         selected = null;
         artifactSlot.removeAll();
         if (folder != null && chatId != null) {
@@ -118,6 +152,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     /** Die Seite kommt zurück (der Benutzer hat links etwas gewählt); die Reiter bleiben stehen. */
     void showPage() {
         selected = null;
+        actions.setVisible(false);
         group.clearSelection();
         artifactSlot.removeAll();
         cards.show(center, PAGE);
@@ -145,7 +180,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         Tab tab = new Tab(pill, new ArtifactView(store, folder, chatId, artifact.id()));
         tabs.put(artifact.id(), tab);
         group.add(pill);
-        strip.add(pill);
+        pills.add(pill);
         refreshStrip();
         return tab;
     }
@@ -162,6 +197,8 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         artifactSlot.revalidate();
         artifactSlot.repaint();
         cards.show(center, ARTIFACT);
+        actions.setVisible(true);
+        refreshUndo();
     }
 
     private void close(String id) {
@@ -171,7 +208,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         }
         tab.view().dispose();
         group.remove(tab.pill());
-        strip.remove(tab.pill());
+        pills.remove(tab.pill());
         remember();
         refreshStrip();
         if (id.equals(selected)) {
@@ -191,11 +228,71 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         strip.repaint();
     }
 
+    /** Holt den Stand vor der letzten Änderung des gewählten Artefakts zurück (als neue Revision). */
+    void undo() {
+        String id = selected;
+        if (id == null) {
+            return;
+        }
+        ChatArtifactStore.WriteResult result = store.undo(folder, chatId, id, ChatArtifactStore.ANY,
+                ChatArtifact.Origin.USER);
+        status.accept(result.success() ? "Rückgängig: " + result.artifact().title() + ", Stand "
+                + result.revision() : result.reason());
+        refreshUndo();
+    }
+
+    private void refreshUndo() {
+        ChatArtifact artifact = selected == null ? null : store.read(folder, chatId, selected);
+        undo.setEnabled(artifact != null && artifact.undoable());
+    }
+
+    /** Das Menü am Export-Knopf: Markdown, Word, PDF für Dokumente, SVG für Grafiken. */
+    private void showExportMenu() {
+        ChatArtifact artifact = selected == null ? null : store.read(folder, chatId, selected);
+        if (artifact == null) {
+            return;
+        }
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        if (artifact.kind() == ChatArtifact.Kind.GRAPHIC) {
+            javax.swing.JMenuItem item = new javax.swing.JMenuItem(SVG_LABEL);
+            item.addActionListener(event -> export(artifact, null));
+            menu.add(item);
+        } else {
+            for (com.aresstack.spaceharvester.app.chat.ChatExport.Format format
+                    : com.aresstack.spaceharvester.app.chat.ChatExport.Format.values()) {
+                javax.swing.JMenuItem item = new javax.swing.JMenuItem(format.label);
+                item.addActionListener(event -> export(artifact, format));
+                menu.add(item);
+            }
+        }
+        com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(menu, export)
+                .show(export, 0, export.getHeight());
+    }
+
+    /** Exportiert im Hintergrund in den Ausgabeordner; {@code format} {@code null} heißt SVG. */
+    void export(ChatArtifact artifact, com.aresstack.spaceharvester.app.chat.ChatExport.Format format) {
+        Path directory = output.get();
+        if (directory == null) {
+            status.accept("Export nicht möglich: kein Ausgabeordner eingestellt");
+            return;
+        }
+        status.accept("Export läuft: " + artifact.title());
+        com.aresstack.spaceharvester.app.ui.Background.run(() -> format == null
+                        ? com.aresstack.spaceharvester.app.chat.artifact.ArtifactExport.writeSvg(artifact, directory)
+                        : com.aresstack.spaceharvester.app.chat.artifact.ArtifactExport.write(artifact, format,
+                        directory),
+                file -> status.accept("Export gespeichert: " + file.getFileName()),
+                error -> status.accept("Export fehlgeschlagen: " + error.getClass().getSimpleName()));
+    }
+
     /** Ein umbenanntes Artefakt bekommt seinen neuen Titel auch am Reiter. */
     private void retitle(ChatArtifactStore.Event event) {
         Runnable update = () -> {
             if (!Objects.equals(folder, event.folder()) || !Objects.equals(chatId, event.chatId())) {
                 return;
+            }
+            if (event.artifact().id().equals(selected)) {
+                undo.setEnabled(event.artifact().undoable());
             }
             Tab tab = tabs.get(event.artifact().id());
             if (tab != null && !tab.pill().getText().equals(event.artifact().title())) {

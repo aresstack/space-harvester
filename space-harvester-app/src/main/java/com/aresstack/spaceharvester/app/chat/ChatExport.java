@@ -149,14 +149,23 @@ public final class ChatExport {
     }
 
     public static void write(ExportDocumentNode document, Format format, Path target) throws IOException {
+        write(document, format, target, com.aresstack.spaceharvester.document.ExportGraphics.standard());
+    }
+
+    /**
+     * Wie {@link #write(ExportDocumentNode, Format, Path)}, mit eigenen Zeichnern für Bilder und Diagramme in Word und
+     * PDF (etwa {@code ExportGraphics.rendering()}, damit Mermaid und SVG als Bild erscheinen).
+     */
+    public static void write(ExportDocumentNode document, Format format, Path target,
+                             com.aresstack.spaceharvester.document.ExportGraphics graphics) throws IOException {
         Path absolute = target.toAbsolutePath();
         Path temporary = Files.createTempFile(absolute.getParent(), ".chat-export-", ".tmp");
         try {
             try (OutputStream output = Files.newOutputStream(temporary)) {
                 switch (format) {
                     case MARKDOWN -> new MarkdownExportWriter().write(document, output);
-                    case PDF -> new PdfExportWriter().write(document, output);
-                    case WORD -> new DocxExportWriter().write(document, output);
+                    case PDF -> new PdfExportWriter(graphics).write(document, output);
+                    case WORD -> new DocxExportWriter(graphics).write(document, output);
                 }
             }
             Files.move(temporary, absolute, StandardCopyOption.REPLACE_EXISTING);
