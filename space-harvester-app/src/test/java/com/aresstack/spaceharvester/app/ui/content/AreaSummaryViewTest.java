@@ -238,6 +238,22 @@ class AreaSummaryViewTest {
     }
 
     @Test
+    void aFolderWithoutFavoritesStillShowsItsBook() throws Exception {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+            com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
+                    new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, "# Buch", "", List.of());
+            view.books(id -> edition);
+
+            view.folder(folder("ordner-leer"));
+
+            assertThat(view.edition()).isEqualTo(edition);
+            assertThat(view.texts()).doesNotContain(AreaSummaryView.NO_FAVORITES);
+            assertThat(actions.summarized).isEmpty();
+        });
+    }
+
+    @Test
     void theListeningViewKeepsTheOverviewForNow() {
         AreaSummaryView view = view(AreaSummaryView.Mode.LISTEN, true);
         actions.stored = overview("selection-abc");

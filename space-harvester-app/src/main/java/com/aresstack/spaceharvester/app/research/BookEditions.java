@@ -82,7 +82,7 @@ public final class BookEditions {
         for (int number = highest(directory) + 1; ; number++) {
             Edition edition = new Edition(number, Objects.requireNonNull(createdAt, "createdAt"), book, report,
                     sources);
-            Path target = directory.resolve(String.format("auflage-%04d.json", number));
+            Path target = directory.resolve(String.format(java.util.Locale.ROOT, "auflage-%04d.json", number));
             try {
                 Files.writeString(target, JSON.writeValueAsString(edition), StandardCharsets.UTF_8,
                         StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);

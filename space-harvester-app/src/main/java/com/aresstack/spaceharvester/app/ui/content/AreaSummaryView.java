@@ -425,6 +425,7 @@ final class AreaSummaryView extends JPanel {
         if (empty) {
             loaded = true;
             render();
+            bookOfEmptyFolder(next);
             return;
         }
         Actions current = actions.get();
@@ -496,7 +497,11 @@ final class AreaSummaryView extends JPanel {
     void reload() {
         Actions current = actions.get();
         Target of = target;
-        if (current == null || of == null || of.empty()) {
+        if (of != null && of.empty()) {
+            bookOfEmptyFolder(of);
+            return;
+        }
+        if (current == null || of == null) {
             return;
         }
         int mine = ++generation;
@@ -525,6 +530,27 @@ final class AreaSummaryView extends JPanel {
                 message("Überblick nicht geladen: " + Problems.describe(failure).title());
             }
         });
+    }
+
+    /**
+     * Ein Ordner ohne Favoriten kann trotzdem ein Buch haben (die Auflage gehört zum Ordner, nicht zu seinen jetzigen
+     * Favoriten): dann zeigt die Leseansicht es; einen Überblick gibt es ohne Favoriten nicht.
+     */
+    private void bookOfEmptyFolder(Target of) {
+        if (mode != Mode.READ || of.folder() == null) {
+            return;
+        }
+        int mine = ++generation;
+        java.util.function.Function<String, BookEditions.Edition> bookOf = books;
+        String folderId = of.folder().folderId();
+        runner.run(() -> java.util.Optional.ofNullable(bookOf.apply(folderId)), found -> {
+            if (mine != generation || !Objects.equals(of, target) || found.isEmpty()) {
+                return;
+            }
+            edition = found.get();
+            offer();
+            render();
+        }, failure -> { });
     }
 
     private record Loaded(UpdateSummary summary, boolean available, BookEditions.Edition edition) {

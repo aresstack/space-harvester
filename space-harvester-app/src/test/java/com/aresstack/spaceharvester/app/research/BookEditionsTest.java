@@ -47,4 +47,18 @@ class BookEditionsTest {
         assertEquals("# Lesbar", BookEditions.latest(data, "ordner-2").orElseThrow().book());
         assertEquals(3, BookEditions.add(data, "ordner-2", Instant.now(), "# Neu", "", List.of()).number());
     }
+
+    @Test
+    void fileNamesUseAsciiDigitsWhateverTheLocale() throws Exception {
+        java.util.Locale before = java.util.Locale.getDefault();
+        try {
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("ar-EG"));
+            BookEditions.add(data, "ordner-4", Instant.parse("2026-11-27T10:00:00Z"), "# Buch", "", List.of());
+        } finally {
+            java.util.Locale.setDefault(before);
+        }
+
+        assertTrue(Files.isRegularFile(BookEditions.directory(data, "ordner-4").resolve("auflage-0001.json")));
+        assertEquals("# Buch", BookEditions.latest(data, "ordner-4").orElseThrow().book());
+    }
 }
