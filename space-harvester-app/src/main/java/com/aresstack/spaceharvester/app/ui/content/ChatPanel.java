@@ -309,6 +309,10 @@ public final class ChatPanel extends JPanel {
      * oder einem Viewer, je ein Chip mit Anführungszeichen und ✕; sie gehen mit der nächsten Frage hinaus.
      */
     private final List<String> quotes = new ArrayList<>();
+    /** Die Chips der Zitate; ein Chip-Vorschlag („Seite zusammenfassen“) sendet sie nicht mit, sie bleiben stehen. */
+    private final java.util.Map<String, JPanel> quoteChips = new java.util.LinkedHashMap<>();
+    /** Die nächste Frage kommt aus der Eingabe und trägt die Zitate (dann sind sie danach weg). */
+    private boolean sendingQuotes;
     /** Das schwebende „Zitieren“ über einer Markierung in einer Antwort (wie im EAC). */
     private final com.aresstack.spaceharvester.app.ui.controls.QuoteOverlayButton quoteOverlay =
             new com.aresstack.spaceharvester.app.ui.controls.QuoteOverlayButton();
@@ -2153,9 +2157,12 @@ public final class ChatPanel extends JPanel {
         if (!quotes.contains(passage)) {
             quotes.add(passage);
             String line = passage.replaceAll("\\s+", " ");
-            addChip(new com.aresstack.spaceharvester.app.ui.controls.QuoteIcon(), ellipsize(line, QUOTE_CHIP_CHARS),
-                    QUOTE + ": \u201E" + ellipsize(line, QUOTE_TOOLTIP_CHARS) + "\u201C", "Zitat entfernen",
-                    () -> quotes.remove(passage));
+            quoteChips.put(passage, addChip(new com.aresstack.spaceharvester.app.ui.controls.QuoteIcon(),
+                    ellipsize(line, QUOTE_CHIP_CHARS),
+                    QUOTE + ": \u201E" + ellipsize(line, QUOTE_TOOLTIP_CHARS) + "\u201C", "Zitat entfernen", () -> {
+                        quotes.remove(passage);
+                        quoteChips.remove(passage);
+                    }));
         }
         editor.requestFocusInWindow();
     }
@@ -2169,7 +2176,7 @@ public final class ChatPanel extends JPanel {
     }
 
     /** Ein Chip über dem Editor (Anhang oder Zitat): Symbol, Name, ✕; das ✕ nimmt ihn mit {@code removed} zurück. */
-    private void addChip(javax.swing.Icon icon, String label, String tooltip, String removeTip, Runnable removed) {
+    private JPanel addChip(javax.swing.Icon icon, String label, String tooltip, String removeTip, Runnable removed) {
         JPanel chip = new JPanel(new BorderLayout(4, 0));
         chip.setOpaque(true);
         chip.setBackground(Comic.SURFACE);
@@ -2193,6 +2200,7 @@ public final class ChatPanel extends JPanel {
         chips.setVisible(true);
         chips.revalidate();
         composer.repaint();
+        return chip;
     }
 
     /** Der Chat nimmt markierten Text aus jedem Textfeld der App an, solange er zu sehen ist, außer aus der Eingabe. */
@@ -2225,6 +2233,8 @@ public final class ChatPanel extends JPanel {
         if (y < QUOTE_OVERLAY_GAP) {
             y = area.y + area.height + QUOTE_OVERLAY_GAP;
         }
+        // Reicht die Markierung über die ganze Höhe, bleibt der Knopf trotzdem im sichtbaren Verlauf.
+        y = Math.max(QUOTE_OVERLAY_GAP, Math.min(y, transcriptLayers.getHeight() - size.height - QUOTE_OVERLAY_GAP));
         quoteOverlay.setBounds(x, y, size.width, size.height);
         quoteOverlay.setVisible(true);
         transcriptLayers.repaint();
@@ -2298,8 +2308,10 @@ public final class ChatPanel extends JPanel {
             return;
         }
         String text = withQuotes(typed, quotes);
+        sendingQuotes = true;
         if (attachments.isEmpty()) {
             sendAsked(text);
+            sendingQuotes = false; // nicht gesendet (kein Modell …): die Zitate bleiben für den nächsten Versuch
             return;
         }
         // Anhänge einmal lesen, nicht auf dem EDT: ein Bild liest das Vision-Modell, das dauert. Ihr Text zählt zum
@@ -2322,11 +2334,13 @@ public final class ChatPanel extends JPanel {
                 readingAttachments = false;
                 editor.setEditable(true);
                 if (!startedChat.equals(chat.id())) {
+                    sendingQuotes = false;
                     status.setText(CHAT_CHANGED_WHILE_READING);
                     return;
                 }
                 status.setText(" ");
                 sendAsked(asked);
+                sendingQuotes = false;
             });
         }, "chat-anhaenge");
         reading.setDaemon(true);
@@ -2474,10 +2488,15 @@ public final class ChatPanel extends JPanel {
         showChatName();
         editor.setText("");
         attachments.clear();
-        quotes.clear();
         hideQuoteOverlay();
         chips.removeAll();
-        chips.setVisible(false);
+        if (sendingQuotes) {
+            quotes.clear();
+            quoteChips.clear();
+        }
+        sendingQuotes = false;
+        quoteChips.values().forEach(chips::add);
+        chips.setVisible(!quotes.isEmpty());
         attach.setToolTipText(ATTACH);
         composer.revalidate();
         composer.repaint();

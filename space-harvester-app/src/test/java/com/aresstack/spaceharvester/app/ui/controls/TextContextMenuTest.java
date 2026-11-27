@@ -130,7 +130,7 @@ class TextContextMenuTest {
                 TextContextMenu.setQuoteTarget(chat);
                 JTextArea page = new JTextArea("Der Nachtlauf startet um 22 Uhr.");
                 page.setEditable(false);
-                page.select(4, 14);
+                page.select(4, 13);
                 JPopupMenu menu = TextContextMenu.menu(page);
                 assertThat(labels(menu)).containsExactly(TextContextMenu.COPY, TextContextMenu.QUOTE,
                         TextContextMenu.SELECT_ALL);
