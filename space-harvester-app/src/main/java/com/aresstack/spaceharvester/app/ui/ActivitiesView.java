@@ -202,8 +202,11 @@ public final class ActivitiesView implements View {
     static final int MIN_DETAIL_HEIGHT = 80;
     /** Kleinste Höhe der Liste über den Details, damit ein paar Zeilen sichtbar bleiben. */
     static final int MIN_LIST_HEIGHT = 90;
-    /** Ob die Höhe des Detailbereichs im Application State bleibt; Tests ohne Ablage merken sich nichts. */
+    /** Ob die Höhe des Detailbereichs im Application State bleibt; Tests merken sich nichts. */
     private final boolean rememberDetails;
+    /** Ob die Liste fehlerfrei fertige Aufträge selbst löscht ({@link #scheduleCleanup}); Tests nie. */
+    private final boolean housekeeping;
+    private static final System.Logger LOG = System.getLogger(ActivitiesView.class.getName());
     /** Während die Ansicht den Trenner selbst setzt, ist das keine Wahl des Benutzers. */
     private boolean placingDivider;
     /** Schreibt die gezogene Höhe erst, wenn der Trenner kurz ruht, nicht bei jedem Schritt des Ziehens. */
@@ -260,7 +263,7 @@ public final class ActivitiesView implements View {
     private boolean toTop;
 
     public ActivitiesView(AppContext context) {
-        this(context, userPreferences());
+        this(context, userPreferences(), true);
     }
 
     /**
@@ -268,9 +271,18 @@ public final class ActivitiesView implements View {
      *                    in die Ablage des Benutzers)
      */
     ActivitiesView(AppContext context, java.util.prefs.Preferences preferences) {
+        this(context, preferences, false);
+    }
+
+    /**
+     * @param live die App selbst: merkt sich die Höhe der Details im Application State und räumt fehlerfrei fertige
+     *             Aufträge auf; Tests nie
+     */
+    private ActivitiesView(AppContext context, java.util.prefs.Preferences preferences, boolean live) {
         this.context = context;
         this.preferences = preferences;
-        this.rememberDetails = preferences != null;
+        this.rememberDetails = live;
+        this.housekeeping = live;
         if (rememberDetails) {
             detailHeight = Math.max(MIN_DETAIL_HEIGHT, WindowSizes.recallInt(DETAIL_HEIGHT_KEY, DEFAULT_DETAIL_HEIGHT));
         }
@@ -841,6 +853,7 @@ public final class ActivitiesView implements View {
             overall.observe(jobs, now, averages::get);
             groupEstimates = groupEstimates(jobs, now);
             lastJobs = List.copyOf(jobs);
+            scheduleCleanup(runtime);
             followSelectedTab(id);
             model.set(visible(jobs, backgroundTab()));
             updateBackgroundChip(jobs);
@@ -984,6 +997,11 @@ public final class ActivitiesView implements View {
         // Die Meldung gehörte zum abgewählten Auftrag; sie hielte den Detailbereich sonst offen.
         feedback.clear();
         render();
+        // Ein fälliger fertiger Auftrag blieb nur, solange er gewählt war.
+        AppRuntime runtime = context.runtime();
+        if (runtime != null) {
+            scheduleCleanup(runtime);
+        }
     }
 
     /** Der Detailbereich ist offen, solange er etwas zeigt: einen Auftrag, das Codefeld oder eine Meldung. */
@@ -1889,6 +1907,77 @@ public final class ActivitiesView implements View {
                 feedback.problem(error);
             }
         });
+    }
+
+    /** Weckt das Aufräumen der Liste, wenn der nächste fehlerfrei fertige Auftrag fällig ist; einmalig, kein Takt. */
+    private final Timer cleanup = new Timer(0, e -> cleanupDue());
+
+    private void cleanupDue() {
+        AppRuntime runtime = context.runtime();
+        if (runtime != null) {
+            scheduleCleanup(runtime);
+        }
+    }
+
+    /**
+     * Räumt die Auftragsliste auf (Angelo 27.11.2026: „jeder Auftrag, der erfolgreich durchgelaufen ist, also ohne
+     * irgendwelche Mängel, entfernt sich automatisch nach 5 Minuten“): Fällige löscht derselbe Weg wie der Besen
+     * ({@code Workspace#deleteJobs}), ohne Rückfrage; für den nächsten fälligen steht ein einmaliger Wecker. Die Frist
+     * steht unter Einstellungen › Allgemein ({@link AppTimeouts.Value#FINISHED_JOBS}), 0 schaltet es ab.
+     */
+    private void scheduleCleanup(AppRuntime runtime) {
+        cleanup.stop();
+        if (!housekeeping) {
+            return;
+        }
+        java.time.Duration keep = AppTimeouts.shared().get(AppTimeouts.Value.FINISHED_JOBS);
+        if (keep.isZero()) {
+            return;
+        }
+        Instant now = Instant.now();
+        List<String> due = new ArrayList<>();
+        Instant next = null;
+        for (JobStatus job : expendable(lastJobs, selectedId)) {
+            Instant at = job.finishedAt().plus(keep);
+            if (!at.isAfter(now)) {
+                due.add(job.id());
+            } else if (next == null || at.isBefore(next)) {
+                next = at;
+            }
+        }
+        if (!due.isEmpty()) {
+            Background.run(() -> runtime.workspace().deleteJobs(due), deleted -> poll(),
+                    error -> LOG.log(System.Logger.Level.WARNING, "Aufräumen der Auftragsliste gescheitert ({0})",
+                            error.getClass().getName()));
+            return;
+        }
+        if (next != null) {
+            long millis = java.time.Duration.between(now, next).toMillis() + 1;
+            cleanup.setInitialDelay((int) Math.min(Integer.MAX_VALUE, Math.max(1, millis)));
+            cleanup.setRepeats(false);
+            cleanup.start();
+        }
+    }
+
+    /**
+     * Die Aufträge, die das Aufräumen löschen darf: fertig ohne Fehlschlag, ohne Unvollständiges und ohne bewusst
+     * Ausgelassenes. Es bleiben Downloads (ihr Datenbestand verschwindet mit dem Auftrag, {@link #KEPT}), der gewählte
+     * Auftrag, solange seine Details offen sind, und Vorgänger, auf die ein offener Auftrag noch wartet.
+     */
+    static List<JobStatus> expendable(List<JobStatus> jobs, String selectedId) {
+        Set<String> awaited = new HashSet<>();
+        for (JobStatus job : jobs) {
+            String after = job.parameter(com.aresstack.spaceharvester.application.jobs.Jobs.AFTER);
+            if (after != null && !job.state().terminal()) {
+                awaited.addAll(java.util.Arrays.asList(after.split(",")));
+            }
+        }
+        return jobs.stream()
+                .filter(job -> job.id() != null && !synthetic(job.id()) && !job.id().equals(selectedId))
+                .filter(job -> job.state() == JobState.COMPLETED && job.finishedAt() != null)
+                .filter(job -> job.progress().failed() == 0 && !job.incomplete() && skipped(job) == 0)
+                .filter(job -> job.type() != JobType.EXPORT && !awaited.contains(job.id()))
+                .toList();
     }
 
     /** Für Tests und Bilder: zeigt diese Aufträge, als kämen sie vom Core. */

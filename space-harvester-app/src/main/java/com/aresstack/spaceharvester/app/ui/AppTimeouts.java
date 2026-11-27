@@ -32,7 +32,12 @@ public final class AppTimeouts {
                 "So lange wartet die Beschriftung eines Code-Diagramms höchstens auf das Modell", 30, 1, 86_400),
         AUDIO_SILENCE("audio-silence-seconds", "Transkription: ohne Ton (Sekunden)",
                 "So lange darf VLC beim Transkribieren keine Tondaten liefern, bevor der Lauf abbricht", 60, 1,
-                86_400);
+                86_400),
+        // Angelo 27.11.2026: „das spammt hier alles so zu mit Aufträgen“; Vorgabe 5 Minuten.
+        FINISHED_JOBS("finished-jobs-seconds", "Fehlerfrei fertige Aufträge entfernen nach (Sekunden)",
+                "So lange nach seinem Ende bleibt ein fehlerfrei fertiger Auftrag in der Auftragsliste, dann wird er "
+                        + "gelöscht; Downloads mit ihrem Datenbestand und Aufträge mit Fehlern oder Auslassungen "
+                        + "bleiben. 0 schaltet das Aufräumen ab", 300, 0, 31_536_000);
 
         private final String key;
         private final String label;
