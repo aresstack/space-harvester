@@ -280,8 +280,13 @@ Tabs in Firefox. Da kann ich ja auch Gruppen erstellen von Tabs. Und genauso mö
 erstellen. Das sind dann quasi Projekte. […] Wenn ich an irgendwas gerade arbeite, dann reicht ja oftmals nicht nur
 ein Chat aus. Und dann könnten wir die Artefakte, die wir erzeugen, […] dem ganzen Projekt verfügbar machen.“
 
-Der Nachtrag ergänzt die Abschnitte 1, 2, 3 und 8 und ändert [ADR 0045](0045-schreibumgebung-im-chat.md) in
-Abschnitt 1. Er ändert nichts an den Favoriten.
+Dazu Angelos Nachricht von 16:24 MEZ: „Wir opfern den Schriftzug unten in der Ecke, beziehungsweise setzen das nur
+für das Default-Projekt. […] Wir machen da so einen kleinen Pfeil nach oben, rechts neben den Schriftzug. […] Und dann
+kann man damit das Projekt auswählen. Global, über alle Perspektiven hinweg. […] Das muss man aber nicht nutzen, man
+kann auch einfach das Default-Projekt nutzen.“
+
+Der Nachtrag ergänzt die Abschnitte 1, 2, 3 und 8, ändert in Abschnitt 4.1, was „aktives Projekt“ heißt (F6), und
+ändert [ADR 0045](0045-schreibumgebung-im-chat.md) in Abschnitt 1.
 
 ### F1. Eine farbige Gruppe von Chats ist ein Projekt
 - Es gibt nur einen Begriff „Projekt“. Die farbige Gruppe von Chats ist kein zweites Ding neben dem Projekt aus
@@ -291,23 +296,27 @@ Abschnitt 1. Er ändert nichts an den Favoriten.
   die Reiter der Artefakte.
 
 ### F2. Chats im Projekt
-- Ein Chat gehört zu höchstens einem Projekt, wie ein Tab zu höchstens einer Gruppe. Ein Chat ohne Projekt bleibt
-  möglich und verhält sich wie heute.
+- Ein Chat gehört zu genau einem Projekt, wie ein Tab zu einer Gruppe. Ein Chat ohne eigene Zuordnung gehört zum
+  Standardprojekt „Allgemein“ (Abschnitt 3) und verhält sich wie heute. Alle vorhandenen Chats sind damit ohne
+  Umwandlung Chats des Standardprojekts.
 - Die Zugehörigkeit steht am Chat selbst (ein Feld mit der Projekt-ID). Sie geht mit dem Chat in den Papierkorb und
-  zurück. Verweist ein Chat auf ein Projekt, das es nicht mehr gibt, gilt er als Chat ohne Projekt.
+  zurück. Fehlt das Feld oder verweist es auf ein Projekt, das es nicht mehr gibt, gehört der Chat zum
+  Standardprojekt.
 - Der Bereich eines Chats (`ChatNode`, was links gewählt ist) bleibt davon unberührt. Ein Projekt fasst Chats aus
   verschiedenen Bereichen zusammen.
 - Bedienung:
-  - Am Chat: „Zu Projekt hinzufügen“ mit der Liste der Projekte und „Neues Projekt“, sowie „Aus Projekt entfernen“.
-  - Die Chat-Liste zeigt oben die Projekte in ihrer Farbe. Ein Projekt klappt zu seinen Chats auf und bietet „Neuer
-    Chat in diesem Projekt“. Darunter stehen wie heute „In diesem Bereich“ und „Übrige Chats“, dort nur noch Chats
-    ohne Projekt. Jeder Chat steht in der Liste genau einmal.
-  - Ein neuer Chat im Projekt beginnt im gerade gewählten Bereich.
+  - Am Chat: „Zu Projekt hinzufügen“ mit der Liste der Projekte und „Neues Projekt“, sowie „Aus Projekt
+    entfernen“. Entfernen legt den Chat zurück ins Standardprojekt.
+  - Die Chat-Liste zeigt zuerst die Chats des aktiven Projekts (F6), gegliedert wie heute in „In diesem Bereich“ und
+    „Übrige Chats“. Darunter stehen die anderen Projekte in ihrer Farbe. Jedes klappt zu seinen Chats auf und bietet
+    „Neuer Chat in diesem Projekt“. Jeder Chat steht in der Liste genau einmal. Ist das Standardprojekt aktiv und
+    gibt es kein weiteres Projekt, sieht die Liste aus wie heute.
+  - Ein neuer Chat gehört zum aktiven Projekt und beginnt im gerade gewählten Bereich.
   - Am Projekt: „Umbenennen“, „Farbe ändern“, „Löschen“.
 
 ### F3. Artefakte gehören dem Projekt
-- Ein Artefakt der Schreibumgebung (ADR 0045) hat genau einen Besitzer: den Chat, wenn dieser zu keinem Projekt
-  gehört, sonst das Projekt.
+- Ein Artefakt der Schreibumgebung (ADR 0045) hat genau einen Besitzer: im Standardprojekt den Chat, in jedem
+  anderen Projekt das Projekt. Im Standardprojekt teilen Chats ihre Artefakte also nicht, wie heute.
 - Alle Chats eines Projekts sehen, öffnen und bearbeiten dessen Artefakte. Die Werkzeuge der KI arbeiten in einem
   Projekt-Chat auf den Artefakten des Projekts.
 - Kommt ein Chat mit eigenen Artefakten in ein Projekt, ziehen sie ins Projekt um. Verweise zwischen Artefakten
@@ -319,20 +328,40 @@ Abschnitt 1. Er ändert nichts an den Favoriten.
 ### F4. Ablage
 - Es gilt Abschnitt 3: je Projekt ein Ordner im Datenordner der App, darin je Bestandteil eine Datei mit
   Versionsfeld, atomar geschrieben, Quarantäne statt Überschreiben.
-- Vorgezogen wird nur, was die Chats brauchen: das Projekt mit ID, Name und Farbe und der Bestandteil „Artefakte“.
-  Die Umwandlung der Favoritenliste in das Standardprojekt „Allgemein“ (Paket P1) bleibt, wo sie ist, und benutzt
-  später dieselbe Projektablage.
+- Vorgezogen wird nur, was die Chats brauchen: das Projekt mit ID, Name und Farbe, der Bestandteil „Artefakte“ und
+  das aktive Projekt. Das Standardprojekt „Allgemein“ gibt es dabei von Anfang an, mit fester ID und ohne Farbe. Die
+  Umwandlung der Favoritenliste in die Favoriten von „Allgemein“ (Paket P1) bleibt, wo sie ist, und benutzt später
+  dieselbe Projektablage.
 
 ### F5. Löschen eines Projekts
 - Nur nach „Projekt wirklich löschen?“ Ja/Nein. Die Frage nennt, wie viele Chats und Artefakte betroffen sind.
-- Die Chats bleiben erhalten und sind danach Chats ohne Projekt. Die Artefakte des Projekts gehen mit dem Projekt in
-  den Papierkorb und lassen sich wie ein gelöschter Chat bis zum Neustart wiederherstellen.
+- Die Chats bleiben erhalten und gehören danach zum Standardprojekt. Die Artefakte des Projekts gehen mit dem
+  Projekt in den Papierkorb und lassen sich wie ein gelöschter Chat bis zum Neustart wiederherstellen.
+- Das Standardprojekt lässt sich nicht löschen. War das gelöschte Projekt aktiv, wird das Standardprojekt aktiv.
 
-### F6. Umsetzung, vorgezogen
+### F6. Aktives Projekt, global gewählt
+- Es gibt für die ganze App genau ein **aktives Projekt**, über alle Perspektiven hinweg. Ohne Wahl ist es das
+  Standardprojekt. Die Wahl gehört zum Bedienprofil und bleibt über einen Neustart erhalten.
+- **Ort der Wahl:** unten in der Ecke beim Schriftzug „AresStack“. Im Standardprojekt steht dort der Schriftzug wie heute,
+  rechts daneben ein kleiner Pfeil nach oben. In jedem anderen Projekt stehen dort statt des Schriftzugs Name und
+  Farbe des Projekts. Der Pfeil öffnet nach oben die Liste der Projekte mit „Neues Projekt“.
+- Wer keine Projekte anlegt, merkt davon nichts außer dem Pfeil.
+- **Was das aktive Projekt bestimmt:**
+  - Neue Chats gehören zum aktiven Projekt, in jeder Perspektive.
+  - Die Chat-Liste zeigt seine Chats zuerst (F2).
+  - Der Stern der Favoriten wirkt auf das aktive Projekt. Damit ändert sich Abschnitt 4.1 in einem Punkt: Aktiv ist
+    nicht mehr das in der Favoritenansicht gewählte Projekt, sondern dieses eine, global gewählte.
+- Öffnet der Benutzer einen Chat eines anderen Projekts, wird dessen Projekt aktiv. So zeigt die Ecke immer das
+  Projekt, in dem gerade gearbeitet wird, und Artefakte landen dort, wo die Ecke es sagt.
+- Der Wechsel wird den Ansichten gemeldet (ADR 0027), niemand fragt ab. Ein Wechsel startet nichts von selbst: keinen
+  Abgleich, keinen KI-Lauf.
+
+### F7. Umsetzung, vorgezogen
 - K1: Projektablage (ID, Name, Farbe) und Projekt-ID am Chat. Reine Logik mit Tests.
 - K2: Chat-Liste mit Projekten, Zuordnen und Entfernen, neuer Chat im Projekt, Farbe an Chat und Reitern (K1).
 - K3: Besitzer eines Artefakts ist Chat oder Projekt, Umzug beim Beitritt (K1 und der Artefakt-Speicher aus
   ADR 0045). Dieses Paket gehört zum Bau der Schreibumgebung, damit nur eine Stelle den Artefakt-Speicher ändert.
+- K4: Aktives Projekt im Bedienprofil und die Wahl unten in der Ecke, über alle Perspektiven (K1).
 
 ## Umsetzung
 
