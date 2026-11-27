@@ -39,6 +39,15 @@ public final class ChatArtifactStore {
 
     /** Die Endung einer Artefakt-Datei; bewusst nicht {@code .json}, damit die Chat-Listen sie nie lesen. */
     static final String SUFFIX = ".artefakt";
+    /** Ein gelöschtes Artefakt bis zum nächsten Start (Papierkorb wie beim Chat, ADR 0047): wiederherstellbar. */
+    static final String DELETED = SUFFIX + ".deleted";
+    /**
+     * Was vom endgültig Gelöschten bleibt: eine leere Marke, damit seine Kennung nie wieder vergeben wird und alte
+     * Verweise ({@code artefakt:G2}) nie auf fremden Inhalt zeigen.
+     */
+    static final String TOMBSTONE = SUFFIX + ".vergeben";
+    /** Die Besitzer, deren Gelöschte dieser Programmlauf schon endgültig entfernt hat (einmal je Start). */
+    private static final java.util.Set<Path> PURGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Jede Kennung eines erwarteten Stands passt: Die Werkzeuge schreiben immer auf den neuesten. */
     public static final long ANY = -1;
     /** Die zuletzt offenen Reiter des Chats, eine Kennung je Zeile. */
@@ -56,7 +65,11 @@ public final class ChatArtifactStore {
      * Eine Änderung an einem Artefakt, für die Ansicht; {@code owner} ist der Ordner des Besitzers ({@link #owner}),
      * sodass jeder Chat eines Projekts die Änderung eines anderen sieht.
      */
-    public record Event(Path folder, String chatId, Path owner, ChatArtifact artifact, List<String> changed) {
+    public record Event(Path folder, String chatId, Path owner, ChatArtifact artifact, List<String> changed,
+                        boolean deleted) {
+        public Event(Path folder, String chatId, Path owner, ChatArtifact artifact, List<String> changed) {
+            this(folder, chatId, owner, artifact, changed, false);
+        }
     }
 
     /** Das Ergebnis eines Schreibens; bei Erfolg der neue Stand, sonst der Grund und der aktuelle Stand. */
@@ -182,6 +195,14 @@ public final class ChatArtifactStore {
      * @return die neuen Kennungen der umgezogenen Artefakte (alt → neu), für Verweise im Verlauf des Chats
      */
     public Map<String, String> moveToProject(Path folder, String chatId, String projectId) {
+        List<Event> events = new ArrayList<>();
+        Map<String, String> moved = moveLocked(folder, chatId, projectId, events);
+        // Jede Ansicht beider Besitzer erfährt den Umzug (etwa die Liste „Artefakte“ links): fort im alten, neu im neuen.
+        events.forEach(this::notify);
+        return moved;
+    }
+
+    private Map<String, String> moveLocked(Path folder, String chatId, String projectId, List<Event> events) {
         synchronized (LOCK) {
             // Der bisherige Besitzer, bevor das neue Projekt gilt: Wechselt der Chat das Projekt, ziehen die von ihm
             // erzeugten Artefakte mit (ADR 0047, erzeugender Chat); die übrigen bleiben im alten Projekt.
@@ -191,7 +212,6 @@ public final class ChatArtifactStore {
             Path chatFolder = chats.artifacts(folder, chatId);
             Path to = projectOwner(projectId);
             if (to == null) {
-                restoreProject(chatId, before);
                 return Map.of();
             }
             Map<ChatArtifact, Path> origins = new LinkedHashMap<>();
@@ -228,15 +248,14 @@ public final class ChatArtifactStore {
             }
             List<ChatArtifact> own = List.copyOf(origins.keySet());
             if (own.isEmpty()) {
-                restoreProject(chatId, before);
                 return Map.of();
             }
             List<ChatArtifact> copied = new ArrayList<>(own);
             copied.addAll(borrowed.keySet());
             Map<String, String> renamed = new LinkedHashMap<>();
             Map<String, Integer> next = new java.util.HashMap<>();
-            for (ChatArtifact existing : listIn(to)) {
-                Matcher match = ID.matcher(existing.id());
+            for (String existing : takenIds(to)) {
+                Matcher match = ID.matcher(existing);
                 if (match.matches()) {
                     next.merge(match.group(1), Integer.parseInt(match.group(2)) + 1, Math::max);
                 }
@@ -281,7 +300,9 @@ public final class ChatArtifactStore {
                     LOG.log(System.Logger.Level.WARNING, "Original nicht entfernt: " + e.getClass().getSimpleName());
                 }
                 moved.put(artifact.id(), renamed.get(artifact.id()));
+                events.add(new Event(null, null, origins.get(artifact), artifact, List.of(), true));
             }
+            copies.forEach(copy -> events.add(new Event(null, null, to, copy, List.of())));
             List<String> tabs = openTabs(folder, chatId).stream().map(moved::get)
                     .filter(java.util.Objects::nonNull).toList();
             Path tabsFile = chatFolder == null ? null : chatFolder.resolve(TABS);
@@ -298,7 +319,10 @@ public final class ChatArtifactStore {
         }
     }
 
-    /** Setzt das gemerkte Projekt eines offenen Chats auf den Stand vor einem gescheiterten Umzug zurück. */
+    /**
+     * Setzt das gemerkte Projekt eines offenen Chats auf den Stand vor einem gescheiterten Umzug zurück. Nur beim
+     * Scheitern: Gibt es nichts umzuziehen, gilt das neue Projekt (auch für einen noch nicht gespeicherten Chat).
+     */
     private void restoreProject(String chatId, String before) {
         if (chatId == null) {
             return;
@@ -310,16 +334,12 @@ public final class ChatArtifactStore {
         }
     }
 
-    /** Die Kennungen, auf die ein Dokument in irgendeinem Stand verweist ({@code artefakt:G1}). */
+    /** Die Grafiken, auf die ein Dokument in irgendeinem Stand verweist ({@code artefakt:G1}). */
     private static java.util.Set<String> references(ChatArtifact artifact) {
         java.util.Set<String> ids = new java.util.LinkedHashSet<>();
         for (ChatArtifact.Revision revision : artifact.revisions()) {
-            if (revision.document() == null) {
-                continue;
-            }
-            Matcher match = LINK.matcher(revision.document().markdown());
-            while (match.find()) {
-                ids.add(match.group(1).toUpperCase(java.util.Locale.ROOT));
+            if (revision.document() != null) {
+                ids.addAll(GraphicReferences.ids(revision.document().markdown()));
             }
         }
         return ids;
@@ -368,7 +388,169 @@ public final class ChatArtifactStore {
     /** Die Artefakte des Chats in der Reihenfolge ihres Anlegens; leer ohne Ordner. */
     public List<ChatArtifact> list(Path folder, String chatId) {
         synchronized (LOCK) {
-            return listIn(owner(folder, chatId));
+            Path owner = owner(folder, chatId);
+            purgeOnce(owner);
+            return listIn(owner);
+        }
+    }
+
+    /** Die gelöschten Artefakte des Besitzers (Papierkorb bis zum nächsten Start), zuletzt angelegte zuletzt. */
+    public List<ChatArtifact> deleted(Path folder, String chatId) {
+        synchronized (LOCK) {
+            return deletedAt(owner(folder, chatId));
+        }
+    }
+
+    /** Die gelöschten Artefakte eines Projekts (Liste „Artefakte“ links, durchgestrichen bis zum nächsten Start). */
+    public List<ChatArtifact> deletedInProject(String projectId) {
+        synchronized (LOCK) {
+            return deletedAt(projectOwner(projectId));
+        }
+    }
+
+    private static List<ChatArtifact> deletedAt(Path owner) {
+        synchronized (LOCK) {
+            purgeOnce(owner);
+            List<ChatArtifact> artifacts = new ArrayList<>();
+            if (owner == null || !Files.isDirectory(owner)) {
+                return artifacts;
+            }
+            try (DirectoryStream<Path> files = Files.newDirectoryStream(owner, "*" + DELETED)) {
+                for (Path file : files) {
+                    ChatArtifact artifact = read(file);
+                    if (artifact != null) {
+                        artifacts.add(artifact);
+                    }
+                }
+            } catch (IOException e) {
+                LOG.log(System.Logger.Level.WARNING, "Papierkorb nicht lesbar: " + e.getClass().getSimpleName());
+            }
+            artifacts.sort(Comparator.comparingLong(ChatArtifact::createdAt).thenComparing(ChatArtifact::id));
+            return artifacts;
+        }
+    }
+
+    /**
+     * Löscht ein Artefakt (ADR 0047: einzeln am Artefakt, nicht mit dem Chat): Es geht in den Papierkorb und ist bis zum
+     * nächsten Start wiederherstellbar ({@link #restore}); seine Kennung wird nicht neu vergeben.
+     */
+    public WriteResult delete(Path folder, String chatId, String artifactId) {
+        return deleteAt(() -> owner(folder, chatId), folder, chatId, artifactId);
+    }
+
+    /** Wie {@link #delete}, für ein Artefakt des Projekts ohne Chat (Liste „Artefakte“ links, ADR 0047 §5). */
+    public WriteResult deleteInProject(String projectId, String artifactId) {
+        return deleteAt(() -> projectOwner(projectId), null, null, artifactId);
+    }
+
+    private WriteResult deleteAt(java.util.function.Supplier<Path> where, Path folder, String chatId,
+                                 String artifactId) {
+        ChatArtifact current;
+        Path owner;
+        synchronized (LOCK) {
+            owner = where.get();
+            current = readAt(owner, artifactId);
+            String problem = problem(current, artifactId, ANY, null);
+            if (problem != null) {
+                return WriteResult.failed(current, problem);
+            }
+            // Erst den Papierkorb des letzten Laufs leeren, sonst ginge beim nächsten Auflisten auch dieses mit.
+            purgeOnce(owner);
+            try {
+                Files.move(owner.resolve(current.id() + SUFFIX), owner.resolve(current.id() + DELETED),
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException e) {
+                LOG.log(System.Logger.Level.WARNING, "Artefakt nicht gelöscht: " + e.getClass().getSimpleName());
+                return WriteResult.failed(current, "Das Artefakt konnte nicht gelöscht werden.");
+            }
+        }
+        notify(new Event(folder, chatId, owner, current, List.of(), true));
+        return WriteResult.ok(current, List.of());
+    }
+
+    /** Holt ein gelöschtes Artefakt aus dem Papierkorb zurück; {@code null}, wenn es dort nicht (mehr) liegt. */
+    public ChatArtifact restore(Path folder, String chatId, String artifactId) {
+        return restoreAt(() -> owner(folder, chatId), folder, chatId, artifactId);
+    }
+
+    /** Wie {@link #restore}, für ein Artefakt des Projekts ohne Chat (Liste „Artefakte“ links). */
+    public ChatArtifact restoreInProject(String projectId, String artifactId) {
+        return restoreAt(() -> projectOwner(projectId), null, null, artifactId);
+    }
+
+    private ChatArtifact restoreAt(java.util.function.Supplier<Path> where, Path folder, String chatId,
+                                   String artifactId) {
+        ChatArtifact restored;
+        Path owner;
+        synchronized (LOCK) {
+            owner = where.get();
+            String id = artifactId == null ? "" : artifactId.strip().toUpperCase(java.util.Locale.ROOT);
+            if (owner == null || !ID.matcher(id).matches()) {
+                return null;
+            }
+            Path trashed = owner.resolve(id + DELETED);
+            Path target = owner.resolve(id + SUFFIX);
+            if (!Files.isRegularFile(trashed) || Files.exists(target)) {
+                return null;
+            }
+            try {
+                Files.move(trashed, target);
+            } catch (IOException e) {
+                LOG.log(System.Logger.Level.WARNING, "Artefakt nicht wiederhergestellt: "
+                        + e.getClass().getSimpleName());
+                return null;
+            }
+            restored = read(target);
+        }
+        if (restored != null) {
+            notify(new Event(folder, chatId, owner, restored, List.of()));
+        }
+        return restored;
+    }
+
+    /** Die vergebenen Kennungen eines Besitzers, auch die im Papierkorb: Sie werden nicht neu vergeben. */
+    private static List<String> takenIds(Path owner) {
+        List<String> ids = new ArrayList<>();
+        if (owner == null || !Files.isDirectory(owner)) {
+            return ids;
+        }
+        try (DirectoryStream<Path> files = Files.newDirectoryStream(owner, "*" + SUFFIX + "*")) {
+            for (Path file : files) {
+                String name = file.getFileName().toString();
+                String id = name.endsWith(DELETED) ? name.substring(0, name.length() - DELETED.length())
+                        : name.endsWith(TOMBSTONE) ? name.substring(0, name.length() - TOMBSTONE.length())
+                        : name.endsWith(SUFFIX) ? name.substring(0, name.length() - SUFFIX.length()) : null;
+                if (id != null && ID.matcher(id).matches()) {
+                    ids.add(id);
+                }
+            }
+        } catch (IOException e) {
+            LOG.log(System.Logger.Level.WARNING, "Artefakte nicht lesbar: " + e.getClass().getSimpleName());
+        }
+        return ids;
+    }
+
+    /** Für Tests: wie ein Neustart der App, der Papierkorb des letzten Laufs wird beim nächsten Zugriff geleert. */
+    static void newRun() {
+        PURGED.clear();
+    }
+
+    /** Beim ersten Zugriff eines Programmlaufs: Was im letzten Lauf gelöscht wurde, geht endgültig. */
+    private static void purgeOnce(Path owner) {
+        if (owner == null || !Files.isDirectory(owner) || !PURGED.add(owner.toAbsolutePath().normalize())) {
+            return;
+        }
+        try (DirectoryStream<Path> files = Files.newDirectoryStream(owner, "*" + DELETED)) {
+            for (Path file : files) {
+                String name = file.getFileName().toString();
+                Path mark = owner.resolve(name.substring(0, name.length() - DELETED.length()) + TOMBSTONE);
+                if (!Files.exists(mark)) {
+                    Files.createFile(mark);
+                }
+                Files.deleteIfExists(file);
+            }
+        } catch (IOException e) {
+            LOG.log(System.Logger.Level.WARNING, "Papierkorb nicht geleert: " + e.getClass().getSimpleName());
         }
     }
 
@@ -453,6 +635,18 @@ public final class ChatArtifactStore {
     }
 
     /**
+     * Die globalen Artefakte eines Projekts ({@code null} = Standardprojekt) ohne geladenen Chat (ADR 0047 §5, Liste
+     * „Artefakte“ links): Dokumente, Grafiken und Bücher, ohne die gelöschten; leer ohne Datenordner.
+     */
+    public List<ChatArtifact> listInProject(String projectId) {
+        synchronized (LOCK) {
+            Path owner = projectOwner(projectId);
+            purgeOnce(owner);
+            return listIn(owner);
+        }
+    }
+
+    /**
      * Legt das Buch eines Ordners an (ADR 0047): ein Dokument mit Kennung B… im Projekt, ohne Chat. Welcher Ordner es
      * hat, merkt sich die Buchverwaltung. Jeder Chat des Projekts sieht und bearbeitet es; „Neue Auflage“ ist
      * {@link #newEdition}.
@@ -467,8 +661,8 @@ public final class ChatArtifactStore {
         ChatArtifact created;
         synchronized (LOCK) {
             int next = 1;
-            for (ChatArtifact existing : listIn(owner)) {
-                Matcher match = ID.matcher(existing.id());
+            for (String existing : takenIds(owner)) {
+                Matcher match = ID.matcher(existing);
                 if (match.matches() && match.group(1).equals(BOOK)) {
                     next = Math.max(next, Integer.parseInt(match.group(2)) + 1);
                 }
@@ -487,7 +681,11 @@ public final class ChatArtifactStore {
 
     /** Ein Artefakt eines Projekts ohne Chat (etwa das Buch eines Ordners) oder {@code null}. */
     public ChatArtifact readInProject(String projectId, String artifactId) {
-        Path owner = projectOwner(projectId);
+        return readAt(projectOwner(projectId), artifactId);
+    }
+
+    /** Ein Artefakt eines Besitzers oder {@code null}. */
+    private static ChatArtifact readAt(Path owner, String artifactId) {
         String id = artifactId == null ? null : artifactId.strip().toUpperCase(java.util.Locale.ROOT);
         if (owner == null || id == null || !ID.matcher(id).matches()) {
             return null;
@@ -550,8 +748,8 @@ public final class ChatArtifactStore {
             }
             String prefix = kind == ChatArtifact.Kind.GRAPHIC ? "G" : "D";
             int next = 1;
-            for (ChatArtifact existing : list(folder, chatId)) {
-                Matcher match = ID.matcher(existing.id());
+            for (String existing : takenIds(directory)) {
+                Matcher match = ID.matcher(existing);
                 if (match.matches() && match.group(1).equals(prefix)) {
                     next = Math.max(next, Integer.parseInt(match.group(2)) + 1);
                 }
@@ -666,9 +864,21 @@ public final class ChatArtifactStore {
 
     /** Benennt ein Artefakt um; der Titel ist keine Revision. */
     public WriteResult rename(Path folder, String chatId, String artifactId, String title) {
+        return renameAt(() -> owner(folder, chatId), folder, chatId, artifactId, title);
+    }
+
+    /** Wie {@link #rename}, für ein Artefakt des Projekts ohne Chat (Liste „Artefakte“ links, ADR 0047 §5). */
+    public WriteResult renameInProject(String projectId, String artifactId, String title) {
+        return renameAt(() -> projectOwner(projectId), null, null, artifactId, title);
+    }
+
+    private WriteResult renameAt(java.util.function.Supplier<Path> where, Path folder, String chatId,
+                                 String artifactId, String title) {
         WriteResult result;
+        Path owner;
         synchronized (LOCK) {
-            ChatArtifact current = read(folder, chatId, artifactId);
+            owner = where.get();
+            ChatArtifact current = readAt(owner, artifactId);
             String problem = problem(current, artifactId, ANY, null);
             if (problem != null) {
                 return WriteResult.failed(current, problem);
@@ -676,10 +886,13 @@ public final class ChatArtifactStore {
             if (title == null || title.isBlank()) {
                 return WriteResult.failed(current, "Der Titel ist leer.");
             }
-            result = store(folder, chatId, current, current.withTitle(title), List.of());
+            ChatArtifact next = current.withTitle(title);
+            result = owner == null || !write(owner, next)
+                    ? WriteResult.failed(current, "Das Artefakt konnte nicht gespeichert werden.")
+                    : WriteResult.ok(next, List.of());
         }
         if (result.success()) {
-            notify(folder, chatId, result.artifact(), List.of());
+            notify(new Event(folder, chatId, owner, result.artifact(), List.of()));
         }
         return result;
     }

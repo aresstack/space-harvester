@@ -185,6 +185,40 @@ public class ChatReadContractLiveTest {
         }
     }
 
+    /**
+     * One challenge detection: the chat's page check reports a challenge widget the research's configured detection
+     * sees ({@code SearchPageGuards}), and a plain page as clear.
+     */
+    @Test
+    public void theChatsPageCheckUsesTheResearchChallengeDetection() throws Exception {
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        String readiness = launcher.readiness().render();
+        assumeTrue("SKIPPED (environment-gated live test): " + readiness, readiness.startsWith("READY"));
+
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/plain", exchange -> respond(exchange,
+                "<html><head><title>Ruhig</title></head><body><p>Nur Text.</p></body></html>"));
+        server.createContext("/gate", exchange -> respond(exchange, "<html><head><title>Bitte warten</title></head>"
+                + "<body><p>Bitte bestätigen.</p><iframe src='/captcha-frame' style='width:320px;height:90px'>"
+                + "</iframe></body></html>"));
+        server.createContext("/captcha-frame", exchange -> respond(exchange, "<html><body>Widget</body></html>"));
+        server.start();
+        String base = "http://127.0.0.1:" + server.getAddress().getPort();
+        PlaywrightChatEngine.Instance instance = (PlaywrightChatEngine.Instance)
+                new PlaywrightChatEngine(launcher, true, 30000L).start(Files.createTempDirectory("contract-probe"));
+        try {
+            BrowserConnection chat = instance.connect();
+            String tab = chat.tabs().get(0).contextId();
+            chat.navigate(tab, base + "/plain");
+            assertEquals("", chat.probe(tab).challenge());
+            chat.navigate(tab, base + "/gate");
+            assertEquals(com.aresstack.enterpriseai.browser.api.BrowserProbe.CAPTCHA, chat.probe(tab).challenge());
+        } finally {
+            instance.stop();
+            server.stop(0);
+        }
+    }
+
     /** The link targets the research session lists for its current page. */
     private static Set<String> aTargets(PlaywrightChatEngine.Instance instance) throws Exception {
         Set<String> targets = new LinkedHashSet<>();

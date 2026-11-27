@@ -111,6 +111,12 @@ final class StandingTab extends JPanel {
     static final String CLEAR_QUESTION = "Wirklich die Entscheidung von Hand löschen? Danach gilt wieder der "
             + "berechnete Stand.";
     static final String NO_STATEMENTS = "Keine analysierten Aussagen in der Auswahl";
+    /**
+     * Wie die Analyse startet, als zweiter Satz in der leeren Liste (Angelo 27.11.2026: „ich weiß nicht, wie ich die
+     * Analyse starte“): Der Eintrag steht im Rechtsklick-Menü des Baums, von hier aus war er nicht zu finden.
+     */
+    static final String HOW_TO_ANALYZE = "Die Analyse startet per Rechtsklick auf die Auswahl im Baum links, "
+            + "Eintrag „Analysieren“.";
     static final String NO_MATCH = "Keine Treffer";
     static final String STALE_WORD = "veraltet";
     static final String DELETE_ANALYSES_TITLE = "Aussagen-Analysen löschen?";
@@ -895,7 +901,8 @@ final class StandingTab extends JPanel {
         boolean staleShown = staleChip.isSelected();
         int all = view.entries().size() - (staleShown ? 0 : stale);
         int pages = view.pages().size();
-        list.placeholder(empty(view.entries().size(), stale, staleShown));
+        list.placeholder(view.entries().isEmpty() ? NO_STATEMENTS + ". " + HOW_TO_ANALYZE
+                : empty(view.entries().size(), stale, staleShown));
         String text = all == 0 ? empty(view.entries().size(), stale, staleShown)
                 : (shownLines == all ? Texts.count(all, "Aussage", "Aussagen")
                 : shownLines + " von " + Texts.count(all, "Aussage", "Aussagen"))
@@ -1102,6 +1109,11 @@ final class StandingTab extends JPanel {
     private void conflictLabel() {
         int found = conflicts == null ? 0 : conflicts.contradictions().size();
         javax.swing.AbstractButton pill = tabs.button(CONFLICTS);
+        if (pill.getIcon() != null) {
+            // Als Symbolknopf (Analysen der Auswahl): die Zahl steht hinter dem Blitz, der Name im Tooltip.
+            tabs.mark(CONFLICTS, found == 0 ? null : String.valueOf(found));
+            return;
+        }
         pill.setText(found == 0 ? CONFLICTS : CONFLICTS + " · " + found);
         pill.revalidate();
     }

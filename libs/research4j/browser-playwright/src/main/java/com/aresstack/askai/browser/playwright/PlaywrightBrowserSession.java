@@ -848,6 +848,11 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
         currentDocument = null;
     }
 
+    /** Whether the current page shows a challenge widget ({@link Playwright4jDriver#challengeShown()}). */
+    boolean challengeShown() {
+        return playwright().challengeShown();
+    }
+
     private Playwright4jDriver playwright() {
         if (!(driver instanceof Playwright4jDriver)) {
             throw new IllegalStateException("chat tabs need the Playwright driver");

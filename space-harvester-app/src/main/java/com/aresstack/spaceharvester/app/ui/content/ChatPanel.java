@@ -1845,8 +1845,16 @@ public final class ChatPanel extends JPanel {
         /** Der offene Chat; {@code folder} ist {@code null}, solange er nicht gespeichert ist. */
         void chat(Path folder, String chatId);
 
-        /** Öffnet ein Artefakt des offenen Chats als Reiter und zeigt ihn. */
+        /** Öffnet ein Artefakt des offenen Chats als Reiter und zeigt ihn (Klick auf einen Verweis). */
         void open(String artifactId);
+
+        /**
+         * Die KI hat ein Artefakt angelegt oder geändert (ADR 0047 §5): Die Mitte schaltet dafür nicht von selbst um;
+         * ohne eigene Umsetzung wie {@link #open}.
+         */
+        default void changed(String artifactId) {
+            open(artifactId);
+        }
 
         /** Das gerade gezeigte Artefakt oder {@code null}. */
         String focus();
@@ -2896,7 +2904,7 @@ public final class ChatPanel extends JPanel {
                     turnChat, () -> showsArtifactsOf(host, targetNode, turnChat) ? host.focus() : null,
                     changed -> SwingUtilities.invokeLater(() -> {
                         if (showsArtifactsOf(host, targetNode, turnChat)) {
-                            host.open(changed.id());
+                            host.changed(changed.id());
                         }
                     }), runtime.workspace()::composeDiagram));
         }

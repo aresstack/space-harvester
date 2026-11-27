@@ -164,10 +164,38 @@ class ChatArtifactStoreTest {
         store.createDocument(folder, staying.id(), "Deins", "# Deins", ChatArtifact.Origin.AI);
         assertThat(mine.chatId()).isEqualTo(moving.id());
 
+        List<ChatArtifactStore.Event> events = new ArrayList<>();
+        store.addListener(events::add);
         java.util.Map<String, String> renamed = store.moveToProject(folder, moving.id(), "p1");
         assertThat(renamed).containsOnly(java.util.Map.entry("D1", "D1"));
+        // Beide Besitzer erfahren es: fort im alten Projekt, neu im neuen (etwa die Liste „Artefakte“ links).
+        assertThat(events).extracting(ChatArtifactStore.Event::owner, ChatArtifactStore.Event::deleted)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(standard, true),
+                        org.assertj.core.groups.Tuple.tuple(p1, false));
+        // Ein neuer, noch nicht gespeicherter Chat ohne Artefakte bleibt trotzdem im gewählten Projekt.
+        store.moveToProject(folder, "neu", "p1");
+        assertThat(store.owner(folder, "neu")).isEqualTo(p1);
         assertThat(ChatArtifactStore.listIn(p1)).extracting(ChatArtifact::title).containsExactly("Meins");
         assertThat(ChatArtifactStore.listIn(standard)).extracting(ChatArtifact::title).containsExactly("Deins");
+    }
+
+    @Test
+    void aJustDeletedArtifactStaysInTheTrashAndItsIdIsNeverGivenAgain() {
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        ChatRecord chat = chat(chats);
+        store.createDocument(folder, chat.id(), "Notiz", "# Notiz", ChatArtifact.Origin.AI);
+        store.createDocument(folder, chat.id(), "Brief", "# Brief", ChatArtifact.Origin.AI);
+        // Ohne vorheriges Auflisten gelöscht: der Papierkorb des letzten Laufs nimmt es nicht mit.
+        assertThat(store.delete(folder, chat.id(), "D2").success()).isTrue();
+        assertThat(store.deleted(folder, chat.id())).extracting(ChatArtifact::id).containsExactly("D2");
+
+        // Nach dem Neustart ist es endgültig weg, seine Kennung bleibt vergeben.
+        ChatArtifactStore.newRun();
+        assertThat(store.list(folder, chat.id())).extracting(ChatArtifact::id).containsExactly("D1");
+        assertThat(store.deleted(folder, chat.id())).isEmpty();
+        assertThat(store.createDocument(folder, chat.id(), "Neu", "", ChatArtifact.Origin.AI).id()).isEqualTo("D3");
     }
 
     @Test

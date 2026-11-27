@@ -82,15 +82,19 @@ public final class BrowserSettings implements BrowserPolicyStore, ChangeApproval
         store.putAll(values);
     }
 
-    /** Der Browser des Chats (ADR 0046): msedge (Vorgabe), chrome oder camoufox. */
+    /** Der Browser des Chats (ADR 0046, research4j#1): firefox (Vorgabe), msedge, chrome oder camoufox. */
     static final String CHANNEL_KEY = "browser.channel";
-    /** Edge ist installiert und nutzt Proxy und Zertifikate des Hauses, ohne Download (ADR 0046). */
-    public static final String DEFAULT_CHANNEL = "msedge";
+    /**
+     * Der installierte Firefox (research4j#1, Angelos Auftrag vom 27.11.2026, Schritt 8): ohne Zusatzinstallation,
+     * über WebDriver BiDi. Edge und Chrome bleiben wählbar, sind aber nie die Vorgabe.
+     */
+    public static final String DEFAULT_CHANNEL = "firefox";
     /** Die Browser, zwischen denen der Benutzer wählt, mit ihren Namen in der Oberfläche. */
     public static final Map<String, String> CHANNELS = channels();
 
     private static Map<String, String> channels() {
         Map<String, String> channels = new java.util.LinkedHashMap<>();
+        channels.put("firefox", "Mozilla Firefox");
         channels.put("msedge", "Microsoft Edge");
         channels.put("chrome", "Google Chrome");
         channels.put("camoufox", "Camoufox");

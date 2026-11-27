@@ -610,10 +610,14 @@ final class PageOperations {
     }
 
     /** What the page says about itself for the access rules (sign-in form, origin, title). */
-    BrowserProbe probe(Page page) throws BrowserException {
+    BrowserProbe probe(Page page, java.util.function.BooleanSupplier challengeShown) throws BrowserException {
         JsonArray values = parse(evaluate(page, PROBE_SCRIPT));
-        return new BrowserProbe(values.get(0).getAsBoolean(), values.get(1).getAsString(),
-                values.get(2).getAsString(), values.get(3).getAsString());
+        String challenge = values.get(2).getAsString();
+        if (!BrowserProbe.CAPTCHA.equals(challenge) && challengeShown.getAsBoolean()) {
+            challenge = BrowserProbe.CAPTCHA; // a challenge widget the research's detection sees
+        }
+        return new BrowserProbe(values.get(0).getAsBoolean(), values.get(1).getAsString(), challenge,
+                values.get(3).getAsString());
     }
 
     /** A token that changes with every new document in the page, to tell whether the page was replaced. */

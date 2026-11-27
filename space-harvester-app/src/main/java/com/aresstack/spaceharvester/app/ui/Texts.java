@@ -33,6 +33,14 @@ public final class Texts {
     /** Hinweis an einem Buch, dessen Seiten sich seit der Auflage geändert haben. */
     public static final String BOOK_STALE = "Seiten des Buchs haben sich seither geändert";
 
+    /** Löschen eines Artefakts (ADR 0047), am Reiter wie in der Liste links. */
+    public static final String ARTIFACT_DELETE_TITLE = "Artefakt löschen";
+
+    /** Die Rückfrage vor dem Löschen eines Artefakts; „wirklich“ Ja/Nein wie beim Chat. */
+    public static String artifactDeleteQuestion(String title) {
+        return "„" + title + "“ wirklich löschen? Alle Chats des Projekts sehen es dann nicht mehr.";
+    }
+
     public static final String OUTDATED_WHY = "Veraltet: In der Quelle gibt es eine neuere Version, der Inhalt ist noch "
             + "nicht geladen, meist wegen der Betriebsart „Nur katalogisieren“. Ändern unter Quellen › „Diese Quelle "
             + "anpassen …“ › Betriebsart.";
