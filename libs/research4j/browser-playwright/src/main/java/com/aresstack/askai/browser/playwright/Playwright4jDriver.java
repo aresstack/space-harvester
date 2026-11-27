@@ -1947,25 +1947,28 @@ final class Playwright4jDriver implements PlaywrightDriver {
         return browser != null ? browser.isConnected() : !contextClosed;
     }
 
-    /** RENDERED state via the DOM: url after redirects, title, body innerText, anchors with absolute hrefs. */
+    /**
+     * RENDERED state via the DOM: url after redirects, title, body innerText, anchors with absolute hrefs. The page
+     * scripts and their parsing are the chat's ({@link PageOperations#readResult}, {@link PageOperations#linksResult}):
+     * one reading and one link extraction for chat and research; here they run through {@link #readPage}.
+     */
     private PlaywrightPageState state() {
-        String url = page.url();
-        String title = page.title();
-        String text = page.innerText("body");
-        List<PlaywrightPageState.Anchor> anchors = new ArrayList<PlaywrightPageState.Anchor>();
-        Object raw = readPage(page,
-                "() => Array.from(document.querySelectorAll('a[href]'))"
-                        + ".map(a => [String(a.innerText || '').trim(), String(a.href || '')])");
-        if (raw instanceof List) {
-            for (Object entry : (List<?>) raw) {
-                if (entry instanceof List && ((List<?>) entry).size() == 2) {
-                    List<?> pair = (List<?>) entry;
-                    anchors.add(new PlaywrightPageState.Anchor(
-                            String.valueOf(pair.get(0)), String.valueOf(pair.get(1))));
-                }
-            }
+        String readJson = String.valueOf(readPage(page, "() => " + ChatPageScripts.READ_SCRIPT));
+        String linksJson = String.valueOf(readPage(page, "() => " + ChatPageScripts.LINKS_SCRIPT));
+        com.aresstack.enterpriseai.browser.api.engine.RawPage read;
+        List<com.aresstack.enterpriseai.browser.api.engine.RawLink> links;
+        try {
+            read = PageOperations.readResult(readJson);
+            links = PageOperations.linksResult(linksJson);
+        } catch (RuntimeException unreadable) {
+            // Every caller handles a failed page read as a PlaywrightException.
+            throw new PlaywrightException("The page could not be read: " + unreadable.getMessage());
         }
-        return new PlaywrightPageState(url, title, text, anchors);
+        List<PlaywrightPageState.Anchor> anchors = new ArrayList<PlaywrightPageState.Anchor>(links.size());
+        for (com.aresstack.enterpriseai.browser.api.engine.RawLink link : links) {
+            anchors.add(new PlaywrightPageState.Anchor(link.text(), link.href()));
+        }
+        return new PlaywrightPageState(read.url(), read.title(), read.text(), anchors);
     }
 
     /**

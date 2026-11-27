@@ -274,13 +274,37 @@ final class PageOperations {
 
     /** Address, title and visible text of the page. */
     RawPage read(Page page) throws BrowserException {
-        JsonArray values = parse(evaluate(page, READ_SCRIPT));
-        return new RawPage(values.get(0).getAsString(), values.get(1).getAsString(), values.get(2).getAsString());
+        String json = evaluate(page, READ_SCRIPT);
+        try {
+            return readResult(json);
+        } catch (RuntimeException e) {
+            throw unreadable(e);
+        }
     }
 
     /** The links of the page. */
     List<RawLink> links(Page page) throws BrowserException {
-        JsonArray values = parse(evaluate(page, LINKS_SCRIPT));
+        String json = evaluate(page, LINKS_SCRIPT);
+        try {
+            return linksResult(json);
+        } catch (RuntimeException e) {
+            throw unreadable(e);
+        }
+    }
+
+    /**
+     * The answer of {@link ChatPageScripts#READ_SCRIPT}. The one reading of a page: the chat's browser_read and the
+     * research driver's page state both parse it, whichever world the script ran in (main world, add-on content
+     * script).
+     */
+    static RawPage readResult(String json) {
+        JsonArray values = JsonParser.parseString(json).getAsJsonArray();
+        return new RawPage(values.get(0).getAsString(), values.get(1).getAsString(), values.get(2).getAsString());
+    }
+
+    /** The answer of {@link ChatPageScripts#LINKS_SCRIPT}; the one link extraction of chat and research. */
+    static List<RawLink> linksResult(String json) {
+        JsonArray values = JsonParser.parseString(json).getAsJsonArray();
         List<RawLink> links = new ArrayList<>(values.size());
         for (JsonElement value : values) {
             JsonArray link = value.getAsJsonArray();
@@ -288,6 +312,10 @@ final class PageOperations {
                     link.get(3).getAsString(), link.get(4).getAsString()));
         }
         return links;
+    }
+
+    private static BrowserException unreadable(RuntimeException e) {
+        return new BrowserException(BrowserException.Kind.FAILED, "Seite konnte nicht gelesen werden", e);
     }
 
     /** The operable controls of the page (fields, buttons, lists), each with its reference for {@link #act}. */
@@ -616,7 +644,7 @@ final class PageOperations {
         try {
             return JsonParser.parseString(json).getAsJsonArray();
         } catch (RuntimeException e) {
-            throw new BrowserException(BrowserException.Kind.FAILED, "Seite konnte nicht gelesen werden", e);
+            throw unreadable(e);
         }
     }
 
