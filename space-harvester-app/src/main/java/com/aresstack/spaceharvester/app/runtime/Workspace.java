@@ -2517,6 +2517,11 @@ public final class Workspace {
         return harvester.navigation().children(caller, sourceId, spaceKey, parentPageId, cursor, true);
     }
 
+    /** Ob im Space irgendeine Wurzel zum Indexieren markiert ist (der ganze Space oder ein Teilbaum); liest nur die Ablage. */
+    public boolean indexedAnywhere(String sourceId, String spaceKey) {
+        return !harvester.indexing().marks().roots(sourceId, spaceKey).isEmpty();
+    }
+
     /** Ob genau diese Wurzel zum Indexieren markiert ist, ohne {@code pageId} der ganze Space; liest nur die Ablage. */
     public boolean indexed(String sourceId, String spaceKey, String pageId) {
         return harvester.indexing().marks().marked(sourceId, spaceKey, pageId);
