@@ -90,8 +90,12 @@ public final class ChatArtifactStore {
 
     /** Meldet das Projekt eines offenen Chats, auch bevor er gespeichert ist ({@code null} = Standardprojekt). */
     public void chatProject(String chatId, String projectId) {
-        if (chatId != null) {
-            projectOf.put(chatId, projectId == null ? "" : projectId);
+        // Unter demselben Schloss wie jedes Lesen und Schreiben: eine laufende Änderung liest und schreibt beim selben
+        // Besitzer, auch wenn der Chat gerade umzieht.
+        synchronized (LOCK) {
+            if (chatId != null) {
+                projectOf.put(chatId, projectId == null ? "" : projectId);
+            }
         }
     }
 
@@ -111,19 +115,24 @@ public final class ChatArtifactStore {
 
     /**
      * Ein Chat kommt in ein Projekt (F3): seine eigenen Artefakte ziehen in den Ordner des Projekts um. Dort bekommen
-     * sie freie Kennungen; Verweise zwischen ihnen (Grafiken im Dokument) und die offenen Reiter des Chats folgen. Ohne
-     * eigene Artefakte vergisst der Chat nur seine Reiter, denn die gehörten zum alten Besitzer.
+     * sie freie Kennungen; Verweise zwischen ihnen (Grafiken im Dokument) und die offenen Reiter des Chats folgen.
      *
-     * @return wie viele Artefakte umgezogen sind
+     * <p>Auch beim Öffnen gerufen: Ein Chat, der schon vor der Projektablage für Artefakte in einem Projekt war, hat
+     * seine Artefakte noch bei sich; sie ziehen dann einmal um.
+     *
+     * @return die neuen Kennungen der umgezogenen Artefakte (alt → neu), für Verweise im Verlauf des Chats
      */
-    public int moveToProject(Path folder, String chatId, String projectId) {
-        chatProject(chatId, projectId);
+    public Map<String, String> moveToProject(Path folder, String chatId, String projectId) {
         synchronized (LOCK) {
+            chatProject(chatId, projectId);
             Path from = chats.artifacts(folder, chatId);
             Path to = projectId == null ? null : projectArtifacts.apply(projectId);
             List<ChatArtifact> own = from == null ? List.of() : listIn(from);
             if (to == null || to.equals(from)) {
-                return 0;
+                return Map.of();
+            }
+            if (own.isEmpty()) {
+                return Map.of();
             }
             Map<String, String> renamed = new LinkedHashMap<>();
             Map<String, Integer> next = new java.util.HashMap<>();
@@ -139,7 +148,7 @@ public final class ChatArtifactStore {
                 next.put(prefix, number + 1);
                 renamed.put(artifact.id(), prefix + number);
             }
-            int moved = 0;
+            Map<String, String> moved = new LinkedHashMap<>();
             for (ChatArtifact artifact : own) {
                 ChatArtifact copy = renamed(artifact, renamed);
                 if (copy == null || !write(to, copy)) {
@@ -147,12 +156,12 @@ public final class ChatArtifactStore {
                 }
                 try {
                     Files.deleteIfExists(from.resolve(artifact.id() + SUFFIX));
-                    moved++;
+                    moved.put(artifact.id(), copy.id());
                 } catch (IOException e) {
                     LOG.log(System.Logger.Level.WARNING, "Artefakt nicht verschoben: " + e.getClass().getSimpleName());
                 }
             }
-            List<String> tabs = openTabs(folder, chatId).stream().map(renamed::get)
+            List<String> tabs = openTabs(folder, chatId).stream().map(moved::get)
                     .filter(java.util.Objects::nonNull).toList();
             Path tabsFile = from == null ? null : from.resolve(TABS);
             try {
@@ -168,6 +177,22 @@ public final class ChatArtifactStore {
         }
     }
 
+    /** {@code text} mit jedem Verweis {@code artefakt:D1} auf die neue Kennung aus {@code renamed}. */
+    public static String relink(String text, Map<String, String> renamed) {
+        if (text == null || renamed.isEmpty() || !text.contains(DocumentChatTools.LINK_SCHEME)) {
+            return text;
+        }
+        Matcher match = LINK.matcher(text);
+        StringBuilder out = new StringBuilder();
+        while (match.find()) {
+            String target = renamed.get(match.group(1).toUpperCase(java.util.Locale.ROOT));
+            match.appendReplacement(out, Matcher.quoteReplacement(target == null ? match.group()
+                    : DocumentChatTools.LINK_SCHEME + target));
+        }
+        match.appendTail(out);
+        return out.toString();
+    }
+
     /** Verweise auf eine Grafik im Text: {@code artefakt:G1}, ohne weitere Ziffer dahinter. */
     private static final Pattern LINK = Pattern.compile(Pattern.quote(DocumentChatTools.LINK_SCHEME)
             + "([DG]\\d{1,6})(?!\\d)", Pattern.CASE_INSENSITIVE);
@@ -177,15 +202,7 @@ public final class ChatArtifactStore {
         try {
             String json = JSON.writeValueAsString(new ChatArtifact(renamed.get(artifact.id()), artifact.kind(),
                     artifact.title(), artifact.createdAt(), artifact.revisions()));
-            Matcher match = LINK.matcher(json);
-            StringBuilder out = new StringBuilder();
-            while (match.find()) {
-                String target = renamed.get(match.group(1).toUpperCase(java.util.Locale.ROOT));
-                match.appendReplacement(out, Matcher.quoteReplacement(target == null ? match.group()
-                        : DocumentChatTools.LINK_SCHEME + target));
-            }
-            match.appendTail(out);
-            return JSON.readValue(out.toString(), ChatArtifact.class);
+            return JSON.readValue(relink(json, renamed), ChatArtifact.class);
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Artefakt nicht umbenannt: " + e.getClass().getSimpleName());
             return null;

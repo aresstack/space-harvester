@@ -1850,12 +1850,29 @@ public final class ChatPanel extends JPanel {
                 && java.util.Objects.equals(artifactChat, chatId);
     }
 
+    /**
+     * Meldet dem Speicher das Projekt des offenen Chats; hat der Chat in einem Projekt noch eigene Artefakte, ziehen
+     * sie ins Projekt um (ADR 0043 F3), und die Verweise in seinen Antworten folgen den neuen Kennungen.
+     */
+    private java.util.Map<String, String> adoptArtifacts() {
+        java.util.Map<String, String> renamed = artifacts.moveToProject(home, chat.id(), chat.projectId());
+        if (renamed.isEmpty()) {
+            return renamed;
+        }
+        chat = chat.withTexts(text -> com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore.relink(text,
+                renamed));
+        if (home != null && !chat.isEmpty()) {
+            store.save(home, chat);
+        }
+        return renamed;
+    }
+
     /** Meldet der Mitte einen Wechsel des offenen Chats (neuer, geladener oder erstmals gespeicherter Chat). */
     private void announceArtifactChat() {
         if (artifacts == null) {
             return;
         }
-        artifacts.chatProject(chat.id(), chat.projectId());
+        adoptArtifacts();
         if (!java.util.Objects.equals(artifactFolder, home) || !java.util.Objects.equals(artifactChat, chat.id())) {
             artifactFolder = home;
             artifactChat = chat.id();
@@ -3904,7 +3921,10 @@ public final class ChatPanel extends JPanel {
         }
         if (moved && artifacts != null) {
             // Eigene Artefakte ziehen ins neue Projekt um (F3); die Mitte zeigt danach die des neuen Besitzers.
-            artifacts.moveToProject(home, chat.id(), chat.projectId());
+            if (adoptArtifacts().isEmpty()) {
+                // Nichts umgezogen: Die offenen Reiter gehörten zum alten Besitzer.
+                artifacts.rememberTabs(home, chat.id(), List.of());
+            }
             artifactHost.chat(null, null);
             artifactFolder = null;
             announceArtifactChat();
