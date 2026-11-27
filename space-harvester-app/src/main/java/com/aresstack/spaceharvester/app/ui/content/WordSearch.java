@@ -74,7 +74,8 @@ public final class WordSearch {
 
         /** Schlüssel gegen Doppelte, wenn mehrere Suchtexte denselben Begriff finden. */
         public String key() {
-            return kind + "\u0000" + (term != null ? term.normalized() : verb.lemma());
+            // Nomen und Kennung gleichen Wortlauts sind im Core verschiedene Begriffe: die Art des Core gehört dazu.
+            return kind + "\u0000" + (term != null ? term.kind() + "\u0000" + term.normalized() : verb.lemma());
         }
 
         static Word of(TermQueries.TermSummary term, Kind kind) {
@@ -190,10 +191,17 @@ public final class WordSearch {
     public List<Place> places(Word word) throws Exception {
         Map<String, Place> byPage = new LinkedHashMap<>();
         if (word.term() != null) {
-            TermQueries.OccurrenceList list = workspace.occurrences(new TermQueries.OccurrenceSearch(
-                    word.term().normalized(), word.term().kind(), null, null, TermQueries.MAX_LIMIT, null, 0, origin)
-                    .within(terms.pages()));
-            for (TermQueries.Occurrence occurrence : list.occurrences()) {
+            // Alle Fundstellen, Stapel für Stapel dem Cursor des Core nach; sonst fehlten Seiten nach dem ersten Stapel.
+            List<TermQueries.Occurrence> all = new ArrayList<>();
+            String cursor = null;
+            do {
+                TermQueries.OccurrenceList list = workspace.occurrences(new TermQueries.OccurrenceSearch(
+                        word.term().normalized(), word.term().kind(), null, null, TermQueries.MAX_LIMIT, cursor, 0,
+                        origin).within(terms.pages()));
+                all.addAll(list.occurrences());
+                cursor = list.nextCursor();
+            } while (cursor != null);
+            for (TermQueries.Occurrence occurrence : all) {
                 byPage.merge(occurrence.sourceId() + "/" + occurrence.pageId(),
                         new Place(occurrence.sourceId(), occurrence.spaceKey(), occurrence.pageId(),
                                 occurrence.title(), 1),

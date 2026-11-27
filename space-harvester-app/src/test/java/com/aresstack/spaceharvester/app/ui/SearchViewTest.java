@@ -799,6 +799,14 @@ class SearchViewTest {
                 .contains("3 Seiten", "davon 1 veraltet");
         assertThat(SearchView.verbsQuestion(new WordSearch.VerbCoverage(0, 5, 0), "Alpha"))
                 .endsWith("Aussagen wirklich jetzt analysieren?");
+        // Nomen und Kennung gleichen Wortlauts bleiben zwei Zeilen.
+        var noun = new com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary("Order", "order",
+                com.aresstack.spaceharvester.application.terms.TermKind.NOUN, 1, 1, 1, List.of(), List.of());
+        var identifier = new com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary("order", "order",
+                com.aresstack.spaceharvester.application.terms.TermKind.IDENTIFIER, 1, 1, 1, List.of(), List.of());
+        assertThat(new WordSearch.Word("Order", WordSearch.Kind.IDENTIFIERS, 1, 1, "", noun, null).key())
+                .isNotEqualTo(new WordSearch.Word("order", WordSearch.Kind.IDENTIFIERS, 1, 1, "", identifier, null)
+                        .key());
         assertThat(WordSearch.origin(true, false)).isEqualTo(
                 com.aresstack.spaceharvester.application.terms.TermOrigin.PAGES);
         assertThat(WordSearch.origin(false, true)).isEqualTo(

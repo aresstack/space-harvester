@@ -1586,10 +1586,12 @@ public final class SearchView implements View {
     private java.util.function.Consumer<SearchLocation> searchLocationListener = location -> { };
 
     record SearchLocation(String text, List<Explorer.Scope> area, boolean words, boolean technical, boolean semantic,
-                          boolean neighbors, boolean synonyms, boolean termPages, Set<DocumentKind> kinds, String label) {
+                          boolean neighbors, boolean synonyms, boolean termPages, Set<DocumentKind> kinds, String label,
+                          Set<WordSearch.Kind> wordKinds, boolean wordSynonyms) {
         SearchLocation {
             area = List.copyOf(area);
             kinds = Set.copyOf(kinds);
+            wordKinds = Set.copyOf(wordKinds);
         }
     }
 
@@ -1604,7 +1606,8 @@ public final class SearchView implements View {
                     .collect(java.util.stream.Collectors.toSet());
             searchLocationListener.accept(new SearchLocation(text, area, words, technicalTerms.isSelected(),
                     semantic.isSelected(), neighbors.isSelected(), glossarySynonyms.isSelected(), termPages.isSelected(),
-                    selectedKinds, "Suche: " + visitName(new Visit(text, area))));
+                    selectedKinds, "Suche: " + visitName(new Visit(text, area)), chosenWordKinds(),
+                    wordSynonyms.isSelected()));
         }
     }
 
@@ -1619,6 +1622,8 @@ public final class SearchView implements View {
                 switchMode(location.words());
             }
             technicalTerms.setSelected(location.technical());
+            wordKindBoxes.forEach((kind, box) -> box.setSelected(location.wordKinds().contains(kind)));
+            wordSynonyms.setSelected(location.wordSynonyms());
             semantic.setSelected(location.semantic());
             neighbors.setSelected(location.neighbors());
             glossarySynonyms.setSelected(location.synonyms());
@@ -2086,6 +2091,8 @@ public final class SearchView implements View {
     /** Die Wortsuche im Bereich der Auswahl: Begriffe der angehakten Worttypen, „Nur Fachbegriffe“ im Glossar. */
     void searchWords() {
         AppRuntime runtime = context.runtime();
+        // Jede neue Wortsuche macht eine noch wartende (Synonyme des Glossars) ungültig, auch wenn sie gleich abbricht.
+        int mine = ++wordRequest;
         if (runtime == null) {
             return;
         }
@@ -2124,7 +2131,6 @@ public final class SearchView implements View {
         if (kinds.contains(WordSearch.Kind.VERBS)) {
             checkVerbs(search);
         }
-        int mine = ++wordRequest;
         if (!wordSynonyms.isSelected() || text.isEmpty()) {
             wordsPanel.search(search, kinds, List.of(text));
             return;
@@ -2257,8 +2263,10 @@ public final class SearchView implements View {
      * Baum.
      */
     private void checkVerbs(WordSearch search) {
-        List<Explorer.Scope> area = List.copyOf(scopes);
-        String title = areaTitle(area);
+        // Analysiert wird genau der durchsuchte Bereich: abgehakte Quellen bleiben draußen, auch bei „alle“.
+        List<Explorer.Scope> area = areaRoots().stream().map(root -> new Explorer.Scope(root.sourceId(),
+                root.spaceKey(), root.pageId(), null)).toList();
+        String title = areaTitle(scopes);
         Background.run(search::verbCoverage, coverage -> {
             if (coverage.complete()) {
                 return;
