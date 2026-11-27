@@ -102,10 +102,10 @@ class ReaderPassageLinkTest {
                 return null;
             });
             awaitTrue(() -> onEdt(() -> panel.shownPage() != null && panel.passages().selectedIndex() == 1));
-            assertThat(onEdt(() -> panel.selectedTab())).isEqualTo(tab);
+            assertThat(onEdt(() -> "Absätze".equals(tab) ? panel.analysesTab() : panel.selectedTab())).isEqualTo(tab);
         }
-        // „Absätze“ liegt seit #499 unter dem Hauptreiter „Analysen“: der Absatz ist dort gewählt (Analysen → Absätze).
-        assertThat(onEdt(() -> panel.tabs().selected())).isEqualTo("Analysen");
+        // „Absätze“ steht bei den Analysen in der Seitenleiste: der Absatz ist dort gewählt (Analysen → Absätze).
+        assertThat(onEdt(() -> panel.analysesShown())).isTrue();
         assertThat(onEdt(() -> panel.analysisTabs().selected())).isEqualTo("Absätze");
 
         // FOUND, aber der Reiter kennt den Absatz nicht (anderes Ergebnis als die Auflösung): Hinweis statt Stille.

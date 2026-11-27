@@ -345,24 +345,37 @@ class ReaderAcronymsTest {
         });
         awaitTrue(() -> onEdt(() -> panel.analysisView().below().count() > 0));
         assertThat(onEdt(() -> panel.analysisView().below().table().getColumnName(4))).isEqualTo("Unterseite");
-        // Angelo 23.11.2026: Die sieben Unterreiter stehen mittig in der unteren Leiste, „mit Unterseiten“ rechts in
-        // derselben Leiste; über dem Inhalt gibt es keine Reiterzeile mehr. Bei 900 px in einer Zeile.
+        // Die sieben Reiter stehen mittig in der unteren Leiste der Seitenleiste, „mit Unterseiten“ darunter rechts;
+        // über dem Inhalt gibt es keine Reiterzeile. Bei 900 px in einer Zeile.
         assertThat(onEdt(() -> {
-            TabFoot foot = panel.analysisFoot();
+            javax.swing.JPanel foot = panel.analysisFoot();
             foot.setSize(900, 40);
             layoutAll(foot);
             java.util.Set<Integer> rows = new java.util.HashSet<>();
-            for (String name : panel.analysisTabs().names()) {
-                javax.swing.AbstractButton tab = panel.analysisTabs().button(name);
+            for (String name : panel.analysisRow().tabs().names()) {
+                javax.swing.AbstractButton tab = panel.analysisRow().tabs().button(name);
                 assertThat(javax.swing.SwingUtilities.isDescendingFrom(tab, foot)).isTrue();
                 assertThat(javax.swing.SwingUtilities.isDescendingFrom(tab, panel)).isFalse();
                 rows.add(javax.swing.SwingUtilities.convertPoint(tab.getParent(), tab.getLocation(), foot).y);
             }
             javax.swing.JCheckBox box = panel.subpages().box();
-            assertThat(box.getParent()).isSameAs(foot);
-            assertThat(box.getX() + box.getWidth()).isEqualTo(foot.getWidth());
+            assertThat(javax.swing.SwingUtilities.isDescendingFrom(box, foot)).isTrue();
             return rows.size() + "/" + panel.analysisTabs().names().size();
         })).isEqualTo("1/7");
+        // Zu schmal für eine Zeile: Die Reiter brechen um und die Leiste wächst mit, nichts wird abgeschnitten.
+        assertThat(onEdt(() -> {
+            javax.swing.JPanel foot = panel.analysisFoot();
+            foot.setSize(140, 400);
+            layoutAll(foot);
+            javax.swing.JComponent bar = panel.analysisRow().bar();
+            int bottom = 0;
+            for (String name : panel.analysisRow().tabs().names()) {
+                javax.swing.AbstractButton tab = panel.analysisRow().tabs().button(name);
+                bottom = Math.max(bottom, tab.getY() + tab.getHeight());
+            }
+            return bar.getPreferredSize().height >= bottom
+                    && bottom > panel.analysisRow().tabs().button("Aussagen").getHeight() * 2;
+        })).isTrue();
         assertThat(onEdt(() -> panel.analysisView().createIcon().getAccessibleContext().getAccessibleName()))
                 .isEqualTo("Neue Beziehung …");
         assertThat(onEdt(() -> panel.analysisView().proposeIcon().getToolTipText()))

@@ -118,7 +118,7 @@ public final class PageDetailPanel extends JPanel {
     private static final String IMAGES = "Bilder";
     private static final String IMAGES_WORD = "Bilder";
     private static final String STATEMENTS_WORD = "Aussagen";
-    private static final String ANALYSES = "Analysen";
+    static final String ANALYSES = "Analysen";
     private static final String STATEMENTS = "Aussagen";
     static final String STATEMENTS_PLACEHOLDER = "Noch keine Aussagen – Analyse folgt";
     private static final String GRAPH = "Graph";
@@ -439,8 +439,32 @@ public final class PageDetailPanel extends JPanel {
      * eines Videos der Transkript-Knopf (Angelo, 19.11.2026: eine Leiste, die je nach Ansicht wechselt).
      */
     private final JPanel footTools = new JPanel(new BorderLayout());
-    /** Die Unterreiter von „Analysen“ einer Seite mit „mit Unterseiten“ rechts, in der unteren Leiste. */
-    private final TabFoot analysisFoot;
+    /**
+     * Die Analysen stehen nicht mehr als Reiter in der Mitte, sondern in der rechten Seitenleiste zwischen Chat und
+     * Aufträgen (Angelo 27.11.2026). Sie richten sich weiter nach der Auswahl links bzw. der offenen Seite: die
+     * Analysen der Seite, die der Auswahl ({@link #standing}) oder ein Hinweis. Das Hauptfenster stellt die Fläche in
+     * die Leiste und meldet über {@link #analysesShown(boolean)}, ob sie zu sehen ist.
+     */
+    private final java.awt.CardLayout analysesCards = new java.awt.CardLayout();
+    private final JPanel analyses = new JPanel(analysesCards);
+    /** Die Reiter der gezeigten Analysen unten in der Seitenleiste ({@link #analysisFoot}). */
+    private final JPanel analysesFoot = new JPanel(new BorderLayout());
+    /** Die eine Reiterzeile der Analysen für Seite und obere Knoten; die Ebene liefert nur ihre Ansichten. */
+    private AnalysisTabRow analysisRow;
+    private boolean analysesOpen;
+    /** Klappt die Seitenleiste mit den Analysen auf; ohne Hauptfenster (Tests) gelten sie sofort als gezeigt. */
+    private Runnable openAnalyses = () -> analysesShown(true);
+    /** Ein Sprung aus den Analysen in die Mitte (Fundstelle, Seite): die groß gezeigte Leiste gibt die Mitte frei. */
+    private Runnable revealMiddle = () -> { };
+    private static final String ANALYSES_PAGE = "page";
+    private static final String ANALYSES_NONE = "none";
+    static final String NO_ANALYSES = "Wähle links eine Seite oder einen Bereich, um die Analysen dazu zu sehen.";
+    /**
+     * Die Reiter der Analysen jeder Ebene in der unteren Leiste der Seitenleiste, rechts die ?-Hilfe des gewählten
+     * Reiters, darunter rechts „mit Unterseiten“. Die Reiter brechen um, wenn die Leiste zu schmal ist (viele Reiter
+     * eines Programms), statt abgeschnitten zu werden.
+     */
+    private JPanel analysisFoot;
     /** Die Unterreiter von „Begriffe“ (Akronyme, Bezeichner, Verben, Beziehungen) neben denen von „Analysen“. */
     /** Die Unterreiter von „Erweitert“ einer Seite bzw. ohne Seite, in der unteren Leiste. */
     private final TabFoot advancedFoot;
@@ -452,12 +476,8 @@ public final class PageDetailPanel extends JPanel {
      */
     private final JCheckBox folderSubfolders = Subpages.checkBox();
     private final TabFoot folderFoot = new TabFoot(javax.swing.Box.createHorizontalBox(), folderSubfolders);
-    /**
-     * Die Unterreiter von „Analysen“ ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner) in der unteren Leiste, wie
-     * auf einer Seite (Angelo 24.11.2026); rechts steht am Ordner „mit Unterseiten“.
-     */
-    private TabFoot standingFoot;
-    private final JPanel standingTrailing = new JPanel(new BorderLayout());
+    /** Unten rechts in {@link #analysisFoot}: „mit Unterseiten“ der Seite oder des Ordners. */
+    private final JPanel standingTrailing = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
     /** Der gewählte Ordner, sonst {@code null}; seine Stellung zeigt {@link #folderSubfolders}. */
     private ExportPanel.Selection.Collection folder;
     /** Bekommt die Stellung, die der Benutzer an {@link #folderSubfolders} wählt. */
@@ -943,17 +963,21 @@ public final class PageDetailPanel extends JPanel {
         analysisActions.add(storeField);
         analysisActions.add(analysisView.proposeIcon());
         analysisActions.add(analysisView.createIcon());
-        analysisFoot = new TabFoot(analysisTabs.detachBar(), subpages.box());
+        analysisTabs.detachBar();
         terms.selectableKinds();
         storeField.onChange(this::switchStore);
         originalContent.setOpaque(false);
         fileContent.setOpaque(false);
         originalContent.add(readingPane, ORIGINAL_PAGE_CARD);
         originalContent.add(fileContent, ORIGINAL_FILE_CARD);
+        storeBusy = new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(analysisTabs);
+        analyses.setOpaque(false);
+        analysesFoot.setOpaque(false);
+        analyses.add(placeholder(NO_ANALYSES), ANALYSES_NONE);
+        analyses.add(storeBusy, ANALYSES_PAGE);
         tabs.tab(READING, originalContent)
                 .tab(READ, readerPanel)
                 .tab(ATTACHMENTS, attachmentsPanel)
-                .tab(ANALYSES, storeBusy = new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(analysisTabs))
                 .tab(ADVANCED, advanced)
                 // Der Export hängt nicht an der gezeigten Seite, sondern an der Auswahl links; er liegt deshalb als
                 // eigene Karte neben Seite und Hinweis, der Reiter hält nur den Platz.
@@ -964,7 +988,6 @@ public final class PageDetailPanel extends JPanel {
         icons.put(READING, PageTabIcons.reading());
         icons.put(READ, PageTabIcons.text());
         icons.put(ATTACHMENTS, PageTabIcons.attachments());
-        icons.put(ANALYSES, PageTabIcons.analyses());
         icons.put(ADVANCED, PageTabIcons.properties());
         icons.put(EXPORT, PageTabIcons.export());
         tabIcons = tabs.iconBar(icons);
@@ -980,7 +1003,7 @@ public final class PageDetailPanel extends JPanel {
             }
             loadBelowSection(name);
             showRelations();
-            if (ANALYSES.equals(tabs.selected())) {
+            if (analysesOpen) {
                 loadVisible();
                 showTabStatus();
             }
@@ -1183,21 +1206,37 @@ public final class PageDetailPanel extends JPanel {
         glossaryHelp.setVisible(false);
         graphHelp.setVisible(false);
         standingTrailing.setOpaque(false);
-        standingTrailing.setVisible(false);
         // Die ?-Hilfe der Reiter steht unten rechts in der Ecke der Leiste, wie bei den Aufträgen (Angelo 27.11.2026).
-        standingTrailing.add(Comic.row(standingHelp, glossaryHelp, graphHelp), BorderLayout.EAST);
-        // Die Reiter der Analysen einer Auswahl als Symbole, der Name im Tooltip (Angelo 27.11.2026).
-        java.util.Map<String, javax.swing.Icon> standingIcons = new java.util.LinkedHashMap<>();
-        standingIcons.put(StandingTab.TERMS, AnalysisTabIcons.terms());
-        standingIcons.put(StandingTab.STATEMENTS, AnalysisTabIcons.statements());
-        standingIcons.put(StandingTab.READING, AnalysisTabIcons.readFirst());
-        standingIcons.put(StandingTab.CONFLICTS, AnalysisTabIcons.conflicts());
-        standingIcons.put(StandingTab.GLOSSARY, AnalysisTabIcons.glossary());
-        standingIcons.put(StandingTab.GRAPH, AnalysisTabIcons.graph());
-        standingIcons.put(RELATIONS, AnalysisTabIcons.relations());
-        standing.tabs().icons(standingIcons);
-        standingFoot = new TabFoot(standing.tabs().detachBar(), standingTrailing);
-        deck.add(standing, STAND_CARD);
+        standingTrailing.add(subpages.box());
+        // Eine Reiterzeile für jede Ebene (Angelo 27.11.2026): alle Reiter in einer Reihenfolge, je Name ein Symbol,
+        // der Name im Tooltip. Gleiche Reiter stehen an derselben Stelle, ob Seite oder oberer Knoten; Reiter eines
+        // Programms (Kontrollfluss …) kommen dahinter und behalten ihren Text.
+        java.util.Map<String, Icon> analysisIcons = new java.util.LinkedHashMap<>();
+        analysisIcons.put(PASSAGES, AnalysisTabIcons.passages());
+        analysisIcons.put(TERMS, AnalysisTabIcons.terms());
+        analysisIcons.put(REFERENCES, AnalysisTabIcons.references());
+        analysisIcons.put(IMAGES, AnalysisTabIcons.images());
+        analysisIcons.put(STATEMENTS, AnalysisTabIcons.statements());
+        analysisIcons.put(StandingTab.READING, AnalysisTabIcons.readFirst());
+        analysisIcons.put(StandingTab.CONFLICTS, AnalysisTabIcons.conflicts());
+        analysisIcons.put(StandingTab.GLOSSARY, AnalysisTabIcons.glossary());
+        analysisIcons.put(GRAPH, AnalysisTabIcons.graph());
+        analysisIcons.put(RELATIONS, AnalysisTabIcons.relations());
+        analysisRow = new AnalysisTabRow(analysisIcons);
+        analysisRow.follow(analysisTabs);
+        analysisRow.follow(standing.tabs());
+        standing.onConflicts(found -> analysisRow.mark(StandingTab.CONFLICTS, found == 0 ? null : String.valueOf(found)));
+        standing.tabs().detachBar();
+        JPanel helps = new JPanel(new BorderLayout());
+        helps.setOpaque(false);
+        helps.add(Comic.row(statementsHelp, standingHelp, glossaryHelp, graphHelp), BorderLayout.NORTH);
+        analysisFoot = new JPanel(new BorderLayout(8, 0));
+        analysisFoot.setOpaque(false);
+        analysisFoot.add(analysisRow.bar(), BorderLayout.CENTER);
+        analysisFoot.add(helps, BorderLayout.EAST);
+        analysisFoot.add(standingTrailing, BorderLayout.SOUTH);
+        analysesFoot.add(analysisFoot, BorderLayout.CENTER);
+        analyses.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
         deck.add(sourceView, SOURCE_CARD);
         deck.add(sourceChanges, SOURCE_TEXT_CARD);
@@ -1228,7 +1267,8 @@ public final class PageDetailPanel extends JPanel {
         searchPrograms.setVisible(false);
         cancelProgramSearch();
         pendingProgramFocus = null;
-        subpages.box().setVisible(true);
+        programShown = false;
+        subpagesShown();
         // Der Graph verlässt die Seite vor den Unterseiten: Deren Abmeldung soll für die alte Seite nichts mehr laden.
         graphView.page(null);
         subpages.page(null, null, null, null);
@@ -1363,7 +1403,7 @@ public final class PageDetailPanel extends JPanel {
         sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && ADVANCED.equals(selected) && wide
                 && PROPERTIES.equals(wideAdvanced.selected()));
         readingHelp.setVisible(PAGE.equals(pageCard) && READING.equals(selected));
-        analysisActions.setVisible(PAGE.equals(pageCard) && ANALYSES.equals(selected) && !wide);
+        analysisActions.setVisible(PAGE.equals(pageCard) && analysesOpen && !wide);
         advancedActions.setVisible(PAGE.equals(pageCard) && ADVANCED.equals(selected) && !wide);
         // Analysen ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner): der Stand der Auswahl links, mit den
         // Unterreitern „Aussagen“, „Zuerst lesen“, „Mögliche Widersprüche“ (Angelo 17.11.2026, kein eigenes Symbol).
@@ -1371,7 +1411,7 @@ public final class PageDetailPanel extends JPanel {
         standing.shown(standingShown);
         showOverviewHelp();
         updateFootTools(selected);
-        if (sourceMenuShown() || standingShown) {
+        if (sourceMenuShown()) {
             more.setEnabled(true);
         } else if (SOURCE_CARD.equals(pageCard) || wide && pageId == null) {
             more.setEnabled(false);
@@ -1389,8 +1429,8 @@ public final class PageDetailPanel extends JPanel {
                     : READ.equals(selected) ? area ? AREA_TEXT_CARD : SOURCE_TEXT_CARD : EMPTY;
         }
         boolean wideAdvancedShown = ADVANCED.equals(selected) && wide;
-        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD
-                : standingShown ? STAND_CARD : wideAdvancedShown ? WIDE_ADVANCED_CARD : page);
+        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : wideAdvancedShown ? WIDE_ADVANCED_CARD : page);
+        analysesCards.show(analyses, wide ? STAND_CARD : PAGE.equals(pageCard) ? ANALYSES_PAGE : ANALYSES_NONE);
         showRelations();
     }
 
@@ -1580,8 +1620,70 @@ public final class PageDetailPanel extends JPanel {
         }
     }
 
+    /** Ob die gezeigte Seite ein Programm ist: dann gibt es „mit Unterseiten“ nicht. */
+    private boolean programShown;
+
+    private void subpagesShown() {
+        subpages.box().setVisible(!wide && PAGE.equals(pageCard) && !programShown);
+    }
+
     private boolean standingShown() {
-        return ANALYSES.equals(tabs.selected()) && wide;
+        return analysesOpen && wide;
+    }
+
+    /** Die Fläche der Analysen für die rechte Seitenleiste; ihr Inhalt folgt der Auswahl links und der offenen Seite. */
+    JComponent analyses() {
+        return analyses;
+    }
+
+    /** Die Reiter der gezeigten Analysen für den Fuß der Seitenleiste. */
+    JComponent analysesFoot() {
+        return analysesFoot;
+    }
+
+    /** Die Aktionen der Analysen einer Seite für die Kopfzeile der Seitenleiste. */
+    JComponent analysesActions() {
+        return analysisActions;
+    }
+
+    /** Was die Mitte wieder zeigt, wenn ein Sprung aus den groß gezeigten Analysen dorthin führt (das Hauptfenster). */
+    void onRevealMiddle(Runnable action) {
+        revealMiddle = java.util.Objects.requireNonNull(action, "action");
+    }
+
+    /** Was die Seitenleiste mit den Analysen aufklappt (das Hauptfenster); etwa wenn ein Sprung dorthin führt. */
+    void onOpenAnalyses(Runnable action) {
+        openAnalyses = java.util.Objects.requireNonNull(action, "action");
+    }
+
+    /**
+     * Ob die Analysen in der Seitenleiste gerade zu sehen sind: verdeckt lesen und zählen sie nicht, beim Zeigen laden
+     * sie nach, was ihr gewählter Reiter braucht.
+     */
+    void analysesShown(boolean shown) {
+        if (analysesOpen == shown) {
+            return;
+        }
+        analysesOpen = shown;
+        showDeck();
+        if (shown) {
+            loadVisible();
+            if (!wide) {
+                loadBelowSection(analysisTabs.selected());
+            }
+        }
+        showTabStatus();
+    }
+
+    boolean analysesShown() {
+        return analysesOpen;
+    }
+
+    /** Das Menü hinter dem Dreieck der Seitenleiste: nur was zu den gezeigten Analysen gehört. */
+    java.util.List<javax.swing.JMenuItem> analysesMenu() {
+        // Nur für den Fehlerfall und deshalb hier versteckt (Angelo 24.11.2026).
+        return standingShown() ? java.util.List.of(menuItem(REBUILD_COUNTS, REBUILD_COUNTS_TIP, true,
+                overviewTerms::rebuild)) : java.util.List.of();
     }
 
     /**
@@ -1590,7 +1692,11 @@ public final class PageDetailPanel extends JPanel {
      */
     private void showProgramAnalysis(PageSnapshot snapshot) {
         boolean program = programAnalysisTabs.show(snapshot, views);
-        subpages.box().setVisible(!program);
+        programShown = program;
+        subpagesShown();
+        if (analysisRow != null) {
+            analysisRow.refresh();
+        }
         recomputeProgram.setVisible(program);
         recomputeBusiness.setVisible(program && com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot).isPresent());
         searchPrograms.setVisible(snapshot.metadata().attributes().containsKey("ftp.path")
@@ -1604,8 +1710,8 @@ public final class PageDetailPanel extends JPanel {
         boolean selected = RELATIONS.equals(analysisTabs.selected());
         analysisView.proposeIcon().setVisible(selected);
         analysisView.createIcon().setVisible(selected);
-        analysisView.shown(ANALYSES.equals(tabs.selected()) && !wide && selected);
-        statementsHelp.setVisible(ANALYSES.equals(tabs.selected()) && !wide
+        analysisView.shown(analysesOpen && !wide && selected);
+        statementsHelp.setVisible(analysesOpen && !wide && PAGE.equals(pageCard)
                 && STATEMENTS.equals(analysisTabs.selected()));
     }
 
@@ -1615,7 +1721,7 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Für Tests: die Unterreiter von „Analysen“ samt „mit Unterseiten“ in der unteren Leiste. */
-    TabFoot analysisFoot() {
+    JPanel analysisFoot() {
         return analysisFoot;
     }
 
@@ -1638,8 +1744,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Für Tests: der Fuß der breiten Ebene mit „mit Unterseiten“ eines Ordners. */
-    TabFoot standingFoot() {
-        return standingFoot;
+    AnalysisTabRow analysisRow() {
+        return analysisRow;
     }
 
     TabFoot folderFoot() {
@@ -1789,7 +1895,7 @@ public final class PageDetailPanel extends JPanel {
 
     /** Für Tests: ob „Analysen“ gerade den Stand der Auswahl zeigt. */
     boolean showsStanding() {
-        return ANALYSES.equals(tabs.selected()) && wide;
+        return standingShown();
     }
 
     /**
@@ -1806,6 +1912,7 @@ public final class PageDetailPanel extends JPanel {
         }
         // Ohne Stelle („Zuerst lesen“ öffnet nur die Seite) wird nach dem Laden nichts markiert.
         pendingJump = somewhere ? target : null;
+        revealMiddle.run();
         if (context.navigator() != null) {
             context.navigator().openPage(target.sourceId(), target.pageId());
         } else {
@@ -1827,6 +1934,7 @@ public final class PageDetailPanel extends JPanel {
         if (source == null || id == null) {
             return;
         }
+        revealMiddle.run();
         if (context != null && context.navigator() != null) {
             context.navigator().openPage(source, id);
         } else {
@@ -2736,6 +2844,13 @@ public final class PageDetailPanel extends JPanel {
         String tab = selectedTab();
         StatusNote note = tabStatus.getOrDefault(tab,
                 StatusNote.plain(" "));
+        // Eine Statuszeile für Mitte und Seitenleiste: Hat der gezeigte Reiter der Analysen etwas zu melden, steht das.
+        String side = analysesTab();
+        StatusNote sideNote = side == null ? null : tabStatus.get(side);
+        if (sideNote != null && sideNote.text() != null && !sideNote.text().isBlank()) {
+            tab = side;
+            note = sideNote;
+        }
         statusShown.accept(withStore(tab, note, shownStore));
     }
 
@@ -3533,7 +3648,7 @@ public final class PageDetailPanel extends JPanel {
     /** Setzt in {@link #footTools}, was zum Reiter {@code selected} gehört; nichts, wenn er keine Werkzeuge hat. */
     private void updateFootTools(String selected) {
         // Viewer und Transkript gibt es nur zu einer gezeigten Seite; jeder Wechsel räumt sie ab (closeOriginalFile).
-        boolean standingFootShown = ANALYSES.equals(selected) && wide && standingFoot != null;
+        boolean standingFootShown = analysesOpen && wide && analysisFoot != null;
         if (EXPORT.equals(selected)) {
             JComponent bar = artifactTabs == null ? null : artifactTabs.footBar();
             bar = bar == null ? export.formatBar() : bar;
@@ -3546,15 +3661,18 @@ public final class PageDetailPanel extends JPanel {
         }
         if (standingFootShown && folder != null) {
             if (folderSubfolders.getParent() != standingTrailing) {
-                standingTrailing.add(folderSubfolders, BorderLayout.CENTER);
+                standingTrailing.add(folderSubfolders);
+                standingTrailing.revalidate();
             }
         } else {
             folderFoot.reclaimTrailing();
         }
-        standingTrailing.setVisible(standingFootShown);
+        if (analysisRow != null) {
+            // Die Ebene bestimmt nur, welche Ansichten es gibt; Zeile, Symbole und Fuß sind für alle dieselben.
+            analysisRow.level(wide ? standing.tabs() : PAGE.equals(pageCard) ? analysisTabs : null);
+            subpagesShown();
+        }
         JComponent shown = EXPORT.equals(selected) ? exportFoot
-                : standingFootShown ? standingFoot
-                : ANALYSES.equals(selected) && PAGE.equals(pageCard) && !wide ? analysisFoot
                 : ADVANCED.equals(selected) && wide ? wideAdvancedFoot
                 : ADVANCED.equals(selected) && PAGE.equals(pageCard) ? advancedFoot
                 : READING.equals(selected) && originalFileViewer != null ? originalFileViewer.footer()
@@ -3653,7 +3771,7 @@ public final class PageDetailPanel extends JPanel {
                 // (etwa einer Hintergrundgruppe „mit Unterseiten“) lesen neu; verdeckte Reiter beim nächsten Zeigen.
                 belowSectionFor.remove(STATEMENTS);
                 belowSectionFor.remove(GRAPH);
-                if (ANALYSES.equals(tabs.selected())) {
+                if (analysesOpen) {
                     loadBelowSection(analysisTabs.selected());
                 }
             }
@@ -3847,6 +3965,7 @@ public final class PageDetailPanel extends JPanel {
         if (target.end() > reader.getDocument().getLength()) {
             return;
         }
+        revealMiddle.run();
         tabs.select(READ);
         reader.requestFocusInWindow();
         mark(target);
@@ -3855,16 +3974,17 @@ public final class PageDetailPanel extends JPanel {
     /** Lädt nach, was der gerade sichtbare Reiter braucht (Haupt- oder Unterreiter unter „Analysen“). */
     private void loadVisible() {
         String visible = selectedTab();
+        String side = analysesTab();
         if (ATTACHMENTS.equals(visible)) {
             loadAssets(false);
         }
         if (READING.equals(visible) && originalFileViewer == null && originalVideoViewer == null && !originalLinkShown && !originalProgramShown) {
             loadReading();
         }
-        if (REFERENCES.equals(visible)) {
+        if (REFERENCES.equals(side)) {
             loadReferences();
         }
-        if (IMAGES.equals(visible)) {
+        if (IMAGES.equals(side)) {
             loadImages();
         }
     }
@@ -5453,7 +5573,7 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             referencesLoaded = false;
-            if (REFERENCES.equals(selectedTab())) {
+            if (REFERENCES.equals(analysesTab())) {
                 loadReferences();
             }
         }));
@@ -5488,7 +5608,7 @@ public final class PageDetailPanel extends JPanel {
                         loadReadAloud(context.runtime(), sourceId, pageId, page);
                     }
                     imagesLoaded = false;
-                    if (IMAGES.equals(selectedTab())) {
+                    if (IMAGES.equals(analysesTab())) {
                         loadImages();
                     }
                 });
@@ -6382,7 +6502,7 @@ public final class PageDetailPanel extends JPanel {
         saveRaw.setEnabled(enabled);
         browse.setEnabled(enabled);
         bookmark.setEnabled(enabled);
-        more.setEnabled(enabled || sourceMenuShown() || standingShown());
+        more.setEnabled(enabled || sourceMenuShown());
         harvest.setEnabled(enabled);
         saveAsset.setEnabled(enabled);
         updatePreviewEnabled();
@@ -6402,10 +6522,9 @@ public final class PageDetailPanel extends JPanel {
      * links davon die Werkzeuge der Updates (keine eigene Leiste, Angelo 17.11.2026).
      */
     JComponent headerActions() {
-        return Comic.row(analysisActions, advancedActions, sourceView.tools(), sourceChanges.tools(),
+        return Comic.row(advancedActions, sourceView.tools(), sourceChanges.tools(),
                 areaView.tools(), areaPodcast.tools(),
-                sourceProperties.tools(), readingHelp,
-                statementsHelp, star, more);
+                sourceProperties.tools(), readingHelp, star, more);
     }
 
     /** Return the existing document-history control for the fixed viewer header. */
@@ -6467,11 +6586,6 @@ public final class PageDetailPanel extends JPanel {
 
     private javax.swing.JPopupMenu pageMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
-        if (standingShown()) {
-            // Nur für den Fehlerfall und deshalb hier versteckt (Angelo 24.11.2026).
-            menu.add(menuItem(REBUILD_COUNTS, REBUILD_COUNTS_TIP, true, overviewTerms::rebuild));
-            return menu;
-        }
         if (sourceMenuShown() && READING.equals(tabs.selected())) {
             menu.add(menuItem(SAVE_SUMMARY, "Die gezeigte Zusammenfassung als Textdatei", areaShown()
                     ? areaView.hasSummary() : sourceView.hasSummary(), this::saveSummary));
@@ -6682,7 +6796,7 @@ public final class PageDetailPanel extends JPanel {
     void selectTab(String name) {
         if (analysisTabs.button(name) != null) {
             analysisTabs.select(name);
-            tabs.select(ANALYSES);
+            openAnalyses.run();
         } else if (advancedTabs.button(name) != null) {
             advancedTabs.select(name);
             wideAdvanced.select(name);
@@ -6694,15 +6808,22 @@ public final class PageDetailPanel extends JPanel {
 
     /** Der sichtbare Reiter: unter „Analysen“ der gewählte Unterreiter, sonst der Hauptreiter. */
     String selectedTab() {
-        String main = tabs.selected();
-        if (ANALYSES.equals(main) && wide) {
+        return tabs.selected();
+    }
+
+    /** Der gezeigte Reiter der Analysen in der Seitenleiste; {@code null}, solange sie zu ist. */
+    String analysesTab() {
+        if (!analysesOpen) {
+            return null;
+        }
+        if (wide) {
             return switch (java.util.Objects.requireNonNullElse(standing.tabs().selected(), "")) {
                 case StandingTab.TERMS -> OVERVIEW_TERMS;
                 case StandingTab.GLOSSARY -> OVERVIEW_GLOSSARY;
                 default -> STAND;
             };
         }
-        return ANALYSES.equals(main) ? analysisTabs.selected() : main;
+        return analysisTabs.selected();
     }
 
     /** Für Tests: die angezeigte Seite oder {@code null} ohne Seite und während des Ladens. */
