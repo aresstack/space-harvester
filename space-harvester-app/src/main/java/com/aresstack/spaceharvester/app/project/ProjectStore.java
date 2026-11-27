@@ -187,6 +187,21 @@ public final class ProjectStore {
     }
 
     /**
+     * Übernimmt die Projekteinstellungen: Ziel ({@code null} entfernt es) und Speicherort für Exporte und Downloads.
+     * Beim Standardprojekt unverändert.
+     */
+    public synchronized Project configure(String projectId, ProjectTarget target, ProjectOutput output) {
+        Project project = existing(projectId);
+        if (project == null || project.isDefault()) {
+            return project;
+        }
+        Project configured = project.withTarget(target).withOutput(output);
+        write(configured);
+        changed();
+        return configured;
+    }
+
+    /**
      * Löscht ein Projekt vorläufig (F5): Sein Ordner samt Bestandteilen geht in den Papierkorb, bis zum nächsten Start
      * mit {@link #restore} zurückzuholen, mit ihm seine Gruppen und Artefakte. Die Chats bleiben unangetastet; da ihre
      * Projekt-ID ins Leere zeigt, gehören sie zum Standardprojekt, und ihre Gruppen-ID kennt dort keine Gruppe. War das Projekt aktiv, wird das Standardprojekt aktiv. Das Standardprojekt selbst lässt
@@ -442,6 +457,8 @@ public final class ProjectStore {
             content.put("targetKind", project.target().kind().key());
             content.put("target", project.target().value());
         }
+        content.put("saveHere", project.output().saveHere());
+        content.put("subfolder", project.output().subfolder());
         try {
             ProfileFiles.writeAtomic(folder.resolve(FILE), JSON.writeValueAsString(content));
         } catch (IOException | RuntimeException e) {
@@ -463,8 +480,14 @@ public final class ProjectStore {
             JsonNode name = json.get("name");
             ProjectTarget.Kind kind = ProjectTarget.Kind.of(text(json, "targetKind"));
             String target = text(json, "target");
+            // Ältere Dateien ohne die Felder: Vorgabe (Haken gesetzt, Unterordner „Downloads“).
+            JsonNode saveHere = json.get("saveHere");
+            String subfolder = text(json, "subfolder");
+            ProjectOutput output = new ProjectOutput(saveHere == null || saveHere.isNull() || saveHere.asBoolean(),
+                    subfolder == null ? ProjectOutput.DEFAULT_SUBFOLDER : subfolder);
             return new Project(id, text(json, "name"),
-                    kind == null || target == null || target.isBlank() ? null : new ProjectTarget(kind, target));
+                    kind == null || target == null || target.isBlank() ? null : new ProjectTarget(kind, target),
+                    output);
         } catch (IOException | RuntimeException e) {
             quarantine(file, e);
             return null;

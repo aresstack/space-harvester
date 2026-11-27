@@ -295,15 +295,17 @@ class ActivitiesBackgroundTabTest {
                     }
                 }
                 assertThat(menu).contains(view.pauseAll.getText(), view.cancelAll.getText(),
-                        ActivitiesView.DELETE_FINISHED,
                         com.aresstack.spaceharvester.app.ui.content.ChatSidebar.COLLAPSE);
+                // Seit der Umschalter nur Symbole zeigt (Angelo 27.11.2026), hat der Besen auch schmal Platz im Kopf
+                // und steht darum nicht zusätzlich im Menü.
+                assertThat(view.deleteFinished.isVisible()).isTrue();
+                assertThat(menu).doesNotContain(ActivitiesView.DELETE_FINISHED);
                 // Kopfzeile: an der Mindestbreite bleiben Vergrößern und das Dreieck ganz sichtbar.
                 for (javax.swing.JComponent part : List.<javax.swing.JComponent>of(view.enlarge, view.moreJobs)) {
                     assertThat(visible.contains(SwingUtilities.convertRectangle(part.getParent(), part.getBounds(),
                             root))).as("Werkzeug in der Kopfzeile sichtbar").isTrue();
                     assertThat(part.getWidth()).isGreaterThanOrEqualTo(part.getPreferredSize().width);
                 }
-                assertThat(view.deleteFinished.isVisible()).isFalse();
                 // Eine gewählte Zeile schaltet ihre Aktionen frei.
                 // Eine Zeile schaltet ihre Aktionen frei (ohne laufenden Dienst leert die Auswahl selbst die Liste).
                 view.showSelectedActions(1);

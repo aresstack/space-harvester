@@ -357,6 +357,29 @@ class AreaSummaryTest {
     }
 
     @Test
+    void deletingTheSummaryRemovesOnlyItTellsTheViewsAndIsNotOfferedWhileItIsMade() throws Exception {
+        // ADR 0047: lokales Artefakt löschen; während „Zusammenfassen“ läuft, geht es nicht.
+        devSpace();
+        log.summarizeArea(CALLER, SPACE, false);
+        assertThat(log.areaSummaryDeletable(CALLER, SPACE)).isFalse();
+        assertThatThrownBy(() -> log.deleteAreaSummary(CALLER, SPACE)).isInstanceOf(IllegalStateException.class);
+        runHeld();
+        assertThat(log.areaSummary(CALLER, SPACE)).isPresent();
+        marked.clear();
+
+        assertThat(log.areaSummaryDeletable(CALLER, SPACE)).isTrue();
+        assertThat(log.deleteAreaSummary(CALLER, SPACE)).isTrue();
+
+        assertThat(log.areaSummary(CALLER, SPACE)).isEmpty();
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (marked.isEmpty() && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+        assertThat(marked).contains("wiki");
+        assertThat(log.deleteAreaSummary(CALLER, SPACE)).as("schon weg").isFalse();
+    }
+
+    @Test
     void anOpenRunForTheSameAreaIsTheAnswerAndAnEmptyAreaNeverCallsTheModel() {
         devSpace();
         JobStatus first = log.summarizeArea(CALLER, SPACE, false);

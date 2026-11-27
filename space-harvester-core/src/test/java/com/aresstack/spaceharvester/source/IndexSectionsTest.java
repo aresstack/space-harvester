@@ -76,6 +76,33 @@ class IndexSectionsTest {
         assertThat(Set.copyOf(all.stream().map(DocumentExtractions.IndexSection::section).toList())).contains(0, 1);
     }
 
+    /** Überschriften eines Dokuments kommen mit ihrer Stelle im Abschnittstext in den Volltextindex. */
+    @Test
+    void headingsCarryTheirPositionInTheSectionText() {
+        byte[] html = ("<html><body><p>Einleitung zum Betrieb.</p><h2>Notfallplan Ablauf</h2>"
+                + "<p>Erst melden, dann handeln.</p></body></html>").getBytes(StandardCharsets.UTF_8);
+        FileSystemAssetStore store = new FileSystemAssetStore(directory.resolve("assets"));
+        DocumentExtractions extractions = new DocumentExtractions(new TikaDocumentStructure(),
+                new FileSystemExtractionStore(directory.resolve("extractions")), ExtractionLimits.DEFAULTS);
+        Asset asset = new Asset("wiki", "1", "a1", "1", "seite.html", "text/html", AssetKind.OTHER, html.length,
+                Assets.sha256(html), NOW);
+        store.put(asset, html);
+        extractions.text(asset, store, NOW);
+
+        List<DocumentExtractions.IndexSection> all;
+        try (Stream<DocumentExtractions.IndexSection> sections = extractions.indexSections(asset).orElseThrow()) {
+            all = sections.toList();
+        }
+
+        List<DocumentExtractions.IndexSection.Heading> headings = all.stream()
+                .flatMap(section -> section.headings().stream()).toList();
+        assertThat(headings).extracting(DocumentExtractions.IndexSection.Heading::text)
+                .containsExactly("Notfallplan Ablauf");
+        DocumentExtractions.IndexSection section = all.stream().filter(s -> !s.headings().isEmpty()).findFirst()
+                .orElseThrow();
+        assertThat(section.text().substring(section.headings().get(0).start())).startsWith("Notfallplan Ablauf");
+    }
+
     /** Zählt gelesene Abschnitte der Teile und Manifest-Zugriffe für Teile. */
     private static final class Counting extends FileSystemExtractionStore {
         private final AtomicInteger read = new AtomicInteger();

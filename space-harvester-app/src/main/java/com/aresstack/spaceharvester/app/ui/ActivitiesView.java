@@ -222,6 +222,7 @@ public final class ActivitiesView implements View {
             new com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle();
     static final String JOBS_TAB = "Aufträge";
     static final String BACKGROUND_TAB = "Hintergrund";
+    static final String JOBS_TIP = "Aufträge, die du gestartet hast";
     /** Sehr heller Petrol-Ton hinter der Zeile einer Hintergrundgruppe. */
     static final java.awt.Color BACKGROUND_TONE = mix(Comic.PETROL, java.awt.Color.WHITE, 0.88);
     /** Breite des Petrol-Streifens am linken Rand jeder Hintergrundzeile. */
@@ -334,8 +335,9 @@ public final class ActivitiesView implements View {
         list.setBackground(Comic.SURFACE);
         list.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
         HelpButton hint = new HelpButton(24, "Aufträge", HELP);
-        tabs.segment(JOBS_TAB).segment(BACKGROUND_TAB);
-        tabs.button(JOBS_TAB).setToolTipText("Aufträge, die du gestartet hast");
+        // Nur Symbole wie der Umschalter der Wissensquellen gegenüber (Angelo 27.11.2026); der Name steht im Tooltip.
+        tabs.segment(JOBS_TAB, SwitchIcons.jobs()).segment(BACKGROUND_TAB, SwitchIcons.background());
+        tabs.button(JOBS_TAB).setToolTipText(JOBS_TIP);
         tabs.button(BACKGROUND_TAB).setToolTipText(BACKGROUND_TIP);
         String remembered = rememberedTab();
         if (BACKGROUND_TAB.equals(remembered)) {
@@ -1156,7 +1158,7 @@ public final class ActivitiesView implements View {
         }
         facts.add("Auftrags-ID", status.id());
         outputShown = outputDirectory(status,
-                context.settings() == null ? null : context.settings().outputDirectory());
+                context.exportDirectory());
         if (outputShown != null) {
             facts.add(OUTPUT_LABEL, outputShown.toString(), Comic.INK, openOutput);
         }

@@ -195,6 +195,11 @@ public final class SearchOrchestrator implements AutoCloseable {
             if (semantic == null) {
                 throw new IllegalArgumentException("Keine semantische Suche eingerichtet");
             }
+            if (query != null && query.headingsOnly()) {
+                // Die Vektoren gehören zum ganzen Inhalt; nur Überschriften kann allein die Schlagwortsuche.
+                throw new com.aresstack.spaceharvester.application.sources.InvalidQueryException(
+                        "„Nur Überschriften durchsuchen“ gibt es nur mit der Schlagwortsuche");
+            }
             chosen = semantic;
         }
         chosen.requireAvailable(caller, Objects.requireNonNull(query, "query"));

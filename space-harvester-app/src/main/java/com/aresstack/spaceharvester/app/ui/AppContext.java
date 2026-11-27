@@ -318,11 +318,9 @@ public final class AppContext {
         this.configFile = configFile;
         this.version = version;
         this.vault = vault;
-        // Speichern-Dialoge öffnen im eingestellten Ausgabeordner, Vorgabe Downloads (Angelo 20.11.2026).
-        com.aresstack.spaceharvester.app.ui.controls.SaveChooser.directory(() -> {
-            AppSettings current = settings;
-            return current == null ? null : current.outputDirectory();
-        });
+        // Speichern-Dialoge öffnen im eingestellten Ausgabeordner, Vorgabe Downloads (Angelo 20.11.2026), bzw. im
+        // Projektordner, wenn das aktive Projekt „Alles hier speichern“ hat (Angelo 27.11.2026).
+        com.aresstack.spaceharvester.app.ui.controls.SaveChooser.directory(this::exportDirectory);
     }
 
     public SecretVault vault() {
@@ -976,6 +974,21 @@ public final class AppContext {
 
     public com.aresstack.spaceharvester.app.project.ProjectStore projects() {
         return projects;
+    }
+
+    /**
+     * Wohin Exporte und Downloads jetzt gehen (Angelo, 27.11.2026): in den Projektordner des aktiven Projekts, wenn
+     * dort „Alles hier speichern“ gesetzt ist (samt Unterordner, still angelegt), sonst und beim Standardprojekt
+     * „AresStack“ in den Ausgabeordner der Einstellungen ({@link AppSettings#outputDirectory()}, Vorgabe Downloads).
+     * {@code null}, solange keine Einstellungen geladen sind.
+     */
+    public Path exportDirectory() {
+        AppSettings current = settings;
+        if (current == null) {
+            return null;
+        }
+        Path project = com.aresstack.spaceharvester.app.project.ProjectOutput.prepare(projects.active());
+        return project == null ? current.outputDirectory() : project;
     }
 
     /**

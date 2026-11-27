@@ -7,6 +7,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -544,12 +546,29 @@ public final class DocumentExtractions {
      * @param section   Nummer des Abschnitts im Dokument ab 0
      * @param text      reiner Text des Abschnitts, Absätze mit Leerzeile getrennt
      */
-    public record IndexSection(String partId, String partTitle, int section, String text) {
+    public record IndexSection(String partId, String partTitle, int section, String text, List<Heading> headings) {
+
+        public IndexSection(String partId, String partTitle, int section, String text) {
+            this(partId, partTitle, section, text, List.of());
+        }
 
         public IndexSection {
             Objects.requireNonNull(partId, "partId");
             Objects.requireNonNull(partTitle, "partTitle");
             Objects.requireNonNull(text, "text");
+            headings = headings == null ? List.of() : List.copyOf(headings);
+        }
+
+        /**
+         * Eine Überschrift des Abschnitts ({@link Block.Heading}).
+         *
+         * @param start Zeichenposition im {@link #text()} des Abschnitts
+         */
+        public record Heading(String text, int level, int start) {
+
+            public Heading {
+                Objects.requireNonNull(text, "text");
+            }
         }
 
         @Override
@@ -742,6 +761,7 @@ public final class DocumentExtractions {
 
     private static IndexSection section(String partId, String partTitle, TextSection section) {
         StringBuilder text = new StringBuilder();
+        List<IndexSection.Heading> headings = new ArrayList<>();
         for (Block block : section.blocks()) {
             String piece = plain(block);
             if (piece.isBlank()) {
@@ -750,9 +770,13 @@ public final class DocumentExtractions {
             if (!text.isEmpty()) {
                 text.append(PARAGRAPH_BREAK);
             }
+            if (block instanceof Block.Heading heading) {
+                // Die Überschrift so, wie sie im Text steht, damit Suche und Auszug ihre Stelle finden.
+                headings.add(new IndexSection.Heading(piece.strip(), heading.level(), text.length()));
+            }
             text.append(piece);
         }
-        return new IndexSection(partId, partTitle, section.index(), text.toString());
+        return new IndexSection(partId, partTitle, section.index(), text.toString(), headings);
     }
 
     /**

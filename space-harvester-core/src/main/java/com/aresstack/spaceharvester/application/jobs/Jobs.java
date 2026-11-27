@@ -1198,6 +1198,19 @@ public class Jobs implements AutoCloseable {
         }
     }
 
+    /**
+     * Ob die abgekoppelte Arbeit dieses Auftrags noch läuft: Er ist schon beendet (etwa abgebrochen), sein hängender
+     * Schritt nach {@link #STOP_GRACE} aber noch nicht; er kann dann noch Dateien ablegen.
+     */
+    public boolean lingering(String jobId) {
+        lock.lock();
+        try {
+            return lingering.contains(jobId);
+        } finally {
+            lock.unlock();
+        }
+    }
+
     /** Unter dem Sperrobjekt: kein neuer Lauf, solange die abgekoppelte Arbeit des Eintrags noch läuft. */
     private void requireNotLingering(String jobId) {
         if (lingering.contains(jobId)) {

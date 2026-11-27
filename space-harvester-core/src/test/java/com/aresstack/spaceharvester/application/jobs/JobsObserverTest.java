@@ -119,9 +119,16 @@ class JobsObserverTest {
         try {
             assertThat(mine.next(status -> status.id().equals(id) && status.state() == JobState.CANCELLED))
                     .isNotNull();
+            // Beendet, aber seine abgekoppelte Arbeit läuft noch (etwa ein Podcast, der noch ablegen könnte).
+            assertThat(jobs.lingering(id)).isTrue();
         } finally {
             release.countDown();
         }
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (jobs.lingering(id) && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+        assertThat(jobs.lingering(id)).isFalse();
     }
 
     private static void await(CountDownLatch latch) {

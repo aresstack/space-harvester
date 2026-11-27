@@ -848,7 +848,7 @@ public final class SourcesView implements View {
         if (runtime == null || context.settings() == null) {
             return;
         }
-        java.nio.file.Path directory = context.settings().outputDirectory();
+        java.nio.file.Path directory = context.exportDirectory();
         String name = entry.config().title() == null || entry.config().title().isBlank() ? entry.id()
                 : entry.config().title();
         java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean();
