@@ -294,6 +294,7 @@ Der Nachtrag ergänzt die Abschnitte 1, 2, 3 und 8, ändert in Abschnitt 4.1, wa
 - Es gibt nur einen Begriff „Projekt“. Die farbige Gruppe von Chats ist kein zweites Ding neben dem Projekt aus
   Abschnitt 1, sondern dasselbe Projekt mit zwei weiteren Bestandteilen: **Chats** und **Artefakte**.
 - Ein Projekt hat neben ID und Namen eine **Farbe** aus einer festen Auswahl. Die Auswahl legt der UX-Manager fest.
+- Ein Projekt kann außerdem ein **Ziel** haben, das ein Klick auf seinen Namen öffnet (F6).
 - Die Farbe kennzeichnet überall, was zum Projekt gehört: den Chat in der Liste, den Kopf des geöffneten Chats und
   die Reiter der Artefakte.
 
@@ -357,6 +358,20 @@ Der Nachtrag ergänzt die Abschnitte 1, 2, 3 und 8, ändert in Abschnitt 4.1, wa
   - Die Chat-Liste zeigt seine Chats zuerst (F2).
   - Der Stern der Favoriten wirkt auf das aktive Projekt. Damit ändert sich Abschnitt 4.1 in einem Punkt: Aktiv ist
     nicht mehr das in der Favoritenansicht gewählte Projekt, sondern dieses eine, global gewählte.
+- **Ziel des Projekts** (Angelo, 27.11.2026, 16:29 MEZ: „Das bedeutet aber auch, dass man für jedes Projekt eine URL
+  hinterlegen kann. […] Wenn er noch nicht vergeben ist, dann würde bei dem Klick ein Dialog öffnen. […] Er wählt aus
+  lokale Datei oder Website.“):
+  - Jedes Projekt kann ein Ziel haben: einen lokalen Ordner, eine lokale Datei oder eine Website. Art und Wert
+    stehen beide beim Projekt, neben Name und Farbe.
+  - Ein Klick auf den Namen in der Ecke öffnet das Ziel, der Pfeil daneben wechselt das Projekt. Ordner und Dateien
+    öffnet das Programm, das der Rechner dafür vorsieht; eine Website öffnet der Browser.
+  - Hat das Projekt noch kein Ziel, öffnet der Klick einen kleinen Dialog. Vorgewählt ist „Lokaler Ordner oder
+    Datei“ mit Dateiauswahl oder Eingabe von Hand, die andere Wahl ist „Website“.
+  - Ändern lässt sich das Ziel am Projekt über „Ziel ändern“. Ist das Ziel nicht mehr erreichbar, steht das in der
+    Statuszeile, und derselbe Dialog öffnet sich.
+  - Das Standardprojekt „AresStack“ behält sein fest hinterlegtes Ziel; es lässt sich nicht ändern.
+  - Das Ziel ist eine Angabe des Benutzers. Es steht nie in Logs, und nichts öffnet sich ohne Klick. In Code, Tests
+    und Vorgaben stehen nur erfundene Ziele.
 - Öffnet der Benutzer einen Chat eines anderen Projekts, wird dessen Projekt aktiv. So zeigt die Ecke immer das
   Projekt, in dem gerade gearbeitet wird, und Artefakte landen dort, wo die Ecke es sagt.
 - Der Wechsel wird den Ansichten gemeldet (ADR 0027), niemand fragt ab. Ein Wechsel startet nichts von selbst: keinen
@@ -367,7 +382,8 @@ Der Nachtrag ergänzt die Abschnitte 1, 2, 3 und 8, ändert in Abschnitt 4.1, wa
 - K2: Chat-Liste mit Projekten, Zuordnen und Entfernen, neuer Chat im Projekt, Farbe an Chat und Reitern (K1).
 - K3: Besitzer eines Artefakts ist Chat oder Projekt, Umzug beim Beitritt (K1 und der Artefakt-Speicher aus
   ADR 0045). Dieses Paket gehört zum Bau der Schreibumgebung, damit nur eine Stelle den Artefakt-Speicher ändert.
-- K4: Aktives Projekt im Bedienprofil und die Wahl unten in der Ecke, über alle Perspektiven (K1).
+- K4: Aktives Projekt im Bedienprofil, die Wahl unten in der Ecke über alle Perspektiven und das Ziel des Projekts
+  (K1).
 
 ## Umsetzung
 
