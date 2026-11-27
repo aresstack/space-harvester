@@ -812,4 +812,27 @@ public class ChatBrowserRuntimeTest {
         assertEquals(Arrays.asList("https://intranet.example/richtlinie.pdf", "https://intranet.example/extern.pdf"),
                 engine.fetches);
     }
+
+    @Test
+    public void theSearchGetsTheBlockListOfTheChatsPolicy() throws Exception {
+        final List<String> refusedFor = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        BrowserAccessGuard guard = new BrowserAccessGuard() {
+            @Override
+            public void admit(com.aresstack.enterpriseai.astu.chat.ChatConversationId chat, String url) {
+            }
+
+            @Override
+            public boolean refuses(com.aresstack.enterpriseai.astu.chat.ChatConversationId chat, String url) {
+                refusedFor.add(chat + " " + url);
+                return url.contains("blocked.example");
+            }
+        };
+        ChatBrowser browser = new ChatBrowserRuntime(engine, new BrowserProfileStore(folder.getRoot().toPath()),
+                guard).browserOf(chatA);
+        browser.search(null, "frage", null);
+        java.util.function.Predicate<String> refused = engine.last().connection.searchRefused;
+        assertTrue(refused.test("https://www.blocked.example/a"));
+        assertFalse(refused.test("https://example.org/"));
+        assertEquals(chatA + " https://www.blocked.example/a", refusedFor.get(0));
+    }
 }
