@@ -512,19 +512,22 @@ public final class PageDetailPanel extends JPanel {
      * Ein Umschalter „Änderungen | Bereich“ mittig in seiner Leiste (Angelo 24.11.2026, wie „Aufträge | Hintergrund“);
      * die Wahl gilt global für alle Seiten, alle Umschalter folgen ihr.
      */
-    private JComponent scopeRow() {
+    private JComponent scopeRow(boolean withBook) {
         com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle toggle = AreaSummaryView.scopeToggle();
         scopeToggles.add(toggle);
         toggle.onSelect(this::scopeChosen);
-        // An einem Ordner mit Buch an derselben Stelle „Buch | Bereich“ (Architekt 27.11.2026), Wahl je Ordner.
-        com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle book = AreaSummaryView.bookToggle();
-        bookToggles.add(book);
-        book.onSelect(this::bookChosen);
-        book.setVisible(false);
         JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
         row.setOpaque(false);
         row.add(toggle);
-        row.add(book);
+        // Nur die Podcast-Ansicht eines Ordners mit Buch hat an derselben Stelle „Buch | Bereich“ (Architekt
+        // 27.11.2026), Wahl je Ordner. Die Leseansicht zeigt den Überblick; das Buch steht unter „Artefakte“ (ADR 0047).
+        if (withBook) {
+            com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle book = AreaSummaryView.bookToggle();
+            bookToggles.add(book);
+            book.onSelect(this::bookChosen);
+            book.setVisible(false);
+            row.add(book);
+        }
         scopeRows.add(row);
         return row;
     }
@@ -540,7 +543,7 @@ public final class PageDetailPanel extends JPanel {
         showDeck();
     }
 
-    /** Ob der gezeigte Ordner ein Buch hat: dann steht unten „Buch | Bereich“. */
+    /** Ob der gezeigte Ordner ein Buch hat: dann steht unten im Podcast „Buch | Bereich“. */
     private boolean bookAtFolder() {
         return folderShown() && areaView.edition() != null;
     }
@@ -726,12 +729,8 @@ public final class PageDetailPanel extends JPanel {
         areaPodcast.books(latest);
         // Geänderte Seiten seit der Auflage: gemerkter Stand gegen den jetzigen in der Ablage (kein Abfragen; die
         // Ansicht prüft nur, wenn eine Quelle eine Änderung meldet oder der Ordner neu gezeigt wird).
-        areaView.staleness((folderId, shown) -> context.bookArtifacts().stale(folderId, shown));
-        areaView.onNewEdition(folderId -> {
-            if (context.navigator() != null) {
-                context.navigator().newBookEdition(folderId);
-            }
-        });
+        // Die Leseansicht zeigt kein Buch mehr; „Neue Auflage“ steht an der Buchzeile unter „Artefakte“ (ADR 0047).
+        areaPodcast.staleness((folderId, shown) -> context.bookArtifacts().stale(folderId, shown));
         this.sourceProperties = new SourcePropertiesView(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context::settings);
         sourceProperties.secretState((current, entry) -> com.aresstack.spaceharvester.app.ui.SecretState.of(current,
@@ -812,8 +811,8 @@ public final class PageDetailPanel extends JPanel {
         pageFoot.add(pagePodcast.footTools(), BorderLayout.EAST);
         sourceFoot.add(Comic.row(sourceChanges.podcast().transcriptCopy()), BorderLayout.WEST);
         sourceFoot.add(sourceChanges.podcast().footTools(), BorderLayout.EAST);
-        sourceFoot.add(scopeRow(), BorderLayout.CENTER);
-        readingSourceFoot.add(scopeRow(), BorderLayout.CENTER);
+        sourceFoot.add(scopeRow(false), BorderLayout.CENTER);
+        readingSourceFoot.add(scopeRow(false), BorderLayout.CENTER);
         areaFoot.add(Comic.row(areaPodcast.podcast().transcriptCopy()), BorderLayout.WEST);
         // „mit Unterseiten“ eines Ordners steht in jeder Ansicht an derselben Stelle: ganz rechts in der Ecke, wie in
         // der Ordnerleiste und unter „Analysen“ (TabFoot); früher hier mittig, so sprang sie (Angelo 27.11.2026).
@@ -823,7 +822,7 @@ public final class PageDetailPanel extends JPanel {
         areaFolderSlot.setOpaque(false);
         areaEast.add(areaFolderSlot, BorderLayout.EAST);
         areaFoot.add(areaEast, BorderLayout.EAST);
-        areaFoot.add(scopeRow(), BorderLayout.CENTER);
+        areaFoot.add(scopeRow(true), BorderLayout.CENTER);
         readerPage.setOrb(pagePodcast.orb());
         // Der Chat liest mit derselben Sprachausgabe vor; sein Knopf steht auf der Höhe dieser Knöpfe (Angelo 23.11.2026).
         chat.useReadAloud(this::readAloudBinding);
@@ -1366,18 +1365,20 @@ public final class PageDetailPanel extends JPanel {
         String selected = tabs.selected();
         // Die Werkzeuge der Updates stehen nur da, wo die Updates zu sehen sind.
         boolean area = areaShown();
-        // Ein Ordner hat keine Änderungen: dort kein „Änderungen | Bereich“, mit Buch aber „Buch | Bereich“.
+        // Ein Ordner hat keine Änderungen: dort kein „Änderungen | Bereich“, im Podcast mit Buch aber „Buch | Bereich“.
         boolean folderNow = folderShown();
         boolean book = bookAtFolder();
         ExportPanel.Selection.Collection folder = areaView.folder();
         String bookChoice = AreaSummaryView.bookChosen(folder == null ? null : folder.folderId())
                 ? AreaSummaryView.BOOK : AreaSummaryView.AREA;
         for (JComponent row : scopeRows) {
-            row.setVisible(!folderNow || book);
+            boolean hasBook = false;
             for (java.awt.Component part : row.getComponents()) {
                 boolean isBook = bookToggles.contains(part);
+                hasBook |= isBook;
                 part.setVisible(isBook ? book : !folderNow);
             }
+            row.setVisible(!folderNow || book && hasBook);
         }
         bookToggles.forEach(toggle -> toggle.select(bookChoice));
         sourceView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected) && !area);
