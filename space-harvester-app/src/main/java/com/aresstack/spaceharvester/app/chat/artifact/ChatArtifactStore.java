@@ -195,6 +195,14 @@ public final class ChatArtifactStore {
      * @return die neuen Kennungen der umgezogenen Artefakte (alt → neu), für Verweise im Verlauf des Chats
      */
     public Map<String, String> moveToProject(Path folder, String chatId, String projectId) {
+        List<Event> events = new ArrayList<>();
+        Map<String, String> moved = moveLocked(folder, chatId, projectId, events);
+        // Jede Ansicht beider Besitzer erfährt den Umzug (etwa die Liste „Artefakte“ links): fort im alten, neu im neuen.
+        events.forEach(this::notify);
+        return moved;
+    }
+
+    private Map<String, String> moveLocked(Path folder, String chatId, String projectId, List<Event> events) {
         synchronized (LOCK) {
             // Der bisherige Besitzer, bevor das neue Projekt gilt: Wechselt der Chat das Projekt, ziehen die von ihm
             // erzeugten Artefakte mit (ADR 0047, erzeugender Chat); die übrigen bleiben im alten Projekt.
@@ -204,7 +212,6 @@ public final class ChatArtifactStore {
             Path chatFolder = chats.artifacts(folder, chatId);
             Path to = projectOwner(projectId);
             if (to == null) {
-                restoreProject(chatId, before);
                 return Map.of();
             }
             Map<ChatArtifact, Path> origins = new LinkedHashMap<>();
@@ -241,7 +248,6 @@ public final class ChatArtifactStore {
             }
             List<ChatArtifact> own = List.copyOf(origins.keySet());
             if (own.isEmpty()) {
-                restoreProject(chatId, before);
                 return Map.of();
             }
             List<ChatArtifact> copied = new ArrayList<>(own);
@@ -294,7 +300,9 @@ public final class ChatArtifactStore {
                     LOG.log(System.Logger.Level.WARNING, "Original nicht entfernt: " + e.getClass().getSimpleName());
                 }
                 moved.put(artifact.id(), renamed.get(artifact.id()));
+                events.add(new Event(null, null, origins.get(artifact), artifact, List.of(), true));
             }
+            copies.forEach(copy -> events.add(new Event(null, null, to, copy, List.of())));
             List<String> tabs = openTabs(folder, chatId).stream().map(moved::get)
                     .filter(java.util.Objects::nonNull).toList();
             Path tabsFile = chatFolder == null ? null : chatFolder.resolve(TABS);
@@ -311,7 +319,10 @@ public final class ChatArtifactStore {
         }
     }
 
-    /** Setzt das gemerkte Projekt eines offenen Chats auf den Stand vor einem gescheiterten Umzug zurück. */
+    /**
+     * Setzt das gemerkte Projekt eines offenen Chats auf den Stand vor einem gescheiterten Umzug zurück. Nur beim
+     * Scheitern: Gibt es nichts umzuziehen, gilt das neue Projekt (auch für einen noch nicht gespeicherten Chat).
+     */
     private void restoreProject(String chatId, String before) {
         if (chatId == null) {
             return;

@@ -556,6 +556,9 @@ public final class Explorer {
     private final ArtifactList artifacts;
     /** Ob beim Drücken auf „Wissensquellen“ diese Hälfte schon gewählt war: dann wählt der Klick alles, wie bisher. */
     private boolean sourcesBeforePress;
+    /** Rechts neben den Kopfknöpfen: die Spalte der Sterne bleibt frei. */
+    private final java.awt.Component actionGap =
+            javax.swing.Box.createRigidArea(new java.awt.Dimension(ACTION_WIDTH, RoundHover.SIZE));
     /** Rechts neben der Überschrift, tut dasselbe wie der Klick auf sie: zeigt, dass man hier wählen kann. */
     private final IconButton selectAll = new IconButton(Glyph.SELECT_ALL, ALL_TIP);
     /** Rechts von „Alles auswählen“: das Bestandszeichen über alle Quellen, in der Spalte der Zeilen. */
@@ -986,8 +989,7 @@ public final class Explorer {
                 }
             }
         });
-        head.actions(selectAll, allBadge,
-                javax.swing.Box.createRigidArea(new java.awt.Dimension(ACTION_WIDTH, RoundHover.SIZE)));
+        head.actions(selectAll, allBadge, actionGap);
         selectAll.addActionListener(e -> selectAll());
         heading.setToolTipText(ALL_TIP);
         Cursors.set(heading, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
@@ -1029,11 +1031,10 @@ public final class Explorer {
             sourcesBeforePress = false;
         });
         view.onSelect(tab -> showArtifacts(ARTIFACTS_TAB.equals(tab)));
-        JPanel toggleRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
-        toggleRow.setOpaque(false);
-        toggleRow.add(view);
+        // Eine eigene Zeile über den Kopfknöpfen, so breit wie die Leiste: Beide Hälften bleiben auch in der
+        // schmalsten Seitenleiste sichtbar und anklickbar; die Knöpfe stehen darunter rechts.
         title.remove(heading);
-        title.add(toggleRow, BorderLayout.CENTER);
+        title.add(view, BorderLayout.NORTH);
         artifacts.onNote(text -> {
             if (artifactsShown()) {
                 note.setText(text);
@@ -2811,6 +2812,7 @@ public final class Explorer {
         for (JComponent part : new JComponent[] {selectAll, allBadge, collapseAll, showCurrent, favoritesOnly}) {
             part.setVisible(!shown);
         }
+        actionGap.setVisible(!shown);
         favorites.newFolderButton().setVisible(!shown && onlyFavorites);
         head.setOpaque(!shown && global);
         head.repaint();

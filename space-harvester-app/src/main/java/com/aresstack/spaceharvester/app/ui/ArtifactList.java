@@ -37,7 +37,13 @@ final class ArtifactList {
 
     private final AppContext context;
     private final DefaultListModel<ChatArtifact> model = new DefaultListModel<>();
-    private final JList<ChatArtifact> list = new JList<>(model);
+    /** So breit wie der sichtbare Bereich: lange Titel enden mit „…“, und die Zeit weicht zuerst. */
+    private final JList<ChatArtifact> list = new JList<>(model) {
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+    };
     private final javax.swing.JScrollPane scroll;
     private final Consumer<ChatArtifactStore.Event> changed = event -> SwingUtilities.invokeLater(this::reload);
     private ChatArtifactStore store;
