@@ -129,15 +129,21 @@ public final class ChatArtifactStore {
     public int adoptAll() {
         int moved = 0;
         for (com.aresstack.spaceharvester.app.chat.ChatStore.ArtifactFolder each : chats.artifactFolders()) {
-            Map<String, String> renamed = moveToProject(each.folder(), each.chatId(),
-                    projectOf(each.folder(), each.chatId()));
-            if (renamed.isEmpty()) {
-                continue;
-            }
-            moved += renamed.size();
-            com.aresstack.spaceharvester.app.chat.ChatRecord record = chats.load(each.folder(), each.chatId());
-            if (record != null && !record.isEmpty()) {
-                chats.save(each.folder(), record.withTexts(text -> relink(text, renamed)));
+            // Ein Chat, dessen Umzug scheitert, bleibt unverändert liegen und hält die übrigen nicht auf.
+            try {
+                Map<String, String> renamed = moveToProject(each.folder(), each.chatId(),
+                        projectOf(each.folder(), each.chatId()));
+                if (renamed.isEmpty()) {
+                    continue;
+                }
+                moved += renamed.size();
+                com.aresstack.spaceharvester.app.chat.ChatRecord record = chats.load(each.folder(), each.chatId());
+                if (record != null && !record.isEmpty()) {
+                    chats.save(each.folder(), record.withTexts(text -> relink(text, renamed)));
+                }
+            } catch (RuntimeException failed) {
+                LOG.log(System.Logger.Level.WARNING, "Artefakte eines Chats nicht umgezogen (Bereich "
+                        + each.folder() + "): " + failed.getClass().getSimpleName());
             }
         }
         return moved;
@@ -178,18 +184,34 @@ public final class ChatArtifactStore {
                 next.put(prefix, number + 1);
                 renamed.put(artifact.id(), prefix + number);
             }
-            Map<String, String> moved = new LinkedHashMap<>();
+            // Ganz oder gar nicht: erst alle Kopien schreiben; scheitert eine, bleibt der Chat, wie er war.
+            List<ChatArtifact> copies = new ArrayList<>();
             for (ChatArtifact artifact : own) {
                 ChatArtifact copy = renamed(artifact, renamed);
                 if (copy == null || !write(to, copy)) {
-                    continue;
+                    for (ChatArtifact written : copies) {
+                        try {
+                            Files.deleteIfExists(to.resolve(written.id() + SUFFIX));
+                        } catch (IOException e) {
+                            LOG.log(System.Logger.Level.WARNING, "Kopie nicht entfernt: "
+                                    + e.getClass().getSimpleName());
+                        }
+                    }
+                    LOG.log(System.Logger.Level.WARNING, "Artefakte eines Chats nicht umgezogen (Bereich " + folder
+                            + "); sie bleiben beim Chat.");
+                    return Map.of();
                 }
+                copies.add(copy);
+            }
+            Map<String, String> moved = new LinkedHashMap<>();
+            for (ChatArtifact artifact : own) {
                 try {
                     Files.deleteIfExists(from.resolve(artifact.id() + SUFFIX));
-                    moved.put(artifact.id(), copy.id());
                 } catch (IOException e) {
-                    LOG.log(System.Logger.Level.WARNING, "Artefakt nicht verschoben: " + e.getClass().getSimpleName());
+                    // Die Kopie gilt. Das Original (etwa gesperrt) bleibt liegen; ein späterer Umzug fände es noch einmal.
+                    LOG.log(System.Logger.Level.WARNING, "Original nicht entfernt: " + e.getClass().getSimpleName());
                 }
+                moved.put(artifact.id(), renamed.get(artifact.id()));
             }
             List<String> tabs = openTabs(folder, chatId).stream().map(moved::get)
                     .filter(java.util.Objects::nonNull).toList();
