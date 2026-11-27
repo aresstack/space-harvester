@@ -835,6 +835,57 @@ class MainWindowTest {
     }
 
     /** Ob das Bauteil und alle seine Vorfahren sichtbar sind und es eine Fläche hat (ohne Fenster gemessen). */
+    /**
+     * Angelo 27.11.2026: Das „?“ der Seitenansicht steht unten rechts in der Ecke der Werkzeugleiste, wie die Lupe links
+     * fest an der Leiste und auch bei aufgeklappter Suche; an seiner früheren Stelle im Kopf steht „Seite neu laden“.
+     */
+    @Test
+    void theHelpSitsInTheFootCornerAndTheHeadReloadsThePage() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            surface.setSize(1280, 820);
+            window.show(AppContext.Section.CONTENT);
+            layoutAll(surface);
+            FindBar bar = window.findBar();
+            assertThat(bar.helpArea().getComponentCount()).isEqualTo(1);
+            javax.swing.JComponent row = (javax.swing.JComponent) bar.helpArea().getComponent(0);
+            List<com.aresstack.spaceharvester.app.ui.controls.HelpButton> helps =
+                    find(row, com.aresstack.spaceharvester.app.ui.controls.HelpButton.class);
+            assertThat(helps).isNotEmpty();
+            // Ohne Hilfe zur gezeigten Ansicht nimmt die Ecke keinen Platz.
+            helps.forEach(help -> help.setVisible(false));
+            layoutAll(surface);
+            assertThat(bar.helpArea().getWidth()).isZero();
+            helps.get(helps.size() - 1).setVisible(true);
+            layoutAll(surface);
+            assertThat(bar.helpArea().getWidth()).isPositive();
+            assertThat(bar.helpArea().getX() + bar.helpArea().getWidth())
+                    .isEqualTo(bar.getWidth() - bar.getInsets().right);
+            assertThat(bar.findButton().getX()).isEqualTo(bar.getInsets().left);
+            bar.focus();
+            layoutAll(surface);
+            assertThat(bar.helpArea().isVisible()).isTrue();
+            assertThat(bar.searchArea().getX() + bar.searchArea().getWidth())
+                    .isLessThanOrEqualTo(bar.helpArea().getX());
+            bar.close();
+
+            List<AbstractButton> reload = find(surface, AbstractButton.class).stream()
+                    .filter(button -> "Seite neu laden".equals(button.getToolTipText())).toList();
+            assertThat(reload).hasSize(1);
+            assertThat(SwingUtilities.isDescendingFrom(reload.get(0), bar)).isFalse();
+            assertThat(SwingUtilities.isDescendingFrom(reload.get(0), window.stage())).isTrue();
+            assertThat(SwingUtilities.convertPoint(reload.get(0).getParent(), reload.get(0).getLocation(), surface).y)
+                    .as("im Kopf der Mitte").isLessThan(surface.getHeight() / 4);
+        });
+    }
+
     private static boolean shownInTree(java.awt.Component component) {
         for (java.awt.Component up = component; up != null; up = up.getParent()) {
             if (!up.isVisible()) {

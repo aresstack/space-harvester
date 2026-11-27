@@ -1394,6 +1394,13 @@ public final class PageDetailPanel extends JPanel {
         sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && ADVANCED.equals(selected) && wide
                 && PROPERTIES.equals(wideAdvanced.selected()));
         readingHelp.setVisible(PAGE.equals(pageCard) && READING.equals(selected));
+        // Die Hilfe einer Ansicht ist zu sehen, solange ihre Werkzeuge im Kopf zu sehen sind.
+        sourceView.help().setVisible(sourceView.tools().isVisible());
+        sourceChanges.help().setVisible(sourceChanges.tools().isVisible());
+        areaView.help().setVisible(areaView.tools().isVisible());
+        areaPodcast.help().setVisible(areaPodcast.tools().isVisible());
+        sourceProperties.help().setVisible(sourceProperties.tools().isVisible());
+        reload.setEnabled(pageId != null || SOURCE_CARD.equals(pageCard));
         analysisActions.setVisible(PAGE.equals(pageCard) && analysesOpen && !wide);
         advancedActions.setVisible(PAGE.equals(pageCard) && ADVANCED.equals(selected) && !wide);
         // Analysen ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner): der Stand der Auswahl links, mit den
@@ -6515,8 +6522,63 @@ public final class PageDetailPanel extends JPanel {
     JComponent headerActions() {
         return Comic.row(advancedActions, sourceView.tools(), sourceChanges.tools(),
                 areaView.tools(), areaPodcast.tools(),
-                sourceProperties.tools(), readingHelp, star, more);
+                sourceProperties.tools(), reload, star, more);
     }
+
+    /**
+     * „Seite neu laden“ im Kopf, an der früheren Stelle des „?“ (Angelo 27.11.2026): in jeder Ansicht derselbe Knopf.
+     * Eine Seite wird bei der Quelle geprüft und, wenn sie dort neuer ist, neu geholt; Quelle und Bereich laden ihre
+     * gezeigte Ansicht neu.
+     */
+    private final com.aresstack.spaceharvester.app.ui.IconButton reload =
+            new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.SYNC,
+                    ReadingPane.RELOAD);
+
+    {
+        reload.addActionListener(event -> reloadClicked());
+    }
+
+    com.aresstack.spaceharvester.app.ui.IconButton reloadButton() {
+        return reload;
+    }
+
+    private void reloadClicked() {
+        if (PAGE.equals(pageCard) || !SOURCE_CARD.equals(pageCard)) {
+            if (sourceId != null && pageId != null) {
+                load(sourceId, pageId, true, null);
+            }
+            return;
+        }
+        if (sourceView.tools().isVisible()) {
+            sourceView.reload();
+        } else if (sourceChanges.tools().isVisible()) {
+            sourceChanges.reload();
+        } else if (areaView.tools().isVisible()) {
+            areaView.reload();
+        } else if (areaPodcast.tools().isVisible()) {
+            areaPodcast.reload();
+        } else if (sourceProperties.tools().isVisible()) {
+            sourceProperties.reload();
+        }
+    }
+
+    /**
+     * Die „?“-Hilfe der gezeigten Ansicht für die Ecke unten rechts in der Werkzeugleiste: Nur die passende ist
+     * sichtbar; hat die Ansicht keine, bleibt die Ecke leer.
+     */
+    JComponent help() {
+        if (help == null) {
+            help = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
+            help.setOpaque(false);
+            for (JComponent part : new JComponent[] {sourceView.help(), sourceChanges.help(), areaView.help(),
+                    areaPodcast.help(), sourceProperties.help(), readingHelp}) {
+                help.add(part);
+            }
+        }
+        return help;
+    }
+
+    private JPanel help;
 
     /** Return the existing document-history control for the fixed viewer header. */
     JComponent navigation() {

@@ -272,7 +272,7 @@ final class SourceUpdatesView extends JPanel {
         summarizeEntry.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
         clickable(this::summarize, "Das Chat-Modell fasst dieses Update zusammen; nur Seiten mit KI-Freigabe",
                 summarizeEntry);
-        tools.add(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Updates", HELP));
+        // Die Hilfe steht nicht mehr bei den Werkzeugen im Kopf, sondern unten rechts in der Leiste ({@link #help()}).
 
         sky.setName("updates.sky");
         // „Seit dem letzten Update“ ist noch kein Update: gestrichelt am Ende (ADR-0030-Nachtrag, Abschnitt 7).
@@ -391,6 +391,14 @@ final class SourceUpdatesView extends JPanel {
     }
 
     /** Die Werkzeuge für die gemeinsame Kopfzeile. */
+    /** Die „?“-Hilfe dieser Ansicht für die Ecke unten rechts in der Werkzeugleiste. */
+    JComponent help() {
+        return help;
+    }
+
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton help =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Updates", HELP);
+
     JComponent tools() {
         return tools;
     }

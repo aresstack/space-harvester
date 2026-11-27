@@ -470,7 +470,7 @@ final class AreaSummaryView extends JPanel {
             tools.add(summarize);
         }
         tools.add(new com.aresstack.spaceharvester.app.ui.controls.CopyButton(this::copyText));
-        tools.add(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Bereich", HELP));
+        // Die Hilfe steht nicht mehr bei den Werkzeugen im Kopf, sondern unten rechts in der Leiste ({@link #help()}).
         summarize.addActionListener(e -> summarize(true));
         summarizeEntry.setFont(Comic.semiBold(13f));
         summarizeEntry.setForeground(Comic.BLUE);
@@ -537,6 +537,14 @@ final class AreaSummaryView extends JPanel {
         toggle.select(areaChosen() ? AREA : CHANGES);
         return toggle;
     }
+
+    /** Die „?“-Hilfe dieser Ansicht für die Ecke unten rechts in der Werkzeugleiste. */
+    JComponent help() {
+        return help;
+    }
+
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton help =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Bereich", HELP);
 
     JComponent tools() {
         return tools;
