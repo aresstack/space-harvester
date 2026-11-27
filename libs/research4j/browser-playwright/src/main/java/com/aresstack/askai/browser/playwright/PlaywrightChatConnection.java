@@ -66,7 +66,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
 
     @Override
     public List<RawTab> tabs() throws BrowserException {
-        return onOwner(() -> {
+        return onOwner(session -> {
             check();
             try {
                 return tabs.list();
@@ -78,7 +78,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
 
     @Override
     public String createTab() throws BrowserException {
-        return onOwner(() -> {
+        return onOwner(session -> {
             check();
             try {
                 return tabs.create();
@@ -90,10 +90,11 @@ final class PlaywrightChatConnection implements BrowserConnection {
 
     @Override
     public void activate(String contextId) throws BrowserException {
-        onOwner(() -> {
+        onOwner(session -> {
             check();
             try {
                 tabs.activate(contextId);
+                session.useChatTab(tabs.page(contextId));
             } catch (PlaywrightException e) {
                 throw classify(e);
             }
@@ -103,7 +104,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
 
     @Override
     public void close(String contextId) throws BrowserException {
-        onOwner(() -> {
+        onOwner(session -> {
             check();
             try {
                 tabs.close(contextId);
@@ -116,9 +117,9 @@ final class PlaywrightChatConnection implements BrowserConnection {
 
     @Override
     public void navigate(String contextId, String url) throws BrowserException {
-        onOwner(() -> {
+        onOwner(session -> {
             check();
-            operations.navigate(tabs.page(contextId), url, human, tabs.pointer(contextId));
+            operations.navigate(tab(session, contextId), url, human, tabs.pointer(contextId));
             return null;
         });
     }
@@ -133,64 +134,54 @@ final class PlaywrightChatConnection implements BrowserConnection {
 
     @Override
     public Map<String, String> navigateAll(Map<String, String> urlByContext) throws BrowserException {
-        return onOwner(() -> {
+        return onOwner(session -> {
             check();
+            session.chatChangedPages();
             return operations.navigateAll(tabs::page, urlByContext, human, tabs::pointer);
         });
     }
 
     @Override
     public RawPage read(String contextId) throws BrowserException {
-        return onOwner(() -> {
+        return onOwner(session -> {
             check();
-            return operations.read(tabs.page(contextId));
+            return operations.read(tab(session, contextId));
         });
     }
 
     @Override
     public List<RawLink> links(String contextId) throws BrowserException {
-        return onOwner(() -> {
+        return onOwner(session -> {
             check();
-            return operations.links(tabs.page(contextId));
+            return operations.links(tab(session, contextId));
         });
     }
 
     @Override
     public List<RawControl> controls(String contextId) throws BrowserException {
-        return onOwner(() -> {
+        return onOwner(session -> {
             check();
-            return operations.controls(tabs.page(contextId));
+            return operations.controls(tab(session, contextId));
         });
     }
 
     @Override
     public RawActOutcome act(String contextId, String ref, BrowserAction action, String value)
             throws BrowserException {
-        return onOwner(() -> {
+        return onOwner(session -> {
             check();
-            return operations.act(tabs.page(contextId), ref, action, value, human, tabs.pointer(contextId));
+            return operations.act(tab(session, contextId), ref, action, value, human, tabs.pointer(contextId));
         });
     }
 
     @Override
     public String search(String contextId, String query, List<String> engines) throws BrowserException {
-        return onOwner(() -> {
+        return onOwner(session -> {
             check();
-            Page page = tabs.page(contextId);
-            // The search of the research browser (engine catalog, SERP extraction, consent, challenge) on this tab.
-            // Which addresses the chat may open stays with the chat tools' access guard; the search engines are
-            // the host's configured ones.
-            Playwright4jDriver driver = Playwright4jDriver.onChatTab(context, page,
-                    (int) Math.min(Integer.MAX_VALUE, navigationTimeoutMillis), instance.searchSettings.consent,
-                    instance.searchSettings.captcha, instance.camoufox);
-            driver.setRenderedCapture(new RenderedPageDocumentCapture(instance.searchSettings.analysis));
-            PlaywrightBrowserSession session = new PlaywrightBrowserSession(driver,
-                    com.aresstack.askai.browser.UrlSafetyPolicy.allowingPrivateNetworks(),
-                    com.aresstack.askai.browser.BrowserLimits.defaults(), instance.testSearchUrlTemplate, null,
-                    instance.searchSettings);
-            if (instance.testSearchUrlTemplate != null) {
-                session.setDomainKeyResolver(new com.aresstack.askai.browser.domain.HostPortDomainKeyResolver());
-            }
+            // The search of the research browser (engine catalog, SERP extraction, consent, challenge) on this tab,
+            // in the research session itself: the tab is its current page. Which addresses the chat may open stays
+            // with the chat tools' access guard; the search engines are the host's configured ones.
+            tab(session, contextId);
             try {
                 return BrowserToolSet.renderSearch(session.search(query, engines), session.challengeStatus());
             } catch (com.aresstack.askai.browser.BrowserException e) {
@@ -205,33 +196,33 @@ final class PlaywrightChatConnection implements BrowserConnection {
     @Override
     public RawScreenshot screenshot(String contextId, Map<String, String> marks, String clipRef, int maxBytes)
             throws BrowserException {
-        return onOwner(() -> {
+        return onOwner(session -> {
             check();
-            return operations.screenshot(tabs.page(contextId), marks, clipRef, maxBytes);
+            return operations.screenshot(tab(session, contextId), marks, clipRef, maxBytes);
         });
     }
 
     @Override
     public RawDownload fetch(String contextId, String url, int maxBytes) throws BrowserException {
-        return onOwner(() -> {
+        return onOwner(session -> {
             check();
-            return operations.fetch(tabs.page(contextId), url, maxBytes);
+            return operations.fetch(tab(session, contextId), url, maxBytes);
         });
     }
 
     @Override
     public BrowserProbe probe(String contextId) throws BrowserException {
-        return onOwner(() -> {
+        return onOwner(session -> {
             check();
-            return operations.probe(tabs.page(contextId));
+            return operations.probe(tab(session, contextId));
         });
     }
 
     @Override
     public String documentToken(String contextId) throws BrowserException {
-        return onOwner(() -> {
+        return onOwner(session -> {
             check();
-            return operations.documentToken(tabs.page(contextId));
+            return operations.documentToken(tab(session, contextId));
         });
     }
 
@@ -243,7 +234,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
 
     /** A call of the chat that runs on the browser's owner thread. */
     private interface OwnerCall<T> {
-        T run() throws BrowserException;
+        T run(PlaywrightBrowserSession session) throws BrowserException;
     }
 
     /** Carries the chat contract's failure through the owner thread's actor. */
@@ -263,9 +254,9 @@ final class PlaywrightChatConnection implements BrowserConnection {
      */
     private <T> T onOwner(OwnerCall<T> call) throws BrowserException {
         try {
-            return instance.actor.call(session -> {
+            return instance.actor.onPlaywrightSession(session -> {
                 try {
-                    return call.run();
+                    return call.run(session);
                 } catch (BrowserException e) {
                     throw new Failure(e);
                 }
@@ -279,6 +270,16 @@ final class PlaywrightChatConnection implements BrowserConnection {
             check();
             throw new BrowserException(BrowserException.Kind.BROWSER_CLOSED, "Der Browser wurde geschlossen", e);
         }
+    }
+
+    /**
+     * The page of the chat's tab {@code contextId}, which also becomes the research session's current page: chat
+     * and research share one current page.
+     */
+    private Page tab(PlaywrightBrowserSession session, String contextId) throws BrowserException {
+        Page page = tabs.page(contextId);
+        session.useChatTab(page);
+        return page;
     }
 
     private void check() throws BrowserException {

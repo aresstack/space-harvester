@@ -55,7 +55,11 @@ final class Playwright4jDriver implements PlaywrightDriver {
      * add-on read), so {@link #current()} reports it as a document for the session to read instead of waiting for
      * a page read that never answers.
      */
-    private PlaywrightPageState viewedDocument;
+    /** The PDF a tab shows in the browser's viewer, per tab: a tab switch keeps each tab's document. */
+    private final java.util.Map<Page, PlaywrightPageState> viewedDocuments =
+            new java.util.IdentityHashMap<Page, PlaywrightPageState>();
+    /** See {@link #pageGeneration()}; owner thread only. */
+    private long pageGeneration;
     private Page page;
     /** The parked manual-challenge page (kept open for the user), or null. At most one at a time. */
     private Page challengePage;
@@ -237,7 +241,7 @@ final class Playwright4jDriver implements PlaywrightDriver {
             }
             driver.launchedMillis = System.currentTimeMillis();
             if (chat) {
-                page.onClose(driver.chatTabCloseWatcher());
+                driver.watchChatTab(page);
             } else {
                 page.onPopup(driver.popupCloser());
             }
@@ -315,18 +319,6 @@ final class Playwright4jDriver implements PlaywrightDriver {
         return driver;
     }
 
-    /**
-     * A driver over one tab of the chat browser ({@link PlaywrightChatEngine}), for its web search: it owns nothing,
-     * closes no popups (new tabs of a chat page are the chat's tabs) and leaves page and context to the chat engine.
-     */
-    static Playwright4jDriver onChatTab(BrowserContext context, Page page, int timeoutMillis,
-                                        com.aresstack.askai.browser.search.ConsentHandlingSettings consent,
-                                        com.aresstack.askai.browser.search.CaptchaHandlingSettings captcha,
-                                        boolean camoufox) {
-        return new Playwright4jDriver(context.browser(), context, page, consent, captcha, timeoutMillis, false,
-                camoufox);
-    }
-
     @Override
     public PlaywrightPageState open(String url) throws BrowserException {
         owner.check();
@@ -355,6 +347,7 @@ final class Playwright4jDriver implements PlaywrightDriver {
         owner.check();
         requireOpen();
         try {
+            PlaywrightPageState viewedDocument = viewedDocuments.get(page);
             if (viewedDocument != null && viewedDocument.url.equals(page.url())) {
                 return viewedDocument;
             }
@@ -411,10 +404,11 @@ final class Playwright4jDriver implements PlaywrightDriver {
     private PlaywrightPageState pageOrDocument(com.microsoft.playwright.Response response) {
         String contentType = response == null ? null : response.headers().get("content-type");
         if (isPdf(contentType)) {
-            viewedDocument = PlaywrightPageState.viewedDocument(response.url(), contentType);
+            PlaywrightPageState viewedDocument = PlaywrightPageState.viewedDocument(response.url(), contentType);
+            viewedDocuments.put(page, viewedDocument);
             return viewedDocument;
         }
-        viewedDocument = null;
+        viewedDocuments.remove(page);
         return state();
     }
 
@@ -1651,20 +1645,58 @@ final class Playwright4jDriver implements PlaywrightDriver {
         };
     }
 
+    /** The chat's tabs whose closing the driver watches ({@link #chatTabCloseWatcher}); owner thread only. */
+    private final java.util.Set<Page> watchedChatTabs =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Page, Boolean>());
+
     /**
-     * The chat's first tab closing: the driver goes on in another open tab of the context (its event pump needs a
+     * The research continues in the chat's tab {@code tab}: reads, links, guards and navigation of the session work on
+     * the tab the chat used last, so the chat's {@code browser_*} tools and the research's {@code web_*} tools see one
+     * current page. Owner thread, between calls.
+     */
+    void useChatTab(Page tab) {
+        owner.check();
+        if (tab == null) {
+            return;
+        }
+        pageGeneration++; // the chat may change the page, also when it stays on the same tab
+        page = tab;
+        watchChatTab(tab);
+    }
+
+    /** The chat changed pages without naming one current page (parallel loading in several tabs). */
+    void chatChangedPages() {
+        owner.check();
+        pageGeneration++;
+    }
+
+    @Override
+    public long pageGeneration() {
+        return pageGeneration;
+    }
+
+    private void watchChatTab(Page tab) {
+        if (watchedChatTabs.add(tab)) {
+            tab.onClose(chatTabCloseWatcher());
+        }
+    }
+
+    /**
+     * The chat's current tab closing: the driver goes on in another open tab of the context (its event pump needs a
      * page); only when none is left is the browser gone.
      */
     private Consumer<Page> chatTabCloseWatcher() {
         return new Consumer<Page>() {
             public void accept(Page gone) {
+                viewedDocuments.remove(gone);
                 if (closed || gone != page) {
                     return;
                 }
                 for (Page other : context.pages()) {
                     if (other != gone && !other.isClosed()) {
                         page = other;
-                        other.onClose(chatTabCloseWatcher());
+                        pageGeneration++; // another tab took over: the session's links are the closed tab's
+                        watchChatTab(other);
                         return;
                     }
                 }
@@ -1693,11 +1725,6 @@ final class Playwright4jDriver implements PlaywrightDriver {
      */
     void readThroughAddon(AddonBridge workerBridge) {
         this.readBridge = workerBridge;
-    }
-
-    /** Whether the browser is Camoufox (its page scripts run in the isolated world). */
-    boolean camoufox() {
-        return camoufox;
     }
 
     /** The research add-on's bridge, or null (switched off, not prepared or not loaded; Chrome/Edge worker tabs). */
