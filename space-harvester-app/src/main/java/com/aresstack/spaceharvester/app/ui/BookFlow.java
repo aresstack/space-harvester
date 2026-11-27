@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.app.research.AiChatModel;
 import com.aresstack.spaceharvester.app.research.BookJob;
 import com.aresstack.spaceharvester.app.research.BookNotes;
+import com.aresstack.spaceharvester.app.research.BookProfiles;
 import com.aresstack.spaceharvester.app.research.FavoritesBasket;
 import com.aresstack.spaceharvester.app.research.WorkspacePageStock;
 import com.aresstack.spaceharvester.app.ui.content.PageDetailPanel;
@@ -137,6 +138,11 @@ final class BookFlow {
                 contextTokens > 0 ? StockQuestions.Options.defaults().withContextTokens(contextTokens) : null,
                 contextTokens > 0 ? EvidenceBundleJudge.Options.defaults().withContextTokens(contextTokens) : null,
                 null);
+        Path data = dataDirectory(context);
+        if (data != null) {
+            // Fertige Quellensteckbriefe bleiben am Ordner: ein neuer Start fragt nur die übrigen ab (Angelo 27.11.2026).
+            settings.withProfileMemory(new BookProfiles(data, folderId));
+        }
         BookJob.Session session = BookJob.session(chat.get(), new WorkspacePageStock(workspace, null),
                 new FavoritesBasket(favorites, folderId, context::sourceTitle), folderId, name, fence.get(),
                 form.questions(), settings, parent -> workspace.childJobs(parent, settings.getCapacity(), name));
