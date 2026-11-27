@@ -1156,7 +1156,7 @@ public final class ActivitiesView implements View {
         }
         facts.add("Auftrags-ID", status.id());
         outputShown = outputDirectory(status,
-                context.settings() == null ? null : context.settings().outputDirectory());
+                context.exportDirectory());
         if (outputShown != null) {
             facts.add(OUTPUT_LABEL, outputShown.toString(), Comic.INK, openOutput);
         }

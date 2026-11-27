@@ -5031,7 +5031,7 @@ public final class PageDetailPanel extends JPanel {
         feedback.working(name + " wird gestartet …");
         java.nio.file.Path directory = context.settings() == null
                 ? com.aresstack.spaceharvester.app.settings.AppSettings.defaultOutputDirectory()
-                : context.settings().outputDirectory();
+                : context.exportDirectory();
         Background.run(() -> runtime.workspace().startVideoPresentation(video.sourceId(), video.pageId(), media,
                         format, directory),
                 run -> {
