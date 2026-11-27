@@ -2,8 +2,6 @@ package com.aresstack.askai.browser.playwright;
 
 import com.aresstack.askai.browser.BrowserException;
 
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -16,7 +14,7 @@ import java.util.concurrent.TimeUnit;
  * Isolated browser user contexts for parallel research workers (WebDriver BiDi terms: one
  * {@code browser.UserContext} per worker, its tabs are {@code browsingContext.BrowsingContext}s).
  *
- * <p>The chat's own browser (the persistent Camoufox profile behind {@link PlaywrightBrowserRuntime}) stays
+ * <p>The chat's own browser (the lasting profile behind {@link PlaywrightBrowserRuntime}) stays
  * exactly as it is. Workers get their user contexts in separate WORKER BROWSERS ({@link WorkerBrowserLane}):
  * each one is one Playwright instance with its own owner thread and one non-persistent browser process,
  * hosting up to {@link WorkerBrowserLimits#maxUserContextsPerProcess} user contexts. Playwright Java runs one
@@ -32,22 +30,8 @@ import java.util.concurrent.TimeUnit;
  */
 public final class PlaywrightUserContextPool implements AutoCloseable {
 
-    /**
-     * Documented DEV/TEST hand-off: a browser executable for the chrome/chromium worker channel (e.g. a bundled
-     * Chromium on a build machine). Never a persisted value; production uses Camoufox or an installed browser.
-     */
-    public static final String WORKER_EXECUTABLE_PROPERTY = "askai.research.browser.workerExecutable";
-
     /** Leads every error that means the worker's user context, tab or worker browser is gone. */
     public static final String USER_CONTEXT_LOST = WorkerBrowserLane.LOST_MARKER;
-
-    /**
-     * Where saved worker sign-in states belong: next to the chat browser's profile
-     * ({@code <APPDATA>/.askai/browser-profiles/worker-state}), never in a research project folder.
-     */
-    public static Path defaultStateDirectory() {
-        return CamoufoxProvisioning.appDirectory().resolve("browser-profiles").resolve("worker-state");
-    }
 
     /** One worker browser and the user contexts it hosts (including reservations in flight). */
     static final class LaneSlot {
@@ -101,9 +85,7 @@ public final class PlaywrightUserContextPool implements AutoCloseable {
 
     /** The scope of one chat: its worker browsers start with that chat's browser options. */
     public Chat openChat(String chatKey, PlaywrightBrowserRuntime.Options options) {
-        String executable = System.getProperty(WORKER_EXECUTABLE_PROPERTY, "").trim();
-        Path override = executable.isEmpty() ? null : Paths.get(executable);
-        return openChat(chatKey, PlaywrightWorkerBrowserBackend.factory(options, override));
+        return openChat(chatKey, PlaywrightWorkerBrowserBackend.factory(options));
     }
 
     Chat openChat(String chatKey, WorkerBrowserBackend.Factory factory) {

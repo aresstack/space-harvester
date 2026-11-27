@@ -30,17 +30,16 @@ import java.util.function.Supplier;
  * tool set ({@link BrowserToolSet}) the research runtime drives. The host calls {@link #call} with the same
  * tool names and arguments it used to send over MCP and gets the same text results back.
  *
- * <p>Starting runs the structured capability probe and the real browser launch; anything but READY fails
- * {@link #start} with the SPECIFIC readiness line ({@code INCOMPATIBLE_DRIVER} / {@code DRIVER_BUNDLE_NOT_FOUND}
- * / {@code BROWSER_NOT_INSTALLED} / {@code BROWSER_START_FAILED}) — never a silent fallback. The only download
- * is the managed Camoufox (channel {@code camoufox}, the default), installed once during the first launch or
- * ahead of time through {@link #installCamoufox()}.</p>
+ * <p>Starting asks the host's {@link BrowserLauncher} for its readiness and then for the browser; anything but
+ * READY fails {@link #start} with the SPECIFIC readiness line ({@code INCOMPATIBLE_DRIVER} /
+ * {@code DRIVER_BUNDLE_NOT_FOUND} / {@code BROWSER_NOT_INSTALLED} / {@code BROWSER_START_FAILED}) — never a silent
+ * fallback. Which browser runs is the launcher's configuration.</p>
  */
 public final class PlaywrightBrowserRuntime implements AutoCloseable {
 
     /** How a browser generation is started. */
     public static final class Options {
-        final String channel;
+        final BrowserLauncher launcher;
         final boolean headless;
         final boolean allowPrivateNetworks;
         final String searchUrlTemplate;
@@ -50,7 +49,7 @@ public final class PlaywrightBrowserRuntime implements AutoCloseable {
         final UrlSafetyPolicy.HostGate hostGate;
 
         /**
-         * @param channel              {@code camoufox} (default, also for null), {@code chrome} or {@code msedge}
+         * @param launcher             the host's browser runtime (which browser, program file, profiles)
          * @param headless             run the browser without a window
          * @param allowPrivateNetworks development-only: allow loopback/private targets (local test servers)
          * @param searchUrlTemplate    dev/test only: ONE search engine URL with {@code {query}} replacing the
@@ -59,26 +58,30 @@ public final class PlaywrightBrowserRuntime implements AutoCloseable {
          * @param hostPortDomainKeys   dev/test only: host:port domain families so local multi-server worlds
          *                             act as distinct domains (production keeps the public-suffix resolver)
          */
-        public Options(String channel, boolean headless, boolean allowPrivateNetworks, String searchUrlTemplate,
-                       LegacyBrowserSearchSettings settings, boolean hostPortDomainKeys) {
-            this(channel, headless, allowPrivateNetworks, searchUrlTemplate, settings, hostPortDomainKeys, null);
+        public Options(BrowserLauncher launcher, boolean headless, boolean allowPrivateNetworks,
+                       String searchUrlTemplate, LegacyBrowserSearchSettings settings, boolean hostPortDomainKeys) {
+            this(launcher, headless, allowPrivateNetworks, searchUrlTemplate, settings, hostPortDomainKeys, null);
         }
 
         /**
-         * @param profileKey the chat this browser belongs to: Camoufox keeps that chat's OWN persistent profile
+         * @param profileKey the chat this browser belongs to: the browser keeps that chat's OWN lasting profile
          *                   (sign-ins never travel between chats); null = a temporary profile, deleted on close
          */
-        public Options(String channel, boolean headless, boolean allowPrivateNetworks, String searchUrlTemplate,
-                       LegacyBrowserSearchSettings settings, boolean hostPortDomainKeys, String profileKey) {
-            this(channel, headless, allowPrivateNetworks, searchUrlTemplate, settings, hostPortDomainKeys, profileKey,
+        public Options(BrowserLauncher launcher, boolean headless, boolean allowPrivateNetworks,
+                       String searchUrlTemplate, LegacyBrowserSearchSettings settings, boolean hostPortDomainKeys,
+                       String profileKey) {
+            this(launcher, headless, allowPrivateNetworks, searchUrlTemplate, settings, hostPortDomainKeys, profileKey,
                     null);
         }
 
-        private Options(String channel, boolean headless, boolean allowPrivateNetworks, String searchUrlTemplate,
+        private Options(BrowserLauncher launcher, boolean headless, boolean allowPrivateNetworks, String searchUrlTemplate,
                         LegacyBrowserSearchSettings settings, boolean hostPortDomainKeys, String profileKey,
                         UrlSafetyPolicy.HostGate hostGate) {
             this.hostGate = hostGate;
-            this.channel = channel;
+            if (launcher == null) {
+                throw new IllegalArgumentException("a browser launcher is required");
+            }
+            this.launcher = launcher;
             this.headless = headless;
             this.allowPrivateNetworks = allowPrivateNetworks;
             this.searchUrlTemplate = searchUrlTemplate == null || searchUrlTemplate.trim().isEmpty()
@@ -95,7 +98,7 @@ public final class PlaywrightBrowserRuntime implements AutoCloseable {
          * every final address after a redirect.
          */
         public Options withHostGate(UrlSafetyPolicy.HostGate gate) {
-            return new Options(channel, headless, allowPrivateNetworks, searchUrlTemplate, settings,
+            return new Options(launcher, headless, allowPrivateNetworks, searchUrlTemplate, settings,
                     hostPortDomainKeys, profileKey, gate);
         }
 
@@ -143,18 +146,16 @@ public final class PlaywrightBrowserRuntime implements AutoCloseable {
     }
 
     /**
-     * Start a browser generation: probe, launch, wire the repair tools. BLOCKS until the browser is up (the
-     * first Camoufox start downloads the distribution). Playwright and everything below it are created on
+     * Start a browser generation: readiness, launch, wire the repair tools. BLOCKS until the browser is up. Playwright and everything below it are created on
      * the actor's dedicated owner thread; the calling thread only waits.
      */
     public static PlaywrightBrowserRuntime start(final Options options) throws StartFailure {
-        final String channel = PlaywrightSessionFactory.normalizeChannel(options.channel);
         final AtomicReference<BrowserSession> created = new AtomicReference<BrowserSession>();
         BrowserSessionActor actor;
         try {
             actor = BrowserSessionActor.start(new Supplier<BrowserSession>() {
                 public BrowserSession get() {
-                    BrowserSession session = PlaywrightSessionFactory.create(channel, options.headless,
+                    BrowserSession session = PlaywrightSessionFactory.create(options.launcher, options.headless,
                             options.urlPolicy(), options.filtersPrivateTargets(), options.searchUrlTemplate,
                             BrowserLimits.defaults(), options.settings, options.profileKey);
                     created.set(session);
@@ -197,8 +198,8 @@ public final class PlaywrightBrowserRuntime implements AutoCloseable {
                             }
                         })
                 : null;
-        // The READY line as the probe renders it (channel + executable), for diagnostics and the capability check.
-        String readiness = new PlaywrightCapabilityProbe().probe(channel).render();
+        // The READY line as the launcher renders it (channel + executable), for diagnostics and the capability check.
+        String readiness = options.launcher.readiness().render();
         System.err.println("[browser] ready backend=" + actor.getBackendKind() + " " + readiness);
         return new PlaywrightBrowserRuntime(actor, repairTools, readiness);
     }
@@ -263,19 +264,6 @@ public final class PlaywrightBrowserRuntime implements AutoCloseable {
     }
 
     // ------------------------------------------------------------------ static helpers
-
-    /** Cheap capability probe for a channel (driver, driver bundle, installed browser) — launches nothing. */
-    public static String probe(String channel) {
-        return new PlaywrightCapabilityProbe().probe(PlaywrightSessionFactory.normalizeChannel(channel)).render();
-    }
-
-    /**
-     * One-time download/verification of the managed Camoufox (serialized through the install lock); an
-     * already verified installation returns immediately. @return 0 when ready, non-zero on failure.
-     */
-    public static int installCamoufox() {
-        return CamoufoxProvisioning.installOnly();
-    }
 
     /**
      * Load the typed settings from a browser-search config document. Without a path the settings are exactly

@@ -631,7 +631,7 @@ public class ResearchLoopPlaywrightIntegrationTest {
             throws Exception {
         try {
             return PlaywrightBrowserRuntime.start(new PlaywrightBrowserRuntime.Options(
-                    System.getenv().getOrDefault("ASKAI_TEST_BROWSER_CHANNEL", "camoufox"), true, true,
+                    com.aresstack.askai.browser.playwright.TestBrowserLauncher.fromEnvironment(), true, true,
                     searchUrl, PlaywrightBrowserRuntime.loadBrowserConfig(browserConfigPath), true));
         } catch (PlaywrightBrowserRuntime.StartFailure notReady) {
             assumeTrue("SKIPPED (environment-gated): " + notReady.readiness(), false);

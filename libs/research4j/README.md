@@ -11,19 +11,23 @@ Reusable Java research and browser components extracted from [Ask AI](https://gi
 - **research-core** (new, `com.aresstack.research4j`): the source-neutral research of Phase 3. It fills the basket
   (Korb, the contract of [Knowledge4j](https://github.com/aresstack/knowledge4j)) and knows no browser, no search
   engine and no writing. See below.
-- browser-api, browser-playwright, browser-search-analysis, browser-static-http
+- browser-api, browser-playwright, browser-search-analysis, browser-static-http. browser-playwright operates the
+  browser (pages, SERP, consent, captcha, PDF, research add-on bridge, access rules) but never starts one: it gets its
+  browsers through the `BrowserLauncher` port. Which browser runs (Firefox, Camoufox, Chrome, Edge), its program file,
+  the profiles, the driver process and browser workarounds are the host's browser runtime; Space Harvester has it as
+  its `browser-runtime` project.
 - **browser-tools**: the browser tools of a chat host (`browser_tabs`, `_navigate`, `_read`, `_links`, `_follow`,
   `_back`, `_document`, `_controls`, `_act`, `_screenshot`, `_open_many`, `_mark`, `_close`), one browser per chat with
   its own profile, access rules per profile with the host's question for unknown sites, the question before
   data-changing actions and the progress of a web exploration. Moved from the Enterprise AI Client, see
   [browser-tools/UPSTREAM.md](browser-tools/UPSTREAM.md); its contract (`ChatBrowser`, engine SPI) is in browser-api.
-  The engine is `PlaywrightChatEngine` in browser-playwright: a visible browser per chat profile folder (channel
-  `msedge`, `chrome` or `camoufox`), with the Enterprise AI Client's page scripts, waiting rules and real input.
+  The engine is `PlaywrightChatEngine` in browser-playwright: a visible browser per chat profile from the host's
+  `BrowserLauncher`, with the Enterprise AI Client's page scripts, waiting rules and real input.
 - web-search-providers, serp4j-playwright-google
 - research-domain, research-agent-runtime
 - agent-model-runtime-api, mcp-runtime-api (neutral host contracts)
 
-The original Java packages and resources are retained to minimize migration changes. Java 21 matches the upstream build. The Playwright backend uses playwright4j and requires isolation from older GraalJS versions in host applications.
+The original Java packages and resources are retained to minimize migration changes. Java 21 matches the upstream build. The Playwright driver (playwright4j with its GraalVM 25 stack) belongs to the host's browser runtime, which keeps it apart from older GraalJS versions in the host.
 
 ## Filling the basket (research-core)
 
@@ -56,7 +60,7 @@ bash gradlew clean build
 bash gradlew publishToMavenLocal
 ```
 
-Ask AI host-dependent tests remain in the source tree but are explicitly excluded from the standalone test source set until replaced with host-neutral fixtures. The existing Firefox channel is retained; persistent Firefox profiles, extension loading, intranet access policy and Space Harvester integration require separate validation.
+Ask AI host-dependent tests remain in the source tree but are explicitly excluded from the standalone test source set until replaced with host-neutral fixtures.
 
 ## License
 
@@ -65,11 +69,13 @@ MIT; see LICENSE.
 ## Verification and releases
 
 The default build runs library tests without a live browser or model. Environment-dependent tests named
-`*Live*Test` run separately via `bash gradlew liveTest`. For example, select the installed Firefox with
-`ASKAI_TEST_BROWSER_CHANNEL=firefox bash gradlew :browser-playwright:liveTest --tests '*PlaywrightLiveBrowserTest'`.
+`*Live*Test` run separately via `bash gradlew liveTest`. They start their browser with the minimal
+`TestBrowserLauncher` (test fixtures of browser-playwright): `ASKAI_TEST_BROWSER_CHANNEL` (`firefox`, `chrome`,
+`msedge` or `chromium`) and `ASKAI_TEST_BROWSER_EXECUTABLE`, e.g.
+`ASKAI_TEST_BROWSER_CHANNEL=firefox ASKAI_TEST_BROWSER_EXECUTABLE=/usr/lib/firefox/firefox bash gradlew :browser-playwright:liveTest --tests '*PlaywrightChatEngineLiveTest'`.
+It has no profile management, preferences or workarounds: the real start, including the Firefox history workaround
+(https://github.com/aresstack/playwright4j/issues/79), is accepted in the host's browser runtime.
 The host-dependent tests listed in research-agent-runtime/build.gradle still require standalone host fixtures.
-Firefox history navigation currently fails with playwright4j 0.3.0 (see https://github.com/aresstack/playwright4j/issues/79).
-Do not treat the baseline library as acceptance of the Space Harvester integration.
 
 Build signed release bundles in GitHub Actions on a version tag. Central Portal credentials and signing
 keys are supplied by the existing organization secrets. The portal verification timeout is two hours.

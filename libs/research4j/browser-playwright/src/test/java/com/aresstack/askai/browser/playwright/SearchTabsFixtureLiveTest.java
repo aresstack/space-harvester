@@ -37,7 +37,7 @@ import static org.junit.Assume.assumeTrue;
  * the query exactly as the engine got it and the page's own view of the input.
  *
  * <p>Environment-gated like the other live tests: {@code ASKAI_TEST_BROWSER_CHANNEL} (default chrome) names the
- * browser; for Camoufox set {@code ASKAI_TEST_BROWSER_CHANNEL=camoufox ASKAI_LIVE_CAMOUFOX=1}.</p>
+ * browser ({@link TestBrowserLauncher}); Camoufox runs through the host's browser runtime.</p>
  */
 public class SearchTabsFixtureLiveTest {
 
@@ -74,15 +74,11 @@ public class SearchTabsFixtureLiveTest {
     }
 
     /** The browser to test with, or the test is skipped where that browser is missing. */
-    private static String gatedChannel() {
-        String channel = System.getenv().getOrDefault("ASKAI_TEST_BROWSER_CHANNEL", "chrome");
-        if (CamoufoxProvisioning.CHANNEL.equals(channel)) {
-            assumeTrue("set ASKAI_LIVE_CAMOUFOX=1 for the real Camoufox", "1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX")));
-        } else {
-            PlaywrightReadiness readiness = new PlaywrightCapabilityProbe().probe(channel);
-            assumeTrue("SKIPPED (environment-gated live test): " + readiness.render(), readiness.isReady());
-        }
-        return channel;
+    private static BrowserLauncher gatedLauncher() {
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        PlaywrightReadiness readiness = launcher.readiness();
+        assumeTrue("SKIPPED (environment-gated live test): " + readiness.render(), readiness.isReady());
+        return launcher;
     }
 
     /**
@@ -92,7 +88,7 @@ public class SearchTabsFixtureLiveTest {
      */
     @Test
     public void aDelayedEngineHoldsBackNoOtherStartPage() throws Exception {
-        String channel = gatedChannel();
+        BrowserLauncher launcher = gatedLauncher();
         final long slowMillis = 2_500L;
         final int budgetMillis = 5_000;
         final Map<String, Long> asked = new ConcurrentHashMap<String, Long>();
@@ -127,7 +123,7 @@ public class SearchTabsFixtureLiveTest {
         }
 
         LegacyBrowserSearchSettings settings = LegacyBrowserSearchDefaults.create();
-        driver = Playwright4jDriver.launch(channel, !"1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX_HEADED")),
+        driver = Playwright4jDriver.launch(launcher, !"1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX_HEADED")),
                 budgetMillis, null, null, settings.consent, settings.captcha);
         driver.open(base + "/fast/front");
         asked.clear();
@@ -178,7 +174,7 @@ public class SearchTabsFixtureLiveTest {
      */
     @Test
     public void hangingResultPagesDoNotAddUpTheirWaits() throws Exception {
-        String channel = gatedChannel();
+        BrowserLauncher launcher = gatedLauncher();
         final int budgetMillis = 5_000;
         final Map<String, Long> asked = new ConcurrentHashMap<String, Long>();
         server = threadedServer();
@@ -212,7 +208,7 @@ public class SearchTabsFixtureLiveTest {
         server.start();
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
         LegacyBrowserSearchSettings settings = LegacyBrowserSearchDefaults.create();
-        driver = Playwright4jDriver.launch(channel, !"1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX_HEADED")),
+        driver = Playwright4jDriver.launch(launcher, !"1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX_HEADED")),
                 budgetMillis, null, null, settings.consent, settings.captcha);
         driver.open(base + "/fast/front");
         List<String> homes = new ArrayList<String>();
@@ -244,7 +240,7 @@ public class SearchTabsFixtureLiveTest {
      */
     @Test
     public void theFirstTabClosingDuringTheInputEndsOnlyItsOwnInput() throws Exception {
-        String channel = gatedChannel();
+        BrowserLauncher launcher = gatedLauncher();
         server = threadedServer();
         final List<String> engines = Arrays.asList("closes", "two", "three");
         for (final String engine : engines) {
@@ -264,7 +260,7 @@ public class SearchTabsFixtureLiveTest {
         server.start();
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
         LegacyBrowserSearchSettings settings = LegacyBrowserSearchDefaults.create();
-        driver = Playwright4jDriver.launch(channel, !"1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX_HEADED")),
+        driver = Playwright4jDriver.launch(launcher, !"1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX_HEADED")),
                 30_000, null, null, settings.consent, settings.captcha);
         driver.open(base + "/two/front");
         List<String> homes = new ArrayList<String>();
@@ -305,7 +301,7 @@ public class SearchTabsFixtureLiveTest {
 
     @Test
     public void allEngineTabsAreTypedIntoAtTheSameTimeWithRealInput() throws Exception {
-        String channel = gatedChannel();
+        BrowserLauncher launcher = gatedLauncher();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         final List<String> engines = Arrays.asList("one", "two", "three");
         for (final String engine : engines) {
@@ -337,7 +333,7 @@ public class SearchTabsFixtureLiveTest {
 
         LegacyBrowserSearchSettings settings = LegacyBrowserSearchDefaults.create();
         boolean headless = !"1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX_HEADED"));
-        driver = Playwright4jDriver.launch(channel, headless, 30_000, null, null, settings.consent, settings.captcha);
+        driver = Playwright4jDriver.launch(launcher, headless, 30_000, null, null, settings.consent, settings.captcha);
         PlaywrightPageState front = driver.open(base + "/one/front");
 
         List<String> homes = new ArrayList<String>();
@@ -408,7 +404,7 @@ public class SearchTabsFixtureLiveTest {
      */
     @Test
     public void everyPagerClickLoadsTheNextResultPage() throws Exception {
-        String channel = gatedChannel();
+        BrowserLauncher launcher = gatedLauncher();
         final List<String> asked = java.util.Collections.synchronizedList(new ArrayList<String>());
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/serp", exchange -> {
@@ -420,7 +416,7 @@ public class SearchTabsFixtureLiveTest {
         server.start();
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
         LegacyBrowserSearchSettings settings = LegacyBrowserSearchDefaults.create();
-        driver = Playwright4jDriver.launch(channel, !"1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX_HEADED")),
+        driver = Playwright4jDriver.launch(launcher, !"1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX_HEADED")),
                 30_000, null, null, settings.consent, settings.captcha);
         driver.open(base + "/serp?first=1");
 
@@ -435,13 +431,13 @@ public class SearchTabsFixtureLiveTest {
     /** A "Weiter" that loads the same result page again is no next page: the click reports false, nothing is re-read. */
     @Test
     public void aPagerClickThatLoadsNoOtherPageIsNotTheNextPage() throws Exception {
-        String channel = gatedChannel();
+        BrowserLauncher launcher = gatedLauncher();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/serp", exchange -> respond(exchange, pagedResults(11, true)));
         server.start();
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
         LegacyBrowserSearchSettings settings = LegacyBrowserSearchDefaults.create();
-        driver = Playwright4jDriver.launch(channel, !"1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX_HEADED")),
+        driver = Playwright4jDriver.launch(launcher, !"1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX_HEADED")),
                 30_000, null, null, settings.consent, settings.captcha);
         driver.open(base + "/serp?first=11&dead=1");
 
@@ -454,7 +450,7 @@ public class SearchTabsFixtureLiveTest {
      */
     @Test
     public void aPostPagerKeepsItsAddressAndIsStillTheNextPage() throws Exception {
-        String channel = gatedChannel();
+        BrowserLauncher launcher = gatedLauncher();
         final List<String> posted = java.util.Collections.synchronizedList(new ArrayList<String>());
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/html/", exchange -> {
@@ -478,7 +474,7 @@ public class SearchTabsFixtureLiveTest {
         server.start();
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
         LegacyBrowserSearchSettings settings = LegacyBrowserSearchDefaults.create();
-        driver = Playwright4jDriver.launch(channel, !"1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX_HEADED")),
+        driver = Playwright4jDriver.launch(launcher, !"1".equals(System.getenv("ASKAI_LIVE_CAMOUFOX_HEADED")),
                 30_000, null, null, settings.consent, settings.captcha);
         driver.open(base + "/html/");
 

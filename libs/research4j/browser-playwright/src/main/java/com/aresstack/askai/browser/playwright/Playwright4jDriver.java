@@ -3,19 +3,15 @@ package com.aresstack.askai.browser.playwright;
 import com.aresstack.askai.browser.BrowserException;
 import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.BrowserContext;
-import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.ElementHandle;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
-import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.PlaywrightException;
 import com.microsoft.playwright.options.BoundingBox;
 
-import com.aresstack.askai.browser.playwright.camoufox.CamoufoxLaunch;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -24,16 +20,13 @@ import java.util.function.Predicate;
 /**
  * {@link PlaywrightDriver} over the OFFICIAL Playwright Java API, executed by playwright4j: the Driver
  * replacement spawns a second Java process ({@code GraalDriverMain}) hosting the Playwright Core JS driver on
- * GraalJS, which in turn launches the browser: by default the managed Camoufox (Firefox over WebDriver BiDi,
- * downloaded once and verified by {@link CamoufoxProvisioning}, started with its fingerprint profile in a
- * persistent context, as Argos does), or the locally installed Chrome/Edge via the channel mechanism.
- * Playwright itself never downloads a browser ({@code PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1} is always set).
+ * GraalJS. Which browser runs and how it starts is the host's browser runtime ({@link BrowserLauncher}); this
+ * driver only operates it.
  *
- * <p>Lifecycle owned here (one research session per runtime instance): Playwright → Browser → one
- * BrowserContext → one Page + history. Popups are closed immediately, downloads are refused, and when a
- * request filter is given, browser-side requests to disallowed targets are aborted via route interception.
- * {@link #close()} tears down page → context → browser → Playwright (ending the driver child) and is
- * idempotent.</p>
+ * <p>One research session per runtime instance: one BrowserContext → one Page + history. Popups are closed
+ * immediately, and when a request filter is given, browser-side requests to disallowed targets are aborted via
+ * route interception. {@link #close()} closes the page and hands the launched browser back to the launcher's
+ * {@link LaunchedBrowser#close()}; it is idempotent.</p>
  *
  * <p>THREADING CONTRACT: every instance is created and used on exactly ONE thread (the
  * {@link BrowserSessionActor} owner). Playwright Java is not thread-safe, and its events (route
@@ -45,12 +38,11 @@ final class Playwright4jDriver implements PlaywrightDriver {
 
     /** Created in the constructor — the launching thread (the actor owner) is the only legal caller. */
     private final ThreadOwnershipGuard owner = new ThreadOwnershipGuard();
-    private final Playwright playwright;
     /** Null for a persistent context whose browser Playwright does not expose (Camoufox). */
     private final Browser browser;
     private final BrowserContext context;
-    /** Camoufox only: the profile this browser runs on (released/deleted on close), else null. */
-    private CamoufoxProvisioning.ProfileLease profileLease;
+    /** The chat browser this driver owns (closed with it), else null (worker and chat tabs own nothing). */
+    private LaunchedBrowser launched;
     /** Set by BrowserContext.onClose: a persistent context ends with its browser window. */
     private volatile boolean contextClosed;
     /** SERP guard behaviour comes exclusively from the settings — no local constants. */
@@ -81,8 +73,6 @@ final class Playwright4jDriver implements PlaywrightDriver {
      * prepared or loaded.
      */
     private AddonBridge addonBridge;
-    /** Chrome/Edge with the research extension: the temporary root of profile and extension, deleted on close. */
-    private Path chromeRoot;
     /**
      * With the add-on (Camoufox) or extension (Chrome/Edge chat browser): where page reads run (the chat browser's
      * {@link #addonBridge}, or the Camoufox worker
@@ -145,21 +135,20 @@ final class Playwright4jDriver implements PlaywrightDriver {
     private final boolean camoufox;
     /** Every main-world script passes this gate; in script-free mode it refuses them all (see PageScriptGate). */
     private final PageScriptGate pageScripts;
-    private Playwright4jDriver(Playwright playwright, Browser browser, BrowserContext context, Page page,
+    private Playwright4jDriver(Browser browser, BrowserContext context, Page page,
                                com.aresstack.askai.browser.search.ConsentHandlingSettings consent,
                                com.aresstack.askai.browser.search.CaptchaHandlingSettings captcha,
                                int navigationTimeoutMillis, boolean camoufox) {
-        this(playwright, browser, context, page, consent, captcha, navigationTimeoutMillis, true, camoufox);
+        this(browser, context, page, consent, captcha, navigationTimeoutMillis, true, camoufox);
     }
 
-    private Playwright4jDriver(Playwright playwright, Browser browser, BrowserContext context, Page page,
+    private Playwright4jDriver(Browser browser, BrowserContext context, Page page,
                                com.aresstack.askai.browser.search.ConsentHandlingSettings consent,
                                com.aresstack.askai.browser.search.CaptchaHandlingSettings captcha,
                                int navigationTimeoutMillis, boolean ownsGeneration, boolean camoufox) {
         this.ownsGeneration = ownsGeneration;
         this.camoufox = camoufox;
         this.pageScripts = PageScriptGate.forBrowser(camoufox);
-        this.playwright = playwright;
         this.browser = browser;
         this.context = context;
         this.page = page;
@@ -169,129 +158,38 @@ final class Playwright4jDriver implements PlaywrightDriver {
     }
 
     /**
-     * Launch the full chain. @param requestAllowed null = no interception; otherwise every browser-side
-     * request URL is checked and aborted when not allowed (cheap best-effort SSRF net below the
-     * authoritative post-navigation URL-policy check in the session). @param profileKey the chat whose persistent
-     * Camoufox profile this browser uses (null = a temporary profile; see {@link CamoufoxProvisioning#leaseProfile}).
+     * Get the chat browser from the host's launcher and wire it. @param requestAllowed null = no interception;
+     * otherwise every browser-side request URL is checked and aborted when not allowed (cheap best-effort SSRF net
+     * below the authoritative post-navigation URL-policy check in the session). @param profileKey the chat whose
+     * lasting profile this browser uses (null = a temporary profile).
      */
-    static Playwright4jDriver launch(String channel, boolean headless, int timeoutMillis, String profileKey,
+    static Playwright4jDriver launch(BrowserLauncher launcher, boolean headless, int timeoutMillis, String profileKey,
                                      final Predicate<String> requestAllowed,
                                      com.aresstack.askai.browser.search.ConsentHandlingSettings consent,
                                      com.aresstack.askai.browser.search.CaptchaHandlingSettings captcha)
             throws BrowserException {
-        Playwright playwright = null;
-        Browser browser = null;
-        BrowserContext context = null;
-        CamoufoxProvisioning.ProfileLease profile = null;
         AddonBridge bridge = null;
-        Path chromeRoot = null;
-        boolean camoufox = CamoufoxProvisioning.CHANNEL.equals(channel);
-        // Which step of the chain was running when it failed — a visible window with a failed start
-        // (browser up, CDP/context not) reads very differently from a driver that never came up.
-        String stage = camoufox ? "CAMOUFOX_INSTALL" : "PLAYWRIGHT_CREATE";
-        long startedNanos = System.nanoTime();
+        LaunchedBrowser launched = null;
         try {
-            CamoufoxLaunch camoufoxLaunch = null;
-            Path camoufoxExecutable = null;
-            if (camoufox) {
-                // Downloads once (progress lines keep the host waiting), afterwards only verifies.
-                camoufoxExecutable = CamoufoxProvisioning.ensureInstalled();
-                // The system language, as Chrome used it: search engines answer in it (see builtIn).
-                camoufoxLaunch = CamoufoxLaunch.builtIn(camoufoxExecutable, CamoufoxProvisioning.browserRoot(),
-                        java.util.Locale.getDefault());
-                stage = "PLAYWRIGHT_CREATE";
+            final AddonBridge addonBridge = startAddonBridge("research add-on");
+            bridge = addonBridge;
+            AddonPackager addon = addonBridge == null ? null : AddonPackager.research(addonBridge, true);
+            launched = launcher.persistent(profileKey, headless, addon);
+            if (bridge != null && !launched.addonLoaded()) {
+                // The browser runs on without the add-on: HUD overlay and page reads stay in the page.
+                System.err.println("[browser-mcp] research add-on not loaded: " + launched.addonFailure());
+                bridge.close();
+                bridge = null;
             }
-            Map<String, String> env = new LinkedHashMap<String, String>();
-            env.put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
-            env.put("PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS", "1");
-            DriverClasspathJar.install();
-            playwright = Playwright.create(new Playwright.CreateOptions().setEnv(env));
-            stage = "BROWSER_LAUNCH";
-            if (camoufox) {
-                profile = CamoufoxProvisioning.leaseProfile(profileKey);
-                if (!"false".equalsIgnoreCase(System.getProperty(ADDON_PROPERTY))) {
-                    stage = "ADDON_PREPARE";
-                    try {
-                        bridge = AddonBridge.start();
-                        Path addon = ResearchAddon.install(profile.directory(), bridge.clientConfig());
-                        camoufoxLaunch = camoufoxLaunch.withAddon(addon);
-                    } catch (java.io.IOException | RuntimeException addonFailed) {
-                        // The browser still starts, without a HUD in it: nothing is put into the page instead.
-                        System.err.println("[browser-mcp] research add-on not prepared: " + firstLine(addonFailed));
-                        if (bridge != null) {
-                            bridge.close();
-                            bridge = null;
-                        }
-                    }
-                    stage = "BROWSER_LAUNCH";
-                }
-                context = playwright.firefox().launchPersistentContext(profile.directory(),
-                        camoufoxOptions(camoufoxExecutable, camoufoxLaunch, headless));
-                browser = context.browser();
-            } else if (BrowserExecutables.FIREFOX.equals(channel)) {
-                // The local Firefox over WebDriver BiDi, as Camoufox runs (without its fingerprint patches).
-                browser = playwright.firefox().launch(localFirefoxOptions(headless));
-                stage = "CONTEXT_CREATE";
-                context = browser.newContext(new Browser.NewContextOptions().setAcceptDownloads(false));
-            } else if (!"false".equalsIgnoreCase(System.getProperty(ADDON_PROPERTY))) {
-                // Chrome/Edge with the research extension (issue #23, stage 4): a persistent profile of its own per
-                // start, the extension next to it, loaded over the DevTools protocol (ChromeResearchExtension).
-                chromeRoot = java.nio.file.Files.createTempDirectory("askai-chrome-");
-                Path chromeProfile = chromeRoot.resolve(ChromeResearchExtension.PROFILE);
-                Path extension = null;
-                stage = "ADDON_PREPARE";
-                try {
-                    bridge = AddonBridge.start();
-                    extension = ResearchAddon.installChrome(chromeRoot, bridge.clientConfig());
-                    bridge.readScriptsAsFilesIn(extension);
-                    ChromeResearchExtension.pinToolbarButton(chromeProfile);
-                } catch (java.io.IOException | RuntimeException addonFailed) {
-                    System.err.println("[browser-mcp] research extension not prepared: " + firstLine(addonFailed));
-                    if (bridge != null) {
-                        bridge.close();
-                        bridge = null;
-                    }
-                }
-                stage = "BROWSER_LAUNCH";
-                BrowserType.LaunchPersistentContextOptions chromeOptions =
-                        ChromeResearchExtension.options(channel, headless);
-                String chosenChrome = BrowserExecutables.configured(channel);
-                if (!chosenChrome.isEmpty()) {
-                    chromeOptions.setExecutablePath(java.nio.file.Paths.get(chosenChrome));
-                }
-                context = playwright.chromium().launchPersistentContext(chromeProfile, chromeOptions);
-                browser = context.browser();
-                if (bridge != null) {
-                    stage = "ADDON_LOAD";
-                    try {
-                        ChromeResearchExtension.load(browser, extension);
-                    } catch (RuntimeException loadFailed) {
-                        // The browser runs on without the extension: HUD overlay and page.evaluate as before.
-                        System.err.println("[browser-mcp] research extension not loaded (HUD and page reads stay "
-                                + "in the page): " + firstLine(loadFailed));
-                        bridge.close();
-                        bridge = null;
-                    }
-                }
-            } else {
-                BrowserType.LaunchOptions chromium = new BrowserType.LaunchOptions()
-                        .setChannel(channel)
-                        .setHeadless(headless);
-                String chosen = BrowserExecutables.configured(channel);
-                if (!chosen.isEmpty()) {
-                    chromium.setExecutablePath(java.nio.file.Paths.get(chosen));
-                }
-                browser = playwright.chromium().launch(chromium);
-                stage = "CONTEXT_CREATE";
-                context = browser.newContext(new Browser.NewContextOptions().setAcceptDownloads(false));
-            }
+            BrowserContext context = launched.context();
+            Browser browser = launched.browser();
             context.setDefaultNavigationTimeout(timeoutMillis);
             context.setDefaultTimeout(timeoutMillis);
             if (requestAllowed != null) {
                 // Chrome/Edge: Playwright's interception also sees the extension service worker's requests (Firefox
                 // does not), so the bridge of THIS start stays reachable for requests with its token; everything
                 // else to loopback is still refused, and the bridge itself checks token and origin again.
-                final String extensionBridge = chromeRoot != null && bridge != null
+                final String extensionBridge = launched.chromiumExtension() && bridge != null
                         ? "http://127.0.0.1:" + bridge.port() + "/v1/" : null;
                 final String extensionBearer = bridge != null ? "Bearer " + bridge.token() : null;
                 context.route("**/*", route -> {
@@ -304,14 +202,11 @@ final class Playwright4jDriver implements PlaywrightDriver {
                     }
                 });
             }
-            stage = "PAGE_CREATE";
             // A persistent context opens with its first tab already; use it instead of a second one.
-            Page page = (camoufox || chromeRoot != null) && !context.pages().isEmpty()
-                    ? context.pages().get(0) : context.newPage();
-            final Playwright4jDriver driver = new Playwright4jDriver(playwright, browser, context, page,
-                    consent, captcha, timeoutMillis, camoufox);
-            driver.profileLease = profile;
-            driver.chromeRoot = chromeRoot;
+            Page page = !context.pages().isEmpty() ? context.pages().get(0) : context.newPage();
+            final Playwright4jDriver driver = new Playwright4jDriver(browser, context, page,
+                    consent, captcha, timeoutMillis, launched.camoufox());
+            driver.launched = launched;
             if (bridge != null) {
                 bridge.deliverTo(driver.hudCommands);
                 driver.addonBridge = bridge;
@@ -335,23 +230,35 @@ final class Playwright4jDriver implements PlaywrightDriver {
                 }
             });
             return driver;
-        } catch (RuntimeException | java.io.IOException ex) {
-            long elapsedMillis = (System.nanoTime() - startedNanos) / 1_000_000L;
-            closeQuietly(context, browser, playwright);
+        } catch (RuntimeException ex) {
+            if (launched != null) {
+                launched.close();
+            }
             if (bridge != null) {
                 bridge.close();
             }
-            if (profile != null) {
-                profile.close();
+            throw new BrowserException("Browser start failed: " + firstLine(ex));
+        } catch (BrowserException ex) {
+            if (bridge != null) {
+                bridge.close();
             }
-            deleteTree(chromeRoot);
-            // The one-line message travels to the host and the chat; the FULL exception (Playwright's
-            // multi-line message carries the browser log and call log) goes to a persistent file —
-            // start failures are rare, the next one must be diagnosable without a repro.
-            String report = BrowserStartFailureLog.append(channel, headless, stage, elapsedMillis, ex);
-            throw new BrowserException("Browser start failed (channel=" + channel + ", stage=" + stage
-                    + ", after " + elapsedMillis + " ms): " + firstLine(ex)
-                    + (report == null ? "" : " (full report: " + report + ")"));
+            throw ex;
+        }
+    }
+
+    /**
+     * The bridge to the research add-on, unless it is switched off ({@value #ADDON_PROPERTY}{@code =false});
+     * null when it could not start (the browser then starts without the add-on, which is logged).
+     */
+    static AddonBridge startAddonBridge(String what) {
+        if ("false".equalsIgnoreCase(System.getProperty(ADDON_PROPERTY))) {
+            return null;
+        }
+        try {
+            return AddonBridge.start();
+        } catch (java.io.IOException | RuntimeException failed) {
+            System.err.println("[browser-mcp] " + what + " not prepared: " + firstLine(failed));
+            return null;
         }
     }
 
@@ -367,7 +274,7 @@ final class Playwright4jDriver implements PlaywrightDriver {
                                                 com.aresstack.askai.browser.search.ConsentHandlingSettings consent,
                                                 com.aresstack.askai.browser.search.CaptchaHandlingSettings captcha,
                                                 boolean camoufox) {
-        final Playwright4jDriver driver = new Playwright4jDriver(null, browser, userContext, page, consent,
+        final Playwright4jDriver driver = new Playwright4jDriver(browser, userContext, page, consent,
                 captcha, timeoutMillis, false, camoufox);
         page.onPopup(driver.popupCloser());
         if (browser != null) {
@@ -389,29 +296,8 @@ final class Playwright4jDriver implements PlaywrightDriver {
                                         com.aresstack.askai.browser.search.ConsentHandlingSettings consent,
                                         com.aresstack.askai.browser.search.CaptchaHandlingSettings captcha,
                                         boolean camoufox) {
-        return new Playwright4jDriver(null, context.browser(), context, page, consent, captcha, timeoutMillis, false,
+        return new Playwright4jDriver(context.browser(), context, page, consent, captcha, timeoutMillis, false,
                 camoufox);
-    }
-
-    /** Launch options of the local Firefox (chosen location, else autodetected). */
-    static BrowserType.LaunchOptions localFirefoxOptions(boolean headless) {
-        return new BrowserType.LaunchOptions()
-                .setChannel(FIREFOX_BIDI_CHANNEL)
-                .setExecutablePath(localFirefoxExecutable())
-                .setHeadless(headless)
-                .setFirefoxUserPrefs(FirefoxSessionPrefs.apply(new LinkedHashMap<String, Object>()));
-    }
-
-    /** Playwright's channel for a Firefox driven over WebDriver BiDi (local Firefox and Camoufox). */
-    static final String FIREFOX_BIDI_CHANNEL = "moz-firefox";
-
-    /** The local Firefox to start (chosen location, else autodetected); fails readably when there is none. */
-    static java.nio.file.Path localFirefoxExecutable() {
-        String executable = BrowserExecutables.effective(BrowserExecutables.FIREFOX);
-        if (executable == null) {
-            throw new IllegalStateException("No Firefox found; choose its location in the browser settings");
-        }
-        return java.nio.file.Paths.get(executable);
     }
 
     @Override
@@ -1765,11 +1651,6 @@ final class Playwright4jDriver implements PlaywrightDriver {
         return addonBridge;
     }
 
-    /** Chrome/Edge with the extension: the temporary root of profile and extension; null otherwise. */
-    Path chromeRoot() {
-        return chromeRoot;
-    }
-
     /** Tests only: the browser context, e.g. to reach the Chrome extension's service worker. */
     BrowserContext browserContext() {
         return context;
@@ -1950,14 +1831,12 @@ final class Playwright4jDriver implements PlaywrightDriver {
         if (!ownsGeneration) {
             return; // a worker tab: the user context and the browser stay with the worker browser
         }
-        closeQuietly(context, browser, playwright);
+        if (launched != null) {
+            launched.close();
+        }
         if (addonBridge != null) {
             addonBridge.close();
         }
-        if (profileLease != null) {
-            profileLease.close();
-        }
-        deleteTree(chromeRoot);
     }
 
     /**
@@ -1977,24 +1856,6 @@ final class Playwright4jDriver implements PlaywrightDriver {
                 bearer.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
-    /** Best effort: the temporary profile and extension of a Chrome/Edge start; null does nothing. */
-    static void deleteTree(Path root) {
-        if (root == null) {
-            return;
-        }
-        try (java.util.stream.Stream<Path> walk = java.nio.file.Files.walk(root)) {
-            walk.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
-                try {
-                    java.nio.file.Files.deleteIfExists(path);
-                } catch (java.io.IOException ignored) {
-                    // a file the browser still holds stays in the temp directory
-                }
-            });
-        } catch (java.io.IOException | RuntimeException ignored) {
-            // nothing to clean up, or not readable any more
-        }
-    }
-
     @Override
     public void terminate() {
         // Deliberately NO owner check: the owner thread is the stuck one. Cutting the Playwright connection
@@ -2011,23 +1872,15 @@ final class Playwright4jDriver implements PlaywrightDriver {
         if (!ownsGeneration) {
             return; // the worker browser cuts its own connection; a tab has nothing of its own to cut
         }
-        final Playwright toCut = playwright;
-        final CamoufoxProvisioning.ProfileLease lease = profileLease;
+        final LaunchedBrowser toCut = launched;
         final AddonBridge bridgeToClose = addonBridge;
-        final Path chromeRootToDelete = chromeRoot;
         Thread cutter = new Thread(new Runnable() {
             public void run() {
-                closeQuietly(null, null, toCut);
+                if (toCut != null) {
+                    toCut.abandon();
+                }
                 if (bridgeToClose != null) {
                     bridgeToClose.close();
-                }
-                deleteTree(chromeRootToDelete); // best effort: an orphaned browser may still hold its profile
-                if (lease != null) {
-                    try {
-                        lease.close();
-                    } catch (RuntimeException ignored) {
-                        // best effort: a profile still held by an orphaned browser stays on disk
-                    }
                 }
             }
         }, "playwright-terminate");
@@ -2038,36 +1891,6 @@ final class Playwright4jDriver implements PlaywrightDriver {
     /** Whether the browser is still there; a persistent context without a Browser object ends with its context. */
     private boolean connected() {
         return browser != null ? browser.isConnected() : !contextClosed;
-    }
-
-    /**
-     * Camoufox as Argos starts it: Firefox over WebDriver BiDi ({@code moz-firefox}) with the verified
-     * executable, the fingerprint environment and prefs of the built-in profile, and NO Playwright
-     * emulation (viewport, color scheme, motion ...) — the fingerprint owns the window and the screen.
-     */
-    static BrowserType.LaunchPersistentContextOptions camoufoxOptions(Path executable,
-                                                                              CamoufoxLaunch launch,
-                                                                              boolean headless) {
-        Map<String, String> environment = new java.util.HashMap<String, String>(System.getenv());
-        environment.putAll(launch.environment());
-        Map<String, Object> prefs = new LinkedHashMap<String, Object>(launch.prefs());
-        FirefoxSessionPrefs.apply(prefs); // no bfcache + no blocking "resend data" prompt
-        BrowserType.LaunchPersistentContextOptions options = new BrowserType.LaunchPersistentContextOptions()
-                .setChannel(FIREFOX_BIDI_CHANNEL)
-                .setExecutablePath(executable)
-                .setHeadless(headless)
-                .setEnv(environment)
-                .setAcceptDownloads(false)
-                .setViewportSize(null)
-                .setColorScheme(null)
-                .setReducedMotion(null)
-                .setForcedColors(null)
-                .setContrast(null)
-                .setFirefoxUserPrefs(prefs);
-        if (!launch.args().isEmpty()) {
-            options.setArgs(launch.args());
-        }
-        return options;
     }
 
     /** RENDERED state via the DOM: url after redirects, title, body innerText, anchors with absolute hrefs. */
@@ -2145,27 +1968,6 @@ final class Playwright4jDriver implements PlaywrightDriver {
             return new BrowserException(BROWSER_CLOSED_MESSAGE);
         }
         return new BrowserException(action + ": " + firstLine(ex));
-    }
-
-    private static void closeQuietly(BrowserContext context, Browser browser, Playwright playwright) {
-        try {
-            if (context != null) {
-                context.close();
-            }
-        } catch (RuntimeException ignored) {
-        }
-        try {
-            if (browser != null) {
-                browser.close();
-            }
-        } catch (RuntimeException ignored) {
-        }
-        try {
-            if (playwright != null) {
-                playwright.close();
-            }
-        } catch (RuntimeException ignored) {
-        }
     }
 
     /** Tool errors carry the reason, never a multi-line driver stack trace. */

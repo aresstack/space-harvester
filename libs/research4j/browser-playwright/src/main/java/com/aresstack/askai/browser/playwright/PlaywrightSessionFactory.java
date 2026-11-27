@@ -14,49 +14,49 @@ import java.util.Locale;
 import java.util.function.Predicate;
 
 /**
- * Creates the Playwright-backed {@link BrowserSession} for the browser runtime. Runs the structured capability probe
- * first ({@link PlaywrightCapabilityProbe}); anything but READY yields an {@link UnavailableSession} whose
- * tool errors carry the SPECIFIC status (INCOMPATIBLE_DRIVER / DRIVER_BUNDLE_NOT_FOUND / BROWSER_NOT_INSTALLED
- * / BROWSER_START_FAILED) — never a blanket NOT_INSTALLED and never a silent STATIC_HTTP fallback. A launch
- * failure after a READY probe is reported as BROWSER_START_FAILED. The only download is the managed Camoufox
- * (channel {@code camoufox}, the default), installed once by {@link CamoufoxProvisioning} during the launch.
+ * Creates the Playwright-backed {@link BrowserSession} for the browser runtime. Asks the host's launcher for its
+ * readiness first; anything but READY yields an {@link UnavailableSession} whose tool errors carry the SPECIFIC
+ * status (INCOMPATIBLE_DRIVER / DRIVER_BUNDLE_NOT_FOUND / BROWSER_NOT_INSTALLED / BROWSER_START_FAILED) — never a
+ * blanket NOT_INSTALLED and never a silent STATIC_HTTP fallback. A launch failure after a READY readiness is reported
+ * as BROWSER_START_FAILED.
  */
 final class PlaywrightSessionFactory {
 
     private PlaywrightSessionFactory() {
     }
 
-    static BrowserSession create(String channel, boolean headless, boolean allowPrivateNetworks,
+    static BrowserSession create(BrowserLauncher launcher, boolean headless, boolean allowPrivateNetworks,
                                  String searchUrlTemplate, BrowserLimits limits,
                                  com.aresstack.askai.browser.search.LegacyBrowserSearchSettings settings) {
-        return create(channel, headless, allowPrivateNetworks, searchUrlTemplate, limits, settings, null);
+        return create(launcher, headless, allowPrivateNetworks, searchUrlTemplate, limits, settings, null);
     }
 
-    /** @param profileKey the chat whose persistent browser profile to use; null = a temporary profile */
-    static BrowserSession create(String channel, boolean headless, boolean allowPrivateNetworks,
+    /** @param profileKey the chat whose lasting profile to use; null = a temporary profile */
+    static BrowserSession create(BrowserLauncher launcher, boolean headless, boolean allowPrivateNetworks,
                                  String searchUrlTemplate, BrowserLimits limits,
                                  com.aresstack.askai.browser.search.LegacyBrowserSearchSettings settings,
                                  String profileKey) {
-        return create(channel, headless, allowPrivateNetworks ? UrlSafetyPolicy.allowingPrivateNetworks()
+        return create(launcher, headless, allowPrivateNetworks ? UrlSafetyPolicy.allowingPrivateNetworks()
                 : UrlSafetyPolicy.strict(), !allowPrivateNetworks, searchUrlTemplate, limits, settings, profileKey);
     }
 
     /**
+     * @param launcher              the host's browser runtime
      * @param policy                the navigation policy (the host's gate or the public-host rule)
      * @param filterPrivateTargets  whether the in-page filter against literal private addresses runs
+     * @param profileKey            the chat whose lasting profile to use; null = a temporary profile
      */
-    static BrowserSession create(String channel, boolean headless, UrlSafetyPolicy policy,
+    static BrowserSession create(BrowserLauncher launcher, boolean headless, UrlSafetyPolicy policy,
                                  boolean filterPrivateTargets, String searchUrlTemplate, BrowserLimits limits,
                                  com.aresstack.askai.browser.search.LegacyBrowserSearchSettings settings,
                                  String profileKey) {
-        String normalizedChannel = normalizeChannel(channel);
-        PlaywrightReadiness readiness = new PlaywrightCapabilityProbe().probe(normalizedChannel);
+        PlaywrightReadiness readiness = launcher.readiness();
         System.err.println("[browser-mcp] playwright readiness: " + readiness.render());
         if (!readiness.isReady()) {
             return new UnavailableSession(readiness.render());
         }
         try {
-            Playwright4jDriver driver = Playwright4jDriver.launch(normalizedChannel, headless,
+            Playwright4jDriver driver = Playwright4jDriver.launch(launcher, headless,
                     settings.navigation.navigationCommitTimeoutMillis, profileKey,
                     filterPrivateTargets ? new PrivateTargetRequestFilter() : null,
                     settings.consent, settings.captcha);
@@ -69,20 +69,6 @@ final class PlaywrightSessionFactory {
             System.err.println("[browser-mcp] playwright readiness: " + failed.render());
             return new UnavailableSession(failed.render());
         }
-    }
-
-    /** camoufox (the default, also for a missing value), firefox, chrome or msedge. */
-    static String normalizeChannel(String channel) {
-        if (BrowserExecutables.FIREFOX.equalsIgnoreCase(channel)) {
-            return BrowserExecutables.FIREFOX;
-        }
-        if ("msedge".equalsIgnoreCase(channel)) {
-            return "msedge";
-        }
-        if ("chrome".equalsIgnoreCase(channel)) {
-            return "chrome";
-        }
-        return CamoufoxProvisioning.CHANNEL;
     }
 
     /**

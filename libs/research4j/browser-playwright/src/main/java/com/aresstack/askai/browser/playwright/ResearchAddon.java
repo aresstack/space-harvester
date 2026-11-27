@@ -43,7 +43,7 @@ final class ResearchAddon {
     /**
      * Write the add-on to {@code <parent>/askai-research-addon} with the bridge configuration of this start.
      * @param bridgeConfig the {@link AddonBridge#clientConfig()} JSON, or null for an add-on that stays idle
-     * @return the add-on directory, for {@code CamoufoxLaunch.withAddon}
+     * @return the add-on directory, which the host's launcher loads ({@link AddonPackager})
      */
     static Path install(Path parent, String bridgeConfig) throws IOException {
         Map<String, String> files = new LinkedHashMap<String, String>();

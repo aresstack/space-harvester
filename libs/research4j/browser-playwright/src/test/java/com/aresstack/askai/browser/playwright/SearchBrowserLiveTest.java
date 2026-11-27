@@ -40,8 +40,8 @@ public class SearchBrowserLiveTest {
 
     @Test
     public void reusesOneBrowserAndStartsItAgainAfterItDied() throws Exception {
-        String channel = System.getenv().getOrDefault("ASKAI_TEST_BROWSER_CHANNEL", "chrome");
-        PlaywrightReadiness readiness = new PlaywrightCapabilityProbe().probe(channel);
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        PlaywrightReadiness readiness = launcher.readiness();
         assumeTrue("SKIPPED (environment-gated live test): " + readiness.render(), readiness.isReady());
 
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -56,7 +56,7 @@ public class SearchBrowserLiveTest {
         server.start();
         String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/search";
         TitleProvider provider = new TitleProvider(url);
-        SearchBrowser searchBrowser = new SearchBrowser(channel);
+        SearchBrowser searchBrowser = new SearchBrowser(launcher);
         try {
             SearchResponse first = searchBrowser.search(provider, SearchRequest.builder("a").build(),
                     SearchContext.defaults());

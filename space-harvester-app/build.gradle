@@ -30,18 +30,14 @@ configurations {
         canBeConsumed = false
         transitive = false
     }
-    // Der Treiber-Prozess der Chat-Websuche (ADR 0046): playwright4j mit seinem GraalVM-25-Stapel. Diese JARs stehen
-    // nie im Klassenpfad der App (dort lebt GraalJS 21.3 für Mermaid, draw.io und die PAC-Auswertung), sondern in
-    // einem eigenen Ordner des App-JARs; PlaywrightDriverJars entpackt sie und gibt sie dem Kind-Prozess über
-    // -Dplaywright4j.driver.classpath.
+    // Der Treiber-Prozess der Chat-Websuche (ADR 0046): playwright4j mit seinem GraalVM-25-Stapel, wie ihn die
+    // Browser-Laufzeit festlegt. Diese JARs stehen nie im Klassenpfad der App (dort lebt GraalJS 21.3 für Mermaid,
+    // draw.io und die PAC-Auswertung), sondern in einem eigenen Ordner des App-JARs; die Laufzeit entpackt sie
+    // (PlaywrightDriverJars) und gibt sie dem Kind-Prozess über -Dplaywright4j.driver.classpath.
     playwrightDriver {
         canBeConsumed = false
     }
 }
-
-// Gruppen des GraalVM-25-Stapels von playwright4j, die aus dem Klassenpfad der App herausbleiben.
-def playwrightDriverGraal = ['org.graalvm.polyglot', 'org.graalvm.sdk', 'org.graalvm.truffle', 'org.graalvm.js',
-                             'org.graalvm.regex', 'org.graalvm.shadowed', 'org.graalvm.tools']
 
 java {
     toolchain {
@@ -76,13 +72,12 @@ dependencies {
     // KeePass koppeln und Einträge lesen/anlegen wie im Enterprise AI Client; nur die App, nie der Core
     implementation project(':enterprise-ai-keepass')
     // Websuche im Chat (ADR 0046): die Browser-Werkzeuge aus Research4j (browser-tools) und ihre Engine auf
-    // Playwright (browser-playwright, Edge als Vorgabe). Der GraalVM-25-Stapel von playwright4j bleibt draußen; er
-    // läuft nur im Treiber-Prozess (Konfiguration playwrightDriver).
+    // Playwright (browser-playwright, Edge als Vorgabe). Research4j startet keinen Browser selbst; das macht die
+    // Browser-Laufzeit, die auch den GraalVM-25-Stapel von playwright4j aus dem Klassenpfad der App heraushält.
     implementation libs.research4j.browser.tools
-    implementation(libs.research4j.browser.playwright) {
-        playwrightDriverGraal.each { group -> exclude group: group }
-    }
-    playwrightDriver libs.playwright4j
+    implementation libs.research4j.browser.playwright
+    implementation project(':browser-runtime')
+    playwrightDriver project(path: ':browser-runtime', configuration: 'driverProcess')
     implementation libs.snakeyaml
     // Chat-Antworten als Markdown wie im Enterprise AI Client (app.ui.markdown, Kopie von exedra.ui.markdown): flexmark
     // und mermaid-java in derselben Fassung wie document-export, keine neue Bibliothek

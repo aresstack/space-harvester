@@ -142,13 +142,13 @@ public class PlaywrightUserContextPoolLiveTest {
     public void realUserContextsIsolateSignInsRunInParallelAndCleanUp() throws Exception {
         Path executable = chromium();
         assumeTrue("SKIPPED (environment-gated live test): no Chromium executable found", executable != null);
-        PlaywrightBrowserRuntime.Options options = new PlaywrightBrowserRuntime.Options("chrome", true, true,
-                null, null, true);
+        PlaywrightBrowserRuntime.Options options = new PlaywrightBrowserRuntime.Options(
+                new TestBrowserLauncher("chromium", executable.toString()), true, true, null, null, true);
         PlaywrightUserContextPool pool = new PlaywrightUserContextPool(new WorkerBrowserLimits(3, 2, 3, 8,
                 120_000L, 60_000L, 0L));
         ExecutorService workers = Executors.newCachedThreadPool();
         try {
-            WorkerBrowserBackend.Factory factory = PlaywrightWorkerBrowserBackend.factory(options, executable);
+            WorkerBrowserBackend.Factory factory = PlaywrightWorkerBrowserBackend.factory(options);
             PlaywrightUserContextPool.Chat chatA = pool.openChat("chat-a", factory);
             PlaywrightUserContextPool.Chat chatB = pool.openChat("chat-b", factory);
 

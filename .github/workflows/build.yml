@@ -38,10 +38,10 @@ jobs:
         run: cat parity-tests/build/reports/parity/parity-report.md >> "$GITHUB_STEP_SUMMARY" || true
       - name: Fehlgeschlagene Tests ins Log
         if: failure()
-        run: python3 .github/scripts/test-summary.py --log space-harvester-*/build/test-results parity-tests/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results
+        run: python3 .github/scripts/test-summary.py --log space-harvester-*/build/test-results browser-runtime/build/test-results parity-tests/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results
       - name: Testübersicht
         if: always()
-        run: python3 .github/scripts/test-summary.py space-harvester-*/build/test-results parity-tests/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results >> "$GITHUB_STEP_SUMMARY"
+        run: python3 .github/scripts/test-summary.py space-harvester-*/build/test-results browser-runtime/build/test-results parity-tests/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results >> "$GITHUB_STEP_SUMMARY"
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -58,4 +58,39 @@ jobs:
             space-harvester-app/build/app-jar-check/screenshots/
             parity-tests/build/test-results/
             parity-tests/build/reports/parity/
+          if-no-files-found: ignore
+  # Abnahme der Browser-Laufzeit (ADR 0046) mit dem installierten Standard-Firefox des Runners, ohne zusätzliche
+  # Browser-Installation und ohne gewählte Programmdatei (Erkennung an den üblichen Orten): echter Start, dauerhaftes
+  # Profil, Zurück/Vor ohne BFCache (playwright4j#79), gemeldetes Add-on. Ein fehlender Firefox schlägt fehl.
+  browser-runtime-firefox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Firefox des Runners
+        run: |
+          firefox --version
+          readlink -f "$(command -v firefox)"
+      - name: Browser-Laufzeit mit Firefox
+        env:
+          BROWSER_RUNTIME_TEST_CHANNEL: firefox
+        run: ./gradlew :browser-runtime:liveTest --console=plain
+      - name: Kein Test übersprungen außer dem Chrome/Edge-Pfad
+        working-directory: browser-runtime/build/test-results/liveTest
+        run: |
+          ls TEST-*.xml
+          skipped="$(grep -B1 "<skipped" TEST-*.xml | grep -o 'testcase name="[^"]*"' | grep -v chromeAndEdge || true)"
+          test -z "$skipped" || { echo "übersprungen: $skipped"; exit 1; }
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-runtime-firefox
+          path: |
+            browser-runtime/build/test-results/liveTest/
+            browser-runtime/build/reports/tests/liveTest/
           if-no-files-found: ignore

@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Browser runtime test extension",
+  "version": "1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7da8+28/M5dPrUBJCTqFvc4271TBbMSjp1XZPvYa64mXfruymg6HQGDDAXaryjuK8J0RJa8RompApaeHC4dFQpaEAH2DBhRHCDpmG9j0F3x2dZX+Jockq/iA8xdL1BOi1mFSjOPJoFOicJzTVZA/HsQUgyPO4hHOR4coFfBxE1PC/ZpbR0abbwFZ9AFDZ2sHkL8tlLk6mxaDbqd4aGKGS91VkFRq3c+n9WW6bt6827GHrqaEO+TioK9ovTzMQX2hIFvB6GBiSshh2zzt7kqbG5Nu0xj0svdOe5pV537+sm0o45Sg6CgVgFMcEdbSUIPV449CWs7yCC6zJWLB6g/OlQIDAQAB",
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1/*"],
+      "js": ["mark.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

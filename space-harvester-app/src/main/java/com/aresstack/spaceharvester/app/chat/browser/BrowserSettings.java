@@ -93,7 +93,7 @@ public final class BrowserSettings implements BrowserPolicyStore, ChangeApproval
         Map<String, String> channels = new java.util.LinkedHashMap<>();
         channels.put("msedge", "Microsoft Edge");
         channels.put("chrome", "Google Chrome");
-        channels.put("camoufox", "Camoufox (wird beim ersten Start heruntergeladen)");
+        channels.put("camoufox", "Camoufox");
         return java.util.Collections.unmodifiableMap(channels);
     }
 
@@ -107,6 +107,22 @@ public final class BrowserSettings implements BrowserPolicyStore, ChangeApproval
     public synchronized void saveChannel(String channel) {
         Map<String, String> values = new HashMap<>();
         values.put(CHANNEL_KEY, CHANNELS.containsKey(channel) ? channel : DEFAULT_CHANNEL);
+        store.putAll(values);
+    }
+
+    /** Die gewählte Programmdatei je Browser (research4j#1: der Host wählt sie); leer = die üblichen Installationsorte. */
+    static final String EXECUTABLE_KEY = "browser.executable.";
+
+    /** Die gewählte Programmdatei des Browsers {@code channel}, oder "". */
+    public synchronized String executable(String channel) {
+        String path = store.get(EXECUTABLE_KEY + channel);
+        return path == null ? "" : path.trim();
+    }
+
+    /** Speichert die Programmdatei des Browsers {@code channel} ("" = übliche Orte). */
+    public synchronized void saveExecutable(String channel, String path) {
+        Map<String, String> values = new HashMap<>();
+        values.put(EXECUTABLE_KEY + channel, path == null ? "" : path.trim());
         store.putAll(values);
     }
 
