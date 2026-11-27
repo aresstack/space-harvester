@@ -177,7 +177,8 @@ public record SectionDocument(List<Section> sections, long nextId) {
         int index = index(id);
         Section old = sections.get(index);
         String body = markdown == null ? "" : markdown;
-        String stripped = body.stripLeading();
+        // Erste nicht leere Zeile mit ihrer Einrückung prüfen: ab vier Leerzeichen ist „#“ Code, keine Überschrift.
+        String stripped = LEADING_BLANK_LINES.matcher(body).replaceFirst("");
         int end = stripped.indexOf('\n');
         Matcher first = HEADING.matcher(end < 0 ? stripped : stripped.substring(0, end));
         Section head = old;

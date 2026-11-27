@@ -184,5 +184,10 @@ class SectionDocumentTest {
         assertThat(change.document().section("a5").text()).isEqualTo("Ab Ende Mai.");
         assertThat(document.replaceSection("a5", "Nur Text.").document().section("a5").heading())
                 .as("ohne Überschrift bleibt die alte").isEqualTo("Aussaat");
+        SectionDocument code = SectionDocument.parse("    print(1)\n    print(2)");
+        SectionDocument.Change same = code.replaceSection("a1", code.section("a1").markdown().stripTrailing());
+        assertThat(same.document().markdown()).as("unverändert übernommen bleibt gleich").isEqualTo(code.markdown());
+        assertThat(code.replaceSection("a1", "    # Kommentar\n    print(2)").document().section("a1").level())
+                .as("eingerücktes # ist Code").isZero();
     }
 }

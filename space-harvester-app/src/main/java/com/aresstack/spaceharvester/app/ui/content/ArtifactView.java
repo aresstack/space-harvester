@@ -183,7 +183,8 @@ final class ArtifactView extends JPanel {
             return;
         }
         editing = sectionId;
-        editor = new javax.swing.JTextArea(section.markdown().strip());
+        // Nur Leerraum am Ende weg: ein eingerückter Codeblock am Anfang bleibt beim unveränderten Übernehmen gleich.
+        editor = new javax.swing.JTextArea(section.markdown().stripTrailing());
         editor.setLineWrap(true);
         editor.setWrapStyleWord(true);
         editor.setFont(Comic.regular(14f));
