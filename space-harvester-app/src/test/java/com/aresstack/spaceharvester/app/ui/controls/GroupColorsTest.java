@@ -40,8 +40,12 @@ class GroupColorsTest {
         ColorSwatches swatches = new ColorSwatches(GroupColors.GRAU, GroupColors::name);
         List<GroupColors> seen = new java.util.ArrayList<>();
         swatches.onChange(seen::add);
-        swatches.dispatchEvent(new java.awt.event.KeyEvent(swatches, java.awt.event.KeyEvent.KEY_PRESSED, 0, 0,
-                java.awt.event.KeyEvent.VK_RIGHT, java.awt.event.KeyEvent.CHAR_UNDEFINED));
+        // Ohne Fenster lenkt Swing Tastendrücke an den Fokusinhaber um; der Test spricht den Zuhörer direkt an.
+        java.awt.event.KeyEvent right = new java.awt.event.KeyEvent(swatches, java.awt.event.KeyEvent.KEY_PRESSED, 0,
+                0, java.awt.event.KeyEvent.VK_RIGHT, java.awt.event.KeyEvent.CHAR_UNDEFINED);
+        for (java.awt.event.KeyListener listener : swatches.getKeyListeners()) {
+            listener.keyPressed(right);
+        }
         assertThat(swatches.selected()).isEqualTo(GroupColors.BLAU);
         assertThat(seen).containsExactly(GroupColors.BLAU);
         assertThat(swatches.getAccessibleContext().getAccessibleName()).isEqualTo("BLAU");

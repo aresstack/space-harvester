@@ -62,6 +62,20 @@ public final class ColorSwatches extends JComponent {
         getAccessibleContext().setAccessibleName(names.apply(this.selected));
     }
 
+    /** Ein schlichtes JComponent hat keinen zugänglichen Kontext; die Farbwahl braucht ihn für ihren Namen. */
+    @Override
+    public AccessibleContext getAccessibleContext() {
+        if (accessibleContext == null) {
+            accessibleContext = new AccessibleJComponent() {
+                @Override
+                public javax.accessibility.AccessibleRole getAccessibleRole() {
+                    return javax.accessibility.AccessibleRole.RADIO_BUTTON;
+                }
+            };
+        }
+        return accessibleContext;
+    }
+
     public GroupColors selected() {
         return selected;
     }
