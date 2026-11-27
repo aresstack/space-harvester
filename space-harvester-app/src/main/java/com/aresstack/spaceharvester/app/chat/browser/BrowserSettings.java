@@ -1,5 +1,9 @@
 package com.aresstack.spaceharvester.app.chat.browser;
 
+import com.aresstack.askai.browser.search.LegacyBrowserSearchDefaults;
+import com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog;
+import com.aresstack.askai.browser.search.engine.BrowserSearchEngineSelection;
+import com.aresstack.askai.browser.search.engine.EngineAcquisitionMode;
 import com.aresstack.enterpriseai.browser.api.BrowserAccessPolicy;
 import com.aresstack.enterpriseai.proasteion.application.browser.BrowserPolicyStore;
 import com.aresstack.enterpriseai.proasteion.application.config.BrowserAccessConfig;
@@ -79,6 +83,92 @@ public final class BrowserSettings implements BrowserPolicyStore, ChangeApproval
         values.put(profile.allowKey(), BrowserAccessConfig.join(config.allow()));
         values.put(profile.blockKey(), BrowserAccessConfig.join(config.block()));
         values.put(profile.searchKey(), BrowserAccessConfig.joinUrls(config.searchUrls()));
+        store.putAll(values);
+    }
+
+    /**
+     * Die Suchmaschinen eines Profils für {@code browser_search} (Angelo 27.11.2026): die Suchmaschinenliste aus
+     * Ask AI mit Prioritäten (gleiche Priorität = eine Gruppe), gespeichert in deren Form. Intern stehen hier die
+     * Suchseiten des Hauses (Such-URL mit {@code {query}}), Extern Startpage und DuckDuckGo als Vorgabe.
+     */
+    static String enginesKey(BrowserProfile profile) {
+        return profile == BrowserProfile.INTERNAL ? "browser.search.internal.engines" : "browser.search.engines";
+    }
+
+    /**
+     * Die Suchmaschinen des Profils. Ohne gespeicherte Liste: Extern die Vorgabe aus Ask AI mit Startpage und
+     * DuckDuckGo (die übrigen Zeilen aus); Such-URLs, die das Profil vorher hatte, kommen als Suchseiten dazu.
+     */
+    public synchronized BrowserSearchEngineSelection engines(BrowserProfile profile) {
+        String stored = store.get(enginesKey(profile));
+        if (stored != null) {
+            return new BrowserSearchEngineSelection(BrowserSearchEngineSelection.parseEntries(stored),
+                    EngineAcquisitionMode.FIRST_USABLE);
+        }
+        List<BrowserSearchEngineSelection.Entry> rows = new java.util.ArrayList<>();
+        int priority = 0;
+        if (profile == BrowserProfile.EXTERNAL) {
+            for (BrowserSearchEngineSelection.Entry row : LegacyBrowserSearchDefaults.engineSelection().getEntries()) {
+                boolean on = EXTERNAL_DEFAULT_ENGINES.contains(row.getEngineId());
+                rows.add(new BrowserSearchEngineSelection.Entry(row.getEngineId(), on, row.getResultPages(),
+                        row.getDelayMillis(), row.getPriority(), row.getLanguages(), row.getFurtherLanguages()));
+                priority = Math.max(priority, row.getPriority() + 1);
+            }
+        }
+        // Die bisherigen Such-URLs des Profils (Extern ohne die alte Vorgabe) bleiben als Suchseiten erhalten.
+        String urls = store.get(profile.searchKey());
+        for (String url : BrowserAccessConfig.splitUrls(urls == null ? "" : urls)) {
+            if (BrowserSearchEngineCatalog.isSearchPage(url) && !DEFAULT_EXTERNAL_SEARCH.equals(url)) {
+                rows.add(searchPage(url, priority));
+            }
+        }
+        return new BrowserSearchEngineSelection(rows, EngineAcquisitionMode.FIRST_USABLE);
+    }
+
+    /** Die Suchmaschinen, die Extern ohne gespeicherte Liste sucht (Angelo 27.11.2026). */
+    static final List<String> EXTERNAL_DEFAULT_ENGINES = List.of(BrowserSearchEngineCatalog.STARTPAGE,
+            BrowserSearchEngineCatalog.DUCKDUCKGO);
+
+    /** Eine Zeile für eine Suchseite des Hauses. */
+    static BrowserSearchEngineSelection.Entry searchPage(String url, int priority) {
+        return new BrowserSearchEngineSelection.Entry(url, true, BrowserSearchEngineSelection.Entry.DEFAULT_RESULT_PAGES,
+                BrowserSearchEngineSelection.Entry.DEFAULT_DELAY_MILLIS, priority, List.of(), List.of());
+    }
+
+    /** Speichert die Suchmaschinen des Profils in der Form der Ask-AI-Liste. */
+    public synchronized void saveEngines(BrowserProfile profile, BrowserSearchEngineSelection engines) {
+        Map<String, String> values = new HashMap<>();
+        values.put(enginesKey(profile), engines.encodeEntries());
+        store.putAll(values);
+    }
+
+    /**
+     * Nimmt eine Suchseite in die Liste des Profils auf, mit Priorität 0 wie die übrigen Suchseiten: Weiß man nicht,
+     * wo etwas steht, werden alle zusammen durchsucht.
+     */
+    public synchronized void addSearchPage(BrowserProfile profile, String url) {
+        List<BrowserSearchEngineSelection.Entry> rows = new java.util.ArrayList<>(engines(profile).getEntries());
+        for (BrowserSearchEngineSelection.Entry row : rows) {
+            if (row.getEngineId().equals(url)) {
+                return;
+            }
+        }
+        rows.add(searchPage(url, 0));
+        saveEngines(profile, new BrowserSearchEngineSelection(rows, EngineAcquisitionMode.FIRST_USABLE));
+    }
+
+    /** Ob das Fenster des Suchbrowsers sichtbar ist (Vorgabe: ja, wie das eigene Suchfenster in Ask AI). */
+    static final String SEARCH_WINDOW_KEY = "browser.search.window";
+
+    /** Ob der Suchbrowser ein sichtbares Fenster hat; gilt ab seinem nächsten Start. */
+    public synchronized boolean searchWindowShown() {
+        return !"hidden".equals(store.get(SEARCH_WINDOW_KEY));
+    }
+
+    /** Speichert, ob der Suchbrowser ein sichtbares Fenster hat. */
+    public synchronized void saveSearchWindowShown(boolean shown) {
+        Map<String, String> values = new HashMap<>();
+        values.put(SEARCH_WINDOW_KEY, shown ? "shown" : "hidden");
         store.putAll(values);
     }
 
