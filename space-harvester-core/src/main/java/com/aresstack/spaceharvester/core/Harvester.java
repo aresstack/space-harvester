@@ -3297,7 +3297,6 @@ public final class Harvester implements AutoCloseable {
         return changeLog;
     }
 
-    /** Der Erklär-Podcast einer Seite (Angelo 21.11.2026). */
     /**
      * Ein Schaubild zu {@code topic} aus {@code material} (Chat, Angelo 27.11.2026), gezeichnet wie die Bilder im
      * Podcast mit den Zeilen „Bildgenerierung – Plan“ und „– Einzelteile“; die Einzelteile laufen höchstens
@@ -3327,6 +3326,7 @@ public final class Harvester implements AutoCloseable {
         }
     }
 
+    /** Der Erklär-Podcast einer Seite (Angelo 21.11.2026). */
     public com.aresstack.spaceharvester.application.podcast.PagePodcasts pagePodcasts() {
         return pagePodcasts;
     }
