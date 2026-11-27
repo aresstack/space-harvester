@@ -27,6 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntSupplier;
 import java.util.function.LongSupplier;
 import java.util.function.ObjIntConsumer;
+import java.util.function.Supplier;
 
 /**
  * Der Erklär-Podcast einer Seite (Angelo 21.11.2026: „jede beliebige Unterseite sich so erklären lassen“): derselbe
@@ -46,10 +47,6 @@ public final class PagePodcasts {
     /** Parameter des Auftrags: die Seite. */
     public static final String PAGE_PARAMETER = "page";
 
-    /** So viele Abschnitte der Seite selbst werden zu eigenen Teilen; der Rest hängt am letzten. */
-    static final int MAX_SECTIONS = 10;
-    /** So viel Text eines Abschnitts der Seite geht an das Modell. */
-    static final int SECTION_CHARS = 3000;
     /** So viele Unterseiten kommen vor. */
     static final int MAX_SUBPAGES = 12;
     /** So viel vom Anfang einer Unterseite geht an das Modell. */
@@ -94,6 +91,8 @@ public final class PagePodcasts {
     private final LongSupplier clock;
     private final Object starting = new Object();
     private final Map<String, Remembered> remembered = new ConcurrentHashMap<>();
+    /** Was von der Seite gelesen wird; die Einstellung kann sich jederzeit ändern. */
+    private volatile Supplier<Reading> reading = () -> Reading.DEFAULT;
 
     private record Remembered(long at, Optional<PodcastWriter.Material> material) {
     }
@@ -158,6 +157,35 @@ public final class PagePodcasts {
         }
         String voice = chosen.readAloudVoice() != null ? chosen.readAloudVoice() : voices.pair(model).host();
         return speech.readAloud(model, voice, playback);
+    }
+
+    /**
+     * Was der Podcast von der Seite liest (Angelo 27.11.2026: keine festen Grenzen, {@code ai.podcast-section-chars}
+     * und {@code ai.podcast-sections}).
+     *
+     * @param sectionChars so viel Text eines Abschnitts der Seite geht an das Modell
+     * @param sections     so viele Abschnitte der Seite selbst werden zu eigenen Teilen; der Rest hängt am letzten
+     */
+    public record Reading(int sectionChars, int sections) {
+
+        /** Die Vorgaben der Einstellungen. */
+        public static final Reading DEFAULT = of(com.aresstack.spaceharvester.ai.AiServiceSettings.Speech.AUTOMATIC);
+
+        public Reading {
+            if (sectionChars < 1 || sections < 1) {
+                throw new IllegalArgumentException("Lesemengen des Podcasts müssen mindestens 1 sein");
+            }
+        }
+
+        /** Die wirksamen Lesemengen dieser Einstellungen. */
+        public static Reading of(com.aresstack.spaceharvester.ai.AiServiceSettings.Speech speech) {
+            return new Reading(speech.podcastSectionLength(), speech.podcastSectionCount());
+        }
+    }
+
+    /** Woher die Lesemengen kommen; ohne Aufruf gelten die Vorgaben. */
+    public void reading(Supplier<Reading> reading) {
+        this.reading = Objects.requireNonNull(reading, "reading");
     }
 
     /** Eine Stelle im Text der Seite ({@link PageText#text()}), {@code [start, end)}. */
@@ -235,9 +263,10 @@ public final class PagePodcasts {
         }
         String all = page.get().text().text();
         List<Span> spans = new ArrayList<>();
-        List<Part> parts = parts(page.get(), MAX_SECTIONS);
+        Reading now = reading.get();
+        List<Part> parts = parts(page.get(), now);
         for (int story : told(plan.get().topics().get(topic), parts)) {
-            spans.add(read(all, parts.get(story - 1), SECTION_CHARS));
+            spans.add(read(all, parts.get(story - 1), now.sectionChars()));
         }
         return List.copyOf(spans);
     }
@@ -257,18 +286,18 @@ public final class PagePodcasts {
         if (page.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.of(coverage(page.get(), plan.get()));
+        return Optional.of(coverage(page.get(), plan.get(), reading.get()));
     }
 
     /** {@link #coverage(AccessContext, String, String)} ohne Lesen, in der Reihenfolge der Teile. */
-    static List<Span> coverage(Page page, PodcastPlan plan) {
+    static List<Span> coverage(Page page, PodcastPlan plan, Reading reading) {
         String all = page.text().text();
-        List<Part> parts = parts(page, MAX_SECTIONS);
+        List<Part> parts = parts(page, reading);
         java.util.SortedSet<Integer> told = new java.util.TreeSet<>();
         plan.topics().forEach(topic -> told.addAll(told(topic, parts)));
         List<Span> spans = new ArrayList<>();
         for (int story : told) {
-            spans.add(read(all, parts.get(story - 1), SECTION_CHARS));
+            spans.add(read(all, parts.get(story - 1), reading.sectionChars()));
         }
         return List.copyOf(spans);
     }
@@ -414,7 +443,7 @@ public final class PagePodcasts {
         }
         Optional<PodcastWriter.Material> material = pages.page(caller, sourceId, pageId)
                 .map(page -> material(page, children(caller, sourceId, pageId),
-                        safe(() -> pages.ancestors(caller, sourceId, pageId))));
+                        safe(() -> pages.ancestors(caller, sourceId, pageId)), reading.get()));
         remembered.put(key, new Remembered(now, material));
         return material;
     }
@@ -464,17 +493,18 @@ public final class PagePodcasts {
     }
 
     /**
-     * Die Teile der Seite in Lesereihenfolge; ab dem {@code max}-ten Hauptabschnitt (bzw. Stück) hängt der Rest am
-     * letzten.
+     * Die Teile der Seite in Lesereihenfolge; ab dem {@code reading.sections()}-ten Hauptabschnitt (bzw. Stück) hängt
+     * der Rest am letzten.
      */
-    static List<Part> parts(Page page, int max) {
+    static List<Part> parts(Page page, Reading reading) {
+        int max = reading.sections();
         List<Part> parts = new ArrayList<>();
         String here = "auf der Seite „" + page.title() + "“";
         PageText text = page.text();
         String all = text.text();
         List<PageText.Section> sections = text.sections();
         if (sections.isEmpty()) {
-            List<int[]> chunks = chunks(all);
+            List<int[]> chunks = chunks(all, reading.sectionChars());
             for (int i = 0; i < chunks.size() && i < max; i++) {
                 int end = i == max - 1 ? all.length() : chunks.get(i)[1];
                 parts.add(new Part(chunks.size() == 1 ? page.title() : page.title() + " (" + (i + 1) + ")",
@@ -502,8 +532,8 @@ public final class PagePodcasts {
         return parts;
     }
 
-    /** Stücke aus ganzen Absätzen mit höchstens {@link #SECTION_CHARS} Zeichen, als {@code [start, end)}. */
-    private static List<int[]> chunks(String text) {
+    /** Stücke aus ganzen Absätzen mit höchstens {@code limit} Zeichen, als {@code [start, end)}. */
+    private static List<int[]> chunks(String text, int limit) {
         List<int[]> chunks = new ArrayList<>();
         java.util.regex.Matcher lines = java.util.regex.Pattern.compile("[^\\n]+").matcher(text);
         int start = -1;
@@ -514,7 +544,7 @@ public final class PagePodcasts {
                 continue;
             }
             int lineLength = lines.group().strip().length();
-            if (start >= 0 && length > 0 && length + lineLength > SECTION_CHARS) {
+            if (start >= 0 && length > 0 && length + lineLength > limit) {
                 chunks.add(new int[]{start, end});
                 start = -1;
                 length = 0;
@@ -536,12 +566,13 @@ public final class PagePodcasts {
      * Unterseite ein Teil mit dem Anfang ihres Texts und, kurz, ihren eigenen Unterseiten. Tabellen aus stumpfen Zahlen
      * fallen weg. Meldung n (ab 1) bis zur Zahl der Teile ist Teil n−1 der Seite ({@link #parts}).
      */
-    static PodcastWriter.Material material(Page page, List<Subpage> subpages, List<String> ancestors) {
+    static PodcastWriter.Material material(Page page, List<Subpage> subpages, List<String> ancestors,
+                                           Reading reading) {
         List<PodcastWriter.Story> stories = new ArrayList<>();
         String all = page.text().text();
-        for (Part part : parts(page, MAX_SECTIONS)) {
+        for (Part part : parts(page, reading)) {
             stories.add(new PodcastWriter.Story(part.title(),
-                    sectionText(all.substring(part.start(), part.end()), SECTION_CHARS), List.of(part.place()),
+                    sectionText(all.substring(part.start(), part.end()), reading.sectionChars()), List.of(part.place()),
                     List.of(page.pageId())));
         }
         for (Subpage subpage : subpages) {

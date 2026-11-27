@@ -156,6 +156,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     public static final String PODCAST_PAUSE_MILLIS = "podcast-pause-millis";
     public static final String PODCAST_SPEECH_ATTEMPTS = "podcast-speech-attempts";
     public static final String PODCAST_SPEECH_WORKERS = "podcast-speech-workers";
+    public static final String PODCAST_SECTION_CHARS = "podcast-section-chars";
+    public static final String PODCAST_SECTIONS = "podcast-sections";
     /** Die Stufen des Nachdenkens, wie sie in der Datei stehen und mit jeder Anfrage mitgehen. */
     public static final List<String> THINKING_LEVELS = List.of("none", "low", "medium", "high");
 
@@ -363,10 +365,14 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
      *                       {@code null}: {@link #DEFAULT_PODCAST_ATTEMPTS}
      * @param podcastWorkers gleichzeitige Synthesen je Beitrag des Podcasts ({@code podcast-speech-workers});
      *                       {@code null}: {@link #DEFAULT_PODCAST_WORKERS}
+     * @param podcastSectionChars so viele Zeichen eines Abschnitts einer Seite liest der Erklär-Podcast
+     *                       ({@code podcast-section-chars}); {@code null}: {@link #DEFAULT_PODCAST_SECTION_CHARS}
+     * @param podcastSections so viele Abschnitte einer Seite werden zu eigenen Teilen, der Rest hängt am letzten
+     *                       ({@code podcast-sections}); {@code null}: {@link #DEFAULT_PODCAST_SECTIONS}
      */
     public record Speech(String podcastModel, String podcastHost, String podcastCohost, String readAloudModel,
                          String readAloudVoice, Integer podcastPauseMillis, Integer podcastAttempts,
-                         Integer podcastWorkers) {
+                         Integer podcastWorkers, Integer podcastSectionChars, Integer podcastSections) {
 
         /** Vorgabe der Pause zwischen zwei Beiträgen des Podcasts. */
         public static final int DEFAULT_PODCAST_PAUSE_MILLIS = 350;
@@ -380,9 +386,14 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         public static final int DEFAULT_PODCAST_WORKERS = 2;
         /** Höchstens so viele gleichzeitige Synthesen je Beitrag (wie im Vorlese-Ablauf des Enterprise AI Client). */
         public static final int MAX_PODCAST_WORKERS = 8;
+        /** Vorgabe: so viele Zeichen eines Abschnitts einer Seite liest der Erklär-Podcast (Angelo 27.11.2026). */
+        public static final int DEFAULT_PODCAST_SECTION_CHARS = 3000;
+        /** Vorgabe: so viele Abschnitte einer Seite werden zu eigenen Teilen des Erklär-Podcasts. */
+        public static final int DEFAULT_PODCAST_SECTIONS = 10;
 
         /** Nichts eingestellt: Modell, Stimmen und Sprechwerte wählt die App. */
-        public static final Speech AUTOMATIC = new Speech(null, null, null, null, null, null, null, null);
+        public static final Speech AUTOMATIC = new Speech(null, null, null, null, null, null, null, null, null,
+                null);
 
         public Speech {
             podcastModel = strip(podcastModel);
@@ -393,6 +404,16 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
             check(podcastPauseMillis, 0, MAX_PODCAST_PAUSE_MILLIS, PODCAST_PAUSE_MILLIS);
             check(podcastAttempts, 1, MAX_PODCAST_ATTEMPTS, PODCAST_SPEECH_ATTEMPTS);
             check(podcastWorkers, 1, MAX_PODCAST_WORKERS, PODCAST_SPEECH_WORKERS);
+            check(podcastSectionChars, 1, Integer.MAX_VALUE, PODCAST_SECTION_CHARS);
+            check(podcastSections, 1, Integer.MAX_VALUE, PODCAST_SECTIONS);
+        }
+
+        /** Ohne eigene Lesemengen des Erklär-Podcasts. */
+        public Speech(String podcastModel, String podcastHost, String podcastCohost, String readAloudModel,
+                      String readAloudVoice, Integer podcastPauseMillis, Integer podcastAttempts,
+                      Integer podcastWorkers) {
+            this(podcastModel, podcastHost, podcastCohost, readAloudModel, readAloudVoice, podcastPauseMillis,
+                    podcastAttempts, podcastWorkers, null, null);
         }
 
         /** Nur Modell und Stimmen; Pause, Versuche und Synthesen nach Vorgabe. */
@@ -404,7 +425,29 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         /** Dieselben Modelle und Stimmen mit anderen Sprechwerten des Podcasts; {@code null} heißt Vorgabe. */
         public Speech withPodcastTiming(Integer pauseMillis, Integer attempts, Integer workers) {
             return new Speech(podcastModel, podcastHost, podcastCohost, readAloudModel, readAloudVoice, pauseMillis,
-                    attempts, workers);
+                    attempts, workers, podcastSectionChars, podcastSections);
+        }
+
+        /** Dieselben Werte mit anderen Lesemengen des Erklär-Podcasts; {@code null} heißt Vorgabe. */
+        public Speech withPodcastReading(Integer sectionChars, Integer sections) {
+            return new Speech(podcastModel, podcastHost, podcastCohost, readAloudModel, readAloudVoice,
+                    podcastPauseMillis, podcastAttempts, podcastWorkers, sectionChars, sections);
+        }
+
+        /** Dasselbe mit einem anderen TTS-Modell des Podcasts. */
+        public Speech withPodcastModel(String model) {
+            return new Speech(model, podcastHost, podcastCohost, readAloudModel, readAloudVoice, podcastPauseMillis,
+                    podcastAttempts, podcastWorkers, podcastSectionChars, podcastSections);
+        }
+
+        /** Die wirksame Zahl Zeichen, die der Erklär-Podcast von einem Abschnitt einer Seite liest. */
+        public int podcastSectionLength() {
+            return podcastSectionChars == null ? DEFAULT_PODCAST_SECTION_CHARS : podcastSectionChars;
+        }
+
+        /** Die wirksame Zahl Abschnitte einer Seite, die zu eigenen Teilen des Erklär-Podcasts werden. */
+        public int podcastSectionCount() {
+            return podcastSections == null ? DEFAULT_PODCAST_SECTIONS : podcastSections;
         }
 
         /** Die wirksame Pause zwischen zwei Beiträgen des Podcasts in Millisekunden. */
@@ -527,7 +570,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         summaryPlanUse = summaryPlanUse == null ? ModelUse.DEFAULT : summaryPlanUse;
         imagePlanUse = imagePlanUse == null ? ModelUse.DEFAULT : imagePlanUse;
         deadlineUse = deadlineUse == null ? ModelUse.DEFAULT : deadlineUse;
-        speech = speech == null ? new Speech(null, null, null, null, null, null, null, null) : speech;
+        speech = speech == null ? new Speech(null, null, null, null, null, null, null, null, null, null) : speech;
         diagnosis = diagnosis == null ? Diagnosis.DEFAULT : diagnosis;
         timeouts = timeouts == null ? Timeouts.DEFAULT : timeouts;
     }
@@ -834,7 +877,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 new Speech(value(properties, PODCAST_SPEECH_MODEL), value(properties, PODCAST_VOICE_HOST),
                         value(properties, PODCAST_VOICE_COHOST), value(properties, READ_ALOUD_MODEL),
                         value(properties, READ_ALOUD_VOICE), tokens(properties, PODCAST_PAUSE_MILLIS),
-                        tokens(properties, PODCAST_SPEECH_ATTEMPTS), tokens(properties, PODCAST_SPEECH_WORKERS)),
+                        tokens(properties, PODCAST_SPEECH_ATTEMPTS), tokens(properties, PODCAST_SPEECH_WORKERS),
+                        tokens(properties, PODCAST_SECTION_CHARS), tokens(properties, PODCAST_SECTIONS)),
                 new Diagnosis(flag(properties, DIAGNOSIS_ENABLED),
                         use(properties, DIAGNOSIS_MODEL, DIAGNOSIS_MAX_TOKENS, DIAGNOSIS_THINKING)),
                 new Timeouts(taskTimeout(properties, SUMMARY_TIMEOUT), taskTimeout(properties, LABEL_TIMEOUT),
