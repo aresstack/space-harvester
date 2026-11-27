@@ -4,7 +4,6 @@ import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact;
 import com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore;
 
-import javax.swing.BorderFactory;
 import javax.swing.DefaultListModel;
 import javax.swing.Icon;
 import javax.swing.JComponent;
@@ -13,7 +12,6 @@ import javax.swing.SwingUtilities;
 import java.awt.Component;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -302,14 +300,9 @@ final class ArtifactList {
         if (cell == null || !cell.contains(point) || !staleBooks.contains(model.get(row).id())) {
             return false;
         }
-        Row renderer = (Row) list.getCellRenderer().getListCellRendererComponent(list, model.get(row), row,
-                list.isSelectedIndex(row), false);
-        renderer.setBounds(0, 0, cell.width, cell.height);
-        renderer.doLayout();
-        renderer.line.doLayout();
-        renderer.side.doLayout();
-        java.awt.Rectangle badge = SwingUtilities.convertRectangle(renderer.side, renderer.stale.getBounds(), renderer);
-        return renderer.stale.isVisible() && badge.contains(point.x - cell.x, point.y - cell.y);
+        var renderer = (com.aresstack.spaceharvester.app.ui.controls.ArtifactRow) list.getCellRenderer()
+                .getListCellRendererComponent(list, model.get(row), row, list.isSelectedIndex(row), false);
+        return renderer.onStaleBadge(cell, point);
     }
 
     /** Für Tests: die gezeigten Kennungen in ihrer Reihenfolge. */
@@ -463,84 +456,39 @@ final class ArtifactList {
         return artifact.revisions().isEmpty() ? artifact.createdAt() : artifact.current().at();
     }
 
-    /** Wann zuletzt geändert: heute als Uhrzeit, sonst als Datum. */
+    /** Wann zuletzt geändert: heute als Uhrzeit, sonst als Datum ({@link com.aresstack.spaceharvester.app.ui.controls.ArtifactRow#when}). */
     static String when(long millis, java.time.ZoneId zone, java.time.LocalDate today) {
-        java.time.ZonedDateTime at = Instant.ofEpochMilli(millis).atZone(zone);
-        return at.toLocalDate().equals(today) ? TODAY.format(at) : DAY.format(at);
+        return com.aresstack.spaceharvester.app.ui.controls.ArtifactRow.when(millis, zone, today);
     }
-
-    private static final java.time.format.DateTimeFormatter TODAY =
-            java.time.format.DateTimeFormatter.ofPattern("HH:mm", Locale.GERMANY);
-    private static final java.time.format.DateTimeFormatter DAY =
-            java.time.format.DateTimeFormatter.ofPattern("dd.MM.", Locale.GERMANY);
 
     /**
      * Eine Zeile, einzeilig: Symbol der Art, Titel (gekürzt mit „…“, voll im Tooltip), Zeit rechts gedämpft. Reicht die
      * Breite nicht, weicht zuerst die Zeit, dann wird der Titel gekürzt.
      */
-    private static final class Row extends javax.swing.JPanel implements javax.swing.ListCellRenderer<ChatArtifact> {
-        private final javax.swing.JLabel title = new javax.swing.JLabel();
-        private final javax.swing.JLabel time = new javax.swing.JLabel();
-        /** „Veraltet“ am Buch, dasselbe Abzeichen wie im Analysebereich. */
-        final javax.swing.JLabel stale = com.aresstack.spaceharvester.app.ui.controls.TabHeader.staleBadge();
-        final javax.swing.JPanel side = new javax.swing.JPanel(new java.awt.BorderLayout(6, 0));
+    /** Die Zeile eines Artefakts, dieselbe wie unter „Export“ ({@link com.aresstack.spaceharvester.app.ui.controls.ArtifactRow}). */
+    private static final class Row implements javax.swing.ListCellRenderer<ChatArtifact> {
+        final com.aresstack.spaceharvester.app.ui.controls.ArtifactRow row =
+                new com.aresstack.spaceharvester.app.ui.controls.ArtifactRow();
         private final java.util.Set<String> trashed;
         private final java.util.Set<String> staleBooks;
         private final java.util.function.IntFunction<String> groupOf;
-        /** Überschrift über der ersten Zeile einer Gruppe (nur gruppiert). */
-        private final javax.swing.JLabel header = new javax.swing.JLabel();
-        final javax.swing.JPanel line = new javax.swing.JPanel(new java.awt.BorderLayout(6, 0));
 
         Row(java.util.Set<String> trashed, java.util.Set<String> staleBooks,
             java.util.function.IntFunction<String> groupOf) {
-            super(new java.awt.BorderLayout(0, 2));
             this.trashed = trashed;
             this.staleBooks = staleBooks;
             this.groupOf = groupOf;
-            header.setForeground(Comic.MUTED);
-            header.setFont(Comic.semiBold(12f));
-            line.setOpaque(false);
-            line.setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 6));
-            header.setBorder(BorderFactory.createEmptyBorder(6, 2, 0, 0));
-            title.setIconTextGap(6);
-            time.setForeground(Comic.MUTED);
-            side.setOpaque(false);
-            side.add(stale, java.awt.BorderLayout.WEST);
-            side.add(time, java.awt.BorderLayout.EAST);
-            line.add(title, java.awt.BorderLayout.CENTER);
-            line.add(side, java.awt.BorderLayout.EAST);
-            add(header, java.awt.BorderLayout.NORTH);
-            add(line, java.awt.BorderLayout.CENTER);
         }
 
         @Override
         public Component getListCellRendererComponent(JList<? extends ChatArtifact> owner, ChatArtifact artifact,
                                                       int index, boolean selected, boolean focus) {
-            String group = groupOf.apply(index);
-            header.setText(group);
-            header.setVisible(group != null);
-            title.setFont(owner.getFont());
-            time.setFont(owner.getFont().deriveFont(owner.getFont().getSize2D() - 1f));
             boolean gone = trashed.contains(artifact.id());
-            title.setForeground(selected ? owner.getSelectionForeground() : gone ? Comic.MUTED : Comic.INK);
-            String text = artifact.title() == null ? "" : artifact.title();
-            title.setText(gone ? "<html><s>" + text.replace("&", "&amp;").replace("<", "&lt;") + "</s></html>"
-                    : text);
-            title.setIcon(icon(artifact));
-            time.setText(when(changedAt(artifact), java.time.ZoneId.systemDefault(), java.time.LocalDate.now()));
-            java.awt.Insets in = line.getInsets();
-            int room = owner.getWidth() - in.left - in.right;
-            // Das Abzeichen bleibt immer (der Titel kürzt sich davor); die Zeit weicht zuerst.
             boolean old = !gone && staleBooks.contains(artifact.id());
-            stale.setVisible(old);
-            time.setVisible(!gone);
-            time.setVisible(!gone && title.getPreferredSize().width + 6 + side.getPreferredSize().width <= room);
-            setToolTipText(gone ? RESTORE_TIP : old ? text + " · " + STALE_TIP : text);
-            // Markiert wird die Zeile, nicht die Überschrift der Gruppe.
-            setOpaque(false);
-            line.setOpaque(selected);
-            line.setBackground(owner.getSelectionBackground());
-            return this;
+            String text = artifact.title() == null ? "" : artifact.title();
+            return row.show(owner, selected, groupOf.apply(index), icon(artifact), text, gone, old,
+                    when(changedAt(artifact), java.time.ZoneId.systemDefault(), java.time.LocalDate.now()),
+                    gone ? RESTORE_TIP : old ? text + " · " + STALE_TIP : text);
         }
     }
 

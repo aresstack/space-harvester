@@ -162,6 +162,8 @@ public final class PageDetailPanel extends JPanel {
     private final ExportPanel export;
     /** Die Artefakte des Chats in der Export-Ansicht; {@code null}, solange keine eingesetzt sind. */
     private ArtifactTabs artifactTabs;
+    /** „Aus dieser Seite erzeugt“: auf der Seite von „Export“ und im ▾-Menü dieselben Einträge. */
+    private final LocalArtifacts localArtifacts;
     /**
      * Die untere Leiste von „Export“: mittig die Knöpfe der Ausgabe (Angelo 27.11.2026), je nach Reiter die der
      * Export-Fläche, eines Export-Reiters oder nur die Formate des gewählten Artefakts (ADR 0045 §5).
@@ -744,6 +746,10 @@ public final class PageDetailPanel extends JPanel {
         this.graphView = new KnowledgeGraphTab(() -> context.runtime() == null ? null
                 : context.runtime().workspace());
         this.export = new ExportPanel(context);
+        // Die lokalen Artefakte der Auswahl auf der leeren Seite von „Export“ (ADR 0047 §5a).
+        this.localArtifacts = new LocalArtifacts(context);
+        localArtifacts.onOpen(() -> tabs.select(READING), () -> tabs.select(READ));
+        export.extra(localArtifacts.component());
         this.chat = new ChatPanel(context);
         footTools.setOpaque(false);
         this.standing = new StandingTab(context::runtime);
@@ -6566,7 +6572,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Unter einer Linie „Neuer Export“ (ADR 0045 §5). Die Artefakte stehen nicht mehr hier, sondern links unter
+     * Unter einer Linie „Neuer Export“ (ADR 0045 §5), darunter „Aus dieser Seite erzeugt“ (ADR 0047 §5a). Die globalen
+     * Artefakte stehen nicht mehr hier, sondern links unter
      * „Artefakte“ (ADR 0047 §5).
      */
     private void addArtifacts(javax.swing.JPopupMenu menu) {
@@ -6580,6 +6587,17 @@ public final class PageDetailPanel extends JPanel {
         ExportPanel.Selection current = export.selection();
         menu.add(menuItem(NEW_EXPORT, NEW_EXPORT_TIP, current != null,
                 () -> artifactTabs.openExport(current, null)));
+        localArtifacts.addTo(menu);
+    }
+
+    /** Die Auswahl links für „Aus dieser Seite erzeugt“. */
+    void localArtifacts(ExportPanel.Selection selection) {
+        localArtifacts.selection(selection);
+    }
+
+    /** Für Tests: „Aus dieser Seite erzeugt“. */
+    LocalArtifacts localArtifacts() {
+        return localArtifacts;
     }
 
     static final String NEW_EXPORT = "Neuer Export";

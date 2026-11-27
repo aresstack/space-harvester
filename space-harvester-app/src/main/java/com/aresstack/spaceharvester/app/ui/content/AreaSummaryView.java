@@ -131,6 +131,15 @@ final class AreaSummaryView extends JPanel {
             return new Target(null, null, null, Objects.requireNonNull(folder, "folder"));
         }
 
+        /** Das Ziel der Auswahl links: ein Ordner, sonst Quelle, Space oder Teilbaum; {@code null} für „Wissensquellen“. */
+        static Target of(ExportPanel.Selection selection) {
+            if (selection instanceof ExportPanel.Selection.Collection folder) {
+                return folder(folder);
+            }
+            return selection == null || selection.sourceId() == null ? null
+                    : subtree(selection.sourceId(), selection.spaceKey(), selection.pageId());
+        }
+
         /** Die Auswahl für den Core: die aufgelösten Wurzeln des Ordners, sonst Quelle, Space oder Teilbaum. */
         com.aresstack.spaceharvester.application.holdings.Selection core() {
             return folder != null ? new com.aresstack.spaceharvester.application.holdings.Selection(folder.roots())
@@ -940,7 +949,39 @@ final class AreaSummaryView extends JPanel {
         // zeigt er nur „veraltet“ bzw. bietet den Klick an, statt von selbst zu starten.
         // Hat der Ordner ein Buch, zeigt die Leseansicht das Buch; der Überblick startet nur per Klick (Architekt).
         return loaded && available && runningJob == null && target != null && target.automatic() && edition == null
-                && showing.getAsBoolean() && AUTO_CONSIDERED.add(target.identity()) && summary == null && !empty;
+                && showing.getAsBoolean() && !deletedByUser(target) && AUTO_CONSIDERED.add(target.identity())
+                && summary == null && !empty;
+    }
+
+    /** Gemerkt, wo der Benutzer den Überblick gelöscht hat (über Neustarts, im Zustand der Anwendung). */
+    static final String DELETED_KEY = "areaSummary.deleted.";
+
+    /**
+     * Merkt, dass der Benutzer den Überblick der Auswahl gelöscht hat (ADR 0047 §5a: danach entsteht nichts von selbst
+     * neu), oder vergisst es, sobald er ihn ausdrücklich wieder erzeugt.
+     */
+    static void deletedByUser(ExportPanel.Selection selection, boolean deleted) {
+        Target target = Target.of(selection);
+        if (target != null) {
+            deletedByUser(target, deleted);
+        }
+    }
+
+    private static void deletedByUser(Target target, boolean deleted) {
+        String key = deletedKey(target);
+        if (deleted) {
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(key, true);
+        } else if (com.aresstack.spaceharvester.app.ui.AppState.shared().getBoolean(key, false)) {
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(key, false);
+        }
+    }
+
+    static boolean deletedByUser(Target target) {
+        return com.aresstack.spaceharvester.app.ui.AppState.shared().getBoolean(deletedKey(target), false);
+    }
+
+    private static String deletedKey(Target target) {
+        return DELETED_KEY + target.identity().replace('\u0000', '/');
     }
 
     private void summarize(boolean interactive) {
@@ -954,6 +995,8 @@ final class AreaSummaryView extends JPanel {
         offer();
         render();
         if (interactive) {
+            // Ausdrücklich wieder erzeugt: ab jetzt gilt der Überblick wieder als gewünscht.
+            deletedByUser(of, false);
             onStatus.accept(SUMMARIZING);
         }
         String priority = enterView();
