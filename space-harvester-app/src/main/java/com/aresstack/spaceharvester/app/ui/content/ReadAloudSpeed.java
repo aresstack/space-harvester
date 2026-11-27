@@ -32,8 +32,12 @@ final class ReadAloudSpeed {
                 current.setRate(rate);
             }
         }, jump);
-        dial.setLimits(rates.min(), rates.max(), rates.step(), rates.jumpSentences());
-        dial.setRate(rates.rate());
+        Runnable limits = () -> {
+            dial.setLimits(rates.min(), rates.max(), rates.step(), rates.jumpSentences());
+            dial.setRate(rates.rate());
+        };
+        limits.run();
+        dial.beforeShow(limits); // in den Einstellungen geänderte Grenzen gelten beim nächsten Einblenden
         return dial;
     }
 

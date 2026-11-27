@@ -66,6 +66,8 @@ public final class ReadAloudDial extends JComponent {
     private final DoubleConsumer rateChanged;
     private final IntConsumer jump;
     private final AWTEventListener follower = this::followMouse;
+    /** Läuft vor jedem Einblenden (etwa um geänderte Grenzen aus den Einstellungen zu übernehmen). */
+    private Runnable beforeShow = () -> { };
     private double min = 0.5;
     private double max = 2.0;
     private double step = 0.05;
@@ -149,6 +151,11 @@ public final class ReadAloudDial extends JComponent {
         repaint();
     }
 
+    /** Läuft vor jedem Einblenden, etwa um geänderte Grenzen zu übernehmen. */
+    public void beforeShow(Runnable action) {
+        this.beforeShow = action == null ? () -> { } : action;
+    }
+
     /** Zeigt {@code rate}, ohne sie zu melden. */
     public void setRate(double rate) {
         this.rate = clampRate(rate);
@@ -183,6 +190,7 @@ public final class ReadAloudDial extends JComponent {
         }
         JLayeredPane layers = root.getLayeredPane();
         if (getParent() != layers) {
+            beforeShow.run();
             layers.add(this, JLayeredPane.POPUP_LAYER);
             Toolkit.getDefaultToolkit().addAWTEventListener(follower,
                     AWTEvent.MOUSE_EVENT_MASK | AWTEvent.MOUSE_MOTION_EVENT_MASK);

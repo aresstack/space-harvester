@@ -22,6 +22,13 @@ public final class ReadAloudRate {
     public static final String JUMP = "readAloud.jumpSentences";
 
     private static final int PERCENT = 100;
+    /** Grenzen der Einstellfelder in Prozent: was der Vorlese-Ablauf kann. */
+    public static final int MIN_PERCENT = (int) Math.round(SpeechRate.MIN * PERCENT);
+    public static final int NORMAL_PERCENT = (int) Math.round(SpeechRate.NORMAL * PERCENT);
+    public static final int MAX_PERCENT = (int) Math.round(SpeechRate.MAX * PERCENT);
+    /** Gröbstes Raster und weitester Sprung, die sich einstellen lassen. */
+    public static final int MAX_STEP_PERCENT = 50;
+    public static final int MAX_JUMP_SENTENCES = 100;
     /** Raster wie der Regler des Enterprise AI Client ({@code ReadAloudRateControl}). */
     private static final int DEFAULT_STEP = 5;
     /** Ohne Eintrag: so viele Sätze am Ende der unteren Skala. */
@@ -56,6 +63,25 @@ public final class ReadAloudRate {
     /** Sätze am Ende der unteren Skala, mindestens einer. */
     public int jumpSentences() {
         return Math.max(1, state.getInt(JUMP, DEFAULT_JUMP));
+    }
+
+    /** Die Grenzen in Prozent bzw. Sätzen, wie sie die Einstellungen zeigen. */
+    public record Limits(int minPercent, int maxPercent, int stepPercent, int jumpSentences) {
+    }
+
+    public Limits limits() {
+        return new Limits((int) Math.round(min() * PERCENT), (int) Math.round(max() * PERCENT),
+                (int) Math.round(step() * PERCENT), jumpSentences());
+    }
+
+    /** Merkt die Grenzen aus den Einstellungen; sie gelten beim nächsten Einblenden der Skala. */
+    public void limits(Limits limits) {
+        java.util.Map<String, String> values = new java.util.LinkedHashMap<>();
+        values.put(MIN, String.valueOf(Math.max(MIN_PERCENT, Math.min(NORMAL_PERCENT, limits.minPercent()))));
+        values.put(MAX, String.valueOf(Math.max(NORMAL_PERCENT, Math.min(MAX_PERCENT, limits.maxPercent()))));
+        values.put(STEP, String.valueOf(Math.max(1, Math.min(MAX_STEP_PERCENT, limits.stepPercent()))));
+        values.put(JUMP, String.valueOf(Math.max(1, Math.min(MAX_JUMP_SENTENCES, limits.jumpSentences()))));
+        state.putAll(values);
     }
 
     /** Die gemerkte Geschwindigkeit, innerhalb der Grenzen. */
