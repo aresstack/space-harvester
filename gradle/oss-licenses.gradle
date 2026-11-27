@@ -19,7 +19,7 @@ def ossReportTask = rootProject.tasks.register('generateOssLicenseReport') {
     // POMs der Bibliotheken aus libs/ (eingebundene Builds) für ihre Lizenzangaben
     gradle.aresstackLibraries.each { library, spec ->
         spec.projects.each { name ->
-            dependsOn gradle.includedBuild(library).task(":${name}:generatePomFileForLibraryPublication")
+            dependsOn gradle.includedBuild(library).task(":${name}:generatePomFileFor${(spec.publication ?: 'library').capitalize()}Publication")
         }
     }
     // Auch nach einer reinen Versionsänderung neu erzeugen.
@@ -77,8 +77,9 @@ def ossReportTask = rootProject.tasks.register('generateOssLicenseReport') {
                         ? (manifest.readLines().find { it.startsWith('# upstream ') } ?: '').tokenize(' ').last().take(7)
                         : id.version
                 id = [group: id.group, name: "${library}-${component.projectName}".toString(), version: commit]
+                def publication = gradle.aresstackLibraries[library]?.publication ?: 'library'
                 def pomFile = new File(gradle.includedBuild(library).projectDir,
-                        "${component.projectName}/build/publications/library/pom-default.xml")
+                        "${component.projectName}/build/publications/${publication}/pom-default.xml")
                 if (pomFile.isFile()) {
                     def pom = new groovy.xml.XmlSlurper(false, false).parse(pomFile)
                     if (pom.artifactId.text()) {

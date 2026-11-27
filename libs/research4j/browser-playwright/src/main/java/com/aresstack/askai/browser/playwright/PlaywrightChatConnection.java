@@ -23,8 +23,9 @@ import java.util.Random;
 /**
  * The engine connection of the chat browser on Playwright: the Firefox adapter of the Enterprise AI Client
  * ({@code BidiBrowserConnection}) carried over to Playwright. The page operations (page scripts, waiting rules,
- * real input) are in {@link PageOperations} and the tabs in {@link ChatTabs}; this connection adds the lock and
- * the failure contract. Playwright is not thread-safe, so every call holds the lock of its browser instance.
+ * real input) are in {@link PageOperations} and the tabs in {@link ChatTabs}; this connection adds the owner thread and
+ * the failure contract. Playwright is not thread-safe: every call runs on the owner thread of the browser
+ * ({@link BrowserSessionActor}), the same thread model as the research browser.
  */
 final class PlaywrightChatConnection implements BrowserConnection {
 
@@ -65,58 +66,61 @@ final class PlaywrightChatConnection implements BrowserConnection {
 
     @Override
     public List<RawTab> tabs() throws BrowserException {
-        synchronized (instance) {
+        return onOwner(() -> {
             check();
             try {
                 return tabs.list();
             } catch (PlaywrightException e) {
                 throw classify(e);
             }
-        }
+        });
     }
 
     @Override
     public String createTab() throws BrowserException {
-        synchronized (instance) {
+        return onOwner(() -> {
             check();
             try {
                 return tabs.create();
             } catch (PlaywrightException e) {
                 throw classify(e);
             }
-        }
+        });
     }
 
     @Override
     public void activate(String contextId) throws BrowserException {
-        synchronized (instance) {
+        onOwner(() -> {
             check();
             try {
                 tabs.activate(contextId);
             } catch (PlaywrightException e) {
                 throw classify(e);
             }
-        }
+            return null;
+        });
     }
 
     @Override
     public void close(String contextId) throws BrowserException {
-        synchronized (instance) {
+        onOwner(() -> {
             check();
             try {
                 tabs.close(contextId);
             } catch (PlaywrightException e) {
                 throw classify(e);
             }
-        }
+            return null;
+        });
     }
 
     @Override
     public void navigate(String contextId, String url) throws BrowserException {
-        synchronized (instance) {
+        onOwner(() -> {
             check();
             operations.navigate(tabs.page(contextId), url, human, tabs.pointer(contextId));
-        }
+            return null;
+        });
     }
 
     @Override
@@ -129,48 +133,48 @@ final class PlaywrightChatConnection implements BrowserConnection {
 
     @Override
     public Map<String, String> navigateAll(Map<String, String> urlByContext) throws BrowserException {
-        synchronized (instance) {
+        return onOwner(() -> {
             check();
             return operations.navigateAll(tabs::page, urlByContext, human, tabs::pointer);
-        }
+        });
     }
 
     @Override
     public RawPage read(String contextId) throws BrowserException {
-        synchronized (instance) {
+        return onOwner(() -> {
             check();
             return operations.read(tabs.page(contextId));
-        }
+        });
     }
 
     @Override
     public List<RawLink> links(String contextId) throws BrowserException {
-        synchronized (instance) {
+        return onOwner(() -> {
             check();
             return operations.links(tabs.page(contextId));
-        }
+        });
     }
 
     @Override
     public List<RawControl> controls(String contextId) throws BrowserException {
-        synchronized (instance) {
+        return onOwner(() -> {
             check();
             return operations.controls(tabs.page(contextId));
-        }
+        });
     }
 
     @Override
     public RawActOutcome act(String contextId, String ref, BrowserAction action, String value)
             throws BrowserException {
-        synchronized (instance) {
+        return onOwner(() -> {
             check();
             return operations.act(tabs.page(contextId), ref, action, value, human, tabs.pointer(contextId));
-        }
+        });
     }
 
     @Override
     public String search(String contextId, String query, List<String> engines) throws BrowserException {
-        synchronized (instance) {
+        return onOwner(() -> {
             check();
             Page page = tabs.page(contextId);
             // The search of the research browser (engine catalog, SERP extraction, consent, challenge) on this tab.
@@ -195,46 +199,86 @@ final class PlaywrightChatConnection implements BrowserConnection {
             } catch (PlaywrightException e) {
                 throw classify(e);
             }
-        }
+        });
     }
 
     @Override
     public RawScreenshot screenshot(String contextId, Map<String, String> marks, String clipRef, int maxBytes)
             throws BrowserException {
-        synchronized (instance) {
+        return onOwner(() -> {
             check();
             return operations.screenshot(tabs.page(contextId), marks, clipRef, maxBytes);
-        }
+        });
     }
 
     @Override
     public RawDownload fetch(String contextId, String url, int maxBytes) throws BrowserException {
-        synchronized (instance) {
+        return onOwner(() -> {
             check();
             return operations.fetch(tabs.page(contextId), url, maxBytes);
-        }
+        });
     }
 
     @Override
     public BrowserProbe probe(String contextId) throws BrowserException {
-        synchronized (instance) {
+        return onOwner(() -> {
             check();
             return operations.probe(tabs.page(contextId));
-        }
+        });
     }
 
     @Override
     public String documentToken(String contextId) throws BrowserException {
-        synchronized (instance) {
+        return onOwner(() -> {
             check();
             return operations.documentToken(tabs.page(contextId));
-        }
+        });
     }
 
     @Override
     public void disconnect() {
         // The browser keeps running; only this connection ends.
         disconnected = true;
+    }
+
+    /** A call of the chat that runs on the browser's owner thread. */
+    private interface OwnerCall<T> {
+        T run() throws BrowserException;
+    }
+
+    /** Carries the chat contract's failure through the owner thread's actor. */
+    private static final class Failure extends RuntimeException {
+        final BrowserException failure;
+
+        Failure(BrowserException failure) {
+            super(failure.getMessage(), failure, false, false);
+            this.failure = failure;
+        }
+    }
+
+    /**
+     * Runs {@code call} on the owner thread of the browser and waits for it; the event pump of the browser goes on
+     * between calls. Interrupting the waiting thread (the chat's Stop) interrupts the running call, so its waiting
+     * ends at once.
+     */
+    private <T> T onOwner(OwnerCall<T> call) throws BrowserException {
+        try {
+            return instance.actor.call(session -> {
+                try {
+                    return call.run();
+                } catch (BrowserException e) {
+                    throw new Failure(e);
+                }
+            });
+        } catch (Failure e) {
+            throw e.failure;
+        } catch (com.aresstack.askai.browser.BrowserException e) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new BrowserException(BrowserException.Kind.FAILED, "Warten unterbrochen", e);
+            }
+            check();
+            throw new BrowserException(BrowserException.Kind.BROWSER_CLOSED, "Der Browser wurde geschlossen", e);
+        }
     }
 
     private void check() throws BrowserException {

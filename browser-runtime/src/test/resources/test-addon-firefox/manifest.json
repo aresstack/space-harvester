@@ -1,0 +1,17 @@
+{
+  "manifest_version": 2,
+  "name": "Browser runtime test add-on",
+  "version": "1.0",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "browser-runtime-test@example.org"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1/*"],
+      "js": ["mark.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

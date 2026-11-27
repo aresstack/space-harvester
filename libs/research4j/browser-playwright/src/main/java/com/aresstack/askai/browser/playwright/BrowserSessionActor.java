@@ -157,6 +157,11 @@ final class BrowserSessionActor implements BrowserSession, EngineGroupSession {
         try {
             return command.result.get();
         } catch (InterruptedException ex) {
+            // The caller gave up (the chat's Stop interrupts its tool thread): a queued command never runs, a
+            // running one is interrupted on the owner thread, so its waiting ends now as it did on the caller.
+            if (!queue.remove(command)) {
+                command.interrupt(ownerThread);
+            }
             Thread.currentThread().interrupt();
             throw new BrowserException("Interrupted while waiting for the browser owner thread.");
         } catch (ExecutionException ex) {
@@ -381,11 +386,42 @@ final class BrowserSessionActor implements BrowserSession, EngineGroupSession {
             this.task = task;
         }
 
+        /** Guarded by this: the command runs on the owner thread, and its caller asked to interrupt it. */
+        private boolean running;
+        private boolean interrupted;
+
         void execute(BrowserSession session) {
+            synchronized (this) {
+                if (interrupted) {
+                    // Taken from the queue just as its caller gave up: it never starts.
+                    result.completeExceptionally(new BrowserException("Browser call cancelled."));
+                    return;
+                }
+                running = true;
+            }
             try {
                 result.complete(task.run(session));
             } catch (Throwable ex) {
                 result.completeExceptionally(ex);
+            } finally {
+                synchronized (this) {
+                    running = false;
+                    if (interrupted) {
+                        // The interrupt was meant for this command only; the owner loop goes on.
+                        Thread.interrupted();
+                    }
+                }
+            }
+        }
+
+        /** Cancels this command: one not yet started never starts, a running one has the owner thread interrupted. */
+        synchronized void interrupt(Thread owner) {
+            if (result.isDone()) {
+                return;
+            }
+            interrupted = true;
+            if (running) {
+                owner.interrupt();
             }
         }
 

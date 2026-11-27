@@ -1,0 +1,72 @@
+package com.aresstack.playwright4j.graal;
+
+import org.graalvm.polyglot.HostAccess;
+
+public interface HostProcessLauncher {
+
+    /**
+     * Launches a local Chromium process and returns a value of the form
+     * {@code processId + "" + wsEndpoint}, where {@code wsEndpoint} is the
+     * DevTools WebSocket endpoint discovered from the {@code DevToolsActivePort} file.
+     */
+    @HostAccess.Export
+    String launchChromium(String command, String arguments, String workingDirectory);
+
+    /**
+     * Ends a process the way Node's {@code child.kill()} does: asks it to terminate, and if it is
+     * still alive after a short grace period, kills it and its descendants forcibly.
+     */
+    @HostAccess.Export
+    void close(String processId);
+
+    /**
+     * Kills a process and all its descendants forcibly, at once (Playwright's force kill:
+     * {@code taskkill /T /F} on Windows, {@code kill(-pid, SIGKILL)} elsewhere).
+     */
+    @HostAccess.Export
+    default void kill(String processId) {
+        close(processId);
+    }
+
+    /** The operating-system pid of a process, or -1 when there is none (e.g. an in-JVM encoder). */
+    @HostAccess.Export
+    default long pid(String processId) {
+        return -1L;
+    }
+
+    /**
+     * Spawns a general (non-Chromium) child process, e.g. the ffmpeg video encoder. Arguments are
+     * unit-separator delimited. Returns a process id. stdout/stderr/exit are delivered via
+     * {@link #drainProcessEvents()}; input bytes are fed to the child via {@link #writeStdin}.
+     */
+    @HostAccess.Export
+    String spawnProcess(String command, String arguments, String workingDirectory);
+
+    /** Writes Base64-encoded bytes to a spawned process's stdin. */
+    @HostAccess.Export
+    void writeStdin(String processId, String base64);
+
+    /** Closes a spawned process's stdin (signals EOF, e.g. so ffmpeg finalizes its output). */
+    @HostAccess.Export
+    void endStdin(String processId);
+
+    /** Drains queued process events (stdout/stderr data, exit) as a newline-separated batch. */
+    @HostAccess.Export
+    String drainProcessEvents();
+
+    /**
+     * Like {@link #launchChromium} but with the child's complete environment, given as
+     * {@code NAME=value} entries, delimited like the arguments. {@code null} inherits this process's
+     * environment. Playwright semantics: the given environment replaces the inherited one.
+     */
+    @HostAccess.Export
+    default String launchChromiumWithEnvironment(String command, String arguments, String workingDirectory, String environment) {
+        return launchChromium(command, arguments, workingDirectory);
+    }
+
+    /** Like {@link #spawnProcess} but with the child's complete environment, see {@link #launchChromiumWithEnvironment}. */
+    @HostAccess.Export
+    default String spawnProcessWithEnvironment(String command, String arguments, String workingDirectory, String environment) {
+        return spawnProcess(command, arguments, workingDirectory);
+    }
+}

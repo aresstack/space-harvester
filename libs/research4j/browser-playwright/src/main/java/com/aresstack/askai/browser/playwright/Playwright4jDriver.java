@@ -168,10 +168,33 @@ final class Playwright4jDriver implements PlaywrightDriver {
                                      com.aresstack.askai.browser.search.ConsentHandlingSettings consent,
                                      com.aresstack.askai.browser.search.CaptchaHandlingSettings captcha)
             throws BrowserException {
+        return launch(launcher, headless, timeoutMillis, profileKey, requestAllowed, consent, captcha, false);
+    }
+
+    /**
+     * Get the chat browser of the chat tools ({@link PlaywrightChatEngine}) from the host's launcher: like
+     * {@link #launch}, but new tabs of a page stay open (they are the chat's tabs, {@link ChatTabs}), the research
+     * add-on is not loaded (the chat reads with its own page scripts) and closing the first tab moves the driver to
+     * another open tab instead of ending the session.
+     */
+    static Playwright4jDriver launchForChat(BrowserLauncher launcher, boolean headless, int timeoutMillis,
+                                            String profileKey,
+                                            com.aresstack.askai.browser.search.ConsentHandlingSettings consent,
+                                            com.aresstack.askai.browser.search.CaptchaHandlingSettings captcha)
+            throws BrowserException {
+        return launch(launcher, headless, timeoutMillis, profileKey, null, consent, captcha, true);
+    }
+
+    private static Playwright4jDriver launch(BrowserLauncher launcher, boolean headless, int timeoutMillis,
+                                             String profileKey, final Predicate<String> requestAllowed,
+                                             com.aresstack.askai.browser.search.ConsentHandlingSettings consent,
+                                             com.aresstack.askai.browser.search.CaptchaHandlingSettings captcha,
+                                             boolean chat)
+            throws BrowserException {
         AddonBridge bridge = null;
         LaunchedBrowser launched = null;
         try {
-            final AddonBridge addonBridge = startAddonBridge("research add-on");
+            final AddonBridge addonBridge = chat ? null : startAddonBridge("research add-on");
             bridge = addonBridge;
             AddonPackager addon = addonBridge == null ? null : AddonPackager.research(addonBridge, true);
             launched = launcher.persistent(profileKey, headless, addon);
@@ -213,7 +236,11 @@ final class Playwright4jDriver implements PlaywrightDriver {
                 driver.readBridge = bridge;
             }
             driver.launchedMillis = System.currentTimeMillis();
-            page.onPopup(driver.popupCloser());
+            if (chat) {
+                page.onClose(driver.chatTabCloseWatcher());
+            } else {
+                page.onPopup(driver.popupCloser());
+            }
             // Dispatched during the idle pump: the user closing the window becomes a TYPED condition
             // instead of an anonymous 'Target closed' that no classifier recognized.
             if (browser != null) {
@@ -1624,6 +1651,28 @@ final class Playwright4jDriver implements PlaywrightDriver {
         };
     }
 
+    /**
+     * The chat's first tab closing: the driver goes on in another open tab of the context (its event pump needs a
+     * page); only when none is left is the browser gone.
+     */
+    private Consumer<Page> chatTabCloseWatcher() {
+        return new Consumer<Page>() {
+            public void accept(Page gone) {
+                if (closed || gone != page) {
+                    return;
+                }
+                for (Page other : context.pages()) {
+                    if (other != gone && !other.isClosed()) {
+                        page = other;
+                        other.onClose(chatTabCloseWatcher());
+                        return;
+                    }
+                }
+                browserDisconnected = true;
+            }
+        };
+    }
+
     /** The one popup policy: close immediately, count it, and never let a dead popup break the session. */
     private Consumer<Page> popupCloser() {
         return new Consumer<Page>() {
@@ -1644,6 +1693,11 @@ final class Playwright4jDriver implements PlaywrightDriver {
      */
     void readThroughAddon(AddonBridge workerBridge) {
         this.readBridge = workerBridge;
+    }
+
+    /** Whether the browser is Camoufox (its page scripts run in the isolated world). */
+    boolean camoufox() {
+        return camoufox;
     }
 
     /** The research add-on's bridge, or null (switched off, not prepared or not loaded; Chrome/Edge worker tabs). */
@@ -1893,25 +1947,28 @@ final class Playwright4jDriver implements PlaywrightDriver {
         return browser != null ? browser.isConnected() : !contextClosed;
     }
 
-    /** RENDERED state via the DOM: url after redirects, title, body innerText, anchors with absolute hrefs. */
+    /**
+     * RENDERED state via the DOM: url after redirects, title, body innerText, anchors with absolute hrefs. The page
+     * scripts and their parsing are the chat's ({@link PageOperations#readResult}, {@link PageOperations#linksResult}):
+     * one reading and one link extraction for chat and research; here they run through {@link #readPage}.
+     */
     private PlaywrightPageState state() {
-        String url = page.url();
-        String title = page.title();
-        String text = page.innerText("body");
-        List<PlaywrightPageState.Anchor> anchors = new ArrayList<PlaywrightPageState.Anchor>();
-        Object raw = readPage(page,
-                "() => Array.from(document.querySelectorAll('a[href]'))"
-                        + ".map(a => [String(a.innerText || '').trim(), String(a.href || '')])");
-        if (raw instanceof List) {
-            for (Object entry : (List<?>) raw) {
-                if (entry instanceof List && ((List<?>) entry).size() == 2) {
-                    List<?> pair = (List<?>) entry;
-                    anchors.add(new PlaywrightPageState.Anchor(
-                            String.valueOf(pair.get(0)), String.valueOf(pair.get(1))));
-                }
-            }
+        String readJson = String.valueOf(readPage(page, "() => " + ChatPageScripts.READ_SCRIPT));
+        String linksJson = String.valueOf(readPage(page, "() => " + ChatPageScripts.LINKS_SCRIPT));
+        com.aresstack.enterpriseai.browser.api.engine.RawPage read;
+        List<com.aresstack.enterpriseai.browser.api.engine.RawLink> links;
+        try {
+            read = PageOperations.readResult(readJson);
+            links = PageOperations.linksResult(linksJson);
+        } catch (RuntimeException unreadable) {
+            // Every caller handles a failed page read as a PlaywrightException.
+            throw new PlaywrightException("The page could not be read: " + unreadable.getMessage());
         }
-        return new PlaywrightPageState(url, title, text, anchors);
+        List<PlaywrightPageState.Anchor> anchors = new ArrayList<PlaywrightPageState.Anchor>(links.size());
+        for (com.aresstack.enterpriseai.browser.api.engine.RawLink link : links) {
+            anchors.add(new PlaywrightPageState.Anchor(link.text(), link.href()));
+        }
+        return new PlaywrightPageState(read.url(), read.title(), read.text(), anchors);
     }
 
     /**

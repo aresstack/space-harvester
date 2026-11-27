@@ -71,63 +71,90 @@ public final class PlaywrightChatEngine implements BrowserEngine {
         if (profileDirectory == null) {
             throw new BrowserException(BrowserException.Kind.START_FAILED, "Kein Profilordner");
         }
-        LaunchedBrowser launched;
+        final String profileKey = profileDirectory.toAbsolutePath().normalize().toString();
+        final int timeout = (int) Math.min(Integer.MAX_VALUE, navigationTimeoutMillis);
+        final Playwright4jDriver[] started = new Playwright4jDriver[1];
+        final java.util.concurrent.atomic.AtomicBoolean gone = new java.util.concurrent.atomic.AtomicBoolean();
+        BrowserSessionActor actor;
         try {
-            launched = launcher.persistent(profileDirectory.toAbsolutePath().normalize().toString(), headless, null);
-        } catch (com.aresstack.askai.browser.BrowserException | RuntimeException e) {
-            String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage().split("\n")[0];
+            // The research driver on its owner thread: Playwright and everything below it are created and used
+            // there only; the chat's calls reach it through the actor (PlaywrightChatConnection).
+            actor = BrowserSessionActor.start(() -> {
+                Playwright4jDriver driver;
+                try {
+                    driver = Playwright4jDriver.launchForChat(launcher, headless, timeout, profileKey,
+                            searchSettings.consent, searchSettings.captcha);
+                } catch (com.aresstack.askai.browser.BrowserException e) {
+                    throw new IllegalStateException(e.getMessage(), e);
+                }
+                driver.setRenderedCapture(new RenderedPageDocumentCapture(searchSettings.analysis));
+                started[0] = driver;
+                driver.browserContext().onClose(context -> gone.set(true));
+                PlaywrightBrowserSession session = new PlaywrightBrowserSession(driver,
+                        com.aresstack.askai.browser.UrlSafetyPolicy.allowingPrivateNetworks(),
+                        com.aresstack.askai.browser.BrowserLimits.defaults(), testSearchUrlTemplate, null,
+                        searchSettings);
+                if (testSearchUrlTemplate != null) {
+                    session.setDomainKeyResolver(new com.aresstack.askai.browser.domain.HostPortDomainKeyResolver());
+                }
+                return session;
+            });
+        } catch (RuntimeException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            String message = cause.getMessage() == null ? cause.getClass().getSimpleName()
+                    : cause.getMessage().split("\n")[0];
             throw new BrowserException(BrowserException.Kind.START_FAILED,
                     "Browser konnte nicht gestartet werden: " + message, e);
         }
-        BrowserContext context = launched.context();
-        context.setDefaultNavigationTimeout(navigationTimeoutMillis);
-        context.setDefaultTimeout(navigationTimeoutMillis);
-        return new Instance(launched, navigationTimeoutMillis, searchSettings, testSearchUrlTemplate);
+        return new Instance(actor, started[0].browserContext(), gone, started[0].camoufox(), navigationTimeoutMillis,
+                searchSettings, testSearchUrlTemplate);
     }
 
-    /** One running browser on one profile folder. */
+    /** One running browser on one profile folder, owned by one thread. */
     static final class Instance implements BrowserInstance {
-        private final LaunchedBrowser launched;
+        final BrowserSessionActor actor;
         private final BrowserContext context;
         private final long navigationTimeoutMillis;
         final com.aresstack.askai.browser.search.LegacyBrowserSearchSettings searchSettings;
         final boolean camoufox;
         final String testSearchUrlTemplate;
-        private volatile boolean closed;
+        /** Set when the context closed (window closed, browser gone) or the chat stopped it. */
+        private final java.util.concurrent.atomic.AtomicBoolean closed;
 
-        Instance(LaunchedBrowser launched, long navigationTimeoutMillis,
+        Instance(BrowserSessionActor actor, BrowserContext context, java.util.concurrent.atomic.AtomicBoolean closed,
+                 boolean camoufox, long navigationTimeoutMillis,
                  com.aresstack.askai.browser.search.LegacyBrowserSearchSettings searchSettings,
                  String testSearchUrlTemplate) {
+            this.actor = actor;
             this.testSearchUrlTemplate = testSearchUrlTemplate;
             this.searchSettings = searchSettings;
-            this.camoufox = launched.camoufox();
-            this.launched = launched;
-            this.context = launched.context();
+            this.camoufox = camoufox;
+            this.context = context;
             this.navigationTimeoutMillis = navigationTimeoutMillis;
-            context.onClose(gone -> closed = true);
+            this.closed = closed;
         }
 
         void markClosed() {
-            closed = true;
+            closed.set(true);
         }
 
         @Override
         public boolean isAlive() {
-            return !closed;
+            return !closed.get();
         }
 
         @Override
         public BrowserConnection connect() throws BrowserException {
-            if (closed) {
+            if (closed.get()) {
                 throw new BrowserException(BrowserException.Kind.BROWSER_CLOSED, "Der Browser wurde geschlossen");
             }
             return new PlaywrightChatConnection(this, context, navigationTimeoutMillis);
         }
 
         @Override
-        public synchronized void stop() {
-            closed = true;
-            launched.close();
+        public void stop() {
+            closed.set(true);
+            actor.close();
         }
     }
 }

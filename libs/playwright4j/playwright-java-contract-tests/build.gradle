@@ -1,0 +1,619 @@
+plugins {
+    id 'java'
+}
+
+description = 'Non-published contract tests for the official Playwright Java API against the playwright4j driver replacement.'
+
+ext.upstreamPlaywrightVersion = findProperty('upstreamPlaywrightVersion') ?: '1.62.0'
+ext.microsoftPlaywrightJavaRepository = 'https://github.com/microsoft/playwright-java'
+ext.upstreamPlaywrightJavaRepository = microsoftPlaywrightJavaRepository
+ext.upstreamPlaywrightTestsZipUrl = findProperty('playwrightJavaTestsZipUrl') ?: "${upstreamPlaywrightJavaRepository}/archive/refs/tags/v${upstreamPlaywrightVersion}.zip"
+
+sourceSets {
+    upstreamTest {
+        java.srcDir 'src/upstreamTest/java'
+        resources.srcDir 'src/upstreamTest/resources'
+        compileClasspath += sourceSets.test.output + sourceSets.test.compileClasspath
+        runtimeClasspath += output + compileClasspath + sourceSets.test.runtimeClasspath
+    }
+}
+
+configurations {
+    upstreamTestImplementation.extendsFrom testImplementation
+    upstreamTestRuntimeOnly.extendsFrom testRuntimeOnly
+}
+
+dependencies {
+    // -Pplaywright4j.referenceDriver=official runs the tests against Microsoft's own Node.js driver
+    // instead, to tell a playwright4j defect from upstream behaviour (see problems.md). Never in CI.
+    if (findProperty('playwright4j.referenceDriver') == 'official') {
+        testCompileOnly project(':playwright4j')
+        testImplementation "com.microsoft.playwright:playwright:${upstreamPlaywrightVersion}"
+    } else {
+        testImplementation project(':playwright4j')
+        testImplementation("com.microsoft.playwright:playwright:${upstreamPlaywrightVersion}") {
+            exclude group: 'com.microsoft.playwright', module: 'driver'
+            exclude group: 'com.microsoft.playwright', module: 'driver-bundle'
+        }
+    }
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.13.1'
+    testImplementation 'org.junit.jupiter:junit-jupiter-params:5.13.1'
+    testImplementation 'org.java-websocket:Java-WebSocket:1.6.0'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.13.1'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.13.1'
+}
+
+test {
+    systemProperty 'playwright4j.officialApiSpike', findProperty('playwright4j.officialApiSpike') ?: 'false'
+    systemProperty 'playwright4j.chrome.executablePath', findProperty('playwright4j.chrome.executablePath') ?: ''
+}
+
+// Tiny per-channel smoke (launch -> newPage -> setContent -> evaluate 1+1 -> close) against the
+// playwright4j driver. Channel via -Pplaywright4j.browserChannel or BROWSER_CHANNEL env (chrome/msedge).
+// Used by the push/PR CI to prove Chrome and Edge work without a full sweep.
+tasks.register('channelSmoke', Test) {
+    description = 'Minimal launch/evaluate/close smoke for the configured BROWSER_CHANNEL (chrome/msedge).'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching 'com.aresstack.playwright4j.smoke.BrowserChannelSmokeTest' }
+
+    environment 'BROWSER', 'chromium'
+    environment 'BROWSER_CHANNEL', findProperty('playwright4j.browserChannel') ?: (System.getenv('BROWSER_CHANNEL') ?: 'chrome')
+    environment 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1'
+    environment 'PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS', '1'
+
+    systemProperty 'playwright4j.chrome.executablePath', findProperty('playwright4j.chrome.executablePath') ?: ''
+    systemProperty 'junit.jupiter.execution.timeout.default', '90 s'
+    systemProperty 'junit.jupiter.execution.timeout.thread.mode.default', 'SAME_THREAD'
+    // An unhandled promise rejection or uncaught exception in the GraalJS driver (or launch-server)
+    // terminates it with exit code 1, as Node.js would, instead of only being reported on stderr.
+    systemProperty 'playwright4j.unhandledRejections', findProperty('playwright4j.unhandledRejections') ?: 'strict'
+    testLogging { events "passed", "failed", "skipped"; showStandardStreams = true; exceptionFormat "full" }
+}
+
+// Firefox over WebDriver BiDi (moz-firefox channel) against an installed Firefox. Point
+// FIREFOX_EXECUTABLE at the firefox binary; PLAYWRIGHT4J_REQUIRE_FIREFOX=true fails instead of skipping.
+tasks.register('firefoxSmoke', Test) {
+    description = 'Launch/evaluate/close smoke for an installed Firefox via WebDriver BiDi (moz-firefox).'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    filter {
+        includeTestsMatching 'com.aresstack.playwright4j.smoke.FirefoxBiDiSmokeTest'
+        // Counts the real Firefox windows (EnumWindows on Windows, xdotool on Linux/X11).
+        includeTestsMatching 'com.aresstack.playwright4j.smoke.FirefoxPersistentWindowTest'
+        includeTestsMatching 'com.aresstack.playwright4j.smoke.FirefoxNativeBehaviorTest'
+        includeTestsMatching 'com.aresstack.playwright4j.smoke.FirefoxCacheBehaviorTest'
+        includeTestsMatching 'com.aresstack.playwright4j.smoke.FirefoxMainWorldTest'
+        // Reading a page leaves no user activation, Playwright events or DOM changes (#37, #38, #40).
+        includeTestsMatching 'com.aresstack.playwright4j.smoke.FirefoxReadSideEffectsTest'
+        // Unhandled dialogs and auth challenges answered after a delay, opt-in (#48).
+        includeTestsMatching 'com.aresstack.playwright4j.smoke.FirefoxUnhandledPromptDelayTest'
+        // Text entry through Firefox's editor and wheel scrolling under nativeBehavior (#41, #42).
+        includeTestsMatching 'com.aresstack.playwright4j.smoke.FirefoxNativeInputTest'
+        // Mouse paths and click timing under playwright4j.bidi.naturalPointer (#43).
+        includeTestsMatching 'com.aresstack.playwright4j.smoke.FirefoxNaturalPointerTest'
+        // The leftover-process guard itself, without a browser.
+        includeTestsMatching 'com.aresstack.playwright4j.smoke.FirefoxTestSupportTest'
+        // keyboard.down/up/press with graphemes outside the US layout (#59).
+        includeTestsMatching 'com.aresstack.playwright4j.smoke.FirefoxKeyboardGraphemeTest'
+        includeTestsMatching 'com.aresstack.playwright4j.smoke.FirefoxBidiTest'
+        // Temporary add-ons over Playwright's BiDi session (webExtension.install).
+        includeTestsMatching 'com.aresstack.playwright4j.smoke.FirefoxExtensionsTest'
+    }
+
+    environment 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1'
+    environment 'PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS', '1'
+    // Firefox inherits it: on a Wayland desktop it opens X11 (XWayland) windows xdotool can count.
+    environment 'MOZ_ENABLE_WAYLAND', '0'
+
+    systemProperty 'junit.jupiter.execution.timeout.default', '90 s'
+    // A hung browser call does not react to an interrupt: run each test in its own thread so a
+    // timeout fails the test, and print every thread's stack first to show where it hung.
+    systemProperty 'junit.jupiter.execution.timeout.thread.mode.default', 'SEPARATE_THREAD'
+    systemProperty 'junit.jupiter.execution.timeout.threaddump.enabled', 'true'
+    // Below the CI job limit, so a hang outside a test method still fails the task and the CI
+    // steps that report it still run.
+    timeout = java.time.Duration.ofMinutes(30)
+    // An unhandled promise rejection or uncaught exception in the GraalJS driver (or launch-server)
+    // terminates it with exit code 1, as Node.js would, instead of only being reported on stderr.
+    systemProperty 'playwright4j.unhandledRejections', findProperty('playwright4j.unhandledRejections') ?: 'strict'
+    // -Pplaywright4j.bidi.nativeBehavior=true runs the smoke with Firefox's own behaviour (docs/browser-signals.md).
+    if (findProperty('playwright4j.bidi.nativeBehavior')) {
+        systemProperty 'playwright4j.bidi.nativeBehavior', findProperty('playwright4j.bidi.nativeBehavior')
+    }
+    // Full exception text in the console: the CI log is often the only place a failure is seen.
+    testLogging { events "passed", "failed", "skipped"; showStandardStreams = true; exceptionFormat "full" }
+}
+
+// Camoufox over WebDriver BiDi (moz-firefox channel): its fingerprint configuration
+// (CAMOU_CONFIG_1..n) reaches the browser through setEnv. Opt-in: CAMOUFOX_EXECUTABLE;
+// CAMOUFOX_BIDI_FIXES=true also checks a second page. See docs/camoufox.md.
+tasks.register('camoufoxSmoke', Test) {
+    description = 'Checks that a Camoufox fingerprint configuration passed with setEnv applies (WebDriver BiDi).'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching 'com.aresstack.playwright4j.smoke.CamoufoxFingerprintTest' }
+    outputs.upToDateWhen { false }
+
+    environment 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1'
+    environment 'PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS', '1'
+    environment 'MOZ_ENABLE_WAYLAND', '0'
+
+    systemProperty 'junit.jupiter.execution.timeout.default', '120 s'
+    // A hung browser call does not react to an interrupt: run each test in its own thread so a
+    // timeout fails the test, and print every thread's stack first to show where it hung.
+    systemProperty 'junit.jupiter.execution.timeout.thread.mode.default', 'SEPARATE_THREAD'
+    systemProperty 'junit.jupiter.execution.timeout.threaddump.enabled', 'true'
+    timeout = java.time.Duration.ofMinutes(5)
+    systemProperty 'playwright4j.unhandledRejections', findProperty('playwright4j.unhandledRejections') ?: 'strict'
+    // -Pplaywright4j.bidi.nativeBehavior=true runs the smoke with Firefox's own behaviour (docs/browser-signals.md).
+    if (findProperty('playwright4j.bidi.nativeBehavior')) {
+        systemProperty 'playwright4j.bidi.nativeBehavior', findProperty('playwright4j.bidi.nativeBehavior')
+    }
+    testLogging { events "passed", "failed", "skipped"; showStandardStreams = true; exceptionFormat "full" }
+}
+
+// A manual Camoufox session over WebDriver BiDi for comparing with Camoufox's own launcher, see
+// docs/camoufox.md. Runs only with CAMOUFOX_MANUAL=true; waits until the browser window is closed.
+tasks.register('camoufoxManual', Test) {
+    description = 'Opens Camoufox over WebDriver BiDi with given launch options and waits until its window is closed.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching 'com.aresstack.playwright4j.smoke.CamoufoxManualSessionTest' }
+    outputs.upToDateWhen { false }
+
+    environment 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1'
+    environment 'PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS', '1'
+    environment 'MOZ_ENABLE_WAYLAND', '0'
+
+    systemProperty 'junit.jupiter.execution.timeout.default', '12 h'
+    systemProperty 'junit.jupiter.execution.timeout.thread.mode.default', 'SAME_THREAD'
+    testLogging { events "passed", "failed", "skipped"; showStandardStreams = true; exceptionFormat "full" }
+}
+
+// The environment a browser process starts with (setEnv and inheritance) for launch() and
+// launchPersistentContext() of Chromium and Firefox. Uses a fake browser script, no real browser.
+tasks.register('launchEnvironmentTest', Test) {
+    description = 'Checks that setEnv reaches the browser process and the default environment is inherited.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching 'com.aresstack.playwright4j.smoke.LaunchEnvironmentTest' }
+
+    environment 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1'
+    environment 'PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS', '1'
+    environment 'PLAYWRIGHT4J_ENV_INHERITED', 'from-test-jvm'
+
+    systemProperty 'junit.jupiter.execution.timeout.default', '90 s'
+    systemProperty 'junit.jupiter.execution.timeout.thread.mode.default', 'SAME_THREAD'
+    testLogging { events "passed", "failed", "skipped"; showStandardStreams = true; exceptionFormat "full" }
+}
+
+// APIRequestContext with Playwright's proxy option, against a local stub proxy (no browser).
+tasks.register('apiRequestProxyTest', Test) {
+    description = 'Checks that APIRequestContext sends its requests through the configured proxy.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching 'com.aresstack.playwright4j.smoke.ApiRequestProxyTest' }
+
+    environment 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1'
+
+    systemProperty 'junit.jupiter.execution.timeout.default', '90 s'
+    systemProperty 'junit.jupiter.execution.timeout.thread.mode.default', 'SAME_THREAD'
+    testLogging { events "passed", "failed", "skipped"; showStandardStreams = true; exceptionFormat "full" }
+}
+
+// Diagnostic: prints the automation signals a page can observe (navigator.webdriver, UA, request
+// headers, injected globals, browser command line) for a browser launched through playwright4j.
+// Firefox: FIREFOX_EXECUTABLE. Chrome/Edge: PROBE_BROWSER=chromium plus PROBE_CHANNEL or
+// PROBE_EXECUTABLE. See docs/browser-signals.md for comparing against the official driver.
+tasks.register('browserSignals', Test) {
+    description = 'Reports page-observable automation signals of a playwright4j-launched browser.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching 'com.aresstack.playwright4j.signals.BrowserSignalsReportTest' }
+    outputs.upToDateWhen { false }
+
+    environment 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1'
+    environment 'PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS', '1'
+    if (!System.getenv('PROBE_OUT')) {
+        environment 'PROBE_OUT', layout.buildDirectory.file('reports/browser-signals/playwright4j.txt').get().asFile.absolutePath
+    }
+
+    systemProperty 'junit.jupiter.execution.timeout.default', '120 s'
+    systemProperty 'junit.jupiter.execution.timeout.thread.mode.default', 'SAME_THREAD'
+    testLogging { events "passed", "failed", "skipped"; showStandardStreams = true }
+}
+
+// Prototype: passive data acquisition from Firefox over WebDriver BiDi (response bodies,
+// browsingContext.locateNodes) and the page-visible side effects of each read. Diagnostic only.
+tasks.register('passiveAcquisition', Test) {
+    description = 'Measures response bodies and BiDi DOM reads against page-visible side effects (Firefox).'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching 'com.aresstack.playwright4j.passive.PassiveAcquisitionReportTest' }
+    outputs.upToDateWhen { false }
+
+    environment 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1'
+    environment 'PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS', '1'
+    environment 'MOZ_ENABLE_WAYLAND', '0'
+    if (!System.getenv('PROBE_OUT')) {
+        environment 'PROBE_OUT', layout.buildDirectory.file('reports/passive-acquisition/report.txt').get().asFile.absolutePath
+    }
+
+    systemProperty 'junit.jupiter.execution.timeout.default', '180 s'
+    systemProperty 'junit.jupiter.execution.timeout.thread.mode.default', 'SAME_THREAD'
+    testLogging { events "passed", "failed", "skipped"; showStandardStreams = true; exceptionFormat "full" }
+}
+
+tasks.named('processUpstreamTestResources') {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    // The upstream Server serves files via getResourceAsStream("resources" + path), i.e. it
+    // expects test assets under a `resources/` directory on the classpath. Nest them there.
+    eachFile { details ->
+        details.relativePath = new RelativePath(true,
+                (['resources'] + (details.relativePath.segments as List)) as String[])
+    }
+    includeEmptyDirs = false
+}
+
+// Many upstream tests reference fixtures via the relative path `src/test/resources/...`
+// (e.g. setInputFiles(Paths.get("src/test/resources/file-to-upload.txt")) and file:// URLs
+// built from such paths). Our fixtures live under src/upstreamTest/resources, so we mirror
+// them into a dedicated working directory laid out as `<cwd>/src/test/resources/...` and run
+// the upstream tests from there. This keeps the fix inside the contract-test harness without
+// touching the driver or rewriting upstream tests.
+def upstreamTestCwd = layout.buildDirectory.dir('upstreamTestCwd')
+
+// Engine and channel of the upstream suite: -Pplaywright4j.browser / BROWSER (chromium, firefox)
+// and -Pplaywright4j.browserChannel / BROWSER_CHANNEL. Firefox runs over WebDriver BiDi (moz-firefox).
+ext.upstreamBrowser = findProperty('playwright4j.browser') ?: (System.getenv('BROWSER') ?: 'chromium')
+ext.upstreamBrowserChannel = findProperty('playwright4j.browserChannel') ?: (System.getenv('BROWSER_CHANNEL')
+        ?: (upstreamBrowser == 'firefox' ? 'moz-firefox' : 'chrome'))
+
+tasks.register('syncUpstreamTestCwd', Copy) {
+    description = 'Mirrors upstream test fixtures to <cwd>/src/test/resources for relative-path access.'
+    from 'src/upstreamTest/resources'
+    into upstreamTestCwd.map { it.dir('src/test/resources') }
+}
+
+tasks.register('upstreamTest', Test) {
+    description = 'Runs imported official Microsoft Playwright Java upstream tests against the playwright4j driver replacement.'
+    group = 'verification'
+    testClassesDirs = sourceSets.upstreamTest.output.classesDirs
+    classpath = sourceSets.upstreamTest.runtimeClasspath
+    shouldRunAfter test
+
+    // Run from a working directory where relative `src/test/resources/...` paths resolve.
+    dependsOn 'syncUpstreamTestCwd'
+    workingDir = upstreamTestCwd.get().asFile
+
+    // Drive the official Microsoft test fixture onto the locally installed Chrome via the
+    // standard Playwright browser-channel mechanism instead of a downloaded browser.
+    environment 'BROWSER', upstreamBrowser
+    environment 'BROWSER_CHANNEL', upstreamBrowserChannel
+    environment 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1'
+    environment 'PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS', '1'
+
+    // TestJavaSourceLocationInConstructor (and Playwright-Java's StackTraceCollector generally)
+    // reads Java sources from PLAYWRIGHT_JAVA_SRC to embed them into `sources`-enabled traces and
+    // to verify them. It defaults to the relative "src/test/java", which resolves against this
+    // task's workingDir (build/upstreamTestCwd) and does not exist there, so StackTraceCollector
+    // throws at construction. Point it at the imported upstream sources' absolute root instead.
+    environment 'PLAYWRIGHT_JAVA_SRC', file('src/upstreamTest/java').absolutePath
+
+    systemProperty 'playwright4j.debug', findProperty('playwright4j.debug') ?: 'false'
+    systemProperty 'playwright4j.chrome.executablePath', findProperty('playwright4j.chrome.executablePath') ?: ''
+
+    // Safety net: a single driver call that never returns (e.g. an unsupported HAR/zip export
+    // during BrowserContext.close()) must not wedge the whole forked JVM. A generous per-method
+    // JUnit timeout interrupts such a hang so the suite proceeds to @AfterAll, closes Playwright,
+    // and the driver child receives EOF and shuts down (killing Chrome). Well above any legitimate
+    // test duration, so it never affects green tests. Same-thread mode keeps Playwright's
+    // single-threaded affinity intact.
+    systemProperty 'junit.jupiter.execution.timeout.default', findProperty('playwright4j.testTimeout') ?: '90 s'
+    systemProperty 'junit.jupiter.execution.timeout.thread.mode.default', 'SAME_THREAD'
+    // Reported on stderr by default; -Pplaywright4j.unhandledRejections=strict terminates the driver.
+    systemProperty 'playwright4j.unhandledRejections', findProperty('playwright4j.unhandledRejections') ?: 'warn'
+
+    testLogging {
+        events "passed", "failed", "skipped"
+        showStandardStreams = false
+    }
+}
+
+// TestBrowserTypeConnect starts a real `cli.js launch-server` (a separate JVM running
+// GraalDriverMain --node-compat, no native node executable) and connects to it over WebSocket:
+// connect, reconnect, disconnect and server-process exit. Runs in CI for chrome and msedge.
+// Only the documented known-limitation shouldRecordTraceWithSources is excluded (see problems.md).
+tasks.register('browserTypeConnectTest', Test) {
+    description = 'Runs the upstream TestBrowserTypeConnect suite (launch-server over the JVM driver).'
+    group = 'verification'
+    testClassesDirs = sourceSets.upstreamTest.output.classesDirs
+    classpath = sourceSets.upstreamTest.runtimeClasspath
+    dependsOn 'syncUpstreamTestCwd'
+    workingDir = upstreamTestCwd.get().asFile
+    filter {
+        includeTestsMatching 'com.microsoft.playwright.TestBrowserTypeConnect'
+        excludeTestsMatching 'com.microsoft.playwright.TestBrowserTypeConnect.shouldRecordTraceWithSources'
+        failOnNoMatchingTests = true
+    }
+    environment 'BROWSER', 'chromium'
+    environment 'BROWSER_CHANNEL', findProperty('playwright4j.browserChannel') ?: (System.getenv('BROWSER_CHANNEL') ?: 'chrome')
+    environment 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1'
+    environment 'PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS', '1'
+    environment 'PLAYWRIGHT_JAVA_SRC', file('src/upstreamTest/java').absolutePath
+    systemProperty 'playwright4j.debug', findProperty('playwright4j.debug') ?: 'false'
+    systemProperty 'junit.jupiter.execution.timeout.default', '90 s'
+    systemProperty 'junit.jupiter.execution.timeout.thread.mode.default', 'SAME_THREAD'
+    // An unhandled promise rejection or uncaught exception in the GraalJS driver (or launch-server)
+    // terminates it with exit code 1, as Node.js would, instead of only being reported on stderr.
+    systemProperty 'playwright4j.unhandledRejections', findProperty('playwright4j.unhandledRejections') ?: 'strict'
+    // "started" + standard streams show whether a hang is in the server start, connect() or a
+    // single test case (the launch-server's stderr is inherited into the test output).
+    testLogging {
+        events "started", "passed", "failed", "skipped", "standard_error"
+        exceptionFormat "full"
+    }
+}
+
+// --- Known-limitations check (CI gate) --------------------------------------------------------
+// The raw `upstreamTest` task stays honest: it reports BUILD FAILED on the known reds. For CI we
+// add an explicit, named gate that runs the SAME suite (no excludes, no test changes) but passes
+// ONLY when exactly the known-limitation reds fail. It fails on any NEW red AND on any known red
+// that unexpectedly disappears (forcing a conscious update of the list below).
+//
+// The ONLY tolerated failures, one file per engine: known-limitations/<browser>.txt. Each line is
+// "<fully-qualified-class> > <method-without-params>  # CATEGORY: reason"; the reason is explained in
+// problems.md. OS_ENVIRONMENT (depends on the host, e.g. Dark Mode) and UPSTREAM_BIDI (fails with
+// Microsoft's own driver too, not on every run) entries may also pass; every other entry must fail,
+// so a fixed limitation forces an update of the list.
+def knownLimitationsFile = file("known-limitations/${upstreamBrowser}.txt")
+
+// Same configuration as `upstreamTest`, but tolerant (always completes and writes JUnit XMLs) so
+// the evaluator below can inspect the full result set. Uses the realistic 45s per-method timeout
+// by default to avoid the load-induced 30s cascade on slow tests (e.g. TestPageWaitForUrl).
+tasks.register('upstreamTestKnownLimitations', Test) {
+    description = 'Runs the upstream suite tolerantly (writes XMLs) to feed knownLimitationsCheck.'
+    group = 'verification'
+    testClassesDirs = sourceSets.upstreamTest.output.classesDirs
+    classpath = sourceSets.upstreamTest.runtimeClasspath
+    dependsOn 'syncUpstreamTestCwd'
+    workingDir = upstreamTestCwd.get().asFile
+    ignoreFailures = true
+    inputs.property 'browser', upstreamBrowser
+    inputs.property 'browserChannel', upstreamBrowserChannel
+
+    environment 'BROWSER', upstreamBrowser
+    environment 'BROWSER_CHANNEL', upstreamBrowserChannel
+    environment 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1'
+    environment 'PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS', '1'
+    environment 'PLAYWRIGHT_JAVA_SRC', file('src/upstreamTest/java').absolutePath
+
+    systemProperty 'playwright4j.debug', findProperty('playwright4j.debug') ?: 'false'
+    systemProperty 'playwright4j.chrome.executablePath', findProperty('playwright4j.chrome.executablePath') ?: ''
+    systemProperty 'junit.jupiter.execution.timeout.default', findProperty('playwright4j.testTimeout') ?: '45 s'
+    // @BeforeAll launches the browser: Playwright's default launch timeout, since every shard starts
+    // a browser cold on a fresh runner.
+    systemProperty 'junit.jupiter.execution.timeout.beforeall.method.default', '180 s'
+    systemProperty 'junit.jupiter.execution.timeout.thread.mode.default', 'SAME_THREAD'
+    // Reported on stderr by default; -Pplaywright4j.unhandledRejections=strict terminates the driver.
+    systemProperty 'playwright4j.unhandledRejections', findProperty('playwright4j.unhandledRejections') ?: 'warn'
+
+    testLogging { events "failed"; showStandardStreams = false; exceptionFormat "full" }
+
+    // -Pplaywright4j.shard=<i>/<n> runs every n-th top-level test class (sorted by name, from the
+    // i-th), so CI spreads the suite over parallel jobs; knownLimitationsCheck then reads all shards.
+    def shard = findProperty('playwright4j.shard')
+    if (shard) {
+        def (index, count) = shard.split('/').collect { it as int }
+        if (count < 1 || index < 1 || index > count) {
+            throw new GradleException("playwright4j.shard must be <i>/<n> with 1 <= i <= n, not ${shard}")
+        }
+        inputs.property 'shard', shard
+        def topLevel = { String path -> path.replaceAll(/(\$.*)?\.class$/, '') }
+        def positions = null
+        exclude { FileTreeElement element ->
+            if (element.directory) return false
+            if (positions == null) {
+                def names = new TreeSet<String>()
+                testClassesDirs.asFileTree.matching { include '**/*.class' }.visit { FileVisitDetails details ->
+                    if (!details.directory) names << topLevel(details.relativePath.pathString)
+                }
+                positions = [:]
+                names.eachWithIndex { String name, int position -> positions[name] = position }
+            }
+            positions[topLevel(element.relativePath.pathString)] % count != index - 1
+        }
+    }
+}
+
+tasks.register('knownLimitationsCheck') {
+    description = 'Green iff exactly the known-limitation reds fail; red on any new red or a vanished known red.'
+    group = 'verification'
+    dependsOn 'upstreamTestKnownLimitations'
+    inputs.file knownLimitationsFile
+
+    doLast {
+        def resultsDir = layout.buildDirectory.dir('test-results/upstreamTestKnownLimitations').get().asFile
+        def xmls = resultsDir.listFiles({ File f -> f.name.startsWith('TEST-') && f.name.endsWith('.xml') } as FileFilter)
+        if (xmls == null || xmls.length == 0) {
+            throw new GradleException("knownLimitationsCheck: no JUnit XML results under ${resultsDir}")
+        }
+
+        // Every upstream class with tests must have reported, so a lost shard or class fails the gate.
+        def reported = xmls.collect { it.name.replaceAll(/^TEST-|\.xml$/, '').replaceAll(/\$.*$/, '') } as Set
+        def unreported = new TreeSet<String>()
+        sourceSets.upstreamTest.java.srcDirs.each { File root ->
+            fileTree(root).matching { include '**/*.java' }.each { File source ->
+                def text = source.getText('UTF-8')
+                if (text =~ /@(Test|ParameterizedTest|RepeatedTest|TestFactory|TestTemplate)\b/ && !(text =~ /\babstract\s+class\b/)) {
+                    def name = root.toPath().relativize(source.toPath()).toString().replace(File.separatorChar, '.' as char).replaceAll(/\.java$/, '')
+                    if (!reported.contains(name)) unreported << name
+                }
+            }
+        }
+        if (!unreported.isEmpty()) {
+            throw new GradleException("knownLimitationsCheck: no results for ${unreported.size()} test class(es): ${unreported.join(', ')}")
+        }
+
+        int passed = 0, failed = 0, skipped = 0
+        def failedKeys = new TreeSet<String>()
+        xmls.each { xml ->
+            def suite = new groovy.xml.XmlSlurper().parse(xml)
+            suite.'**'.findAll { it.name() == 'testcase' }.each { tc ->
+                def cls = tc.@classname.text()
+                def method = tc.@name.text().replaceAll(/\(.*\)$/, '').trim()
+                def key = "${cls} > ${method}".toString()
+                boolean isFailure = tc.children().any { it.name() == 'failure' || it.name() == 'error' }
+                boolean isSkipped = tc.children().any { it.name() == 'skipped' }
+                if (isFailure) { failed++; failedKeys << key }
+                else if (isSkipped) { skipped++ }
+                else { passed++ }
+            }
+        }
+
+        if (!knownLimitationsFile.file) {
+            throw new GradleException("knownLimitationsCheck: no known-limitations list ${knownLimitationsFile}")
+        }
+        def known = new TreeSet<String>()
+        def mayPass = new TreeSet<String>()
+        knownLimitationsFile.eachLine { line ->
+            def key = line.replaceAll(/#.*$/, '').trim()
+            if (key.isEmpty()) return
+            known << key
+            if (line.contains('# OS_ENVIRONMENT') || line.contains('# UPSTREAM_BIDI')) mayPass << key
+        }
+        def newReds = new TreeSet<String>(failedKeys); newReds.removeAll(known)
+        def missingReds = new TreeSet<String>(known); missingReds.removeAll(failedKeys); missingReds.removeAll(mayPass)
+        def presentKnown = new TreeSet<String>(failedKeys); presentKnown.retainAll(known)
+
+        println "\n========== known-limitations check (${upstreamBrowser}, ${upstreamBrowserChannel}) =========="
+        println "passed:  ${passed}"
+        println "failed:  ${failed}"
+        println "skipped: ${skipped}"
+        println "known reds present (${presentKnown.size()}/${known.size()}):"
+        presentKnown.each { println "  - ${it}" }
+        println "new reds (must be empty): ${newReds.size()}"
+        newReds.each { println "  ! ${it}" }
+        println "vanished known reds (must be empty): ${missingReds.size()}"
+        missingReds.each { println "  ? ${it}  (unexpectedly not failing — update ${knownLimitationsFile.name} + problems.md)" }
+        println "========================================================\n"
+
+        if (!newReds.isEmpty() || !missingReds.isEmpty()) {
+            throw new GradleException("knownLimitationsCheck FAILED: " +
+                    "${newReds.size()} new red(s), ${missingReds.size()} vanished known red(s). See report above.")
+        }
+        println "knownLimitationsCheck PASSED: only known-limitation reds failed (${presentKnown.size()} of ${known.size()} listed)."
+    }
+}
+
+// Upstream launches its own browsers in many tests without a channel, i.e. a browser build that
+// Playwright downloads. playwright4j drives installed browsers (Chrome, Edge, Firefox over BiDi), so
+// every launch in the imported tests also gets BROWSER_CHANNEL; setChannel(null) keeps the default.
+// TestPlaywrightCreate is about the downloaded browsers themselves and stays as it is.
+def adaptUpstreamTestsToBrowserChannel(File javaRoot) {
+    def channel = '.setChannel(System.getenv("BROWSER_CHANNEL"))'
+    def browser = '.setBrowserName(System.getenv("BROWSER"))'
+    def rewrites = [
+            [~/new BrowserType\.LaunchOptions\(\)/, 'new BrowserType.LaunchOptions()' + channel],
+            [~/new BrowserType\.LaunchPersistentContextOptions\(\)/, 'new BrowserType.LaunchPersistentContextOptions()' + channel],
+            [~/\.launch\(\)/, '.launch(new BrowserType.LaunchOptions()' + channel + ')'],
+            [~/\.launchPersistentContext\(([^,()]+(?:\([^()]*\))?)\)/, '.launchPersistentContext($1, new BrowserType.LaunchPersistentContextOptions()' + channel + ')'],
+            [~/LaunchPersistentContextOptions browserOptions = null;/, 'LaunchPersistentContextOptions browserOptions = new BrowserType.LaunchPersistentContextOptions()' + channel + ';'],
+            [~/launchPersistent\(null\)/, 'launchPersistent(new BrowserType.LaunchPersistentContextOptions()' + channel + ')'],
+            // JUnit fixtures: the engine comes from BROWSER too; a factory's own setBrowserName still wins.
+            [~/new Options\(\)/, 'new Options()' + browser + channel],
+            [~/@UsePlaywright(?!\()/, '@UsePlaywright(com.microsoft.playwright.TestOptionsFactories.BasicOptionsFactory.class)'],
+    ]
+    int changed = 0
+    fileTree(javaRoot).matching { include '**/*.java'; exclude '**/TestPlaywrightCreate.java' }.each { File source ->
+        def original = source.getText('UTF-8')
+        def text = original
+        rewrites.each { rewrite -> text = text.replaceAll(rewrite[0], rewrite[1]) }
+        if (text != original) {
+            source.setText(text, 'UTF-8')
+            changed++
+        }
+    }
+    if (changed == 0) {
+        throw new GradleException("No launch call found to adapt under ${javaRoot}; upstream changed, revisit adaptUpstreamTestsToBrowserChannel")
+    }
+    logger.lifecycle("Passed BROWSER_CHANNEL to the launches in ${changed} upstream test files.")
+}
+
+tasks.register('syncUpstreamPlaywrightJavaTests') {
+    description = 'Imports all upstream Playwright Java tests into src/upstreamTest.'
+    group = 'verification'
+
+    doLast {
+        def tempRoot = layout.buildDirectory.dir('tmp/upstream-playwright-java-tests').get().asFile
+        def zipFile = new File(tempRoot, 'playwright-java.zip')
+        def extractRoot = new File(tempRoot, 'extract')
+        def targetJava = file('src/upstreamTest/java')
+        def targetResources = file('src/upstreamTest/resources')
+
+        delete tempRoot
+        mkdir tempRoot
+
+        logger.lifecycle("Fetching ${upstreamPlaywrightTestsZipUrl}")
+        ant.get(src: upstreamPlaywrightTestsZipUrl, dest: zipFile, skipexisting: false)
+
+        copy {
+            from zipTree(zipFile)
+            into extractRoot
+        }
+
+        def repoDir = extractRoot.listFiles().find { it.directory }
+        if (repoDir == null) {
+            throw new GradleException("Could not find extracted repository directory under ${extractRoot}")
+        }
+
+        def sourceTestRoot = new File(repoDir, 'playwright/src/test')
+        def sourceJava = new File(sourceTestRoot, 'java')
+        def sourceResources = new File(sourceTestRoot, 'resources')
+
+        if (!sourceJava.directory) {
+            throw new GradleException("Could not find upstream test sources at ${sourceJava}")
+        }
+
+        delete targetJava
+        copy {
+            from sourceJava
+            into targetJava
+            // Since 1.62 upstream keeps the tests of its Node.js driver installer (DriverJar,
+            // PLAYWRIGHT_NODEJS_PATH) here; playwright4j replaces that driver by design.
+            exclude 'com/microsoft/playwright/impl/driver/**'
+        }
+
+        adaptUpstreamTestsToBrowserChannel(targetJava)
+
+        delete targetResources
+        if (sourceResources.directory) {
+            copy {
+                from sourceResources
+                into targetResources
+            }
+        }
+
+        def javaCount = fileTree(targetJava).matching { include '**/*.java' }.files.size()
+        def resourceCount = targetResources.directory ? fileTree(targetResources).files.size() : 0
+        logger.lifecycle("Imported upstream Playwright Java tests. Java files: ${javaCount}, resource files: ${resourceCount}")
+    }
+}

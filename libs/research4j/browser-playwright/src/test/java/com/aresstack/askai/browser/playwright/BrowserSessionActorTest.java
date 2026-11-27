@@ -412,4 +412,73 @@ public class BrowserSessionActorTest {
             // expected
         }
     }
+
+    /**
+     * The chat's Stop interrupts the tool thread that waits for a browser call: the running call is interrupted on
+     * the owner thread (its waiting ends at once, as when the caller ran it itself), a queued one never runs, and
+     * the owner thread serves the next call with no interrupt left over.
+     */
+    @Test
+    public void anInterruptedCallerInterruptsItsRunningCallOnly() throws Exception {
+        final BrowserSessionActor actor = startWith(new RecordingSession());
+        try {
+            final CountDownLatch running = new CountDownLatch(1);
+            final AtomicReference<String> seen = new AtomicReference<String>();
+            final AtomicInteger queuedRuns = new AtomicInteger();
+            Thread caller = new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        actor.call(new BrowserSessionActor.SessionTask<Void>() {
+                            public Void run(BrowserSession session) {
+                                running.countDown();
+                                try {
+                                    Thread.sleep(30_000L);
+                                    seen.set("not interrupted");
+                                } catch (InterruptedException e) {
+                                    seen.set("interrupted");
+                                }
+                                return null;
+                            }
+                        });
+                    } catch (BrowserException expected) {
+                        // the caller gave up
+                    }
+                }
+            }, "chat-tool");
+            caller.start();
+            assertTrue(running.await(15, TimeUnit.SECONDS));
+            Thread queued = new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        actor.call(new BrowserSessionActor.SessionTask<Void>() {
+                            public Void run(BrowserSession session) {
+                                queuedRuns.incrementAndGet();
+                                return null;
+                            }
+                        });
+                    } catch (BrowserException expected) {
+                        // the caller gave up before it ran
+                    }
+                }
+            }, "chat-tool-queued");
+            queued.start();
+            Thread.sleep(200L);
+            queued.interrupt();
+            queued.join(15_000L);
+            caller.interrupt();
+            caller.join(15_000L);
+            assertFalse(caller.isAlive());
+
+            Boolean afterwards = actor.call(new BrowserSessionActor.SessionTask<Boolean>() {
+                public Boolean run(BrowserSession session) {
+                    return Thread.currentThread().isInterrupted();
+                }
+            });
+            assertEquals("interrupted", seen.get());
+            assertEquals(0, queuedRuns.get());
+            assertFalse("no interrupt may leak into the next call", afterwards);
+        } finally {
+            actor.close();
+        }
+    }
 }

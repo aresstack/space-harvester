@@ -67,7 +67,7 @@ include 'space-harvester-app'
 // DOCX, PDF und Markdown, ParityReport für den Live-Lauf; hängt nur am Core, nichts hängt davon ab.
 include 'parity-tests'
 
-// Knowledge4j, Research4j und Writing4j: Maven Central nimmt keine neuen com.aresstack-Releases mehr an (Kontingent des
+// Knowledge4j, Playwright4j, Research4j und Writing4j: Maven Central nimmt keine neuen com.aresstack-Releases mehr an (Kontingent des
 // Namespace erschöpft, 27.11.2026). Der Space Harvester baut sie deshalb selbst, als eigene Gradle-Projekte per Composite
 // Build aus unveränderten Kopien unter libs/ (libs/README.md, Abgleich per libs/sync-from-upstream.sh). Die Koordinaten
 // in gradle/libs.versions.toml bleiben, Gradle ersetzt sie durch die Projekte. Wer an einer Bibliothek mitentwickelt,
@@ -78,6 +78,8 @@ def aresstackLibs = file(providers.gradleProperty('aresstack.libs').getOrElse("$
 gradle.ext.aresstackLibraries = [
         knowledge4j: [prefix: 'knowledge4j-', projects: ['knowledge-api', 'knowledge-model', 'knowledge-model-support',
                                                           'knowledge-file-support']],
+        // Playwright4j veröffentlicht als mavenJava (die anderen als library), für die Lizenzliste
+        playwright4j: [prefix: '', projects: ['playwright4j'], publication: 'mavenJava'],
         research4j : [prefix: 'research4j-', projects: ['browser-api', 'browser-tools', 'browser-playwright',
                                                          'browser-search-analysis', 'browser-static-http',
                                                          'web-search-providers', 'serp4j-playwright-google',

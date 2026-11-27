@@ -13,6 +13,7 @@ Repository der Bibliothek bleibt die Quelle, hier wird nichts geändert, ein neu
 | Kopie | Upstream | Stand |
 |---|---|---|
 | `knowledge4j/` | [aresstack/knowledge4j](https://github.com/aresstack/knowledge4j) | erste Zeile von [`upstream/knowledge4j.sha256`](upstream/knowledge4j.sha256) |
+| `playwright4j/` | [aresstack/playwright4j](https://github.com/aresstack/playwright4j) | erste Zeile von [`upstream/playwright4j.sha256`](upstream/playwright4j.sha256) |
 | `research4j/` | [aresstack/research4j](https://github.com/aresstack/research4j) | erste Zeile von [`upstream/research4j.sha256`](upstream/research4j.sha256) |
 | `writing4j/` | [aresstack/writing4j](https://github.com/aresstack/writing4j) | erste Zeile von [`upstream/writing4j.sha256`](upstream/writing4j.sha256) |
 
@@ -49,5 +50,5 @@ dem aufgelösten Commit neu. Ein vorhandener Checkout lässt sich statt des Klon
 
 Wer an einer Bibliothek arbeitet, ändert sie in ihrem eigenen Repository. Zum Ausprobieren im Space Harvester nennt
 `-Paresstack.libs=<ordner>` (oder `aresstack.libs=<ordner>` in der eigenen `gradle.properties`) den Ordner mit den eigenen
-Klonen `knowledge4j`, `research4j` und `writing4j`; dann baut Gradle diese statt der Kopien. Danach den Stand per `sync`
+Klonen `knowledge4j`, `playwright4j`, `research4j` und `writing4j`; dann baut Gradle diese statt der Kopien. Danach den Stand per `sync`
 übernehmen.
