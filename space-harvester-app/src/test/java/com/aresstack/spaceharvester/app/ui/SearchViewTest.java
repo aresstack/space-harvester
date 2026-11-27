@@ -157,6 +157,10 @@ class SearchViewTest {
                 .as("eine Seite als Bereich heißt wie die Seite").isEqualTo("Betriebshandbuch");
         assertThat(SearchView.ISSUE_KEY.matcher("HAVDBAR-86012").matches()).isTrue();
         assertThat(SearchView.ISSUE_KEY.matcher("Betrieb 2026").matches()).isFalse();
+        // Projektteil alphanumerisch, Groß-/Kleinschreibung egal (Angelo, 27.11.2026).
+        assertThat(SearchView.ISSUE_KEY.matcher("Prio-1234").matches()).isTrue();
+        assertThat(SearchView.ISSUE_KEY.matcher("dev2-7").matches()).isTrue();
+        assertThat(SearchView.ISSUE_KEY.matcher("4711").matches()).isFalse();
 
         // Ein Klick (Auswahl) zeigt die Seite des Treffers schon im Explorer, ohne sie zu öffnen.
         List<String> revealed = new ArrayList<>();
