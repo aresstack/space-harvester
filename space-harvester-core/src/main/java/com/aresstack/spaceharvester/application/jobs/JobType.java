@@ -140,6 +140,8 @@ public enum JobType {
      * ({@code application.deadlines.DeadlineAnalysisService}).
      */
     DOCUMENT_ANALYSIS,
+    /** Buchfunktion Phase 3: Research4j füllt einen Favoritenordner als Korb (Arbeitszweig, nur auf Klick). */
+    RESEARCH,
     /**
      * Hintergrundauftrag (Angelo 21.11.2026, ADR 0025 Nachtrag „Hintergrundaufträge“): alles, was die App von sich aus
      * anstößt, etwa fehlende Seiten nachladen oder Bilder automatisch beschreiben. Welche Arbeit, sagt die Angabe

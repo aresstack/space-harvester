@@ -2357,6 +2357,18 @@ public final class Workspace {
      * Der Chat-Port des KI-Dienstes für den Reiter „Chat“ (streamend, {@code POST /chat/completions}) mit den
      * wirksamen Einstellungen; {@code null} ohne Dienst oder Chat-Modell. Der Chat selbst lebt in der App (ADR 0012).
      */
+    /**
+     * „Korb füllen“ (Buchfunktion Phase 3, Arbeitszweig): startet den Auftrag auf Klick des Benutzers, vor jedem
+     * wartenden Hintergrund. Der Auftrag selbst kommt aus {@code app.research.BasketResearchJob}.
+     */
+    public JobStatus startBasketResearch(com.aresstack.spaceharvester.application.jobs.JobTask task) {
+        JobStatus status = harvester.jobs().submitInteractive(JobType.RESEARCH,
+                com.aresstack.spaceharvester.application.jobs.Jobs.ALL_SOURCES, null, null, caller.jobOwner(),
+                java.util.Map.of(), task);
+        activities.remember(status.id());
+        return status;
+    }
+
     public AiChat aiChat() {
         return harvester.aiChat();
     }
@@ -3516,6 +3528,15 @@ public final class Workspace {
     public List<com.aresstack.spaceharvester.application.release.PageReleases.Entry> releasePageForChat(
             String spaceKey, com.aresstack.spaceharvester.application.snapshot.PageKey key) {
         return harvester.pageReleaseService().releasePage(caller, spaceKey, key);
+    }
+
+    /**
+     * Mehrere Seiten auf einmal freigeben (Seite → Space): eine Meldung an die Beobachter statt einer je Seite; die
+     * Korb-Recherche gibt so jede Runde frei, bevor das Modell sie prüft.
+     */
+    public List<com.aresstack.spaceharvester.application.release.PageReleases.Entry> releasePagesForChat(
+            java.util.Map<com.aresstack.spaceharvester.application.snapshot.PageKey, String> spaceOfPage) {
+        return harvester.pageReleaseService().releasePages(caller, spaceOfPage);
     }
 
     /**

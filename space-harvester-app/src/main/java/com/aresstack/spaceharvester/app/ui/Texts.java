@@ -165,6 +165,7 @@ public final class Texts {
             case UPDATE_PODCAST -> "Podcast erzeugen";
             case READING_PREFETCH -> "Lese-Ansichten vorladen";
             case DOCUMENT_ANALYSIS -> "Dokument analysieren";
+            case RESEARCH -> "Korb füllen";
             case BACKGROUND -> "Hintergrund";
         };
     }

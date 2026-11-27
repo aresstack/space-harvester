@@ -307,6 +307,12 @@ public final class RemoteAi {
             if (request.reasoningEffort() != null) {
                 options.reasoningEffort(request.reasoningEffort());
             }
+            if (request.temperature() != null) {
+                options.temperature(request.temperature());
+            }
+            if (request.maxTokens() != null) {
+                options.maxTokens(request.maxTokens());
+            }
             List<ChatToolDefinition> tools = request.tools().stream()
                     .map(tool -> new ChatToolDefinition(tool.name(), tool.description(), tool.parametersSchemaJson()))
                     .toList();

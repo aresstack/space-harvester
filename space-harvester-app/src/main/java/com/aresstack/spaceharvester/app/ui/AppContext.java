@@ -913,6 +913,20 @@ public final class AppContext {
     private final Favorites favorites = new Favorites(() -> settings() == null ? null
             : settings().storage().dataDirectory().resolve(Favorites.FILE));
 
+    /** Anzeigename einer Wissensquelle (etwa für den Pfad eines Favoriten); ohne Laufzeit oder Titel ihre Kennung. */
+    public String sourceTitle(String id) {
+        AppRuntime runtime = runtime();
+        if (runtime != null) {
+            for (com.aresstack.spaceharvester.application.sources.HarvestSource source
+                    : runtime.workspace().sources()) {
+                if (source.id().equals(id)) {
+                    return source.title() == null || source.title().isBlank() ? id : source.title();
+                }
+            }
+        }
+        return id;
+    }
+
     public Favorites favorites() {
         return favorites;
     }
