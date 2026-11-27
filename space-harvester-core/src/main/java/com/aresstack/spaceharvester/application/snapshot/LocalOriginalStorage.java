@@ -13,10 +13,22 @@ public final class LocalOriginalStorage implements SnapshotStorageStrategy {
 
     private final DirectDocumentExtractions documents;
     private final Predicate<String> readable;
+    private final java.util.function.LongSupplier maxBytes;
 
     public LocalOriginalStorage(DirectDocumentExtractions documents, Predicate<String> readable) {
+        this(documents, readable, () -> 0);
+    }
+
+    /**
+     * @param maxBytes größte Datei, die gelesen und extrahiert wird ({@code cache.max-text-file-size}, wie für große
+     *                 Dateien anderer Quellen); darüber nur die Kopfdaten. Gelesen bei jedem Abruf, {@code <= 0} ohne
+     *                 Grenze
+     */
+    public LocalOriginalStorage(DirectDocumentExtractions documents, Predicate<String> readable,
+                                java.util.function.LongSupplier maxBytes) {
         this.documents = Objects.requireNonNull(documents, "documents");
         this.readable = Objects.requireNonNull(readable, "readable");
+        this.maxBytes = Objects.requireNonNull(maxBytes, "maxBytes");
     }
 
     @Override
@@ -36,7 +48,8 @@ public final class LocalOriginalStorage implements SnapshotStorageStrategy {
         if (!supports(source, metadata)) {
             throw new IllegalArgumentException("Local original storage requires a direct local file");
         }
-        Optional<DirectDocumentExtractions.Original> original = documents.extract(source, metadata, readable);
+        Optional<DirectDocumentExtractions.Original> original = documents.extract(source, metadata, readable,
+                maxBytes.getAsLong());
         if (original.isPresent()) {
             DirectDocumentExtractions.Original read = original.get();
             return PageSnapshot.of(source.id(), read.metadata(), LocalOriginalReference.of(read).payload(), Instant.now());

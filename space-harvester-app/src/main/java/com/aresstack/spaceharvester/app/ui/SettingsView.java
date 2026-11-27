@@ -687,6 +687,8 @@ public final class SettingsView implements View {
                     .add(SettingDialogs.PAGE_SIZE_TITLE, Texts.bytes(s.maxPageBytes()))
                     .add(SettingDialogs.TEXT_SIZE_TITLE, s.maxTextFileBytes() == 0 ? "nie"
                             : "bis " + Texts.bytes(s.maxTextFileBytes()))
+                    .add(SettingDialogs.LARGE_FOLDER_TITLE, s.largeFolderBytes() == 0 ? "nie"
+                            : Texts.bytes(s.largeFolderBytes()))
                     .add(SettingDialogs.CHECK_TIMEOUT_TITLE, ConfigFileEditor.duration(s.checkTimeout())
                             + ", große Dateien " + ConfigFileEditor.duration(s.largeFileTimeout()))
                     .add("Zeitgrenze der Suche", s.searchTimeout().toString().substring(2).toLowerCase(Locale.ROOT))

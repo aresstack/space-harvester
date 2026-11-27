@@ -217,6 +217,14 @@ spring:
 - **Protokoll:** `%USERPROFILE%\.space-harvester\logs\space-harvester-app.log` (sieben Tage), anderer Ort über
   `SPACE_HARVESTER_LOG_DIR`. Geheimnisse erscheinen dort nie. Die Datei bekommt alle Meldungen, auch die aus
   `java.util.logging` und `System.Logger` (Quellen aus dem Enterprise AI Client, KeePass, Core; `ConsoleLogging`).
+- **Große lokale Ordner** (Angelo 27.11.2026): Vor jedem Abgleich einer Ordner-Quelle, den ein Klick startet
+  (Indexieren, Bestand abgleichen, Initialisieren, Änderungen prüfen, Nachholen), zählt die App die Größe des Ordners.
+  Liegen darin Unterordner über `space-harvester-app.large-folder-size` (Vorgabe 5GB, `0` nie; **Einstellungen ›
+  Allgemein › Ablage › Große Ordner nachfragen ab**), fragt „Großer Ordner“ nach und nennt die engsten solchen Unterordner,
+  angekreuzt; **Synchronisieren** schließt die angekreuzten über „Ausschließen“ aus (wieder einblenden unter
+  Wissensquellen › Ausgeschlossen), **Abbrechen** startet nichts. Ohne Kreuz fragt die App für diesen Ordner bis zum
+  Neustart nicht wieder. Einzelne Dateien über **Große Dateien ganz laden bis** (`cache.max-text-file-size`) liest der
+  Abgleich auch bei lokalen Ordnern nicht, er legt nur ihre Kopfdaten ab.
 - **Terminal-Ausgabe:** Das Terminal, aus dem die App gestartet wurde, bleibt ohne Angabe still.
   `logging.threshold.console` (derselbe Schlüssel wie beim Dienst: `off`, `error`, `warn`, `info` oder `all`) bzw.
   **Einstellungen › Allgemein › Terminal-Ausgabe** legt fest, ab welcher Stufe Meldungen dort erscheinen; „Warnungen“

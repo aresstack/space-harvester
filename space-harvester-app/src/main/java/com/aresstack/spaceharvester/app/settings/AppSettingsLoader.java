@@ -68,6 +68,8 @@ public final class AppSettingsLoader {
     static final String ROOT = "space-harvester";
     /** Wurzel der App-eigenen Schlüssel. */
     static final String APP_ROOT = "space-harvester-app";
+    /** Ab welcher Größe ein lokaler Ordner vor dem Abgleich nachfragt ({@link AppSettings.Storage#largeFolderBytes}). */
+    public static final String LARGE_FOLDER_KEY = APP_ROOT + ".large-folder-size";
 
     /** Ein ganzer Wert {@code ${NAME}} oder {@code ${NAME:Standard}}; Gruppe 1 ist der Name. */
     private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{([^}:]+)(?::[^}]*)?}");
@@ -230,7 +232,9 @@ public final class AppSettingsLoader {
                         AppSettings.Storage.DEFAULT_LARGE_FILE_TIMEOUT, "space-harvester.cache.large-file-timeout",
                         problems),
                 queryLimits(map(get(root, "query")), problems),
-                sourceTimeouts(map(get(network, "timeouts")), problems));
+                sourceTimeouts(map(get(network, "timeouts")), problems),
+                size(get(app, "large-folder-size"), AppSettings.Storage.DEFAULT_LARGE_FOLDER_BYTES,
+                        LARGE_FOLDER_KEY, problems));
 
         if (get(root, "embedding") != null) {
             problems.add("space-harvester.embedding entfällt (ADR 0011); den KI-Dienst unter space-harvester.ai "
