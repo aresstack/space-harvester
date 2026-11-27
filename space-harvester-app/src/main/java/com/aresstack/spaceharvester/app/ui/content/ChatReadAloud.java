@@ -90,7 +90,7 @@ final class ChatReadAloud {
         orb.setName("chat.readAloudOrb");
         orb.setVisible(false);
         orb.addActionListener(event -> toggle());
-        dial = ReadAloudSpeed.dial(orb, () -> this.binding, this::jump);
+        dial = ReadAloudSpeed.dial(orb, () -> this.binding, this::jump, marker);
         // Doppelklicks auf die Antworten: die Textblöcke entstehen beim Rendern neu, daher ein Hörer für den Verlauf.
         transcript.addHierarchyListener(event -> {
             long flags = event.getChangeFlags();

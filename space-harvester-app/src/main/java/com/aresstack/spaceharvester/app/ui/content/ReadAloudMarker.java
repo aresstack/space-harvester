@@ -42,6 +42,9 @@ final class ReadAloudMarker {
     private List<int[]> pending = List.of();
     private long pendingMillis;
     private int pendingCharacters;
+    /** Wann der laufende Takt begann und wie lang er ist (für eine Tempoänderung mitten im Satz). */
+    private long stepStarted;
+    private int stepDelay;
     /** Der ganze vorlesbare Text, ab wo vorgelesen wird und die Längen vor und nach der Bereinigung. */
     private String spoken = "";
     private int base;
@@ -165,6 +168,29 @@ final class ReadAloudMarker {
         nextStep();
     }
 
+    private void schedule(int delay) {
+        stepStarted = System.nanoTime();
+        stepDelay = delay;
+        steps.setInitialDelay(delay);
+        steps.restart();
+    }
+
+    /**
+     * Die Stimme spricht ab jetzt um {@code factor} länger (2 = halb so schnell): der Rest des Takts und die übrigen
+     * Sätze des Stücks dehnen oder stauchen sich mit.
+     */
+    void rescale(double factor) {
+        if (!(factor > 0) || factor == 1.0) {
+            return;
+        }
+        pendingMillis = Math.round(pendingMillis * factor);
+        if (steps.isRunning()) {
+            long elapsed = (System.nanoTime() - stepStarted) / 1_000_000L;
+            int remaining = (int) Math.max(1, Math.min(Integer.MAX_VALUE, Math.round((stepDelay - elapsed) * factor)));
+            schedule(remaining);
+        }
+    }
+
     /** Angehalten: die Marke wartet mit. */
     void pause() {
         steps.stop();
@@ -173,7 +199,7 @@ final class ReadAloudMarker {
     /** Fortgesetzt: die Marke schaltet weiter. */
     void resume() {
         if (!pending.isEmpty()) {
-            steps.restart();
+            schedule(Math.max(1, stepDelay));
         }
     }
 
@@ -194,8 +220,7 @@ final class ReadAloudMarker {
         if (!pending.isEmpty() && pendingCharacters > 0) {
             int delay = (int) Math.min(Integer.MAX_VALUE,
                     pendingMillis * (sentence[1] - sentence[0]) / pendingCharacters);
-            steps.setInitialDelay(Math.max(1, delay));
-            steps.restart();
+            schedule(Math.max(1, delay));
         }
     }
 

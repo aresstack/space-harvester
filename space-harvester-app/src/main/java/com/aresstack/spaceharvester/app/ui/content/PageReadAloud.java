@@ -67,7 +67,7 @@ final class PageReadAloud {
         orb.setName("reading.readAloudOrb");
         orb.setVisible(false);
         orb.addActionListener(event -> toggle());
-        dial = ReadAloudSpeed.dial(orb, () -> this.binding, this::jump);
+        dial = ReadAloudSpeed.dial(orb, () -> this.binding, this::jump, marker);
         text.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {
