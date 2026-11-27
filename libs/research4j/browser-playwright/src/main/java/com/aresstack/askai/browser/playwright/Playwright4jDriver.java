@@ -1652,16 +1652,41 @@ final class Playwright4jDriver implements PlaywrightDriver {
     /**
      * The research continues in the chat's tab {@code tab}: reads, links, guards and navigation of the session work on
      * the tab the chat used last, so the chat's {@code browser_*} tools and the research's {@code web_*} tools see one
-     * current page. Owner thread, between calls.
+     * current page. Owner thread, between calls; true when the current page became another tab.
      */
-    void useChatTab(Page tab) {
+    boolean useChatTab(Page tab) {
         owner.check();
         if (tab == null) {
-            return;
+            return false;
         }
         pageGeneration++; // the chat may change the page, also when it stays on the same tab
+        boolean changed = tab != page;
         page = tab;
         watchChatTab(tab);
+        return changed;
+    }
+
+    /**
+     * The chat's load of the current tab answered with a PDF the browser shows in its viewer: as after
+     * {@link #open}, the tab's document is that PDF, which the session reads itself. Null when the response is no PDF.
+     */
+    PlaywrightPageState chatViewedDocument(com.microsoft.playwright.Response response) {
+        owner.check();
+        String contentType = response == null ? null : response.headers().get("content-type");
+        if (!isPdf(contentType)) {
+            viewedDocuments.remove(page);
+            return null;
+        }
+        PlaywrightPageState viewedDocument = PlaywrightPageState.viewedDocument(response.url(), contentType);
+        viewedDocuments.put(page, viewedDocument);
+        return viewedDocument;
+    }
+
+    /** The PDF the current tab's viewer shows, or null when it shows a page. Owner thread. */
+    PlaywrightPageState viewedDocumentOfCurrentTab() {
+        owner.check();
+        PlaywrightPageState viewed = viewedDocuments.get(page);
+        return viewed != null && viewed.url.equals(page.url()) ? viewed : null;
     }
 
     /** The chat changed pages without naming one current page (parallel loading in several tabs). */
@@ -1689,6 +1714,7 @@ final class Playwright4jDriver implements PlaywrightDriver {
         return new Consumer<Page>() {
             public void accept(Page gone) {
                 viewedDocuments.remove(gone);
+                watchedChatTabs.remove(gone); // a closed tab is no longer kept reachable
                 if (closed || gone != page) {
                     return;
                 }

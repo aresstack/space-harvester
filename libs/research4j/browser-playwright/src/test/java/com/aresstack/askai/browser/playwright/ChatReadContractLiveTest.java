@@ -142,6 +142,49 @@ public class ChatReadContractLiveTest {
         }
     }
 
+    /**
+     * A PDF the chat opens is read as the research reads it (web_open), not as the viewer's page: the chat's read and
+     * the session's current page both answer the document's text. Firefox shows a PDF in its viewer; headless Chromium
+     * aborts such a load ({@code net::ERR_ABORTED}, which the research does not take for a download either).
+     */
+    @Test
+    public void aPdfTheChatOpensIsReadAsTheResearchReadsIt() throws Exception {
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        String readiness = launcher.readiness().render();
+        assumeTrue("SKIPPED (environment-gated live test): " + readiness, readiness.startsWith("READY"));
+        assumeTrue("SKIPPED (a Firefox shows PDFs in its viewer; Chromium headless aborts the load)",
+                "firefox".equalsIgnoreCase(System.getenv(TestBrowserLauncher.CHANNEL_ENV)));
+
+        byte[] pdf = TestPdfs.withText("Merkblatt", "Inhalt des Dokuments zum Vertrag");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/doc.pdf", exchange -> {
+            exchange.getResponseHeaders().add("Content-Type", "application/pdf");
+            exchange.sendResponseHeaders(200, pdf.length);
+            exchange.getResponseBody().write(pdf);
+            exchange.close();
+        });
+        server.start();
+        String base = "http://127.0.0.1:" + server.getAddress().getPort();
+        PlaywrightChatEngine.Instance instance = (PlaywrightChatEngine.Instance)
+                new PlaywrightChatEngine(launcher, true, 30000L).start(Files.createTempDirectory("contract-pdf"));
+        try {
+            BrowserConnection chat = instance.connect();
+            String tab = chat.tabs().get(0).contextId();
+            chat.navigate(tab, base + "/doc.pdf");
+            RawPage read = chat.read(tab);
+            assertTrue(read.text(), read.text().contains("Inhalt des Dokuments zum Vertrag"));
+            BrowserPageSnapshot research = instance.actor.call(session -> session.currentPage());
+            assertEquals(lines(read.text()), lines(research.getText()));
+            // Another tab in between: the PDF tab still reads as the document.
+            String other = chat.createTab();
+            chat.read(other);
+            assertTrue(chat.read(tab).text().contains("Inhalt des Dokuments zum Vertrag"));
+        } finally {
+            instance.stop();
+            server.stop(0);
+        }
+    }
+
     /** The link targets the research session lists for its current page. */
     private static Set<String> aTargets(PlaywrightChatEngine.Instance instance) throws Exception {
         Set<String> targets = new LinkedHashSet<>();

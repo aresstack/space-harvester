@@ -119,7 +119,7 @@ final class PlaywrightChatConnection implements BrowserConnection {
     public void navigate(String contextId, String url) throws BrowserException {
         onOwner(session -> {
             check();
-            operations.navigate(tab(session, contextId), url, human, tabs.pointer(contextId));
+            operations.navigate(tab(session, contextId), url, human, tabs.pointer(contextId), documents(session));
             return null;
         });
     }
@@ -145,7 +145,17 @@ final class PlaywrightChatConnection implements BrowserConnection {
     public RawPage read(String contextId) throws BrowserException {
         return onOwner(session -> {
             check();
-            return operations.read(tab(session, contextId));
+            Page page = tab(session, contextId);
+            try {
+                // A PDF the tab reached is read as the research reads it (web_open), not as the viewer's page.
+                com.aresstack.askai.browser.BrowserPageSnapshot document = session.chatDocument();
+                if (document != null) {
+                    return new RawPage(document.getUrl(), document.getTitle(), document.getText());
+                }
+            } catch (com.aresstack.askai.browser.BrowserException e) {
+                throw unreadableDocument(e);
+            }
+            return operations.read(page);
         });
     }
 
@@ -183,6 +193,9 @@ final class PlaywrightChatConnection implements BrowserConnection {
             // with the chat tools' access guard; the search engines are the host's configured ones.
             tab(session, contextId);
             try {
+                // The session lives on between searches: a challenge the user solved or closed since releases its
+                // engine before this search selects engines.
+                session.challengeStatus();
                 return BrowserToolSet.renderSearch(session.search(query, engines), session.challengeStatus());
             } catch (com.aresstack.askai.browser.BrowserException e) {
                 throw new BrowserException(BrowserException.Kind.FAILED, "Websuche fehlgeschlagen: " + e.getMessage(),
@@ -280,6 +293,40 @@ final class PlaywrightChatConnection implements BrowserConnection {
         Page page = tabs.page(contextId);
         session.useChatTab(page);
         return page;
+    }
+
+    /** PDFs and downloads the chat's loads reach, handed to the research session that reads them. */
+    private PageOperations.Documents documents(PlaywrightBrowserSession session) {
+        return new PageOperations.Documents() {
+            @Override
+            public boolean downloadStarted(Page page, String url, PlaywrightException e) throws BrowserException {
+                if (!Playwright4jDriver.startedDownload(e)) {
+                    return false;
+                }
+                try {
+                    return session.chatReachedDocument(url, null);
+                } catch (com.aresstack.askai.browser.BrowserException failed) {
+                    throw unreadableDocument(failed);
+                }
+            }
+
+            @Override
+            public boolean shown(Page page, com.microsoft.playwright.Response response) throws BrowserException {
+                if (response == null) {
+                    return false;
+                }
+                try {
+                    return session.chatReachedDocument(response.url(), response);
+                } catch (com.aresstack.askai.browser.BrowserException failed) {
+                    throw unreadableDocument(failed);
+                }
+            }
+        };
+    }
+
+    private static BrowserException unreadableDocument(com.aresstack.askai.browser.BrowserException e) {
+        return new BrowserException(BrowserException.Kind.FAILED,
+                "Dokument konnte nicht gelesen werden: " + e.getMessage(), e);
     }
 
     private void check() throws BrowserException {

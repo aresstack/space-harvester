@@ -806,9 +806,40 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
      * calls.
      */
     void useChatTab(com.microsoft.playwright.Page tab) {
-        playwright().useChatTab(tab);
-        currentDocument = null;
+        if (playwright().useChatTab(tab)) {
+            currentDocument = null; // a document read in the other tab
+        }
         hasPage = true;
+    }
+
+    /**
+     * The chat's load of the current tab reached a document instead of a page: a PDF in the viewer
+     * ({@code response}), or, with {@code response} null, a download of {@code url} while the tab kept its page. The
+     * session reads it as {@code web_open} would; false when the response is a page after all.
+     */
+    boolean chatReachedDocument(String url, com.microsoft.playwright.Response response) throws BrowserException {
+        PlaywrightPageState state = response == null
+                ? PlaywrightPageState.downloadedDocument(url, driver.currentUrl())
+                : playwright().chatViewedDocument(response);
+        if (state == null) {
+            currentDocument = null; // the load reached a page: a document read before is not what the tab shows
+            return false;
+        }
+        checkedSnapshot(readDocument(state));
+        return true;
+    }
+
+    /**
+     * The document the current tab still shows, read, or null when it shows a page. A PDF the tab's viewer shows is
+     * read anew when the session's read copy belonged to another tab.
+     */
+    BrowserPageSnapshot chatDocument() throws BrowserException {
+        PlaywrightPageState document = shownDocument();
+        if (document != null) {
+            return checkedSnapshot(document);
+        }
+        PlaywrightPageState viewed = playwright().viewedDocumentOfCurrentTab();
+        return viewed == null ? null : checkedSnapshot(readDocument(viewed));
     }
 
     /** The chat loaded pages in several tabs at once: link ids listed before may be stale. */
