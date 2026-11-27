@@ -98,6 +98,12 @@ public final class SearchView implements View {
     static final String STATE_WORD_KIND = "search.words.kind.";
     static final String STATE_TECHNICAL = "search.words.technical";
     static final String STATE_WORD_SYNONYMS = "search.words.synonyms";
+    static final String STATE_WORD_PAGES = "search.words.pages";
+    static final String STATE_WORD_DOCUMENTS = "search.words.documents";
+    /** Statt der Dateitypen unterscheidet die Wortsuche nur Seiten und Anhänge (Angelo 27.11.2026). */
+    static final String WORD_ORIGIN = "Seiten und Anhänge";
+    static final String WORD_PAGES = "Seiten";
+    static final String WORD_DOCUMENTS = "Anhänge";
     /** Titel und Fragen der Hinweise, wenn Fachbegriffe oder Verben im Bereich fehlen. */
     static final String TECHNICAL_OFFER_TITLE = "Fachbegriffe ermitteln?";
     static final String VERBS_OFFER_TITLE = "Aussagen analysieren?";
@@ -221,6 +227,9 @@ public final class SearchView implements View {
     final Map<WordSearch.Kind, JCheckBox> wordKindBoxes = new java.util.EnumMap<>(WordSearch.Kind.class);
     /** „Synonyme der Fachbegriffe einbeziehen“ der Wortsuche; gemerkt im Application State. */
     final JCheckBox wordSynonyms = checkBox(SYNONYMS, WORD_SYNONYMS_TIP);
+    /** Wortsuche: Begriffe der Seiten selbst bzw. ihrer Anhänge und enthaltenen Dateien; gemerkt im Application State. */
+    final JCheckBox wordPages = checkBox(WORD_PAGES, "Begriffe der Seiten selbst durchsuchen");
+    final JCheckBox wordDocuments = checkBox(WORD_DOCUMENTS, "Begriffe der Anhänge und enthaltenen Dateien durchsuchen");
     /** Die Wörter der Wortsuche in der Mitte statt der Seiten. */
     final WordHitsPanel wordsPanel;
     /** Der zuletzt in der Wortsuche gesuchte Text; wechselt der Bereich links, sucht sie damit neu. */
@@ -454,6 +463,10 @@ public final class SearchView implements View {
             box.addItemListener(e -> AppState.shared().put(STATE_WORD_KIND + kind.name(), box.isSelected()));
             wordKindBoxes.put(kind, box);
         }
+        wordPages.setSelected(state.getBoolean(STATE_WORD_PAGES, true));
+        wordPages.addItemListener(e -> AppState.shared().put(STATE_WORD_PAGES, wordPages.isSelected()));
+        wordDocuments.setSelected(state.getBoolean(STATE_WORD_DOCUMENTS, true));
+        wordDocuments.addItemListener(e -> AppState.shared().put(STATE_WORD_DOCUMENTS, wordDocuments.isSelected()));
         wordSynonyms.setSelected(state.getBoolean(STATE_WORD_SYNONYMS, false));
         wordSynonyms.addItemListener(e -> {
             AppState.shared().put(STATE_WORD_SYNONYMS, wordSynonyms.isSelected());
@@ -833,11 +846,18 @@ public final class SearchView implements View {
             sourceBoxes.values().forEach(box -> options.add(menuItem(box)));
             options.addSeparator();
         }
-        options.add(caption("Dateitypen"));
-        kindBoxes.values().forEach(box -> options.add(menuItem(box)));
+        if (words) {
+            options.add(caption(WORD_ORIGIN));
+            options.add(menuItem(wordPages));
+            options.add(menuItem(wordDocuments));
+        } else {
+            options.add(caption("Dateitypen"));
+            kindBoxes.values().forEach(box -> options.add(menuItem(box)));
+        }
         options.addSeparator();
         // Der Hinweis zur semantischen Suche gilt nur in der Seitensuche.
         semanticNote.setVisible(!words);
+        kindsLabel.setVisible(!words);
         if (words) {
             // Wortsuche (Angelo 27.11.2026): statt der Seitenmethoden die Worttypen, „Nur Fachbegriffe“ und Synonyme.
             options.add(caption(WORD_KINDS));
@@ -1603,7 +1623,8 @@ public final class SearchView implements View {
 
     record SearchLocation(String text, List<Explorer.Scope> area, boolean words, boolean technical, boolean semantic,
                           boolean neighbors, boolean synonyms, boolean termPages, Set<DocumentKind> kinds, String label,
-                          Set<WordSearch.Kind> wordKinds, boolean wordSynonyms, boolean headingsOnly) {
+                          Set<WordSearch.Kind> wordKinds, boolean wordSynonyms, boolean headingsOnly,
+                          boolean wordPages, boolean wordDocuments) {
         SearchLocation {
             area = List.copyOf(area);
             kinds = Set.copyOf(kinds);
@@ -1623,7 +1644,8 @@ public final class SearchView implements View {
             searchLocationListener.accept(new SearchLocation(text, area, words, technicalTerms.isSelected(),
                     semantic.isSelected(), neighbors.isSelected(), glossarySynonyms.isSelected(), termPages.isSelected(),
                     selectedKinds, "Suche: " + visitName(new Visit(text, area)), chosenWordKinds(),
-                    wordSynonyms.isSelected(), headingsOnly.isSelected()));
+                    wordSynonyms.isSelected(), headingsOnly.isSelected(),
+                    wordPages.isSelected(), wordDocuments.isSelected()));
         }
     }
 
@@ -1640,6 +1662,8 @@ public final class SearchView implements View {
             technicalTerms.setSelected(location.technical());
             wordKindBoxes.forEach((kind, box) -> box.setSelected(location.wordKinds().contains(kind)));
             wordSynonyms.setSelected(location.wordSynonyms());
+            wordPages.setSelected(location.wordPages());
+            wordDocuments.setSelected(location.wordDocuments());
             semantic.setSelected(location.semantic());
             neighbors.setSelected(location.neighbors());
             glossarySynonyms.setSelected(location.synonyms());
@@ -2122,17 +2146,16 @@ public final class SearchView implements View {
             wordsPanel.clear();
             return;
         }
-        if (!anyKind()) {
-            feedback.warning("Kein Dateityp angehakt", "In den Suchoptionen (Pfeil im Suchfeld) mindestens einen "
-                    + "Dateityp anhaken.");
+        if (!wordPages.isSelected() && !wordDocuments.isSelected()) {
+            feedback.warning("Weder Seiten noch Anhänge angehakt", "In den Suchoptionen (Pfeil im Suchfeld) Seiten, "
+                    + "Anhänge oder beides anhaken.");
             wordsPanel.clear();
             return;
         }
         String text = query.getText().trim();
         searchedWords = text;
         WordSearch search = new WordSearch(runtime, WordSearch.area(areaRoots(), areaTitle(scopes)),
-                WordSearch.origin(kindBoxes.get(DocumentKind.PAGE).isSelected(), kindBoxes.entrySet().stream()
-                        .anyMatch(entry -> entry.getKey() != DocumentKind.PAGE && entry.getValue().isSelected())));
+                WordSearch.origin(wordPages.isSelected(), wordDocuments.isSelected()));
         if (technicalOn()) {
             checkTechnicalTerms(search, TECHNICAL_TERMS);
             searchTechnicalTerms();
@@ -2157,7 +2180,7 @@ public final class SearchView implements View {
             Set<String> sources = searchedSources();
             KeywordSearch.Query q = new KeywordSearch.Query(text, sources.size() == 1 ? sources.iterator().next()
                     : null, sources.size() > 1 ? sources : Set.of(), Set.of(), Set.of())
-                    .ofKinds(chosenKinds()).withHeadingsOnly(true);
+                    .withHeadingsOnly(true);
             wordStatus("Überschriften werden durchsucht …");
             Background.run(() -> headingPages(runtime, q), pages -> {
                 if (mine == wordRequest) {
