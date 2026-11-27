@@ -34,7 +34,7 @@ public final class SearchModeIcon extends JButton {
         setFocusPainted(false);
         setOpaque(false);
         setRolloverEnabled(true);
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         getAccessibleContext().setAccessibleName("Suchmodus");
     }
 
