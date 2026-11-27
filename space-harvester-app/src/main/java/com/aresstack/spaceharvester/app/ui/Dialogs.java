@@ -570,6 +570,31 @@ public final class Dialogs {
      */
     public static void viewSized(Component parent, String title, JComponent body, String sizeKey, double share) {
         JDialog dialog = dialog(parent, title);
+        presentSized(dialog, title, body, sizeKey, share, null);
+    }
+
+    /**
+     * Wie {@link #formOverlay}, aber groß und in der Größe gemerkt wie {@link #viewSized}: für ein Formular mit viel
+     * Inhalt (etwa „Begriffe wählen“ der Buchfunktion). Liefert, ob der Benutzer {@code action} gewählt hat.
+     */
+    public static boolean formOverlaySized(Component parent, String title, JComponent body, String action,
+                                           String sizeKey, double share) {
+        boolean[] result = {false};
+        JDialog dialog = dialog(parent, title);
+        ComposerButton accept = Comic.primary(action, null);
+        presentSized(dialog, title, confirmStack(body, accept), sizeKey, share, close -> {
+            accept.addActionListener(e -> {
+                result[0] = true;
+                close.run();
+            });
+            dialog.getRootPane().setDefaultButton(accept);
+        });
+        return result[0];
+    }
+
+    /** {@code wire} bekommt das Schließen, das die gezogene Größe merkt, bevor das Fenster erscheint. */
+    private static void presentSized(JDialog dialog, String title, JComponent body, String sizeKey, double share,
+                                     java.util.function.Consumer<Runnable> wire) {
         Dimension[] opened = new Dimension[1];
         Runnable close = () -> {
             if (opened[0] != null && !opened[0].equals(dialog.getSize())) {
@@ -577,6 +602,9 @@ public final class Dialogs {
             }
             dialog.dispose();
         };
+        if (wire != null) {
+            wire.accept(close);
+        }
         frame(dialog, title, body, close);
         dialog.addWindowListener(new java.awt.event.WindowAdapter() {
             @Override

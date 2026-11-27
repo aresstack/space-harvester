@@ -48,11 +48,14 @@ final class FavoritesView {
     private final JPanel component = new JPanel(new BorderLayout());
     /** Ordner gewählt: ID und Name; die Auswahl als Sammlung baut der Empfänger (ADR 0034, eine Auflösung). */
     private BiConsumer<String, String> onFolder = (id, name) -> { };
+    /** „Buch schreiben …“ am Korb-Ordner (Buchfunktion Phase 4, Arbeitszweig). */
+    private final BookFlow book;
 
     FavoritesView(AppContext context, Supplier<Explorer.Item> current, Consumer<String> revealSource) {
         this.context = Objects.requireNonNull(context, "context");
         this.current = Objects.requireNonNull(current, "current");
         this.revealSource = Objects.requireNonNull(revealSource, "revealSource");
+        this.book = new BookFlow(context, component);
         Favorites favorites = context.favorites();
         tree = new FolderTree<>(new FolderTree.Shape<>() {
             @Override
@@ -152,6 +155,16 @@ final class FavoritesView {
             fill.setToolTipText("Recherche im Wissensbestand legt passende Seiten als Favoriten in diesen Ordner");
             fill.addActionListener(e -> fillBasket(id));
             menu.add(fill);
+            javax.swing.JMenuItem write = new javax.swing.JMenuItem(BasketResearchForm.BOOK_TITLE + " …");
+            write.setToolTipText("Aus den Seiten dieses Ordners entsteht ein Buch zum Auftrag");
+            write.addActionListener(e -> book.start(id));
+            menu.add(write);
+            if (book.prepared(id)) {
+                javax.swing.JMenuItem choose = new javax.swing.JMenuItem(BookTermsView.TITLE + " …");
+                choose.setToolTipText("Die vorbereiteten Begriffe dieses Ordners wählen und das Buch schreiben");
+                choose.addActionListener(e -> book.choose(id));
+                menu.add(choose);
+            }
         });
         component.setOpaque(false);
         JScrollPane scroll = Comic.scroll(view);
@@ -170,28 +183,25 @@ final class FavoritesView {
     private void fillBasket(String folderId) {
         Favorites favorites = context.favorites();
         String name = favorites.folder(folderId).map(Favorites.Folder::name).orElse("Ordner");
-        var runtime = context.runtime();
-        var ai = context.settings() == null ? null : context.settings().ai();
-        String model = ai == null ? null : ai.chatModel();
-        var chat = runtime == null ? null : runtime.workspace().aiChat();
-        if (chat == null || model == null || model.isBlank()) {
-            Dialogs.view(component, BasketResearchForm.TITLE, Comic.note("Für die Recherche braucht es einen "
-                    + "KI-Dienst mit Chat-Modell (Einstellungen › KI-Dienst)."));
+        var chat = BookFlow.chatModel(context, component, BasketResearchForm.TITLE);
+        if (chat.isEmpty()) {
             return;
         }
-        var fence = new BasketResearchForm().ask(component, name);
+        BasketResearchForm form = new BasketResearchForm();
+        book.notes(folderId).ifPresent(notes -> form.prefill(notes.fence(), notes.targetWords()));
+        var fence = form.ask(component, name);
         if (fence.isEmpty()) {
             return;
         }
-        var workspace = runtime.workspace();
-        // Kapazität des Chat-Modells laut KI-Einstellungen (Parallelität); bei einer GPU 1, beim Clouddienst mehr.
-        int capacity = ai.parallel() == null ? 1 : Math.max(1, ai.parallel());
+        // Der Weidezaun bleibt am Ordner, damit „Buch schreiben …“ ihn vorab zeigt.
+        BookFlow.rememberFence(context, folderId, fence.get(), book.notes(folderId).map(
+                com.aresstack.spaceharvester.app.research.BookNotes::targetWords).orElse(0));
+        var workspace = context.runtime().workspace();
+        int capacity = BookFlow.capacity(context);
         var basket = new com.aresstack.spaceharvester.app.research.FavoritesBasket(favorites, folderId,
                 context::sourceTitle);
-        // Nachdenken aus (kein reasoning_effort), wie die übrigen Analyseschritte; Sprache der Oberfläche.
-        var task = com.aresstack.spaceharvester.app.research.BasketResearchJob.task(
-                new com.aresstack.spaceharvester.app.research.AiChatModel(chat, model, null,
-                        ai.contextTokens() == null ? 0 : ai.contextTokens()),
+        // Sprache der Oberfläche.
+        var task = com.aresstack.spaceharvester.app.research.BasketResearchJob.task(chat.get(),
                 new com.aresstack.spaceharvester.app.research.WorkspacePageStock(workspace, null), basket, name,
                 fence.get(), SearchView.LIMIT,
                 com.aresstack.research4j.basket.BasketResearch.Settings.defaults("de", capacity, capacity));

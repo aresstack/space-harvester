@@ -2362,7 +2362,19 @@ public final class Workspace {
      * wartenden Hintergrund. Der Auftrag selbst kommt aus {@code app.research.BasketResearchJob}.
      */
     public JobStatus startBasketResearch(com.aresstack.spaceharvester.application.jobs.JobTask task) {
-        JobStatus status = harvester.jobs().submitInteractive(JobType.RESEARCH,
+        return startBookFunction(JobType.RESEARCH, task);
+    }
+
+    /**
+     * „Buch schreiben“ (Buchfunktion Phase 4, Arbeitszweig): Vorbereiten oder Schreiben auf Klick des Benutzers, vor
+     * jedem wartenden Hintergrund. Die Aufträge kommen aus {@code app.research.BookJob}.
+     */
+    public JobStatus startBook(com.aresstack.spaceharvester.application.jobs.JobTask task) {
+        return startBookFunction(JobType.BOOK, task);
+    }
+
+    private JobStatus startBookFunction(JobType type, com.aresstack.spaceharvester.application.jobs.JobTask task) {
+        JobStatus status = harvester.jobs().submitInteractive(type,
                 com.aresstack.spaceharvester.application.jobs.Jobs.ALL_SOURCES, null, null, caller.jobOwner(),
                 java.util.Map.of(), task);
         activities.remember(status.id());

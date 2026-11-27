@@ -6549,7 +6549,7 @@ public final class PageDetailPanel extends JPanel {
         return panel;
     }
 
-    static String safeName(String title) {
+    public static String safeName(String title) {
         String name = title == null ? "seite" : title.replaceAll("[\\p{C}\\\\/:*?\"<>|]", "_").trim();
         return name.isEmpty() ? "seite" : name.length() > 120 ? name.substring(0, 120) : name;
     }

@@ -5,6 +5,7 @@
 # Bibliotheken der Ask-AI-Aufteilung (noch unveröffentlicht, Arbeitszweig per Composite Build, siehe settings.gradle)
 knowledge4j = "0.1.0"
 research4j = "0.2.0"
+writing4j = "0.1.0"
 springBoot = "4.1.1"
 springDependencyManagement = "1.1.7"
 springdoc = "3.1.1"
@@ -82,6 +83,7 @@ zxing = "3.5.3"
 knowledge4j-api = { module = "com.aresstack:knowledge4j-knowledge-api", version.ref = "knowledge4j" }
 knowledge4j-model = { module = "com.aresstack:knowledge4j-knowledge-model", version.ref = "knowledge4j" }
 research4j-core = { module = "com.aresstack:research4j-research-core", version.ref = "research4j" }
+writing4j-core = { module = "com.aresstack:writing4j-core", version.ref = "writing4j" }
 openterm = { module = "com.ascert.open:openterm", version.ref = "openterm" }
 rsyntaxtextarea = { module = "com.fifesoft:rsyntaxtextarea", version.ref = "rsyntaxtextarea" }
 antlr = { module = "org.antlr:antlr4", version.ref = "antlr" }

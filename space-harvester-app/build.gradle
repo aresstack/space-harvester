@@ -43,6 +43,8 @@ dependencies {
     implementation project(':space-harvester-core')
     // Phase 3 der Buchfunktion: Research4j füllt den Korb über die neutralen Verträge von Knowledge4j (Arbeitszweig)
     implementation libs.research4j.core
+    // Phase 4 der Buchfunktion: Writing4j schreibt aus dem Korb das Buch (Arbeitszweig, bis Writing4j veröffentlicht ist)
+    implementation libs.writing4j.core
     implementation libs.knowledge4j.api
     implementation libs.knowledge4j.model
     implementation project(':document-export')
