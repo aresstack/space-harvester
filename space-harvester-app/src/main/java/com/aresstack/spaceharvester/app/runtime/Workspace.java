@@ -1217,14 +1217,6 @@ public final class Workspace {
         return harvester.imageAnalysis().visionModel();
     }
 
-    /**
-     * Ein Schaubild für den Chat (Bildgenerierung – Plan und – Einzelteile), als SVG; leer ohne Modell oder ohne
-     * brauchbaren Plan. Nie auf dem EDT.
-     */
-    public Optional<String> composeDiagram(String topic, String material) {
-        return harvester.composeDiagram(topic, material).map(diagram -> diagram.svg());
-    }
-
     /** Ob das Vision-Modell geladen ist und sofort antwortet (bei Ollama laut {@code /api/ps}). */
     public boolean visionModelLoaded() {
         return harvester.imageAnalysis().modelLoaded();

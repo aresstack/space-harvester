@@ -2348,9 +2348,7 @@ public final class ChatPanel extends JPanel {
         listener.card = thinking;
         thinking.open();
         turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
-                listener, SwingUtilities::invokeLater).budget(() -> chatBudget(true))
-                // Spezialmodelle (Angelo 27.11.2026): Schaubilder über die Zeilen „Bildgenerierung“.
-                .diagrams(runtime.workspace()::composeDiagram);
+                listener, SwingUtilities::invokeLater).budget(() -> chatBudget(true));
         if (custom != null) {
             // #1151: dieselbe Unterhaltung, aber die Werkzeuge der Perspektive (Command Deck: Maskenassistent).
             custom.tools().modelSelected(modelName);

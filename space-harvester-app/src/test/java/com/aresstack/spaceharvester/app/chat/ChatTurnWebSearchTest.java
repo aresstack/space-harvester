@@ -162,4 +162,20 @@ class ChatTurnWebSearchTest {
         assertThat(port.requests.get(1).messages().get(1).text()).contains("Frage: Wie ist das Wetter?")
                 .contains("(ohne Titel)");
     }
+
+    private static final class ScriptedChat implements AiChat {
+        private final List<BiConsumer<Request, Listener>> script;
+        final List<Request> requests = new CopyOnWriteArrayList<>();
+
+        ScriptedChat(List<BiConsumer<Request, Listener>> script) {
+            this.script = script;
+        }
+
+        @Override
+        public Task stream(Request request, Listener listener) {
+            requests.add(request);
+            script.get(requests.size() - 1).accept(request, listener);
+            return () -> { };
+        }
+    }
 }

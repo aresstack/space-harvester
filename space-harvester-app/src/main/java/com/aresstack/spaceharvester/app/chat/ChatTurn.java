@@ -190,10 +190,6 @@ public final class ChatTurn {
     }
 
     private final Workspace workspace;
-    /** Zeichnet Schaubilder für {@value ModelChatTools#DIAGRAM}; {@code null}: kein solches Werkzeug. */
-    private volatile ModelChatTools.Diagrams diagrams;
-    /** Was unter der Antwort stehen soll (Schaubilder), in der Reihenfolge der Werkzeugaufrufe. */
-    private final List<String> appendix = java.util.Collections.synchronizedList(new ArrayList<>());
     private ChangeLogReader changeLog;
     private final AiChat port;
     private final String model;
@@ -415,15 +411,6 @@ public final class ChatTurn {
         return this;
     }
 
-    /**
-     * Schaubilder über die Bildgenerierung ({@value ModelChatTools#DIAGRAM}); ohne Aufruf bietet der Turn das
-     * Werkzeug nicht an.
-     */
-    public ChatTurn diagrams(ModelChatTools.Diagrams diagrams) {
-        this.diagrams = diagrams;
-        return this;
-    }
-
     /** Die KI-Freigabe dieses Turns; ohne Aufruf trägt er nichts ein. */
     public ChatTurn releasing(Releases releases) {
         this.releases = Objects.requireNonNull(releases, "releases");
@@ -566,7 +553,7 @@ public final class ChatTurn {
             web.begin().run();
         }
         if (custom != null) {
-            toolset = withModelTools(withWebSearch(custom));
+            toolset = withWebSearch(custom);
             onUi(() -> listener.context(ChatKnowledge.Context.EMPTY));
             round(conversation(withWebSearchRules(customSystem), question), 0);
         } else if (byTools) {
@@ -673,8 +660,7 @@ public final class ChatTurn {
             } else if (message.assistant() && !message.cancelled() && !TextToolCalls.leaked(message.text())) {
                 // Eine Antwort, die nur ein Werkzeugaufruf als Text war, geht nicht zurück: Sonst ahmt das Modell sie
                 // in jeder folgenden Frage nach (Angelo 26.11.2026, „We need to call the tool correctly.“).
-                // Schaubilder (SVG) gehen nicht zurück an das Modell, nur ein Vermerk.
-                messages.add(AiChat.Message.assistant(ModelChatTools.withoutDiagrams(message.text())));
+                messages.add(AiChat.Message.assistant(message.text()));
             }
         }
         messages.add(AiChat.Message.user(asked));
@@ -739,7 +725,7 @@ public final class ChatTurn {
                 running.cancel();
             }
         };
-        toolset = withModelTools(withWebSearch(withSubAgents(toolset)));
+        toolset = withWebSearch(withSubAgents(toolset));
         String openRef = null;
         ChatKnowledge.Excerpt open = null;
         int shown = 0;
@@ -890,13 +876,7 @@ public final class ChatTurn {
                 if (!unshown.isEmpty()) {
                     onUi(() -> listener.delta(unshown));
                 }
-                // Schaubilder der Werkzeuge stehen unter der Antwort; sie gingen nie durch das Chat-Modell.
-                String below = drainAppendix();
-                if (!below.isEmpty()) {
-                    onUi(() -> listener.delta(below));
-                }
-                String answered = full + below;
-                finish(() -> listener.completed(answered));
+                finish(() -> listener.completed(full));
             }
 
             @Override
@@ -1491,19 +1471,6 @@ public final class ChatTurn {
     }
 
     // ------------------------------------------------------------------ Zustellung
-
-    /** Die Werkzeuge {@code base} samt denen der Spezialmodelle ({@link ModelChatTools}). */
-    private ChatToolset withModelTools(ChatToolset base) {
-        return ModelChatTools.with(base, diagrams, appendix::add);
-    }
-
-    private String drainAppendix() {
-        synchronized (appendix) {
-            String all = String.join("", appendix);
-            appendix.clear();
-            return all;
-        }
-    }
 
     /** Die Werkzeuge {@code base} samt den Browser-Werkzeugen, wenn die Websuche an ist. */
     private ChatToolset withWebSearch(ChatToolset base) {
