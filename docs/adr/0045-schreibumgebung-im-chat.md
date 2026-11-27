@@ -35,9 +35,10 @@ die Bildgenerierung (`DiagramComposer`, Zeilen „Bildgenerierung – Plan“ un
 > im Projekt“, Abschnitt F3: Gehört der Chat zu einem Projekt, ist das Projekt der Besitzer der Artefakte, und alle
 > Chats des Projekts arbeiten darauf. Ohne Projekt gilt dieser Abschnitt unverändert.
 >
-> Ergänzt am 27.11.2026 durch [ADR 0044](0044-buch-als-ueberblick-eines-ordners.md), Nachtrag N1 und N4: Ein
-> geschriebenes Buch ist ein Dokument-Artefakt ohne Chat als Besitzer. Im Standardprojekt liegt es an seinem Ordner
-> und ist für jeden Chat sichtbar, in jedem anderen Projekt gehört es dem Projekt.
+> Geändert am 27.11.2026 durch [ADR 0047](0047-artefakte-des-projekts.md): Besitzer ist immer das Projekt, auch das
+> Standardprojekt; ein Chat besitzt keine Artefakte mehr. Ein Artefakt wird einzeln gelöscht und geht nicht mehr mit
+> dem Chat in den Papierkorb. Ein geschriebenes Buch ist ein Dokument-Artefakt des Projekts
+> ([ADR 0044](0044-buch-als-ueberblick-eines-ordners.md), Nachtrag N1 und N4). Revisionen und „Rückgängig“ bleiben.
 
 Ein Chat kann beliebig viele Artefakte haben. Es gibt zwei Arten: **Dokument** (Markdown) und **Grafik** (SVG). Jedes
 Artefakt hat eine feste Kennung, einen Titel und eine Folge von Revisionen. Jede Änderung, ob von der KI oder vom
@@ -130,7 +131,8 @@ Ist er aus, bleiben die Artefakte sichtbar, bearbeitbar und exportierbar; die KI
   entfällt. Ob Daten vorhanden sind, neu erzeugt oder erst geladen werden müssen, merkt sich die App intern und
   entscheidet es beim Klick wie bisher; angezeigt wird es nicht.
 - **Ohne offenen Reiter:** „Export“ zeigt die Export-Fläche für die Auswahl links, ohne Reiterzeile. Sie wandert wie
-  heute mit der Auswahl mit.
+  heute mit der Auswahl mit. Seit [ADR 0047](0047-artefakte-des-projekts.md), Abschnitt 5, steht dort die Liste der
+  Artefakte zur Auswahl links.
 - **Die untere Leiste folgt dem Reiter:** Die Knöpfe der Ausgabe stehen im Reiter „Export“ mittig in der unteren
   Leiste mit der Lupe. Was dort steht, hängt davon ab, was vorn ist:
   - Kein Reiter offen: alle Knöpfe der Ausgabe für die Auswahl links. Ein Klick startet den Auftrag und öffnet dafür
