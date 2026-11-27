@@ -460,9 +460,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 for (SourceSearchHit hit : searchable.search(new SourceQuery(term, depth)
                         .withIncludedPartitions(spaces.only()).withExcludedPartitions(spaces.excluded())
                         .withTitleOnly(port instanceof KnownTitleLookup))) {
-                    if (found.size() < limit && contains(hit.title(), needle)) {
-                        found.putIfAbsent(nativeId(hit.resourceId()),
-                                new PageNode(nativeId(hit.resourceId()), hit.title(), null, null));
+                    String id = nativeId(hit.resourceId());
+                    if (found.size() < limit && contains(hit.title(), needle) && !found.containsKey(id)) {
+                        PageNode node = titleMatch(id, hit);
+                        if (node != null) {
+                            found.put(id, node);
+                        }
                     }
                 }
                 return List.copyOf(found.values());
@@ -1525,6 +1528,22 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                     "Quelle kann Seiten nicht über ihre ID finden");
         }
         return single.resourceMetadata(pageId);
+    }
+
+    /**
+     * Ein Titeltreffer der Online-Suche. Kennt die Quelle die Art ihrer Einträge (BSCW: Ordner oder Datei), fragt sie
+     * die Art des Treffers nach, damit ein noch nie aufgeklappter Ordner als Ordner öffnet und nicht als lesbarer
+     * Inhalt. Lässt sich der Treffer nicht nachschlagen (gelöscht oder ohne Rechte), fällt er weg.
+     */
+    private PageNode titleMatch(String id, SourceSearchHit hit) {
+        if (!(port instanceof ResourceNodeKindSource presentation)) {
+            return new PageNode(id, hit.title(), null, null);
+        }
+        try {
+            return new PageNode(id, hit.title(), null, null, presentation.kind(hit.resourceId()));
+        } catch (KnowledgeSourceException unavailable) {
+            return null;
+        }
     }
 
     private PageNode node(NavigationNode node, String partitionKey) {

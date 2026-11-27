@@ -146,13 +146,20 @@ final class BscwWebDavSourceTest {
                 "bscw-test", "bscw", "BSCW", port);
         PageNavigationSource navigation = (PageNavigationSource) port;
 
-        // Seit der Online-Suche (27.11.2026) findet die Titelsuche auch nie aufgeklappte Dateien, ohne den Baum zu
-        // durchlaufen (keine PROPFIND-Anfrage), über die Namenssuche von BSCW.
+        // Seit der Online-Suche (27.11.2026) findet die Titelsuche auch nie aufgeklappte Einträge über die Namenssuche
+        // von BSCW, ohne den Baum zu durchlaufen: je Treffer nur eine Kopfdatenabfrage für seine Art, damit ein Ordner
+        // als Ordner öffnet und nicht als lesbarer Inhalt.
         assertThat(source.findByTitle("readme", com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
-                .extracting(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::title)
-                .containsExactly("readme.txt");
+                .extracting(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::title,
+                        com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::kind)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("readme.txt",
+                        com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode.Kind.FILE));
         assertThat(searchForms).singleElement().satisfies(form -> assertThat(form).contains("qsmode=q_search_all"));
-        assertThat(propfinds).hasValue(0);
+        assertThat(propfinds).hasValue(1);
+        assertThat(source.findByTitle("Nested", com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
+                .extracting(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode::kind)
+                .containsExactly(com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode.Kind.FOLDER);
+        int beforeBrowsing = propfinds.get();
 
         navigation.children(NavigationNode.root("space:bscw-test", "BSCW", "bscw-test",
                 NavigationNode.Children.YES), "");
@@ -174,7 +181,8 @@ final class BscwWebDavSourceTest {
         assertThat(source.findByTitle("not-found",
                 com.aresstack.spaceharvester.application.sources.SearchSpaces.all(), 5))
                 .isEmpty();
-        assertThat(propfinds).hasValue(1);
+        // Nach dem Aufklappen kennt die Quelle die Art der Einträge, nur das Aufklappen selbst fragt nach.
+        assertThat(propfinds).hasValue(beforeBrowsing + 1);
         assertThat(downloads).hasValue(0);
     }
 
@@ -860,7 +868,9 @@ final class BscwWebDavSourceTest {
             respond(exchange, 200, (BscwSearchPageTest.row("900", "666", "d666/readme.txt", "readme.txt",
                     List.of("4", "Root"), "2026-11-17 18:00")
                     + BscwSearchPageTest.row("900", "555", "d555/archive.zip", "archive.zip",
-                    List.of("4", "Root", "444", "Nested"), "2026-11-16 09:30"))
+                    List.of("4", "Root", "444", "Nested"), "2026-11-16 09:30")
+                    + BscwSearchPageTest.row("900", "444", "444", "Nested", List.of("4", "Root"),
+                    "2026-11-15 08:00"))
                     .getBytes(StandardCharsets.UTF_8), "text/html; charset=UTF-8");
             return true;
         }
@@ -876,7 +886,7 @@ final class BscwWebDavSourceTest {
                         .search(new com.aresstack.enterpriseai.source.api.SourceQuery("Betriebshandbuch Nord", 10));
 
         assertThat(hits).extracting(com.aresstack.enterpriseai.source.api.SourceSearchHit::title)
-                .containsExactly("readme.txt", "archive.zip");
+                .containsExactly("readme.txt", "archive.zip", "Nested");
         assertThat(hits.get(1).snippet()).isEqualTo("Root / Nested");
         assertThat(hits.get(0).url().getRawPath()).isEqualTo("/sec/bscw.cgi/666");
         assertThat(searchForms).singleElement().satisfies(form -> assertThat(form)
