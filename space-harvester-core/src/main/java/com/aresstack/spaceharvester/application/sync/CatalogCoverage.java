@@ -16,7 +16,7 @@ import java.util.function.Supplier;
  * und aktuell, wenn
  * <ul>
  *   <li>ein Abgleich seine Generation bestätigt hat ({@link SpaceCatalog.State#CATALOGED}),</li>
- *   <li>jede bekannte Seite mit Inhalt im Cache liegt (ausgenommen Seiten ohne Leserecht) und</li>
+ *   <li>jede bekannte Seite mit Inhalt im Cache liegt (gesperrte Seiten zählt der Katalog schon nicht mit) und</li>
  *   <li>keine Seite als veraltet gemeldet ist; mit einer Frist {@code search.cache-max-age} über null außerdem nur, wenn
  *       die Bestätigung jünger ist als diese Frist.</li>
  * </ul>
@@ -69,7 +69,7 @@ public final class CatalogCoverage implements LocalCoverage {
     /** Ob der Space vollständig und aktuell lokal liegt (siehe Klassenkommentar). */
     boolean current(SpaceCatalog catalog) {
         if (catalog.state() != SpaceCatalog.State.CATALOGED || catalog.stalePages() > 0
-                || catalog.cachedPages() < catalog.knownPages() - catalog.withheldPages()) {
+                || catalog.cachedPages() < catalog.knownPages()) {
             return false;
         }
         Duration maxAge = freshness.get().maxAge();

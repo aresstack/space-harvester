@@ -335,6 +335,17 @@ class KeywordSearchDiscoveryTest {
     }
 
     @Test
+    void withoutALocalIndexAConciseQueryGetsNoVariantsBecauseTheirFindsWouldBeHits() {
+        wiki.results("Hashicorp Vault", "1").results("Hashicorp", "5");
+
+        KeywordSearch.Results results = new KeywordSearch(catalog, access)
+                .search(APP, KeywordSearch.Query.of("Hashicorp Vault"), null, 50);
+
+        assertThat(wiki.searches).containsExactly("Hashicorp Vault");
+        assertThat(results.ranked()).extracting(KeywordSearch.Hit::pageId).doesNotContain("5");
+    }
+
+    @Test
     void withOneQueryEvenALongQuestionGoesUnchanged() {
         wiki.results(LONG_REQUEST, "7");
 

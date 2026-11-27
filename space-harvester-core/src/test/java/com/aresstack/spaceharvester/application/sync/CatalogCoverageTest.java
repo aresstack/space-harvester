@@ -37,6 +37,10 @@ class CatalogCoverageTest {
         assertThat(coverage.current(catalog("DEV", 10, 10, 0, NOW.minusSeconds(60)))).isTrue();
         assertThat(coverage.current(catalog("DEV", 10, 9, 0, NOW))).as("Inhalt fehlt").isFalse();
         assertThat(coverage.current(catalog("DEV", 10, 10, 1, NOW))).as("veraltet gemeldet").isFalse();
+        // Gesperrte Seiten fehlen schon in der Zahl der bekannten Seiten (LucenePageCache.withhold): eine lesbare Seite
+        // ohne Inhalt neben einer gesperrten ist nicht abgedeckt.
+        assertThat(coverage.current(new SpaceCatalog("wiki", "DEV", SpaceCatalog.State.CATALOGED, 1, 0, 0, 1, 1L,
+                NOW, NOW))).as("lesbare Seite ohne Inhalt neben gesperrter").isFalse();
         assertThat(coverage.current(new SpaceCatalog("wiki", "DEV", SpaceCatalog.State.PARTIAL, 10, 10, 0, 0,
                 null, null, null))).as("nie bestätigt").isFalse();
 

@@ -329,7 +329,7 @@ public class KeywordSearch {
      * ({@link SearchTerms#keywordQueries}, ohne Wörter einer Bitte wie „wird“), ohne Dopplungen (Groß- und
      * Kleinschreibung zählt nicht), höchstens {@code maxQueries}.
      */
-    List<String> nativeQueries(String text) {
+    List<String> nativeQueries(String text, boolean validatedLocally) {
         if (maxQueries == 1) {
             return List.of(text);
         }
@@ -343,9 +343,12 @@ public class KeywordSearch {
         }
         // Lokal zuerst (Angelo 27.11.2026): Die Online-Suche sammelt nur Seiten ein; dafür fragt sie auch mit den
         // Varianten ohne Modell (schwächste Begriffe weglassen, dann die stärksten einzeln), damit auch Seiten
-        // ankommen, die nicht alle Begriffe enthalten. Getroffen wird danach nur im lokalen Index.
-        derived.addAll(new com.aresstack.spaceharvester.application.query.progressive.RuleBasedExpansion()
-                .expand(text, maxQueries));
+        // ankommen, die nicht alle Begriffe enthalten. Getroffen wird danach nur im lokalen Index. Ohne Cache oder ohne
+        // Laden prüft kein lokaler Index die Funde: Dann wären die Varianten selbst Treffer, also bleiben sie weg.
+        if (validatedLocally) {
+            derived.addAll(new com.aresstack.spaceharvester.application.query.progressive.RuleBasedExpansion()
+                    .expand(text, maxQueries));
+        }
         for (String candidate : derived) {
             String trimmed = candidate.strip();
             if (!trimmed.isEmpty() && queries.size() < maxQueries) {
@@ -715,7 +718,7 @@ public class KeywordSearch {
         }
         // Alle Quellen und alle Anfragen zugleich; ausgewertet in der Reihenfolge der Quellen. Je Quelle kommen die
         // bestätigten Begriffsbeziehungen ihres Umfangs als Anfragen dazu (#336).
-        List<String> nativeQueries = nativeQueries(query.text());
+        List<String> nativeQueries = nativeQueries(query.text(), cached && prefetch != null);
         String spaceKey = query.singleSpace();
         Map<String, List<SearchExpansion.Expansion>> expansions = new HashMap<>();
         // Je Quelle die Anfragen in der Reihenfolge ihrer Aufrufe, für die Ursache am Treffer (R1).
