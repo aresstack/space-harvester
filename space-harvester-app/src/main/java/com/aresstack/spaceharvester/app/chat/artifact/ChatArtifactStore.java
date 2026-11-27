@@ -34,6 +34,8 @@ public final class ChatArtifactStore {
     static final String SUFFIX = ".artefakt";
     /** Jede Kennung eines erwarteten Stands passt: Die Werkzeuge schreiben immer auf den neuesten. */
     public static final long ANY = -1;
+    /** Die zuletzt offenen Reiter des Chats, eine Kennung je Zeile. */
+    private static final String TABS = "offen.txt";
 
     private static final System.Logger LOG = System.getLogger(ChatArtifactStore.class.getName());
     private static final Pattern ID = Pattern.compile("([DG])(\\d{1,6})");
@@ -95,6 +97,41 @@ public final class ChatArtifactStore {
             }
             artifacts.sort(Comparator.comparingLong(ChatArtifact::createdAt).thenComparing(ChatArtifact::id));
             return artifacts;
+        }
+    }
+
+    /** Die Kennungen der Reiter, die in diesem Chat zuletzt offen waren (ADR 0045, Abschnitt 5). */
+    public List<String> openTabs(Path folder, String chatId) {
+        synchronized (LOCK) {
+            Path directory = chats.artifacts(folder, chatId);
+            Path file = directory == null ? null : directory.resolve(TABS);
+            if (file == null || !Files.isRegularFile(file)) {
+                return List.of();
+            }
+            try {
+                return Files.readAllLines(file, StandardCharsets.UTF_8).stream().map(String::strip)
+                        .filter(id -> ID.matcher(id).matches()).distinct().toList();
+            } catch (IOException e) {
+                LOG.log(System.Logger.Level.WARNING, "Offene Reiter nicht lesbar: " + e.getClass().getSimpleName());
+                return List.of();
+            }
+        }
+    }
+
+    /** Merkt sich die offenen Reiter; nur, wenn der Chat schon Artefakte hat. */
+    public void rememberTabs(Path folder, String chatId, List<String> ids) {
+        synchronized (LOCK) {
+            Path directory = chats.artifacts(folder, chatId);
+            if (directory == null || !Files.isDirectory(directory)) {
+                return;
+            }
+            try {
+                Files.write(directory.resolve(TABS), ids.stream().filter(id -> ID.matcher(id).matches()).toList(),
+                        StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                LOG.log(System.Logger.Level.WARNING, "Offene Reiter nicht gespeichert: "
+                        + e.getClass().getSimpleName());
+            }
         }
     }
 
