@@ -225,6 +225,7 @@ public final class SettingsView implements View {
 
     public SettingsView(AppContext context) {
         this.context = context;
+        browser.onChannelChanged(context::browserChannelChanged);
         this.ai = new AiSettingsPanel(context);
         this.fileAccess = new FileAccessEditor(context);
         this.standingWords = new StandingWordsEditor(context);
@@ -365,6 +366,7 @@ public final class SettingsView implements View {
                 Comic.plate(BetaViewSettingsPanel.CONNECTION_HEADING, Comic.BLUE, betaView.connection()),
                 Comic.plate(BetaViewSettingsPanel.HEADING, Comic.BLUE, betaView.component())));
         page(BROWSER, Comic.column(
+                Comic.plate(BrowserSettingsPanel.ENGINE_HEADING, Comic.PETROL, browser.engine()),
                 Comic.plate(BrowserSettingsPanel.HEADING, Comic.ORANGE, browser.note()),
                 Comic.plate("Profil Extern", Comic.BLUE, browser.external()),
                 Comic.plate("Profil Intern", Comic.ORANGE, browser.internal()),

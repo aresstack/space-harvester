@@ -30,7 +30,18 @@ configurations {
         canBeConsumed = false
         transitive = false
     }
+    // Der Treiber-Prozess der Chat-Websuche (ADR 0046): playwright4j mit seinem GraalVM-25-Stapel. Diese JARs stehen
+    // nie im Klassenpfad der App (dort lebt GraalJS 21.3 für Mermaid, draw.io und die PAC-Auswertung), sondern in
+    // einem eigenen Ordner des App-JARs; PlaywrightDriverJars entpackt sie und gibt sie dem Kind-Prozess über
+    // -Dplaywright4j.driver.classpath.
+    playwrightDriver {
+        canBeConsumed = false
+    }
 }
+
+// Gruppen des GraalVM-25-Stapels von playwright4j, die aus dem Klassenpfad der App herausbleiben.
+def playwrightDriverGraal = ['org.graalvm.polyglot', 'org.graalvm.sdk', 'org.graalvm.truffle', 'org.graalvm.js',
+                             'org.graalvm.regex', 'org.graalvm.shadowed', 'org.graalvm.tools']
 
 java {
     toolchain {
@@ -64,8 +75,14 @@ dependencies {
     implementation project(':mermaid-renderer')
     // KeePass koppeln und Einträge lesen/anlegen wie im Enterprise AI Client; nur die App, nie der Core
     implementation project(':enterprise-ai-keepass')
-    // Websuche im Chat: Browser (Firefox über WebDriver BiDi) und seine Werkzeuge aus dem Enterprise AI Client
-    implementation project(':enterprise-ai-browser')
+    // Websuche im Chat (ADR 0046): die Browser-Werkzeuge aus Research4j (browser-tools) und ihre Engine auf
+    // Playwright (browser-playwright, Edge als Vorgabe). Der GraalVM-25-Stapel von playwright4j bleibt draußen; er
+    // läuft nur im Treiber-Prozess (Konfiguration playwrightDriver).
+    implementation libs.research4j.browser.tools
+    implementation(libs.research4j.browser.playwright) {
+        playwrightDriverGraal.each { group -> exclude group: group }
+    }
+    playwrightDriver libs.playwright4j
     implementation libs.snakeyaml
     // Chat-Antworten als Markdown wie im Enterprise AI Client (app.ui.markdown, Kopie von exedra.ui.markdown): flexmark
     // und mermaid-java in derselben Fassung wie document-export, keine neue Bibliothek
@@ -143,6 +160,10 @@ tasks.named('bootJar') {
     from({ configurations.bootLoader.filter { it.name.endsWith('.jar') }.collect { zipTree(it) } }) {
         exclude 'META-INF/**'
     }
+    // Die JARs des Treiber-Prozesses der Chat-Websuche: ein eigener Ordner, nicht BOOT-INF/lib (ADR 0046)
+    from(configurations.playwrightDriver) {
+        into 'playwright-driver'
+    }
     manifest {
         // Spring Boot setzt Main-Class nur, wenn keine angegeben ist; Start-Class bleibt SpaceHarvesterApp.
         attributes 'Main-Class': launcherClass,
@@ -154,9 +175,37 @@ tasks.named('jar') {
     enabled = false
 }
 
+// Nur eine GraalJS-Linie im Klassenpfad der App (ADR 0046, Abschnitt 4): kein polyglot 25 aus playwright4j, keine
+// zweite Fassung des GraalVM-Stapels. Läuft mit check, damit eine spätere Abhängigkeit es nicht unbemerkt hereinzieht.
+def graalLineCheck = tasks.register('graalLineCheck') {
+    group = 'verification'
+    description = 'Prüft, dass im Laufzeit-Klassenpfad der App nur eine GraalVM/GraalJS-Fassung steht.'
+    def runtime = configurations.runtimeClasspath
+    doLast {
+        def graal = runtime.incoming.resolutionResult.allComponents
+                .collect { it.moduleVersion }
+                .findAll { it != null && it.group.startsWith('org.graalvm') }
+        def versions = graal.collect { it.version }.unique()
+        if (graal.any { it.group == 'org.graalvm.polyglot' } || versions.size() > 1) {
+            throw new GradleException('Mehr als eine GraalJS-Linie im Klassenpfad der App: '
+                    + graal.collect { "${it.group}:${it.name}:${it.version}" }.sort().join(', ')
+                    + '. playwright4j und sein GraalVM-Stapel gehören nur in die Konfiguration playwrightDriver.')
+        }
+    }
+}
+tasks.named('check') {
+    dependsOn graalLineCheck
+}
+
 tasks.named('test') {
     useJUnitPlatform()
     systemProperty 'java.awt.headless', 'true'
+    // Der Treiber-Prozess der Chat-Websuche bekommt in Tests die JARs direkt aus der Konfiguration.
+    def driverJars = configurations.playwrightDriver
+    inputs.files(driverJars)
+    doFirst {
+        systemProperty 'playwright4j.driver.classpath', driverJars.files.join(File.pathSeparator)
+    }
     // Der Bedienzustand (app-state.json) der Tests liegt im Build-Ordner, nie im Benutzerordner; jeder Lauf beginnt leer.
     def appState = layout.buildDirectory.file('tmp/test-app-state.json').get().asFile
     systemProperty 'space-harvester.app-state', appState.absolutePath

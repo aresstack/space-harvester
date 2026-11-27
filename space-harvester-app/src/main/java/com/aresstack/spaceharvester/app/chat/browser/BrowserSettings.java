@@ -82,6 +82,34 @@ public final class BrowserSettings implements BrowserPolicyStore, ChangeApproval
         store.putAll(values);
     }
 
+    /** Der Browser des Chats (ADR 0046): msedge (Vorgabe), chrome oder camoufox. */
+    static final String CHANNEL_KEY = "browser.channel";
+    /** Edge ist installiert und nutzt Proxy und Zertifikate des Hauses, ohne Download (ADR 0046). */
+    public static final String DEFAULT_CHANNEL = "msedge";
+    /** Die Browser, zwischen denen der Benutzer wählt, mit ihren Namen in der Oberfläche. */
+    public static final Map<String, String> CHANNELS = channels();
+
+    private static Map<String, String> channels() {
+        Map<String, String> channels = new java.util.LinkedHashMap<>();
+        channels.put("msedge", "Microsoft Edge");
+        channels.put("chrome", "Google Chrome");
+        channels.put("camoufox", "Camoufox (wird beim ersten Start heruntergeladen)");
+        return java.util.Collections.unmodifiableMap(channels);
+    }
+
+    /** Der gewählte Browser des Chats. */
+    public synchronized String channel() {
+        String channel = store.get(CHANNEL_KEY);
+        return channel == null || !CHANNELS.containsKey(channel) ? DEFAULT_CHANNEL : channel;
+    }
+
+    /** Speichert den Browser des Chats; gilt für den nächsten Start des Browsers. */
+    public synchronized void saveChannel(String channel) {
+        Map<String, String> values = new HashMap<>();
+        values.put(CHANNEL_KEY, CHANNELS.containsKey(channel) ? channel : DEFAULT_CHANNEL);
+        store.putAll(values);
+    }
+
     /** Hosts, auf denen der Chat ändernde Browser-Aktionen ohne Rückfrage ausführt („Immer erlauben“). */
     static final String CHANGE_ALLOW_KEY = "browser.act.change.allow";
     /** Hosts, auf denen der Chat ändernde Browser-Aktionen nie ausführt („Immer verbieten“). */

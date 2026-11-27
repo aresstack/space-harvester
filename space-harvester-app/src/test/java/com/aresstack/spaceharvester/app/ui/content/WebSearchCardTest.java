@@ -20,7 +20,7 @@ class WebSearchCardTest {
                 3 Seiten besucht · 37 Links geprüft · 2 relevant · 1 übersprungen
                 „Wetter“ geöffnet
                 5 Links passend zu „Regen“
-                Anmeldung nötig: bitte im Firefox anmelden
+                Anmeldung nötig: bitte im Browserfenster anmelden
                 Browser arbeitet …""");
         assertThat(WebSearchCard.summary(progress, false))
                 .isEqualTo("Browserrecherche abgeschlossen · 3 Seiten besucht · 37 Links geprüft · 2 relevante "
