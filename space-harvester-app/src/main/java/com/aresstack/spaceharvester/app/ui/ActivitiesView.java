@@ -3003,11 +3003,20 @@ public final class ActivitiesView implements View {
         }
         String run = job.parameter(com.aresstack.spaceharvester.application.presentation.VideoPresentations
                 .RUN_PARAMETER);
-        return job.type() == JobType.PRESENTATION_EXPORT && run != null ? "presentation:" + run : null;
+        if (job.type() == JobType.PRESENTATION_EXPORT && run != null) {
+            return "presentation:" + run;
+        }
+        // Jeder andere Auftrag kann Klammer seiner Unteraufträge sein (ChildJobs, etwa „Buch schreiben“ je Quelle).
+        return job.parameter(com.aresstack.spaceharvester.application.jobs.ChildJobs.PARENT_PARAMETER) == null
+                ? "child:" + job.id() : null;
     }
 
     /** Zu welchem Oberschritt ein Auftrag gehört; {@code null}, wenn er eigenständig ist. */
     private static String memberKey(JobStatus job) {
+        String childOf = job.parameter(com.aresstack.spaceharvester.application.jobs.ChildJobs.PARENT_PARAMETER);
+        if (childOf != null) {
+            return "child:" + childOf;
+        }
         if (job.type() == JobType.SYNC && !groupRow(job)) {
             String group = job.parameter(SpaceSyncJobs.GROUP);
             return group == null ? null : "sync:" + group;

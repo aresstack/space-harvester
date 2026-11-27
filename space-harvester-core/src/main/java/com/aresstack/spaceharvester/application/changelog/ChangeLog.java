@@ -120,7 +120,8 @@ public final class ChangeLog implements AutoCloseable {
     /** Parameter eines Unterauftrags von „Zusammenfassen“: sein Schritt, etwa „Teil 2 von 5“. */
     public static final String STEP_PARAMETER = "summary.step";
     /** So lange darf kein Unterauftrag laufen, bevor der Oberauftrag einen wartenden selbst übernimmt. */
-    static final java.time.Duration CHILD_START_GRACE = java.time.Duration.ofSeconds(15);
+    static final java.time.Duration CHILD_START_GRACE =
+            com.aresstack.spaceharvester.application.jobs.ChildJobs.DEFAULT_START_GRACE;
 
     /**
      * @param headers jüngste Kopfdaten einer Seite im Cache, für Titel, Pfad und Verweis im Bericht
