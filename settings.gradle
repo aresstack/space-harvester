@@ -78,7 +78,8 @@ def aresstackLibs = file(providers.gradleProperty('aresstack.libs').getOrElse("$
 gradle.ext.aresstackLibraries = [
         knowledge4j: [prefix: 'knowledge4j-', projects: ['knowledge-api', 'knowledge-model', 'knowledge-model-support',
                                                           'knowledge-file-support']],
-        playwright4j: [prefix: '', projects: ['playwright4j']],
+        // Playwright4j veröffentlicht als mavenJava (die anderen als library), für die Lizenzliste
+        playwright4j: [prefix: '', projects: ['playwright4j'], publication: 'mavenJava'],
         research4j : [prefix: 'research4j-', projects: ['browser-api', 'browser-tools', 'browser-playwright',
                                                          'browser-search-analysis', 'browser-static-http',
                                                          'web-search-providers', 'serp4j-playwright-google',
