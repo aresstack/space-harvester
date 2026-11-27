@@ -129,11 +129,17 @@ public final class ExtractionRows {
     }
 
     /**
-     * Das Ergebnis als Text für den Chat: Stand, dann je Abschnitt die Felder mit Wert, Stand und Fundstelle, so wie
+     * Das Ergebnis als Text für den Chat: Stand und Hinweise, dann je Abschnitt die Felder mit Wert, Stand und Fundstelle, so wie
      * die Tabelle sie zeigt.
      */
     public static String text(DocumentAnalysis analysis) {
         StringBuilder text = new StringBuilder(status(analysis));
+        if (analysis != null) {
+            // Hinweise zum ganzen Ergebnis (abgeschnitten, ohne KI …): ohne sie hielte der Chat es für vollständig.
+            for (com.aresstack.spaceharvester.application.extraction.AnalysisNote note : analysis.notes()) {
+                text.append("\nHinweis: ").append(note.text().isEmpty() ? note.code().name() : note.text());
+            }
+        }
         for (Row row : rows(analysis)) {
             if (row.isHeading()) {
                 text.append("\n\n").append(row.heading()).append(':');

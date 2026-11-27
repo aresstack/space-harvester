@@ -9,6 +9,8 @@ import com.aresstack.spaceharvester.application.extraction.DocumentRef;
 import com.aresstack.spaceharvester.application.observe.Subscription;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.function.Supplier;
 
@@ -24,9 +26,11 @@ public final class DeadlineChatTools implements ChatToolset {
 
     static final String DESCRIPTION = "Wertet das offene E-Akte-Dokument mit der Fristen-Analyse der App aus "
             + "(Fristen, Termine, Aktenzeichen, Beteiligte; mit Stand und Fundstelle) und liefert die Tabelle als Text. "
-            + "Ein vorhandenes Ergebnis wird gelesen; mit neu=true läuft die Analyse erneut.";
+            + "Ein vorhandenes Ergebnis wird gelesen; mit neu=true läuft die Analyse erneut. Passt die Tabelle nicht "
+            + "auf einmal, liefert ab=<Zeichen> den Rest.";
     static final String SCHEMA = "{\"type\":\"object\",\"properties\":{"
-            + "\"neu\":{\"type\":\"boolean\",\"description\":\"true: Analyse neu starten statt vorhandenes Ergebnis\"}"
+            + "\"neu\":{\"type\":\"boolean\",\"description\":\"true: Analyse neu starten statt vorhandenes Ergebnis\"},"
+            + "\"ab\":{\"type\":\"integer\",\"description\":\"Zeichen, ab dem die Tabelle weitergeht\"}"
             + "}}";
     static final String NO_DOCUMENT = "Kein Dokument geöffnet. Bitte den Benutzer, in der E-Akte ein Dokument zu "
             + "öffnen.";
@@ -35,7 +39,8 @@ public final class DeadlineChatTools implements ChatToolset {
 
     private final Supplier<DocumentRef> open;
     private final DocumentAnalysisProvider analyses;
-    private final Semaphore changed = new Semaphore(0);
+    /** Je wartendem Aufruf ein Signal; Stopp weckt alle (mehrere Aufrufe einer Runde laufen parallel). */
+    private final Set<Semaphore> waiting = ConcurrentHashMap.newKeySet();
     private volatile boolean cancelled;
 
     /**
@@ -63,26 +68,24 @@ public final class DeadlineChatTools implements ChatToolset {
         if (!DEADLINES.equals(call.name())) {
             return "Unbekanntes Werkzeug.";
         }
-        boolean again;
-        try {
-            again = DeckChatTools.arguments(call).path("neu").asBoolean(false);
-        } catch (RuntimeException e) {
-            again = false;
-        }
+        var arguments = DeckChatTools.arguments(call);
+        boolean again = arguments.path("neu").asBoolean(false);
+        int from = Math.max(0, arguments.path("ab").asInt(0));
         DocumentRef document = open.get();
         if (document == null) {
             return NO_DOCUMENT;
         }
         try {
+            // Ein fertiges Ergebnis liegt im Speicher und ist auch ohne Verbindung zur E-Akte lesbar.
+            DocumentAnalysis result = analyses.result(document);
+            if (!again && finished(result)) {
+                return answer(result, from);
+            }
             if (!analyses.canAnalyze(document)) {
                 return NOT_ANALYZABLE;
             }
-            DocumentAnalysis result = analyses.result(document);
-            if (!again && finished(result)) {
-                return answer(result);
-            }
             return answer(await(document, again || result == null
-                    || result.state() != AnalysisState.IN_PROGRESS));
+                    || result.state() != AnalysisState.IN_PROGRESS), from);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return "Abgebrochen.";
@@ -94,7 +97,8 @@ public final class DeadlineChatTools implements ChatToolset {
 
     /** Startet die Analyse bei Bedarf und wartet, bis sie fertig oder gescheitert ist; Stopp im Chat bricht ab. */
     private DocumentAnalysis await(DocumentRef document, boolean start) throws Exception {
-        changed.drainPermits();
+        Semaphore changed = new Semaphore(0);
+        waiting.add(changed);
         try (Subscription ignored = analyses.observe(ref -> {
             if (document.equals(ref)) {
                 changed.release();
@@ -112,6 +116,8 @@ public final class DeadlineChatTools implements ChatToolset {
                 result = analyses.result(document);
             }
             return result;
+        } finally {
+            waiting.remove(changed);
         }
     }
 
@@ -119,13 +125,15 @@ public final class DeadlineChatTools implements ChatToolset {
         return result != null && (result.state() == AnalysisState.COMPLETED || result.state() == AnalysisState.FAILED);
     }
 
-    static String answer(DocumentAnalysis result) {
-        return "Fristen-Analyse des offenen Dokuments (Modellzeile „Fristen“):\n" + ExtractionRows.text(result);
+    /** Die Tabelle als Text, so viel wie in die Anfrage passt, ab Zeichen {@code from}. */
+    static String answer(DocumentAnalysis result, int from) {
+        return DeckChatTools.page("Fristen-Analyse des offenen Dokuments (Modellzeile „Fristen“)",
+                ExtractionRows.text(result), from);
     }
 
     @Override
     public void cancel() {
         cancelled = true;
-        changed.release();
+        waiting.forEach(Semaphore::release);
     }
 }

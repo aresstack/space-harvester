@@ -3,7 +3,9 @@ package com.aresstack.spaceharvester.app.chat;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.ai.AiChat;
+import com.aresstack.spaceharvester.application.extraction.AnalysisNote;
 import com.aresstack.spaceharvester.application.extraction.AnalysisSection;
+import com.aresstack.spaceharvester.application.extraction.AnalysisState;
 import com.aresstack.spaceharvester.application.extraction.DocumentAnalysis;
 import com.aresstack.spaceharvester.application.extraction.DocumentAnalysisProvider;
 import com.aresstack.spaceharvester.application.extraction.DocumentRef;
@@ -62,15 +64,35 @@ class DeadlineChatToolsTest {
     }
 
     @Test
-    void stopEndsTheWaitingCall() throws Exception {
+    void stopEndsEveryWaitingCall() throws Exception {
         FakeAnalyses analyses = new FakeAnalyses();
         DeadlineChatTools tools = new DeadlineChatTools(() -> DOCUMENT, analyses);
 
-        CompletableFuture<String> answer = CompletableFuture.supplyAsync(() -> tools.run(call("{}")));
+        CompletableFuture<String> first = CompletableFuture.supplyAsync(() -> tools.run(call("{}")));
+        CompletableFuture<String> second = CompletableFuture.supplyAsync(() -> tools.run(call("{}")));
         analyses.started.get(5, TimeUnit.SECONDS);
+        // Beide warten, bevor Stopp kommt.
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (analyses.observers.size() < 2 && System.nanoTime() < until) {
+            Thread.onSpinWait();
+        }
         tools.cancel();
 
-        assertThat(answer.get(5, TimeUnit.SECONDS)).isEqualTo("Abgebrochen.");
+        assertThat(first.get(5, TimeUnit.SECONDS)).isEqualTo("Abgebrochen.");
+        assertThat(second.get(5, TimeUnit.SECONDS)).isEqualTo("Abgebrochen.");
+    }
+
+    @Test
+    void aFinishedResultIsReadEvenWhenTheEakteIsNoLongerConnected() {
+        FakeAnalyses analyses = new FakeAnalyses();
+        analyses.connected = false;
+        analyses.results.put(DOCUMENT, new DocumentAnalysis(DOCUMENT, AnalysisState.COMPLETED, List.of(), "", false,
+                List.of(new AnalysisNote(AnalysisNote.Code.AI_UNAVAILABLE, "nur Muster, KI nicht erreichbar", null)),
+                List.of()));
+        DeadlineChatTools tools = new DeadlineChatTools(() -> DOCUMENT, analyses);
+
+        assertThat(tools.run(call("{}"))).contains("Hinweis: nur Muster, KI nicht erreichbar");
+        assertThat(tools.run(call("{\"neu\":true}"))).isEqualTo(DeadlineChatTools.NOT_ANALYZABLE);
     }
 
     @Test
@@ -89,6 +111,7 @@ class DeadlineChatToolsTest {
         final Map<DocumentRef, DocumentAnalysis> results = new ConcurrentHashMap<>();
         final List<Consumer<DocumentRef>> observers = new CopyOnWriteArrayList<>();
         final AtomicInteger starts = new AtomicInteger();
+        volatile boolean connected = true;
         volatile CompletableFuture<Void> started = new CompletableFuture<>();
 
         @Override
@@ -98,7 +121,7 @@ class DeadlineChatToolsTest {
 
         @Override
         public boolean canAnalyze(DocumentRef document) {
-            return true;
+            return connected;
         }
 
         @Override
