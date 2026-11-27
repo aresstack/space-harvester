@@ -37,7 +37,7 @@ public final class QuoteOverlayButton extends JButton {
         setRolloverEnabled(true);
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 12));
-        setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         Font base = getFont();
         if (base != null) {
             setFont(base.deriveFont(Font.BOLD, Math.max(11f, base.getSize2D() - 1f)));

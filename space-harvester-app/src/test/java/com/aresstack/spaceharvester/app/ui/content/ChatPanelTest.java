@@ -827,6 +827,9 @@ class ChatPanelTest {
     @Test
     void markedPassagesAreCollectedAsQuoteChips() throws Exception {
         List<String> seen = new ArrayList<>();
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
         SwingUtilities.invokeAndWait(() -> {
             ChatPanel panel = new ChatPanel(context);
             panel.quote("  Der Nachtlauf bricht ab  ");
