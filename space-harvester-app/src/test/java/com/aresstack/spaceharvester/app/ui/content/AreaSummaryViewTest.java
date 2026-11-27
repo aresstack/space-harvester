@@ -178,6 +178,41 @@ class AreaSummaryViewTest {
         assertThat(actions.summarized).containsExactly("ordner:ordner-c|null|false");
     }
 
+    /**
+     * Angelo 27.11.2026: Der Ring verschwand, der Auftrag lief weiter, das fertige Ergebnis erschien nicht. Der laufende
+     * Überblick gehört zum Ordner: wer weg- und zurückwechselt oder die andere Ansicht öffnet, sieht den Ring wieder, und
+     * das Ende zeigt den Überblick ohne neues Öffnen.
+     */
+    @Test
+    void aRunningOverviewStaysWithItsFolderAcrossSwitchesAndViews() throws Exception {
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        ExportPanel.Selection.Collection folder = folder("ordner-lauf", Root.space("wiki", "BAU"));
+        view.folder(folder);
+        assertThat(actions.summarized).containsExactly("ordner:ordner-lauf|null|false");
+        assertThat(view.busy()).isTrue();
+
+        view.area(null, null);
+        assertThat(view.busy()).isFalse();
+        view.folder(folder);
+        assertThat(view.busy()).as("zurück am Ordner: der Ring des laufenden Auftrags").isTrue();
+        assertThat(actions.summarized).as("kein zweiter Start").hasSize(1);
+
+        AreaSummaryView listen = view(AreaSummaryView.Mode.LISTEN, false);
+        listen.folder(folder);
+        assertThat(listen.busy()).as("die Podcast-Ansicht kennt den laufenden Auftrag").isTrue();
+
+        shared.jobNow = JobState.COMPLETED;
+        actions.stored = overview("selection-lauf");
+        shared.jobs.forEach(listener -> listener.changed(SourceUpdatesViewTest.FakeActions.job("job-area-1",
+                JobState.COMPLETED)));
+        SwingUtilities.invokeAndWait(() -> { });
+
+        assertThat(view.busy()).isFalse();
+        assertThat(view.summary()).isEqualTo(actions.stored);
+        assertThat(listen.busy()).isFalse();
+        assertThat(listen.summary()).isEqualTo(actions.stored);
+    }
+
     @Test
     void anEmptyFolderSaysSoWithoutAskingTheModel() {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
