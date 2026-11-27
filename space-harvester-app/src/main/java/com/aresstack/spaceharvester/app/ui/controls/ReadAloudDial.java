@@ -94,7 +94,7 @@ public final class ReadAloudDial extends JComponent {
         setVisible(false);
         setToolTipText(TOOLTIP);
         Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        int size = size();
+        int size = diameter();
         setSize(size, size + 2 * LABEL);
         MouseAdapter onOrb = new MouseAdapter() {
             @Override
@@ -313,7 +313,7 @@ public final class ReadAloudDial extends JComponent {
         return Math.max(min, Math.min(max, Math.round(snapped * 1000) / 1000.0));
     }
 
-    private static int size() {
+    private static int diameter() {
         return 2 * (PodcastOrb.SIZE / 2 + GAP + RING + GAP);
     }
 
