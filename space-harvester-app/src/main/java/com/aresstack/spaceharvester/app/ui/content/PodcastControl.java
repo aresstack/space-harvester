@@ -374,6 +374,15 @@ final class PodcastControl<S> {
         return transcriptCopy;
     }
 
+    /**
+     * Der gezeigte Podcast, wenn jeder Abschnitt sein Audio hat (dann lässt er sich als WAV oder Video exportieren);
+     * sonst {@code null}.
+     */
+    Podcast exportable() {
+        Podcast podcast = last;
+        return com.aresstack.spaceharvester.app.podcast.PodcastExport.exportable(podcast) ? podcast : null;
+    }
+
     /** Ob es zum Gezeigten einen Podcast gibt, dessen Text man kopieren oder speichern kann. */
     boolean hasTranscript() {
         return transcriptCopy.isVisible();
@@ -563,18 +572,9 @@ final class PodcastControl<S> {
         });
     }
 
-    /** Liest ein Bild von der Platte: SVG als Schaubild, alles andere als Rasterbild. */
+    /** Liest ein Bild von der Platte: SVG als Schaubild, alles andere als Rasterbild (dasselbe wie im Video). */
     static PictureStage.Picture read(Podcast.Picture picture) throws java.io.IOException {
-        if (picture.vector()) {
-            return new PictureStage.Picture(null, com.aresstack.spaceharvester.application.diagrams.VectorDiagram
-                    .of(java.nio.file.Files.readAllBytes(picture.file()))
-                    .orElseThrow(() -> new java.io.IOException("Kein lesbares SVG")), picture.caption());
-        }
-        java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(picture.file().toFile());
-        if (image == null) {
-            throw new java.io.IOException("Kein lesbares Bild");
-        }
-        return new PictureStage.Picture(image, null, picture.caption());
+        return com.aresstack.spaceharvester.app.podcast.PodcastVideo.picture(picture);
     }
 
     private void showStage(boolean show) {

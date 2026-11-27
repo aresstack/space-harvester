@@ -2404,6 +2404,24 @@ public final class Workspace {
         return startBookFunction(JobType.BOOK, folderId, folderName, task);
     }
 
+    /**
+     * „Als WAV exportieren …“ oder „Als Video exportieren …“ am Podcast (Angelo 27.11.2026): auf Klick des Benutzers,
+     * auf der lokalen Spur, abbrechbar in der Auftragsliste. Die Arbeit kommt aus {@code app.podcast}; der Bereich ist
+     * der Titel des Podcasts.
+     *
+     * @param parameters Datei und Format ({@code app.podcast.PodcastExport})
+     */
+    public JobStatus startPodcastExport(String title, java.util.Map<String, String> parameters,
+                                        com.aresstack.spaceharvester.application.jobs.JobTask task) {
+        JobStatus status = harvester.jobs().submitInteractive(JobType.PODCAST_EXPORT,
+                com.aresstack.spaceharvester.application.jobs.Jobs.ALL_SOURCES, null, null, caller.jobOwner(),
+                com.aresstack.spaceharvester.application.jobs.JobArea.with(parameters,
+                        title == null || title.isBlank() ? null : "Podcast „" + title.strip() + "“"),
+                task);
+        activities.remember(status.id());
+        return status;
+    }
+
     /** Angabe eines Buch-Auftrags: die ID seines Favoritenordners. */
     public static final String BOOK_FOLDER = "book.folder";
 
