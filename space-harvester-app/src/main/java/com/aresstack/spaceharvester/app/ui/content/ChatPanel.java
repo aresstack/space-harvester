@@ -470,10 +470,9 @@ public final class ChatPanel extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(8, 12, 12, 12));
 
         store = new ChatStore(context::chatsDirectory);
-        artifacts = new com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore(store);
+        // Ein Speicher für die ganze App: was das Buch (BookArtifacts) schreibt, sehen offene Reiter sofort.
+        artifacts = context.chatArtifacts();
         projects = context.projects();
-        // Artefakte gehören immer dem Projekt, auch dem Standardprojekt (ADR 0047).
-        artifacts.projects(projects::artifacts);
         chat = freshChat(null);
         // Wechselt das aktive Projekt (Ecke unten) oder ändert sich eine Gruppe, folgt der Chat (ADR 0027, ohne Abfragen).
         projects.addListener(() -> SwingUtilities.invokeLater(this::projectsChanged));

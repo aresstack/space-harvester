@@ -726,23 +726,7 @@ public final class PageDetailPanel extends JPanel {
         areaPodcast.books(latest);
         // Geänderte Seiten seit der Auflage: gemerkter Stand gegen den jetzigen in der Ablage (kein Abfragen; die
         // Ansicht prüft nur, wenn eine Quelle eine Änderung meldet oder der Ordner neu gezeigt wird).
-        areaView.staleness((folderId, shown) -> {
-            var runtime = context.runtime();
-            if (runtime == null) {
-                return false;
-            }
-            // Dieselben Seiten, aus denen „Buch schreiben“ liest (FavoritesBasket: der Ordner samt Unterordnern).
-            List<com.aresstack.spaceharvester.app.research.BookEditions.Source> members = new java.util.ArrayList<>();
-            for (var favorite : context.favorites().favoritesIn(folderId, true)) {
-                if (favorite.pageId() != null) {
-                    members.add(new com.aresstack.spaceharvester.app.research.BookEditions.Source(favorite.sourceId(),
-                            favorite.pageId(), null));
-                }
-            }
-            var stock = new com.aresstack.spaceharvester.app.research.WorkspacePageStock(runtime.workspace(), null);
-            return com.aresstack.spaceharvester.app.research.BookEditions.stale(shown, members, source -> stock.version(
-                    new com.aresstack.spaceharvester.application.snapshot.PageKey(source.sourceId(), source.pageId())));
-        });
+        areaView.staleness((folderId, shown) -> context.bookArtifacts().stale(folderId, shown));
         areaView.onNewEdition(folderId -> {
             if (context.navigator() != null) {
                 context.navigator().newBookEdition(folderId);
@@ -6560,6 +6544,22 @@ public final class PageDetailPanel extends JPanel {
      */
     javax.swing.JPopupMenu moreMenu() {
         javax.swing.JPopupMenu menu = pageMenu();
+        // Das Buch eines Ordners an erster Stelle (ADR 0044 Nachtrag N5).
+        String bookFolder = folderShown() && areaView.folder() != null ? areaView.folder().folderId() : null;
+        if (bookFolder != null && context.navigator() != null && context.navigator().opensArtifacts()
+                && com.aresstack.spaceharvester.app.research.BookEditions.exists(
+                context.settings() == null || context.settings().storage() == null ? null
+                        : context.settings().storage().dataDirectory(), bookFolder)) {
+            menu.insert(menuItem(com.aresstack.spaceharvester.app.ui.Texts.OPEN_BOOK,
+                    com.aresstack.spaceharvester.app.ui.Texts.OPEN_BOOK_TIP, true, () -> {
+                        if (context.navigator() != null) {
+                            context.navigator().openBook(bookFolder);
+                        }
+                    }), 0);
+            if (menu.getComponentCount() > 1) {
+                menu.insert(new javax.swing.JPopupMenu.Separator(), 1);
+            }
+        }
         addArtifacts(menu);
         return menu;
     }
