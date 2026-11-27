@@ -86,4 +86,13 @@ if (aresstackLibs != null) {
             substitute module('com.aresstack:research4j-research-core') using project(':research-core')
         }
     }
+    // Writing4j (Phase 4) liegt daneben, wenn es mitentwickelt wird.
+    def writing4j = new File(libs, 'writing4j')
+    if (writing4j.isDirectory()) {
+        includeBuild(writing4j) {
+            dependencySubstitution {
+                substitute module('com.aresstack:writing4j-core') using project(':writing-core')
+            }
+        }
+    }
 }
