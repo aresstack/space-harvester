@@ -1,0 +1,17 @@
+// The source-neutral research core (Phase 3): it fills the basket. It finds sources over SourceSearchPort, reads them
+// over ContentFetchPort, checks them against the fence and keeps them in the host's stock. It knows no browser, no
+// search engine and no writing; the mind map (concept) only steers its searches.
+
+dependencies {
+    api "com.aresstack:knowledge4j-knowledge-api:${rootProject.knowledge4jVersion}"
+    api "com.aresstack:knowledge4j-knowledge-model:${rootProject.knowledge4jVersion}"
+    implementation "com.google.code.gson:gson:${rootProject.gsonVersion}"
+
+    testImplementation platform("org.junit:junit-bom:${rootProject.junitVersion}")
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+}

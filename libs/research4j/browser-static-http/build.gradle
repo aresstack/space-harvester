@@ -1,0 +1,15 @@
+// STATIC_HTTP browser backend (Java 8): HttpURLConnection fetch + jsoup cleanup behind the shared
+// BrowserSession port. Visibly limited: no JavaScript, no dynamic pages, no real interaction, no search.
+// It is a separate, explicitly selected backend — never a silent fallback for the Playwright sidecar.
+apply plugin: 'java-library'
+
+dependencies {
+    api project(':browser-api')
+    implementation 'org.jsoup:jsoup:1.17.2'   // Java 8 bytecode, verified
+
+    testImplementation 'junit:junit:4.13.2'
+}
+
+test {
+    useJUnit()
+}

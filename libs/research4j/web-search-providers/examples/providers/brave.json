@@ -1,0 +1,50 @@
+{
+  "formatVersion": 1,
+  "enabled": false,
+  "endpoint": "https://api.search.brave.com/res/v1/web/search",
+  "apiKey": null,
+  "apiVersion": null,
+  "country": "DE",
+  "searchLanguage": "de",
+  "uiLanguage": "de-DE",
+  "count": 20,
+  "offset": 0,
+  "safeSearch": "moderate",
+  "freshness": {
+    "mode": "NONE",
+    "startDate": null,
+    "endDate": null
+  },
+  "textDecorations": true,
+  "spellcheck": true,
+  "resultFilter": [
+    "web"
+  ],
+  "goggles": [],
+  "extraSnippets": true,
+  "operators": true,
+  "units": "metric",
+  "enableRichCallback": false,
+  "includeFetchMetadata": false,
+  "location": {
+    "latitude": null,
+    "longitude": null,
+    "timezone": null,
+    "city": null,
+    "stateCode": null,
+    "stateName": null,
+    "countryCode": null,
+    "postalCode": null
+  },
+  "transport": {
+    "connectTimeoutMillis": 15000,
+    "readTimeoutMillis": 60000,
+    "requestTimeoutMillis": 60000,
+    "maxConnections": 100,
+    "maxConnectionsPerHost": 20,
+    "followRedirects": true,
+    "keepAlive": true,
+    "compressionEnabled": true,
+    "userAgent": "AskAI-Research/1.0"
+  }
+}

@@ -1,0 +1,5 @@
+// Optional: a contract-true capacity planner (ModelPort) over a narrow streaming backend of the host.
+dependencies {
+    api project(':knowledge-model')
+    testImplementation testFixtures(project(':knowledge-model'))
+}

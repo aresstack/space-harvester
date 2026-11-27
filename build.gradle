@@ -1,6 +1,7 @@
 // Gradle-Wurzel: nur Aggregator. Der Dienst liegt in space-harvester-server, die Upstream-Kopie in
 // enterprise-ai-sources; Zuordnung und Gründe stehen in docs/MODULES.md (#100).
 plugins {
+    id 'base'
     alias(libs.plugins.spring.boot) apply false
     alias(libs.plugins.spring.dependency.management) apply false
 }
@@ -19,6 +20,19 @@ allprojects {
             }
         }
     }
+}
+
+// Bibliotheken aus eigenen Repositories (Knowledge4j, Research4j, Writing4j) liegen als unveränderte Kopie unter libs/
+// und werden per Composite Build eingebunden (settings.gradle, libs/README.md). Die Kopien dürfen hier nicht geändert
+// werden: check prüft jede gegen ihr Manifest libs/upstream/<bibliothek>.sha256.
+apply from: "$rootDir/gradle/upstream-copy.gradle"
+gradle.aresstackLibraries.keySet().each { library ->
+    def copyDir = file("libs/$library")
+    registerUpstreamCopyCheck(name: "libs/$library", taskName: "verify${library.capitalize()}Copy",
+            manifest: file("libs/upstream/${library}.sha256"), baseDir: copyDir,
+            files: fileTree(copyDir) { exclude '**/build/**', '**/.gradle/**' },
+            normalizeLineEndings: true,
+            hint: "Änderungen gehören in aresstack/$library und kommen per libs/sync-from-upstream.sh zurück")
 }
 
 // Die Bibliotheksliste von Einstellungen › Bibliotheken (oss-licenses.json in den Ressourcen der Desktop-App).

@@ -1,0 +1,13 @@
+.gradle/
+.chatgpt/
+.idea/
+build/
+*/build/
+.check-classes/
+sources.txt
+*.class
+audio-dsp/speech-input.wav
+*.stackdump
+
+# JVM crash dumps
+hs_err_pid*.log

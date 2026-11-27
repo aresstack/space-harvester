@@ -1,0 +1,695 @@
+{
+ "was": "Komponente 16: bekannte Domains, die eine Quellenart und einen Rechtsraum VORSCHLAGEN duerfen; das Modell entscheidet und begruendet. Allgemein bekannte Stellen in DE, AT, CH und der EU, keine Auswahl fuer ein Buch. Eine Unterdomain erbt den Eintrag ihrer Domain, der genaueste Eintrag gilt.",
+ "domains": [
+  {
+   "domain": "dguv.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Deutsche Gesetzliche Unfallversicherung"
+  },
+  {
+   "domain": "bgbau.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Berufsgenossenschaft der Bauwirtschaft"
+  },
+  {
+   "domain": "bghm.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Berufsgenossenschaft Holz und Metall"
+  },
+  {
+   "domain": "bgetem.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Berufsgenossenschaft Energie Textil Elektro Medienerzeugnisse"
+  },
+  {
+   "domain": "bgn.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Berufsgenossenschaft Nahrungsmittel und Gastgewerbe"
+  },
+  {
+   "domain": "bgrci.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Berufsgenossenschaft Rohstoffe und chemische Industrie"
+  },
+  {
+   "domain": "bgw-online.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Berufsgenossenschaft für Gesundheitsdienst und Wohlfahrtspflege"
+  },
+  {
+   "domain": "bg-verkehr.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Berufsgenossenschaft Verkehrswirtschaft"
+  },
+  {
+   "domain": "vbg.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Verwaltungs-Berufsgenossenschaft"
+  },
+  {
+   "domain": "svlfg.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Sozialversicherung für Landwirtschaft, Forsten und Gartenbau"
+  },
+  {
+   "domain": "baua.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Bundesanstalt für Arbeitsschutz und Arbeitsmedizin"
+  },
+  {
+   "domain": "bmas.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Bundesministerium für Arbeit und Soziales"
+  },
+  {
+   "domain": "bund.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Portal der Bundesbehörden, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "datenschutzkonferenz-online.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Konferenz der Datenschutzaufsichtsbehörden"
+  },
+  {
+   "domain": "lasi-info.com",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Länderausschuss für Arbeitsschutz und Sicherheitstechnik"
+  },
+  {
+   "domain": "recht.bund.de",
+   "quellenart": "GESETZ_NORM",
+   "rechtsraum": "DE",
+   "hinweis": "amtliche Veröffentlichung des Bundesrechts"
+  },
+  {
+   "domain": "gesetze-im-internet.de",
+   "quellenart": "GESETZ_NORM",
+   "rechtsraum": "DE",
+   "hinweis": "Bundesrecht, Bundesministerium der Justiz"
+  },
+  {
+   "domain": "bundesgesetzblatt.de",
+   "quellenart": "GESETZ_NORM",
+   "rechtsraum": "DE",
+   "hinweis": "Bundesgesetzblatt"
+  },
+  {
+   "domain": "din.de",
+   "quellenart": "GESETZ_NORM",
+   "rechtsraum": "DE",
+   "hinweis": "Deutsches Institut für Normung"
+  },
+  {
+   "domain": "baden-wuerttemberg.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "bayern.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "berlin.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "brandenburg.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "bremen.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "hamburg.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "hessen.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "niedersachsen.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "nrw.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "regierung-mv.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "rlp.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "saarland.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "sachsen.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "sachsen-anhalt.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "schleswig-holstein.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "thueringen.de",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "DE",
+   "hinweis": "Landesportal, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "gv.at",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "AT",
+   "hinweis": "österreichische Behörden"
+  },
+  {
+   "domain": "ris.bka.gv.at",
+   "quellenart": "GESETZ_NORM",
+   "rechtsraum": "AT",
+   "hinweis": "Rechtsinformationssystem des Bundes"
+  },
+  {
+   "domain": "auva.at",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "AT",
+   "hinweis": "Allgemeine Unfallversicherungsanstalt"
+  },
+  {
+   "domain": "sozialministerium.at",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "AT",
+   "hinweis": "Sozialministerium"
+  },
+  {
+   "domain": "wko.at",
+   "quellenart": "VERBAND",
+   "rechtsraum": "AT",
+   "hinweis": "Wirtschaftskammer Österreich"
+  },
+  {
+   "domain": "arbeiterkammer.at",
+   "quellenart": "VERBAND",
+   "rechtsraum": "AT",
+   "hinweis": "Arbeiterkammer"
+  },
+  {
+   "domain": "oegb.at",
+   "quellenart": "VERBAND",
+   "rechtsraum": "AT",
+   "hinweis": "Österreichischer Gewerkschaftsbund"
+  },
+  {
+   "domain": "admin.ch",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "CH",
+   "hinweis": "Bundesverwaltung, die Unterdomain ist die Behörde"
+  },
+  {
+   "domain": "fedlex.admin.ch",
+   "quellenart": "GESETZ_NORM",
+   "rechtsraum": "CH",
+   "hinweis": "amtliche Sammlung des Bundesrechts"
+  },
+  {
+   "domain": "suva.ch",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "CH",
+   "hinweis": "Schweizerische Unfallversicherungsanstalt"
+  },
+  {
+   "domain": "ekas.ch",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "CH",
+   "hinweis": "Eidgenössische Koordinationskommission für Arbeitssicherheit"
+  },
+  {
+   "domain": "europa.eu",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "EU",
+   "hinweis": "Organe und Agenturen der EU, die Unterdomain ist die Stelle"
+  },
+  {
+   "domain": "eur-lex.europa.eu",
+   "quellenart": "GESETZ_NORM",
+   "rechtsraum": "EU",
+   "hinweis": "amtliche Sammlung des EU-Rechts"
+  },
+  {
+   "domain": "cencenelec.eu",
+   "quellenart": "GESETZ_NORM",
+   "rechtsraum": "EU",
+   "hinweis": "europäische Normungsorganisationen"
+  },
+  {
+   "domain": "osha.gov",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "ANDERE",
+   "hinweis": "Arbeitsschutzbehörde der USA"
+  },
+  {
+   "domain": "cdc.gov",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "ANDERE",
+   "hinweis": "Gesundheitsbehörde der USA, auch NIOSH"
+  },
+  {
+   "domain": "hse.gov.uk",
+   "quellenart": "BEHOERDE_UNFALLVERSICHERUNG",
+   "rechtsraum": "ANDERE",
+   "hinweis": "Arbeitsschutzbehörde Großbritanniens"
+  },
+  {
+   "domain": "iso.org",
+   "quellenart": "GESETZ_NORM",
+   "rechtsraum": "OHNE",
+   "hinweis": "Internationale Organisation für Normung"
+  },
+  {
+   "domain": "springer.com",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "Wissenschaftsverlag Springer"
+  },
+  {
+   "domain": "sciencedirect.com",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "Wissenschaftsverlag Elsevier"
+  },
+  {
+   "domain": "wiley.com",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "Wissenschaftsverlag Wiley"
+  },
+  {
+   "domain": "tandfonline.com",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "Wissenschaftsverlag Taylor & Francis"
+  },
+  {
+   "domain": "sagepub.com",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "Wissenschaftsverlag SAGE"
+  },
+  {
+   "domain": "mdpi.com",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "Wissenschaftsverlag MDPI"
+  },
+  {
+   "domain": "frontiersin.org",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "Wissenschaftsverlag Frontiers"
+  },
+  {
+   "domain": "nature.com",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "Wissenschaftsverlag Nature"
+  },
+  {
+   "domain": "ieee.org",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "Fachgesellschaft IEEE, Fachartikel"
+  },
+  {
+   "domain": "acm.org",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "Fachgesellschaft ACM, Fachartikel"
+  },
+  {
+   "domain": "arxiv.org",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "Vorabdrucke wissenschaftlicher Artikel"
+  },
+  {
+   "domain": "ncbi.nlm.nih.gov",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "PubMed, wissenschaftliche Artikel"
+  },
+  {
+   "domain": "doi.org",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "Verweis auf wissenschaftliche Veröffentlichungen"
+  },
+  {
+   "domain": "researchgate.net",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "OHNE",
+   "hinweis": "Plattform für wissenschaftliche Artikel"
+  },
+  {
+   "domain": "fraunhofer.de",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "DE",
+   "hinweis": "Fraunhofer-Gesellschaft"
+  },
+  {
+   "domain": "mpg.de",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "DE",
+   "hinweis": "Max-Planck-Gesellschaft"
+  },
+  {
+   "domain": "helmholtz.de",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "DE",
+   "hinweis": "Helmholtz-Gemeinschaft"
+  },
+  {
+   "domain": "rwth-aachen.de",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "DE",
+   "hinweis": "RWTH Aachen"
+  },
+  {
+   "domain": "ethz.ch",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "CH",
+   "hinweis": "ETH Zürich"
+  },
+  {
+   "domain": "epfl.ch",
+   "quellenart": "WISSENSCHAFT",
+   "rechtsraum": "CH",
+   "hinweis": "EPFL Lausanne"
+  },
+  {
+   "domain": "wikipedia.org",
+   "quellenart": "NACHSCHLAGEWERK",
+   "rechtsraum": "OHNE",
+   "hinweis": "Wikipedia"
+  },
+  {
+   "domain": "wiktionary.org",
+   "quellenart": "NACHSCHLAGEWERK",
+   "rechtsraum": "OHNE",
+   "hinweis": "Wiktionary"
+  },
+  {
+   "domain": "duden.de",
+   "quellenart": "NACHSCHLAGEWERK",
+   "rechtsraum": "DE",
+   "hinweis": "Duden"
+  },
+  {
+   "domain": "britannica.com",
+   "quellenart": "NACHSCHLAGEWERK",
+   "rechtsraum": "OHNE",
+   "hinweis": "Encyclopaedia Britannica"
+  },
+  {
+   "domain": "heise.de",
+   "quellenart": "FACHPRESSE",
+   "rechtsraum": "DE",
+   "hinweis": "Fachverlag Heise"
+  },
+  {
+   "domain": "golem.de",
+   "quellenart": "FACHPRESSE",
+   "rechtsraum": "DE",
+   "hinweis": "IT-Nachrichten"
+  },
+  {
+   "domain": "haufe.de",
+   "quellenart": "FACHPRESSE",
+   "rechtsraum": "DE",
+   "hinweis": "Fachverlag Haufe"
+  },
+  {
+   "domain": "weka.de",
+   "quellenart": "FACHPRESSE",
+   "rechtsraum": "DE",
+   "hinweis": "Fachverlag WEKA"
+  },
+  {
+   "domain": "spiegel.de",
+   "quellenart": "FACHPRESSE",
+   "rechtsraum": "DE",
+   "hinweis": "Nachrichtenmagazin"
+  },
+  {
+   "domain": "zeit.de",
+   "quellenart": "FACHPRESSE",
+   "rechtsraum": "DE",
+   "hinweis": "Wochenzeitung"
+  },
+  {
+   "domain": "faz.net",
+   "quellenart": "FACHPRESSE",
+   "rechtsraum": "DE",
+   "hinweis": "Tageszeitung"
+  },
+  {
+   "domain": "sueddeutsche.de",
+   "quellenart": "FACHPRESSE",
+   "rechtsraum": "DE",
+   "hinweis": "Tageszeitung"
+  },
+  {
+   "domain": "handelsblatt.com",
+   "quellenart": "FACHPRESSE",
+   "rechtsraum": "DE",
+   "hinweis": "Wirtschaftszeitung"
+  },
+  {
+   "domain": "tagesschau.de",
+   "quellenart": "FACHPRESSE",
+   "rechtsraum": "DE",
+   "hinweis": "Nachrichten der ARD"
+  },
+  {
+   "domain": "dgb.de",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Deutscher Gewerkschaftsbund"
+  },
+  {
+   "domain": "igbau.de",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "IG Bauen-Agrar-Umwelt"
+  },
+  {
+   "domain": "igmetall.de",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "IG Metall"
+  },
+  {
+   "domain": "verdi.de",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Gewerkschaft ver.di"
+  },
+  {
+   "domain": "bitkom.org",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Branchenverband der Digitalwirtschaft"
+  },
+  {
+   "domain": "vdma.org",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Verband Deutscher Maschinen- und Anlagenbau"
+  },
+  {
+   "domain": "vdma.eu",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Verband Deutscher Maschinen- und Anlagenbau"
+  },
+  {
+   "domain": "zvei.org",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Verband der Elektro- und Digitalindustrie"
+  },
+  {
+   "domain": "bauindustrie.de",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Hauptverband der Deutschen Bauindustrie"
+  },
+  {
+   "domain": "zdb.de",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Zentralverband Deutsches Baugewerbe"
+  },
+  {
+   "domain": "zdh.de",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Zentralverband des Deutschen Handwerks"
+  },
+  {
+   "domain": "ihk.de",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Industrie- und Handelskammern"
+  },
+  {
+   "domain": "dihk.de",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Deutsche Industrie- und Handelskammer"
+  },
+  {
+   "domain": "vdi.de",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Verein Deutscher Ingenieure"
+  },
+  {
+   "domain": "vde.com",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Verband der Elektrotechnik"
+  },
+  {
+   "domain": "vdsi.de",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Verband für Sicherheit, Gesundheit und Umweltschutz bei der Arbeit"
+  },
+  {
+   "domain": "gdv.de",
+   "quellenart": "VERBAND",
+   "rechtsraum": "DE",
+   "hinweis": "Gesamtverband der Versicherer"
+  },
+  {
+   "domain": "linkedin.com",
+   "quellenart": "SONSTIGE",
+   "rechtsraum": "OHNE",
+   "hinweis": "soziales Netzwerk"
+  },
+  {
+   "domain": "xing.com",
+   "quellenart": "SONSTIGE",
+   "rechtsraum": "OHNE",
+   "hinweis": "soziales Netzwerk"
+  },
+  {
+   "domain": "facebook.com",
+   "quellenart": "SONSTIGE",
+   "rechtsraum": "OHNE",
+   "hinweis": "soziales Netzwerk"
+  },
+  {
+   "domain": "instagram.com",
+   "quellenart": "SONSTIGE",
+   "rechtsraum": "OHNE",
+   "hinweis": "soziales Netzwerk"
+  },
+  {
+   "domain": "x.com",
+   "quellenart": "SONSTIGE",
+   "rechtsraum": "OHNE",
+   "hinweis": "soziales Netzwerk"
+  },
+  {
+   "domain": "twitter.com",
+   "quellenart": "SONSTIGE",
+   "rechtsraum": "OHNE",
+   "hinweis": "soziales Netzwerk"
+  },
+  {
+   "domain": "youtube.com",
+   "quellenart": "SONSTIGE",
+   "rechtsraum": "OHNE",
+   "hinweis": "Videoplattform"
+  },
+  {
+   "domain": "reddit.com",
+   "quellenart": "SONSTIGE",
+   "rechtsraum": "OHNE",
+   "hinweis": "Forum"
+  },
+  {
+   "domain": "medium.com",
+   "quellenart": "SONSTIGE",
+   "rechtsraum": "OHNE",
+   "hinweis": "Blogplattform"
+  },
+  {
+   "domain": "quora.com",
+   "quellenart": "SONSTIGE",
+   "rechtsraum": "OHNE",
+   "hinweis": "Frageportal"
+  },
+  {
+   "domain": "gutefrage.net",
+   "quellenart": "SONSTIGE",
+   "rechtsraum": "OHNE",
+   "hinweis": "Frageportal"
+  }
+ ]
+}

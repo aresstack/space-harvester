@@ -1,0 +1,18 @@
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+rootProject.name = 'writing4j'
+include 'writing-core'
+
+// Knowledge4j comes from Maven Central; a neighbouring checkout replaces it for co-development (Composite Build). The
+// folder is set with -Pknowledge4j.dir=<folder>; without it ../knowledge4j when that folder exists.
+def knowledge4j = file(providers.gradleProperty('knowledge4j.dir').getOrElse('../knowledge4j'))
+if (knowledge4j.isDirectory()) {
+    includeBuild(knowledge4j) {
+        dependencySubstitution {
+            ['knowledge-api', 'knowledge-model', 'knowledge-model-support', 'knowledge-file-support'].each { name ->
+                substitute module("com.aresstack:knowledge4j-${name}") using project(":${name}")
+            }
+        }
+    }
+}

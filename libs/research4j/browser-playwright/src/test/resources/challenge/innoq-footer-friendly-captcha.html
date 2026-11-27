@@ -1,0 +1,50 @@
+<!doctype html>
+<!-- Regression fixture for the INNOQ CAPTCHA false positive (research run "Java 21 LTS release", 2026-10-31).
+     Page: https://www.innoq.com/de/podcast/135-java-21/ (HTTP 200, no redirect, fetched 2026-10-31).
+     The footer contact form reproduces INNOQ's real markup (<friendly-captcha><div class="frc-captcha">) with the DOM
+     the Friendly Captcha widget renders into it ("Anti-Roboter-Verifizierung", "Hier klicken", "FriendlyCaptcha");
+     the article text is a shortened paraphrase. The widget sits far below the first screen. -->
+<html lang="de"><head><meta charset="utf-8"><title>Java 21. Alles zum neuen LTS-Release – INNOQ</title>
+<style>body{font:16px/1.5 sans-serif;margin:0 auto;max-width:760px;padding:0 16px}
+.frc-captcha{border:1px solid #ccc;padding:8px;width:300px;min-height:56px}.frc-banner{font-size:11px}</style></head>
+<body>
+<header><a href="/">INNOQ Homepage</a> <a href="#contact">Kontakt</a> <nav>Leistungen Success Stories Kultur Magazin Trends Schulungen</nav></header>
+<main>
+<p>PODCAST</p><h1>Java 21</h1><h2>Alles zum neuen LTS-Release</h2><p>19. September 2023</p>
+<p>Heute erscheint Java 21, das neue Long-Term-Support-Release. In dieser Folge sprechen zwei Kollegen darüber, welche Neuerungen im Alltag den größten Unterschied machen und welche Features das Arbeiten auf der JVM erleichtern.</p>
+<p>Virtual Threads machen blockierenden Code wieder skalierbar, ohne dass Anwendungen auf reaktive Bibliotheken umgestellt werden müssen. Structured Concurrency fasst zusammengehörige Aufgaben zu einer Einheit zusammen, deren Fehler und Abbrüche gemeinsam behandelt werden.</p>
+<p>Scoped Values ersetzen in vielen Fällen ThreadLocal und passen besser zu Millionen kurzlebiger Threads. Record Patterns und Pattern Matching für switch machen datenorientierten Code kürzer und lesbarer.</p>
+<p>Dazu kommen Sequenced Collections mit einer einheitlichen Schnittstelle für geordnete Sammlungen, der generationale Z Garbage Collector, unbenannte Muster und Variablen sowie String Templates als Vorschau.</p>
+<p>Wer von Java 17 kommt, sollte außerdem die Änderungen bei der Finalisierung, das dynamische Laden von Agents und UTF-8 als Standardzeichensatz im Blick behalten. Die Shownotes verlinken die zugehörigen JEPs.</p>
+<p>Heute erscheint Java 21, das neue Long-Term-Support-Release. In dieser Folge sprechen zwei Kollegen darüber, welche Neuerungen im Alltag den größten Unterschied machen und welche Features das Arbeiten auf der JVM erleichtern.</p>
+<p>Virtual Threads machen blockierenden Code wieder skalierbar, ohne dass Anwendungen auf reaktive Bibliotheken umgestellt werden müssen. Structured Concurrency fasst zusammengehörige Aufgaben zu einer Einheit zusammen, deren Fehler und Abbrüche gemeinsam behandelt werden.</p>
+<p>Scoped Values ersetzen in vielen Fällen ThreadLocal und passen besser zu Millionen kurzlebiger Threads. Record Patterns und Pattern Matching für switch machen datenorientierten Code kürzer und lesbarer.</p>
+<p>Dazu kommen Sequenced Collections mit einer einheitlichen Schnittstelle für geordnete Sammlungen, der generationale Z Garbage Collector, unbenannte Muster und Variablen sowie String Templates als Vorschau.</p>
+<p>Wer von Java 17 kommt, sollte außerdem die Änderungen bei der Finalisierung, das dynamische Laden von Agents und UTF-8 als Standardzeichensatz im Blick behalten. Die Shownotes verlinken die zugehörigen JEPs.</p>
+<p>Heute erscheint Java 21, das neue Long-Term-Support-Release. In dieser Folge sprechen zwei Kollegen darüber, welche Neuerungen im Alltag den größten Unterschied machen und welche Features das Arbeiten auf der JVM erleichtern.</p>
+<p>Virtual Threads machen blockierenden Code wieder skalierbar, ohne dass Anwendungen auf reaktive Bibliotheken umgestellt werden müssen. Structured Concurrency fasst zusammengehörige Aufgaben zu einer Einheit zusammen, deren Fehler und Abbrüche gemeinsam behandelt werden.</p>
+<p>Scoped Values ersetzen in vielen Fällen ThreadLocal und passen besser zu Millionen kurzlebiger Threads. Record Patterns und Pattern Matching für switch machen datenorientierten Code kürzer und lesbarer.</p>
+<p>Dazu kommen Sequenced Collections mit einer einheitlichen Schnittstelle für geordnete Sammlungen, der generationale Z Garbage Collector, unbenannte Muster und Variablen sowie String Templates als Vorschau.</p>
+<p>Wer von Java 17 kommt, sollte außerdem die Änderungen bei der Finalisierung, das dynamische Laden von Agents und UTF-8 als Standardzeichensatz im Blick behalten. Die Shownotes verlinken die zugehörigen JEPs.</p>
+<h3>Shownotes &amp; Links</h3>
+<ul><li>Java LTS alle 2 Jahre</li><li>Neue APIs in Java 21</li><li>Virtual Threads</li><li>Structured Concurrency</li><li>Scoped Values</li><li>Record Patterns</li><li>Sequenced Collections</li><li>Generational ZGC</li></ul>
+</main>
+<div class="stripe stripe--secondary"><footer class="footer">
+<div class="footer__form" id="contact"><h2 class="footer__heading">Kontakt</h2>
+<p class="footer__paragraph">Nutzen Sie unser Kontaktformular oder schreiben Sie uns eine E-Mail.</p>
+<remote-form><form class="form form--inverted" action="/de/contact_messages/" method="post">
+<div class="sr-only" id="form-description">Kontaktformular</div>
+<div class="form-group"><label class="form-label required" for="n">Name<span aria-hidden="true">*</span></label><input required class="form-control" type="text" id="n"></div>
+<div class="form-group"><label class="form-label required" for="e">E-Mail<span aria-hidden="true">*</span></label><input required class="form-control" type="email" id="e"></div>
+<div class="form-group"><label class="form-label required" for="c">Nachricht<span aria-hidden="true">*</span></label><textarea required rows="5" class="form-control" id="c"></textarea></div>
+<friendly-captcha><div class="frc-captcha" data-sitekey="FIXTURE" data-lang="de">
+<div class="frc-container"><div class="frc-content"><span class="frc-text">Anti-Roboter-Verifizierung</span>
+<button type="button" class="frc-button">Hier klicken</button></div></div>
+<span class="frc-banner"><a lang="en" href="https://friendlycaptcha.com/" rel="noopener" target="_blank"><b>Friendly</b>Captcha ⇗</a></span>
+</div></friendly-captcha>
+<p class="footer__paragraph">Datenschutzhinweis: Ihre personenbezogenen Daten werden ausschließlich zur Bearbeitung Ihrer Anfrage verarbeitet.</p>
+<button type="submit" class="btn btn--small btn--inverted">Senden</button>
+</form></remote-form></div>
+<div class="footer__offices"><h2 class="footer__heading">Standorte</h2><p>Monheim am Rhein · Berlin · Hamburg · Köln · Offenbach · München · Baar · Zürich</p></div>
+</footer></div>
+</body></html>

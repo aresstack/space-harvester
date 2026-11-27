@@ -16,6 +16,12 @@ def ossReportTask = rootProject.tasks.register('generateOssLicenseReport') {
     description = 'Sammelt die ausgelieferten Bibliotheken und schreibt oss-licenses.json für Einstellungen › Bibliotheken.'
 
     outputs.dir(ossOutputDir)
+    // POMs der Bibliotheken aus libs/ (eingebundene Builds) für ihre Lizenzangaben
+    gradle.aresstackLibraries.each { library, spec ->
+        spec.projects.each { name ->
+            dependsOn gradle.includedBuild(library).task(":${name}:generatePomFileForLibraryPublication")
+        }
+    }
     // Auch nach einer reinen Versionsänderung neu erzeugen.
     outputs.upToDateWhen { false }
 
@@ -54,14 +60,38 @@ def ossReportTask = rootProject.tasks.register('generateOssLicenseReport') {
         def byName = [:]
         ossTargetProject.configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts.each { artifact ->
             def component = artifact.id.componentIdentifier
-            if (component instanceof org.gradle.api.artifacts.component.ProjectComponentIdentifier) {
+            if (component instanceof org.gradle.api.artifacts.component.ProjectComponentIdentifier
+                    && component.build.buildPath == ':') {
                 shippedModules << component.projectPath
                 return
             }
             def id = artifact.moduleVersion.id
+            def license = 'Unknown'
+            // Bibliotheken aus libs/ (eingebundene Builds, settings.gradle): ausgeliefert wie eine Bibliothek, unter ihrem
+            // veröffentlichten Namen <bibliothek>-<modul>, Fassung = Upstream-Commit der Kopie; die Lizenzen aus der POM ihrer
+            // Publikation, dort auch der veröffentlichte Name (wie bei Bibliotheken von Maven Central, z. B. MIT und CC BY-SA 4.0 der Wortliste in Writing4j).
+            if (component instanceof org.gradle.api.artifacts.component.ProjectComponentIdentifier) {
+                def library = component.build.buildPath.substring(1)
+                def manifest = rootProject.file("libs/upstream/${library}.sha256")
+                def commit = manifest.isFile()
+                        ? (manifest.readLines().find { it.startsWith('# upstream ') } ?: '').tokenize(' ').last().take(7)
+                        : id.version
+                id = [group: id.group, name: "${library}-${component.projectName}".toString(), version: commit]
+                def pomFile = new File(gradle.includedBuild(library).projectDir,
+                        "${component.projectName}/build/publications/library/pom-default.xml")
+                if (pomFile.isFile()) {
+                    def pom = new groovy.xml.XmlSlurper(false, false).parse(pomFile)
+                    if (pom.artifactId.text()) {
+                        id.name = pom.artifactId.text()
+                    }
+                    def names = pom.licenses.license.name*.text().collect { it.trim() }.findAll { it }
+                    if (!names.isEmpty()) {
+                        license = names.join(' / ')
+                    }
+                }
+            }
             def key = "${id.group}:${id.name}:${id.version}".toString()
             if (seen.add(key)) {
-                def license = 'Unknown'
                 for (mapping in knownLicenses) {
                     if (id.group == mapping.key || id.group.startsWith(mapping.key + '.')) {
                         license = mapping.value

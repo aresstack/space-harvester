@@ -1,0 +1,8 @@
+// Generic browser port for the research MVP (Java 8, framework-free). No Playwright/Solon/jsoup here.
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+}
+
+test {
+    useJUnit()
+}

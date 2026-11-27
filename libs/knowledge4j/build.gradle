@@ -1,0 +1,100 @@
+plugins {
+    id 'com.gradleup.nmcp.aggregation' version '0.1.5'
+    id 'com.gradleup.nmcp' version '0.1.5' apply false
+}
+
+allprojects {
+    group = 'com.aresstack'
+    version = (findProperty('releaseVersion') ?: '0.1.0-SNAPSHOT').toString()
+    repositories {
+        mavenCentral()
+    }
+}
+
+ext.junitVersion = '5.11.4'
+
+subprojects {
+    apply plugin: 'java-library'
+    apply plugin: 'java-test-fixtures'
+    apply plugin: 'maven-publish'
+    apply plugin: 'signing'
+    apply plugin: 'com.gradleup.nmcp'
+
+    java {
+        toolchain { languageVersion = JavaLanguageVersion.of(21) }
+        withSourcesJar()
+        withJavadocJar()
+    }
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
+    }
+    tasks.withType(Javadoc).configureEach {
+        options.encoding = 'UTF-8'
+        options.addStringOption('Xdoclint:none', '-quiet')
+    }
+
+    dependencies {
+        testImplementation platform("org.junit:junit-bom:${rootProject.junitVersion}")
+        testImplementation 'org.junit.jupiter:junit-jupiter'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+        testFixturesApi platform("org.junit:junit-bom:${rootProject.junitVersion}")
+        testFixturesApi 'org.junit.jupiter:junit-jupiter-api'
+    }
+
+    tasks.named('test', Test) {
+        useJUnitPlatform()
+    }
+
+    publishing {
+        publications {
+            library(MavenPublication) {
+                from components.java
+                artifactId = "knowledge4j-${project.name}"
+                pom {
+                    name = "Knowledge4j - ${project.name}"
+                    description = 'Shared contracts for Research4j and Writing4j'
+                    url = 'https://github.com/aresstack/knowledge4j'
+                    licenses {
+                        license {
+                            name = 'MIT'
+                            url = 'https://opensource.org/licenses/MIT'
+                            distribution = 'repo'
+                        }
+                    }
+                    developers {
+                        developer {
+                            id = 'aresstack'
+                            name = 'AresStack'
+                            url = 'https://github.com/aresstack'
+                        }
+                    }
+                    scm {
+                        connection = 'scm:git:https://github.com/aresstack/knowledge4j.git'
+                        developerConnection = 'scm:git:ssh://git@github.com/aresstack/knowledge4j.git'
+                        url = 'https://github.com/aresstack/knowledge4j'
+                    }
+                }
+            }
+        }
+    }
+
+    def signingKey = providers.gradleProperty('signingInMemoryKey').filter { !it.isBlank() }
+    signing {
+        required = signingKey.isPresent()
+        if (signingKey.isPresent()) {
+            useInMemoryPgpKeys(signingKey.get(),
+                    providers.gradleProperty('signingInMemoryKeyPassword').getOrElse(''))
+        }
+        sign publishing.publications
+    }
+}
+
+nmcpAggregation {
+    centralPortal {
+        username = providers.gradleProperty('centralUsername')
+        password = providers.gradleProperty('centralPassword')
+        publishingType = 'AUTOMATIC'
+        verificationTimeout = java.time.Duration.ofHours(2)
+    }
+    publishAllProjectsProbablyBreakingProjectIsolation()
+}

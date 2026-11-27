@@ -47,45 +47,14 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
-// Protect the pinned upstream sources and license; normalize checkout line endings.
-def verifyUpstreamCopy = tasks.register('verifyUpstreamCopy') {
-    group = 'verification'
-    description = 'Verify the pinned ProLeap source snapshot against UPSTREAM.sha256.'
-    def manifestFile = layout.projectDirectory.file('UPSTREAM.sha256')
-    def copied = layout.projectDirectory.dir('src/main')
-    def license = layout.projectDirectory.file('LICENSE')
-    inputs.file(manifestFile)
-    inputs.dir(copied)
-    inputs.file(license)
-    doLast {
-        def root = layout.projectDirectory.asFile.toPath()
-        def expected = [:] as TreeMap
-        manifestFile.asFile.eachLine('UTF-8') { line ->
-            if (!line.isBlank() && !line.startsWith('#')) {
-                def parts = line.split('  ', 2)
-                expected[parts[1]] = parts[0]
-            }
-        }
-        def actual = [:] as TreeMap
-        ([license.asFile] + project.fileTree(copied).files).each { file ->
-            def path = root.relativize(file.toPath()).toString().replace(File.separatorChar, '/' as char)
-            def normalized = new String(file.bytes, java.nio.charset.StandardCharsets.UTF_8)
-                    .replace('\r\n', '\n')
-            actual[path] = java.security.MessageDigest.getInstance('SHA-256')
-                    .digest(normalized.getBytes(java.nio.charset.StandardCharsets.UTF_8)).encodeHex().toString()
-        }
-        def differences = (expected.keySet() + actual.keySet()).unique()
-                .findAll { expected[it] != actual[it] }
-        if (differences) {
-            throw new GradleException("ProLeap snapshot differs from UPSTREAM.sha256:\n  " + differences.join('\n  '))
-        }
-        logger.lifecycle("Verified ${actual.size()} pinned ProLeap files.")
-    }
-}
-
-tasks.named('check') {
-    dependsOn verifyUpstreamCopy
-}
+// Lokale Änderungen an der Kopie erkennen (gemeinsame Prüfung in gradle/upstream-copy.gradle).
+apply from: rootProject.file('gradle/upstream-copy.gradle')
+def verifyUpstreamCopy = registerUpstreamCopyCheck(name: 'proleap-parser',
+        manifest: file('UPSTREAM.sha256'),
+        baseDir: projectDir,
+        files: files('LICENSE', fileTree('src/main')),
+        hint: 'Änderungen gehören in den ProLeap-Upstream und kommen als neuer Stand zurück',
+        normalizeLineEndings: true)
 
 tasks.named('compileJava') {
     dependsOn verifyUpstreamCopy
