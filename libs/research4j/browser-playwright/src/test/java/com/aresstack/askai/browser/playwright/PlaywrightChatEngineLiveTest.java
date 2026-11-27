@@ -112,6 +112,86 @@ public class PlaywrightChatEngineLiveTest {
         assertFalse(instance.isAlive());
     }
 
+    /**
+     * The chat browser runs on the owner thread of the research driver: a page's new tab stays open as a chat tab,
+     * closing the first tab leaves the browser running, and Stop (interrupting the waiting tool thread) ends a
+     * running wait at once while the browser stays usable.
+     */
+    @Test
+    public void theChatKeepsItsTabsAndStopEndsAWait() throws Exception {
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        String readiness = launcher.readiness().render();
+        assumeTrue("SKIPPED (environment-gated live test): " + readiness, readiness.startsWith("READY"));
+
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/start", exchange -> respond(exchange, "text/html",
+                "<html><head><title>Start</title></head><body>"
+                        + "<button type='button' onclick=\"window.open('/second')\">In neuem Tab</button></body></html>"));
+        server.createContext("/second", exchange -> respond(exchange, "text/html",
+                "<html><head><title>Zweite</title></head><body><p>Inhalt der zweiten Seite</p></body></html>"));
+        // Never quiet: the content changes all the time, so settling waits until its deadline.
+        server.createContext("/busy", exchange -> respond(exchange, "text/html",
+                "<html><head><title>Unruhig</title></head><body><p id='t'>0</p><script>"
+                        + "setInterval(function(){document.getElementById('t').textContent=Date.now();},50);"
+                        + "</script></body></html>"));
+        server.start();
+        String base = "http://127.0.0.1:" + server.getAddress().getPort();
+        Path profile = Files.createTempDirectory("chat-engine-profile");
+        BrowserInstance instance = new PlaywrightChatEngine(launcher, true, 30000L).start(profile);
+        try {
+            BrowserConnection connection = instance.connect();
+            String first = connection.tabs().isEmpty() ? connection.createTab() : connection.tabs().get(0).contextId();
+            connection.navigate(first, base + "/start");
+            RawControl open = null;
+            for (RawControl control : connection.controls(first)) {
+                if (control.label().contains("In neuem Tab")) {
+                    open = control;
+                }
+            }
+            assertTrue("link found", open != null);
+            connection.act(first, open.ref(), BrowserAction.CLICK, null);
+            String opened = null;
+            long deadline = System.currentTimeMillis() + 10_000L;
+            while (opened == null && System.currentTimeMillis() < deadline) {
+                for (com.aresstack.enterpriseai.browser.api.engine.RawTab tab : connection.tabs()) {
+                    if (!tab.contextId().equals(first) && tab.url().endsWith("/second")) {
+                        opened = tab.contextId();
+                    }
+                }
+                Thread.sleep(100L);
+            }
+            assertTrue("the page's new tab stays open as a chat tab", opened != null);
+
+            connection.close(first);
+            assertTrue(instance.isAlive());
+            assertEquals("Zweite", connection.read(opened).title());
+
+            final String busyTab = opened;
+            final Throwable[] failure = new Throwable[1];
+            Thread tool = new Thread(() -> {
+                try {
+                    connection.navigate(busyTab, base + "/busy");
+                } catch (Throwable e) {
+                    failure[0] = e;
+                }
+            }, "chat-tool");
+            tool.start();
+            Thread.sleep(1_500L);
+            long stopped = System.currentTimeMillis();
+            tool.interrupt();
+            tool.join(10_000L);
+            assertFalse("Stop ends the wait", tool.isAlive());
+            assertTrue("Stop ends the wait at once: " + (System.currentTimeMillis() - stopped) + " ms",
+                    System.currentTimeMillis() - stopped < ChatPageScripts.LOAD_SETTLE_MILLIS);
+            assertTrue(instance.isAlive());
+            assertEquals("Unruhig", connection.read(busyTab).title());
+        } finally {
+            instance.stop();
+            server.stop(0);
+        }
+        assertFalse(instance.isAlive());
+    }
+
     private static void respond(com.sun.net.httpserver.HttpExchange exchange, String type, String body)
             throws java.io.IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);

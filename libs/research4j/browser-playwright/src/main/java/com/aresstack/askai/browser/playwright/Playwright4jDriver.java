@@ -168,10 +168,33 @@ final class Playwright4jDriver implements PlaywrightDriver {
                                      com.aresstack.askai.browser.search.ConsentHandlingSettings consent,
                                      com.aresstack.askai.browser.search.CaptchaHandlingSettings captcha)
             throws BrowserException {
+        return launch(launcher, headless, timeoutMillis, profileKey, requestAllowed, consent, captcha, false);
+    }
+
+    /**
+     * Get the chat browser of the chat tools ({@link PlaywrightChatEngine}) from the host's launcher: like
+     * {@link #launch}, but new tabs of a page stay open (they are the chat's tabs, {@link ChatTabs}), the research
+     * add-on is not loaded (the chat reads with its own page scripts) and closing the first tab moves the driver to
+     * another open tab instead of ending the session.
+     */
+    static Playwright4jDriver launchForChat(BrowserLauncher launcher, boolean headless, int timeoutMillis,
+                                            String profileKey,
+                                            com.aresstack.askai.browser.search.ConsentHandlingSettings consent,
+                                            com.aresstack.askai.browser.search.CaptchaHandlingSettings captcha)
+            throws BrowserException {
+        return launch(launcher, headless, timeoutMillis, profileKey, null, consent, captcha, true);
+    }
+
+    private static Playwright4jDriver launch(BrowserLauncher launcher, boolean headless, int timeoutMillis,
+                                             String profileKey, final Predicate<String> requestAllowed,
+                                             com.aresstack.askai.browser.search.ConsentHandlingSettings consent,
+                                             com.aresstack.askai.browser.search.CaptchaHandlingSettings captcha,
+                                             boolean chat)
+            throws BrowserException {
         AddonBridge bridge = null;
         LaunchedBrowser launched = null;
         try {
-            final AddonBridge addonBridge = startAddonBridge("research add-on");
+            final AddonBridge addonBridge = chat ? null : startAddonBridge("research add-on");
             bridge = addonBridge;
             AddonPackager addon = addonBridge == null ? null : AddonPackager.research(addonBridge, true);
             launched = launcher.persistent(profileKey, headless, addon);
@@ -213,7 +236,11 @@ final class Playwright4jDriver implements PlaywrightDriver {
                 driver.readBridge = bridge;
             }
             driver.launchedMillis = System.currentTimeMillis();
-            page.onPopup(driver.popupCloser());
+            if (chat) {
+                page.onClose(driver.chatTabCloseWatcher());
+            } else {
+                page.onPopup(driver.popupCloser());
+            }
             // Dispatched during the idle pump: the user closing the window becomes a TYPED condition
             // instead of an anonymous 'Target closed' that no classifier recognized.
             if (browser != null) {
@@ -1624,6 +1651,28 @@ final class Playwright4jDriver implements PlaywrightDriver {
         };
     }
 
+    /**
+     * The chat's first tab closing: the driver goes on in another open tab of the context (its event pump needs a
+     * page); only when none is left is the browser gone.
+     */
+    private Consumer<Page> chatTabCloseWatcher() {
+        return new Consumer<Page>() {
+            public void accept(Page gone) {
+                if (closed || gone != page) {
+                    return;
+                }
+                for (Page other : context.pages()) {
+                    if (other != gone && !other.isClosed()) {
+                        page = other;
+                        other.onClose(chatTabCloseWatcher());
+                        return;
+                    }
+                }
+                browserDisconnected = true;
+            }
+        };
+    }
+
     /** The one popup policy: close immediately, count it, and never let a dead popup break the session. */
     private Consumer<Page> popupCloser() {
         return new Consumer<Page>() {
@@ -1644,6 +1693,11 @@ final class Playwright4jDriver implements PlaywrightDriver {
      */
     void readThroughAddon(AddonBridge workerBridge) {
         this.readBridge = workerBridge;
+    }
+
+    /** Whether the browser is Camoufox (its page scripts run in the isolated world). */
+    boolean camoufox() {
+        return camoufox;
     }
 
     /** The research add-on's bridge, or null (switched off, not prepared or not loaded; Chrome/Edge worker tabs). */

@@ -148,12 +148,39 @@ class BrowserRuntimeLiveTest {
         }
     }
 
+    /**
+     * The installed Firefox: the add-on is installed after the start as a temporary add-on over Playwright's BiDi
+     * session and runs in the pages, on a lasting profile and on an ephemeral browser.
+     */
+    @Test
+    void theInstalledFirefoxLoadsTheAddon() throws Exception {
+        assumeTrue(runtime.config().channel() == BrowserChannel.FIREFOX, "the BiDi add-on path is for Firefox");
+        try (RunningBrowser browser = runtime.persistent("chat-addon", true, testExtension())) {
+            assertTrue(browser.addonLoaded(), "add-on not loaded: " + browser.addonFailure());
+            Page page = browser.context().pages().isEmpty() ? browser.context().newPage()
+                    : browser.context().pages().get(0);
+            page.navigate(base + "extension");
+            page.waitForSelector("html[data-runtime-test-extension=loaded]");
+        }
+        try (RunningBrowser browser = runtime.ephemeral(true, testExtension())) {
+            assertTrue(browser.addonLoaded(), "add-on not loaded: " + browser.addonFailure());
+            BrowserContext context = browser.browser().newContext();
+            try {
+                Page page = context.newPage();
+                page.navigate(base + "extension");
+                page.waitForSelector("html[data-runtime-test-extension=loaded]");
+            } finally {
+                context.close();
+            }
+        }
+    }
+
     /** An add-on that cannot be loaded is reported, never dropped silently; the browser still runs. */
     @Test
     void anAddonTheBrowserCannotLoadIsReported() throws Exception {
         try (RunningBrowser browser = runtime.ephemeral(true, testExtension())) {
-            if (runtime.config().channel() == BrowserChannel.CAMOUFOX) {
-                return; // Camoufox loads its add-ons at startup; the ephemeral path supports it
+            if (runtime.config().channel().firefoxFamily()) {
+                return; // Firefox and Camoufox load their add-on on an ephemeral browser as well
             }
             assertFalse(browser.addonLoaded());
             assertNotNull(browser.addonFailure());
@@ -165,9 +192,11 @@ class BrowserRuntimeLiveTest {
         return new BrowserAddon() {
             @Override
             public Path prepare(Path parent, boolean chromium) throws IOException {
-                Path directory = Files.createDirectories(parent.resolve("test-extension"));
+                // Chrome/Edge take a Manifest V3 extension, Firefox a Manifest V2 add-on (as the research add-on).
+                String source = chromium ? "test-extension" : "test-addon-firefox";
+                Path directory = Files.createDirectories(parent.resolve(source));
                 for (String file : new String[]{"manifest.json", "mark.js"}) {
-                    try (InputStream in = BrowserRuntimeLiveTest.class.getResourceAsStream("/test-extension/" + file)) {
+                    try (InputStream in = BrowserRuntimeLiveTest.class.getResourceAsStream("/" + source + "/" + file)) {
                         Files.copy(in, directory.resolve(file));
                     }
                 }

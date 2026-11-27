@@ -1,0 +1,161 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'signing'
+}
+
+// group/version come from the root project (allprojects); version is overridable via -Pversion
+// for the Maven Central release (see root build.gradle and .github/workflows/release.yml).
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    withSourcesJar()
+    withJavadocJar()
+}
+
+tasks.named('javadoc') {
+    options.addStringOption('Xdoclint:none', '-quiet')
+}
+
+
+configurations {
+    playwrightDriverArchive {
+        canBeConsumed = false
+        transitive = false
+    }
+}
+
+dependencies {
+    api 'org.graalvm.polyglot:polyglot:25.0.0'
+    api 'org.graalvm.polyglot:js:25.0.0'
+    // Build-time only: extract Playwright Core JS from the upstream driver artifact.
+    // Never publish Microsoft's driver class or any Node.js executable.
+    playwrightDriverArchive 'com.microsoft.playwright:driver:1.62.0'
+
+    // Java-backed video encoding (default backend for the intercepted ffmpeg spawn).
+    implementation 'org.jcodec:jcodec:0.2.5'
+    implementation 'org.jcodec:jcodec-javase:0.2.5'
+
+    // FirefoxBidi works on the caller's Playwright Java objects; callers bring that dependency.
+    compileOnly 'com.microsoft.playwright:playwright:1.62.0'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.13.1'
+    testImplementation 'com.microsoft.playwright:playwright:1.62.0'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.13.1'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.13.1'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+// Since Playwright 1.62, the platform-independent Core lives directly under
+// driver/package/** in the driver artifact (not driver-bundle).
+// Bundle those JS resources only; exclude Microsoft's Driver.class and native binaries.
+def driverPackageOutputDir = layout.buildDirectory.dir('generated/driver-package')
+def repackageDriverPackage = tasks.register('repackageDriverPackage', Sync) {
+    description = 'Extracts the Playwright Core JS package from driver-bundle, without Node.js binaries.'
+    from({ zipTree(configurations.playwrightDriverArchive.singleFile) }) {
+        include 'driver/package/**'
+        includeEmptyDirs = false
+    }
+    into driverPackageOutputDir
+    doLast {
+        def nativeFiles = fileTree(driverPackageOutputDir).matching {
+            include '**/*.exe', '**/*.dll', '**/*.so', '**/*.dylib', '**/node'
+        }.files
+        if (!nativeFiles.isEmpty()) {
+            throw new GradleException("Native binaries in repackaged driver package: ${nativeFiles}")
+        }
+    }
+}
+// driver/package-id.txt: content hash of the package. Driver.driverDir() extracts into a directory
+// named after it, so an upgraded jar never reuses files extracted by an older one.
+def driverPackageIdOutputDir = layout.buildDirectory.dir('generated/driver-package-id')
+def driverPackageId = tasks.register('driverPackageId') {
+    description = 'Writes the SHA-256 content id of the repackaged Playwright Core package.'
+    dependsOn repackageDriverPackage
+    inputs.dir(driverPackageOutputDir)
+    outputs.dir(driverPackageIdOutputDir)
+    doLast {
+        def base = driverPackageOutputDir.get().dir('driver/package').asFile
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+        fileTree(base).files.sort { base.toPath().relativize(it.toPath()).toString().replace('\\', '/') }.each { file ->
+            digest.update(base.toPath().relativize(file.toPath()).toString().replace('\\', '/').getBytes('UTF-8'))
+            digest.update((byte) 0)
+            digest.update(file.bytes)
+        }
+        def out = driverPackageIdOutputDir.get().file('driver/package-id.txt').asFile
+        out.parentFile.mkdirs()
+        out.text = digest.digest().encodeHex().toString().substring(0, 32)
+    }
+}
+sourceSets.main.resources.srcDir(repackageDriverPackage)
+sourceSets.main.resources.srcDir(driverPackageIdOutputDir)
+tasks.named('processResources') { dependsOn driverPackageId }
+tasks.named('sourcesJar') {
+    dependsOn driverPackageId
+    exclude 'driver/**'
+}
+
+test {
+    useJUnitPlatform()
+    testLogging { events "failed"; exceptionFormat "full" }
+    systemProperty 'playwright4j.chromeSpike', findProperty('playwright4j.chromeSpike') ?: 'false'
+    systemProperty 'playwright4j.graalChromeSpike', findProperty('playwright4j.graalChromeSpike') ?: 'false'
+    systemProperty 'playwright4j.chrome.executablePath', findProperty('playwright4j.chrome.executablePath') ?: ''
+    systemProperty 'playwright4j.chrome.headless', findProperty('playwright4j.chrome.headless') ?: 'false'
+    systemProperty 'playwright4j.chrome.url', findProperty('playwright4j.chrome.url') ?: 'data:text/html,<title>Playwright4J Chrome Spike</title><h1>Playwright4J Chrome Spike</h1>'
+    // Full assertion messages in the console: the CI log is often the only place a failure is seen.
+    testLogging { exceptionFormat "full" }
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            pom {
+                name = 'playwright4j'
+                description = 'Experimental Java/GraalVM runtime that runs the official Microsoft Playwright Core driver inside the JVM without Node.js or any native helper binary. Supports installed Chrome and Edge over CDP and installed Firefox over WebDriver BiDi.'
+                url = 'https://github.com/aresstack/playwright4j'
+                licenses {
+                    license {
+                        name = 'The Apache License, Version 2.0'
+                        url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                    }
+                }
+                developers {
+                    developer {
+                        id = 'aresstack'
+                        name = 'AresStack'
+                    }
+                }
+                scm {
+                    connection = 'scm:git:https://github.com/aresstack/playwright4j.git'
+                    developerConnection = 'scm:git:ssh://git@github.com:aresstack/playwright4j.git'
+                    url = 'https://github.com/aresstack/playwright4j'
+                }
+                // org.graalvm.polyglot:js is a pom-only aggregator on Maven Central (no jar). Gradle
+                // resolves it via the module metadata, but Maven needs <type>pom</type> or it fails
+                // looking for js-<version>.jar. Checked by consumer-check/pom.xml in CI.
+                withXml {
+                    asNode().dependencies.dependency
+                            .findAll { it.groupId.text() == 'org.graalvm.polyglot' && it.artifactId.text() == 'js' }
+                            .each { it.appendNode('type', 'pom') }
+                }
+            }
+        }
+    }
+}
+
+signing {
+    def signingKey = findProperty('signingInMemoryKey')
+    def signingPassword = findProperty('signingInMemoryKeyPassword')
+    required { gradle.taskGraph.allTasks.any { it.name.toLowerCase().contains('centralportal') || it.name == 'publishAggregationToCentralPortal' } }
+    if (signingKey) {
+        useInMemoryPgpKeys(signingKey, signingPassword)
+    }
+    sign publishing.publications.mavenJava
+}

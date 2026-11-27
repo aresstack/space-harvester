@@ -22,7 +22,7 @@ allprojects {
     }
 }
 
-// Bibliotheken aus eigenen Repositories (Knowledge4j, Research4j, Writing4j) liegen als unveränderte Kopie unter libs/
+// Bibliotheken aus eigenen Repositories (Knowledge4j, Playwright4j, Research4j, Writing4j) liegen als unveränderte Kopie unter libs/
 // und werden per Composite Build eingebunden (settings.gradle, libs/README.md). Die Kopien dürfen hier nicht geändert
 // werden: check prüft jede gegen ihr Manifest libs/upstream/<bibliothek>.sha256.
 apply from: "$rootDir/gradle/upstream-copy.gradle"

@@ -1,0 +1,722 @@
+/*
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.microsoft.playwright;
+
+import com.aresstack.playwright4j.graal.UnhandledRejections;
+import com.microsoft.playwright.impl.driver.Driver;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.attribute.FileTime;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
+
+import static com.microsoft.playwright.Utils.*;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Arrays.asList;
+import static org.junit.jupiter.api.Assertions.*;
+
+public class TestBrowserTypeConnect extends TestBase {
+  static Path FILE_TO_UPLOAD = Paths.get("src/test/resources/file-to-upload.txt");
+
+  private Process browserServer;
+  private String wsEndpoint;
+
+  private static class BrowserServer {
+    Process process;
+    String wsEndpoint;
+
+    void kill() throws InterruptedException {
+      int exitCode = destroyProcessTree(process);
+      // FIXME: 2 tests are failing this check on windows:
+      // disconnectedEventShouldBeEmittedWhenBrowserIsClosedOrServerIsClosed
+      // shouldThrowWhenUsedAfterIsConnectedReturnsFalse
+      if (!isWindows) {
+        assertEquals(0, exitCode);
+      }
+    }
+  }
+
+  // playwright4j: there is no native launcher (and no Windows job object) any more, and the
+  // launch-server JVM does not take its browser down when it is killed (TerminateProcess on
+  // Windows). Terminate the browser processes it spawned as well, and escalate to a forced kill
+  // after a bounded wait instead of blocking in waitFor() forever.
+  private static final long DESTROY_TIMEOUT_SECONDS = 15;
+
+  private static int destroyProcessTree(Process process) throws InterruptedException {
+    // A pending interrupt (e.g. a JUnit timeout) must not abort the cleanup half-way and leak the
+    // browsers; restore it afterwards.
+    boolean interrupted = Thread.interrupted();
+    List<ProcessHandle> descendants = process.descendants().collect(Collectors.toList());
+    try {
+      // Server first, browsers after it is gone: clients must see the WebSocket close (and emit
+      // 'disconnected') rather than the browser dying underneath a still-running server. On
+      // Windows destroy() is an asynchronous TerminateProcess, so wait for the exit first.
+      process.destroy();
+      if (!process.waitFor(DESTROY_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) {
+        process.destroyForcibly();
+        process.waitFor(DESTROY_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+      }
+    } finally {
+      descendants.forEach(ProcessHandle::destroy);
+      for (ProcessHandle descendant : descendants) {
+        try {
+          descendant.onExit().get(DESTROY_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (ExecutionException | java.util.concurrent.TimeoutException | InterruptedException e) {
+          descendant.destroyForcibly();
+        }
+      }
+      if (interrupted) {
+        Thread.currentThread().interrupt();
+      }
+    }
+    if (process.isAlive()) {
+      throw new IllegalStateException("launch-server process " + process.pid() + " did not exit");
+    }
+    return process.exitValue();
+  }
+
+  // playwright4j: servers started by individual tests; any still running after a test (e.g. it
+  // failed before its own kill()) is stopped in stopLeftoverServers().
+  private static final List<Process> startedServers = Collections.synchronizedList(new ArrayList<>());
+
+  @AfterEach
+  void stopLeftoverServers() throws InterruptedException {
+    List<Process> leftovers;
+    synchronized (startedServers) {
+      leftovers = new ArrayList<>(startedServers);
+      startedServers.clear();
+    }
+    for (Process process : leftovers) {
+      if (process != browserServer && process.isAlive()) {
+        log("stopping launch-server " + process.pid() + " left running by the test");
+        destroyProcessTree(process);
+      }
+    }
+    awaitServerOutputSettled();
+    assertNoServerErrors();
+  }
+
+  // playwright4j: browser.close() on a connected browser does not wait for the server to handle
+  // the disconnect, so an error from that cleanup is printed shortly after the test returned. Wait
+  // until the servers' stderr has been quiet for a moment (bounded) before blaming this test.
+  private static final long SERVER_OUTPUT_QUIET_MILLIS = 250;
+  private static final long SERVER_OUTPUT_SETTLE_MAX_MILLIS = 2_000;
+  private static volatile long lastServerOutputNanos;
+
+  private static void awaitServerOutputSettled() throws InterruptedException {
+    long start = System.nanoTime();
+    long quiet = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(SERVER_OUTPUT_QUIET_MILLIS);
+    long max = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(SERVER_OUTPUT_SETTLE_MAX_MILLIS);
+    while (System.nanoTime() - start < max) {
+      long now = System.nanoTime();
+      if (now - start >= quiet && now - lastServerOutputNanos >= quiet) {
+        return;
+      }
+      Thread.sleep(25);
+    }
+  }
+
+  // playwright4j: Node.js terminates on an unhandled rejection or an uncaught exception; the
+  // GraalJS launch-server reports them on stderr instead (see UnhandledRejections). Such errors
+  // used to pass unnoticed (e.g. ws failing on every disconnect, which skipped Playwright's
+  // per-connection cleanup), so the servers' stderr is scanned and a test that causes one fails.
+  private static final List<String> serverErrors = Collections.synchronizedList(new ArrayList<>());
+  private static final List<Thread> serverStderrPumps = Collections.synchronizedList(new ArrayList<>());
+
+  private static void pumpServerStderr(Process process) {
+    Thread pump = new Thread(() -> {
+      try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream(), UTF_8))) {
+        String line;
+        while ((line = reader.readLine()) != null) {
+          lastServerOutputNanos = System.nanoTime();
+          System.err.println(line);
+          if (line.startsWith(UnhandledRejections.LOG_PREFIX) || line.startsWith(UnhandledRejections.UNCAUGHT_LOG_PREFIX)) {
+            serverErrors.add(line);
+          }
+        }
+      } catch (IOException e) {
+        // The server is gone.
+      }
+    }, "launch-server-stderr-" + process.pid());
+    pump.setDaemon(true);
+    pump.start();
+    serverStderrPumps.add(pump);
+  }
+
+  private static void assertNoServerErrors() {
+    List<String> errors;
+    synchronized (serverErrors) {
+      errors = new ArrayList<>(serverErrors);
+      serverErrors.clear();
+    }
+    assertEquals(Collections.emptyList(), errors, "errors reported by launch-server (stack traces in the test output)");
+  }
+
+  // playwright4j: bounded server start. The ws:// endpoint must appear on stdout within this time,
+  // otherwise the server JVM (and any browser it started) is killed and the test fails with the
+  // server's stderr instead of blocking in readLine() forever.
+  private static final long SERVER_START_TIMEOUT_SECONDS = 60;
+
+  private static BrowserServer launchBrowserServer(BrowserType browserType) {
+    Process process = null;
+    try {
+      Driver driver = Driver.ensureDriverInstalled(Collections.emptyMap(), false);
+      Path dir = driver.driverDir();
+      String cliJs = dir.resolve("package/cli.js").toString();
+      // playwright4j: no native node executable. Start the Java GraalJS driver directly in
+      // --node-compat mode, which runs the bundled cli.js like `node cli.js launch-server ...`.
+      // Pass the fixture's launch options (BROWSER_CHANNEL, headless) via --config, so the
+      // server launches the same installed browser as the other tests instead of a downloaded one.
+      Path config = Files.createTempFile("playwright4j-launch-server", ".json");
+      config.toFile().deleteOnExit();
+      Files.write(config, launchServerConfig().getBytes(UTF_8));
+      ProcessBuilder pb = driver.createProcessBuilder();
+      pb.command().addAll(asList("--node-compat", cliJs, "launch-server", "--browser", browserType.name(),
+        "--config", config.toString()));
+      pb.directory(dir.toFile());
+      long started = System.nanoTime();
+      log("starting launch-server (" + browserType.name() + ", " + launchServerConfig() + ")");
+      process = pb.start();
+      pumpServerStderr(process);
+      BufferedReader input = new BufferedReader(new InputStreamReader(process.getInputStream(), UTF_8));
+      CompletableFuture<String> firstLine = CompletableFuture.supplyAsync(() -> {
+        try {
+          return input.readLine();
+        } catch (IOException e) {
+          throw new UncheckedIOException(e);
+        }
+      });
+      String endpoint;
+      try {
+        endpoint = firstLine.get(SERVER_START_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+      } catch (java.util.concurrent.TimeoutException e) {
+        throw new PlaywrightException("launch-server printed no ws:// endpoint within "
+          + SERVER_START_TIMEOUT_SECONDS + " s (server stderr is in the test output above)");
+      } catch (ExecutionException e) {
+        throw new PlaywrightException("Failed to read launch-server output", e.getCause());
+      }
+      if (endpoint == null) {
+        process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+        throw new PlaywrightException("launch-server exited without a ws:// endpoint"
+          + (process.isAlive() ? "" : " (exit code " + process.exitValue() + ")")
+          + "; server stderr is in the test output above");
+      }
+      if (!endpoint.startsWith("ws://")) {
+        throw new PlaywrightException("Invalid web socket address: " + endpoint);
+      }
+      log("launch-server ready after " + (System.nanoTime() - started) / 1_000_000 + " ms: " + endpoint);
+      BrowserServer result = new BrowserServer();
+      result.process = process;
+      result.wsEndpoint = endpoint;
+      startedServers.add(process);
+      process = null;
+      return result;
+    } catch (IOException e) {
+      throw new PlaywrightException("Failed to launch server", e);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new PlaywrightException("Interrupted while launching server", e);
+    } finally {
+      if (process != null) {
+        try {
+          destroyProcessTree(process);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+      }
+    }
+  }
+
+  private static String launchServerConfig() {
+    BrowserType.LaunchOptions options = createLaunchOptions();
+    StringBuilder json = new StringBuilder("{\"headless\":").append(options.headless == null || options.headless);
+    String channel = options.channel == null ? null : options.channel.toString();
+    if (channel != null && !channel.isEmpty()) {
+      json.append(",\"channel\":\"").append(channel.replace("\\", "\\\\").replace("\"", "\\\"")).append('"');
+    }
+    return json.append('}').toString();
+  }
+
+  private static void log(String message) {
+    System.err.println("[TestBrowserTypeConnect] " + message);
+  }
+
+  @Override
+  @BeforeAll
+  // Hide base class method to launch browser server and connect to it.
+  void launchBrowser() {
+    initBrowserType();
+    BrowserServer r = launchBrowserServer(browserType);
+    wsEndpoint = r.wsEndpoint;
+    browserServer = r.process;
+    log("connecting to " + wsEndpoint);
+    browser = browserType.connect(wsEndpoint);
+    log("connected");
+    // Do not actually connect to browser, the tests will do it manually.
+  }
+
+  @Override
+  @AfterAll
+  void closeBrowser() {
+    super.closeBrowser();
+    if (browserServer != null) {
+      try {
+        destroyProcessTree(browserServer);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+      browserServer = null;
+      wsEndpoint = null;
+    }
+    // Errors the servers reported after the last test, e.g. while handling its disconnects.
+    try {
+      for (Thread pump : new ArrayList<>(serverStderrPumps)) {
+        pump.join(java.util.concurrent.TimeUnit.SECONDS.toMillis(DESTROY_TIMEOUT_SECONDS));
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+    serverStderrPumps.clear();
+    assertNoServerErrors();
+  }
+
+  @Test
+  void shouldBeAbleToReconnectToABrowser() {
+    {
+      Browser browser = browserType.connect(wsEndpoint);
+      BrowserContext browserContext = browser.newContext();
+      assertEquals(0, browserContext.pages().size());
+      Page page = browserContext.newPage();
+      assertEquals(121, page.evaluate("11 * 11"));
+      page.navigate(server.EMPTY_PAGE);
+      browser.close();
+    }
+    {
+      Browser browser = browserType.connect(wsEndpoint);
+      BrowserContext browserContext = browser.newContext();
+      Page page = browserContext.newPage();
+      page.navigate(server.EMPTY_PAGE);
+      browser.close();
+    }
+  }
+
+  @Test
+  void shouldSupportSlowMo() {
+    Browser browser = browserType.connect(wsEndpoint,
+      new BrowserType.ConnectOptions().setSlowMo(1));
+    BrowserContext browserContext = browser.newContext();
+    Page page = browserContext.newPage();
+    assertEquals(121, page.evaluate("11 * 11"));
+    page.navigate(server.EMPTY_PAGE);
+    browser.close();
+  }
+
+  @Test
+  void shouldBeAbleToConnectTwoBrowsersAtTheSameTime() {
+    Browser browser1 = browserType.connect(wsEndpoint);
+    assertEquals(0, browser1.contexts().size());
+    browser1.newContext();
+    assertEquals(1, browser1.contexts().size());
+
+    Browser browser2 = browserType.connect(wsEndpoint);
+    assertEquals(0, browser2.contexts().size());
+    browser2.newContext();
+    assertEquals(1, browser2.contexts().size());
+    assertEquals(1, browser1.contexts().size());
+
+    browser1.close();
+    Page page2 = browser2.newPage();
+    assertEquals(42, page2.evaluate("7 * 6")); // original browser should still work
+
+    browser2.close();
+  }
+
+  @Test
+  void shouldSendExtraHeadersWithConnectRequest() throws Exception {
+    try (WebSocketServerImpl webSocketServer = WebSocketServerImpl.create()) {
+      try {
+        browserType.connect("ws://localhost:" + webSocketServer.getPort() + "/ws",
+          new BrowserType.ConnectOptions().setHeaders(mapOf("User-Agent", "Playwright", "foo", "bar")));
+      } catch (Exception e) {
+      }
+      assertNotNull(webSocketServer.lastClientHandshake);
+      assertEquals("Playwright", webSocketServer.lastClientHandshake.getFieldValue("User-Agent"));
+      assertEquals(browserType.name(), webSocketServer.lastClientHandshake.getFieldValue("x-playwright-browser"));
+      assertEquals("bar", webSocketServer.lastClientHandshake.getFieldValue("foo"));
+    }
+  }
+
+  @Test
+  void disconnectedEventShouldBeEmittedWhenBrowserIsClosedOrServerIsClosed() throws InterruptedException {
+    // Launch another server to not affect other tests.
+    BrowserServer remote = launchBrowserServer(browserType);
+
+    Browser browser1 = browserType.connect(remote.wsEndpoint);
+    Browser browser2 = browserType.connect(remote.wsEndpoint);
+
+    int[] disconnected1 = {0};
+    int[] disconnected2 = {0};
+    browser1.onDisconnected(b -> ++disconnected1[0]);
+    browser2.onDisconnected(b -> ++disconnected2[0]);
+
+    Page page2 = browser2.newPage();
+
+    browser1.close();
+    assertEquals(1, disconnected1[0]);
+    assertEquals(0, disconnected2[0]);
+
+    remote.kill();
+    assertEquals(1, disconnected1[0]);
+    // Tickle connection so that it gets a chance to dispatch disconnect event.
+    assertThrows(PlaywrightException.class, () -> page2.title());
+    assertEquals(1, disconnected2[0]);
+  }
+
+  @Test
+  void disconnectedEventShouldHaveBrowserAsArgument() {
+    Browser browser = browserType.connect(wsEndpoint);
+    Browser[] disconnected = {null};
+    browser.onDisconnected(b -> disconnected[0] = b);
+    browser.close();
+    assertEquals(browser, disconnected[0]);
+  }
+
+  void shouldHandleExceptionsDuringConnect() {
+    // This is an implementation detail test
+  }
+
+  @Test
+  void shouldSetTheBrowserConnectedState() {
+    Browser remote = browserType.connect(wsEndpoint);
+    assertTrue(remote.isConnected());
+    remote.close();
+    assertFalse(remote.isConnected());
+  }
+
+  @Test
+  void shouldThrowWhenUsedAfterIsConnectedReturnsFalse() throws InterruptedException {
+    // Launch another server to not affect other tests.
+    BrowserServer server = launchBrowserServer(browserType);
+    Browser remote = browserType.connect(server.wsEndpoint);
+    Page page = remote.newPage();
+    boolean[] disconnected = {false};
+    remote.onDisconnected(b -> disconnected[0] = true);
+    server.kill();
+    while (!disconnected[0]) {
+      try {
+        page.waitForTimeout(10);
+      } catch (PlaywrightException e) {
+      }
+    }
+    assertFalse(remote.isConnected());
+    PlaywrightException e = assertThrows(PlaywrightException.class, () -> page.evaluate("1 + 1"));
+    assertTrue(e.getMessage().contains("Browser has been closed") || e.getMessage().contains("Browser closed"), e.getMessage());
+    assertFalse(remote.isConnected());
+  }
+
+  @Test
+  void shouldThrowWhenCallingWaitForNavigationAfterDisconnect() throws InterruptedException {
+    BrowserServer server = launchBrowserServer(browserType);
+    Browser browser = browserType.connect(server.wsEndpoint);
+    Page page = browser.newPage();
+
+    boolean[] disconnected = {false};
+    browser.onDisconnected(browser1 -> disconnected[0] = true);
+    server.kill();
+    while (!disconnected[0]) {
+      try {
+        page.waitForTimeout(10);
+      } catch (PlaywrightException e) {
+      }
+    }
+    assertFalse(browser.isConnected());
+    PlaywrightException e = assertThrows(PlaywrightException.class, () -> page.waitForNavigation(() -> {}));
+    // The surfaced message depends on which call hits the closed connection first.
+    assertTrue(e.getMessage().contains("Browser closed") ||
+      e.getMessage().contains("Page closed") ||
+      e.getMessage().contains("Browser has been closed") ||
+      e.getMessage().contains("Target page, context or browser has been closed"), e.getMessage());
+  }
+
+  @Test
+  void shouldRejectNavigationWhenBrowserCloses() {
+    Browser remote = browserType.connect(wsEndpoint);
+    Page page = remote.newPage();
+
+    server.setRoute("/one-style.css", r -> {});
+    page.onRequest(r -> remote.close());
+    PlaywrightException e = assertThrows(PlaywrightException.class, () -> {
+      page.navigate(server.PREFIX + "/one-style.html", new Page.NavigateOptions().setTimeout(60000));
+    });
+    assertTrue(e.getMessage().contains("Browser has been closed"));
+  }
+
+  @Test
+  void shouldEmitCloseEventsOnPagesAndContexts() throws InterruptedException {
+    BrowserServer server = launchBrowserServer(browserType);
+    Browser browser = browserType.connect(server.wsEndpoint);
+    BrowserContext context = browser.newContext();
+    Page page = context.newPage();
+
+    List<String> events = new ArrayList<>();
+    page.onClose(p -> events.add("page"));
+    context.onClose(c -> events.add("context"));
+    server.kill();
+
+    while (!events.contains("context")) {
+      try {
+        page.waitForTimeout(10);
+      } catch (PlaywrightException e) {
+      }
+    }
+    assertEquals(Arrays.asList("page", "context"), events);
+  }
+
+  @Test
+  void shouldRespectSelectors() {
+    String mycss = "{\n" +
+      "    query(root, selector) {\n" +
+      "      return root.querySelector(selector);\n" +
+      "    },\n" +
+      "    queryAll(root, selector) {\n" +
+      "      return Array.from(root.querySelectorAll(selector));\n" +
+      "    }\n" +
+      "  }";
+    // Register one engine before connecting.
+    playwright.selectors().register("mycss1", mycss);
+
+    Browser browser1 = browserType.connect(wsEndpoint);
+    BrowserContext context1 = browser1.newContext();
+
+    // Register another engine after creating context.
+    playwright.selectors().register("mycss2", mycss);
+
+    Page page1 = context1.newPage();
+    page1.setContent("<div>hello</div>");
+    assertEquals("hello", page1.innerHTML("css=div"));
+    assertEquals("hello", page1.innerHTML("mycss1=div"));
+    assertEquals("hello", page1.innerHTML("mycss2=div"));
+
+    Browser browser2 = browserType.connect(wsEndpoint);
+
+    // Register third engine after second connect.
+    playwright.selectors().register("mycss3", mycss);
+
+    Page page2 = browser2.newPage();
+    page2.setContent("<div>hello</div>");
+    assertEquals("hello", page2.innerHTML("css=div"));
+    assertEquals("hello", page2.innerHTML("mycss1=div"));
+    assertEquals("hello", page2.innerHTML("mycss2=div"));
+    assertEquals("hello", page2.innerHTML("mycss3=div"));
+
+    browser1.close();
+    browser2.close();
+  }
+
+  @Test
+  void shouldNotThrowOnCloseAfterDisconnect() throws InterruptedException {
+    BrowserServer remoteServer = launchBrowserServer(browserType);
+    Browser browser = browserType.connect(remoteServer.wsEndpoint);
+    Page page = browser.newPage();
+
+    remoteServer.kill();
+    while (browser.isConnected()) {
+      try {
+        page.waitForTimeout(10);
+      } catch (PlaywrightException e) {
+      }
+    }
+    browser.close();
+  }
+
+  @Test
+  void shouldSaveAsVideosFromRemoteBrowser(@TempDir Path tempDir) {
+    Path videosPath = tempDir.resolve("videosPath");
+    BrowserContext context = browser.newContext(new Browser.NewContextOptions()
+      .setRecordVideoDir(videosPath).setRecordVideoSize(320,  240));
+    Page page = context.newPage();
+    page.evaluate("() => document.body.style.backgroundColor = 'red'");
+    page.waitForTimeout(1000);
+    context.close();
+    Path savedAsPath = tempDir.resolve("my-video.webm");
+    page.video().saveAs(savedAsPath);
+    assertTrue(Files.exists(savedAsPath));
+    PlaywrightException e = assertThrows(PlaywrightException.class, () -> page.video().path());
+    assertTrue(e.getMessage().contains("Path is not available when using browserType.connect(). Use saveAs() to save a local copy."));
+  }
+
+
+  @Test
+  void shouldSaveDownload(@TempDir Path tempDir) throws IOException {
+    server.setRoute("/download", exchange -> {
+      exchange.getResponseHeaders().add("Content-Type", "application/octet-stream");
+      exchange.getResponseHeaders().add("Content-Disposition", "attachment");
+      exchange.sendResponseHeaders(200, 0);
+      try (OutputStreamWriter writer = new OutputStreamWriter(exchange.getResponseBody())) {
+        writer.write("Hello world");
+      }
+    });
+
+    Page page = browser.newPage(new Browser.NewPageOptions().setAcceptDownloads(true));
+    page.setContent("<a href='" + server.PREFIX + "/download'>download</a>");
+    Download download = page.waitForDownload(() -> page.click("a"));
+    Path nestedPath = tempDir.resolve(Paths.get("these", "are", "directories", "download.txt"));
+    download.saveAs(nestedPath);
+    assertTrue(Files.exists(nestedPath));
+    assertEquals("Hello world", new String(Files.readAllBytes(nestedPath), StandardCharsets.UTF_8));
+    PlaywrightException e = assertThrows(PlaywrightException.class, () -> download.path());
+    assertTrue(e.getMessage().contains("Path is not available when using browserType.connect(). Use download.saveAs() to save a local copy."));
+    page.close();
+  }
+
+  @Test
+  void shouldErrorWhenSavingDownloadAfterDeletion(@TempDir Path tempDir) {
+    server.setRoute("/download", exchange -> {
+      exchange.getResponseHeaders().add("Content-Type", "application/octet-stream");
+      exchange.getResponseHeaders().add("Content-Disposition", "attachment");
+      exchange.sendResponseHeaders(200, 0);
+      try (OutputStreamWriter writer = new OutputStreamWriter(exchange.getResponseBody())) {
+        writer.write("Hello world");
+      }
+    });
+    Page page = browser.newPage(new Browser.NewPageOptions().setAcceptDownloads(true));
+    page.setContent("<a href='" + server.PREFIX + "/download'>download</a>");
+    Download download = page.waitForDownload(() -> page.click("a"));
+    Path userPath = tempDir.resolve("download.txt");
+    download.delete();
+    PlaywrightException e = assertThrows(PlaywrightException.class, () -> download.saveAs(userPath));
+    assertTrue(e.getMessage().contains("Target page, context or browser has been closed"));
+    page.close();
+  }
+
+  @Test
+  void shouldSupportTracingOverWebSocket(@TempDir Path tempDir) throws IOException {
+    List<BrowserContext> contexts = browser.contexts();
+    assertEquals(1, contexts.size());
+    BrowserContext context = contexts.get(0);
+
+    Page page = context.newPage();
+    context.tracing().start(new Tracing.StartOptions().setName("test")
+      .setScreenshots(true).setSnapshots(true));
+    page.navigate(server.EMPTY_PAGE);
+    page.setContent("<button>Click</button>");
+    page.click("'Click'");
+    page.close();
+    Path traceFile = tempDir.resolve("trace.zip");
+    context.tracing().stop(new Tracing.StopOptions().setPath(traceFile));
+
+    assertTrue(Files.exists(traceFile));
+    assertTrue(Files.size(traceFile) > 0);
+  }
+
+  @Test
+  void shouldRecordTraceWithSources(@TempDir Path tmpDir) throws IOException {
+    Assumptions.assumeTrue(System.getenv("PLAYWRIGHT_JAVA_SRC") != null, "PLAYWRIGHT_JAVA_SRC must point to the directory containing this test source.");
+    context.tracing().start(new Tracing.StartOptions().setSources(true));
+    page.navigate(server.EMPTY_PAGE);
+    page.setContent("<button>Click</button>");
+    page.click("'Click'");
+    Path trace = tmpDir.resolve("trace1.zip");
+    context.tracing().stop(new Tracing.StopOptions().setPath(trace));
+
+    Map<String, byte[]> entries = parseZip(trace);
+    Map<String, byte[]> sources = entries.entrySet().stream().filter(e -> e.getKey().endsWith(".txt")).collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    assertEquals(1, sources.size());
+
+    String path = getClass().getName().replace('.', File.separatorChar);
+    Path sourceFile = Paths.get(System.getenv("PLAYWRIGHT_JAVA_SRC"), path + ".java");
+    byte[] thisFile = Files.readAllBytes(sourceFile);
+    assertEquals(new String(thisFile, UTF_8), new String(sources.values().iterator().next(), UTF_8));
+  }
+
+  @Test
+  void shouldFulfillWithGlobalFetchResult() {
+    page.route("**/*", route -> {
+      APIRequestContext request = playwright.request().newContext();
+      APIResponse response = request.get(server.PREFIX + "/simple.json");
+      route.fulfill(new Route.FulfillOptions().setResponse(response));
+    });
+    Response response = page.navigate(server.EMPTY_PAGE);
+    assertEquals(200, response.status());
+    assertEquals("{\"foo\": \"bar\"}\n", response.text());
+  }
+
+  @Test
+  void shouldUploadLargeFile(@TempDir Path tmpDir) throws IOException, ExecutionException, InterruptedException {
+    Assumptions.assumeTrue(3 <= (Runtime.getRuntime().maxMemory() >> 30), "Fails if max heap size is < 3Gb");
+    page.navigate(server.PREFIX + "/input/fileupload.html");
+    Path uploadFile = tmpDir.resolve("200MB.zip");
+    String str = String.join("", Collections.nCopies(4 * 1024, "A"));
+
+    try (Writer stream = new OutputStreamWriter(Files.newOutputStream(uploadFile))) {
+      for (int i = 0; i < 50 * 1024; i++) {
+        stream.write(str);
+      }
+    }
+    Locator input = page.locator("input[type='file']");
+    JSHandle events = input.evaluateHandle("e => {\n" +
+      "    const events = [];\n" +
+      "    e.addEventListener('input', () => events.push('input'));\n" +
+      "    e.addEventListener('change', () => events.push('change'));\n" +
+      "    return events;\n" +
+      "  }");
+    input.setInputFiles(uploadFile);
+    assertEquals("200MB.zip", input.evaluate("e => e.files[0].name"));
+    assertEquals(asList("input", "change"), events.evaluate("e => e"));
+    CompletableFuture<MultipartFormData> formData = new CompletableFuture<>();
+    server.setRoute("/upload", exchange -> {
+      try {
+        MultipartFormData multipartFormData = MultipartFormData.parseRequest(exchange);
+        formData.complete(multipartFormData);
+      } catch (Exception e) {
+        e.printStackTrace();
+        formData.completeExceptionally(e);
+      }
+      exchange.sendResponseHeaders(200, -1);
+    });
+    page.click("input[type=submit]", new Page.ClickOptions().setTimeout(90_000));
+    List<MultipartFormData.Field> fields = formData.get().fields;
+    assertEquals(1, fields.size());
+    assertEquals("200MB.zip", fields.get(0).filename);
+    assertEquals(200 * 1024 * 1024, fields.get(0).content.length());
+  }
+
+  @Test
+  void setInputFilesShouldPreserveLastModifiedTimestamp() throws IOException {
+    page.setContent("<input type=file multiple=true/>");
+    Locator input = page.locator("input");
+    input.setInputFiles(FILE_TO_UPLOAD);
+    assertEquals(asList("file-to-upload.txt"), input.evaluate("e => [...e.files].map(f => f.name)"));
+    List<Double> timestamps = (List<Double>) input.evaluate("e => [...e.files].map(f => f.lastModified)");
+    FileTime expected = Files.getLastModifiedTime(FILE_TO_UPLOAD);
+    // On Linux browser sometimes reduces the timestamp by 1ms: 1696272058110.0715  -> 1696272058109 or even
+    // rounds it to seconds in WebKit: 1696272058110 -> 1696272058000.
+    assertTrue(Math.abs(timestamps.get(0) - expected.toMillis()) < 1000, "expected: " + expected.toMillis() + "; actual: " + timestamps.get(0));
+  }
+}
