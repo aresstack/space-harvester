@@ -11,11 +11,11 @@ import java.util.Objects;
  * @param id    feste Kennung (UUID, beim Standardprojekt {@link #DEFAULT_ID}), zugleich Name des Projektordners
  * @param name  Anzeigename, frei wählbar, darf mehrfach vorkommen; beim Standardprojekt immer {@link #DEFAULT_NAME}
  * @param color die Farbe aus der festen Auswahl; {@code null} nur beim Standardprojekt
- * @param link  wohin ein Klick auf den Projektnamen unten in der Ecke führt (Angelo, 27.11.2026): eine Website
- *              ({@code http(s)://…}) oder ein lokaler Ordner bzw. eine Datei; {@code null}, solange keiner gesetzt
- *              ist. Beim Standardprojekt immer {@code null}, sein Ziel ist fest in der Oberfläche hinterlegt.
+ * @param target wohin ein Klick auf den Projektnamen unten in der Ecke führt (Angelo, 27.11.2026; F6);
+ *               {@code null}, solange keines gesetzt ist. Beim Standardprojekt immer {@code null}, sein Ziel ist fest
+ *               in der Oberfläche hinterlegt und nicht änderbar.
  */
-public record Project(String id, String name, ProjectColor color, String link) {
+public record Project(String id, String name, ProjectColor color, ProjectTarget target) {
 
     /** Die feste Kennung des Standardprojekts. */
     public static final String DEFAULT_ID = "standard";
@@ -27,21 +27,13 @@ public record Project(String id, String name, ProjectColor color, String link) {
         boolean standard = DEFAULT_ID.equals(id);
         name = standard ? DEFAULT_NAME : name == null || name.isBlank() ? "Projekt" : name.trim();
         color = standard ? null : color == null ? ProjectColor.GRAU : color;
-        link = standard || link == null || link.isBlank() ? null : link.strip();
+        target = standard ? null : target;
     }
 
     public Project(String id, String name, ProjectColor color) {
         this(id, name, color, null);
     }
 
-    /** Ob das Ziel eine Website ist (sonst ein lokaler Pfad); {@code false} ohne Ziel. */
-    public boolean linksToWebsite() {
-        if (link == null) {
-            return false;
-        }
-        String lower = link.toLowerCase(java.util.Locale.ROOT);
-        return lower.startsWith("http://") || lower.startsWith("https://");
-    }
 
     /** Das Standardprojekt. */
     public static Project standard() {
@@ -54,14 +46,14 @@ public record Project(String id, String name, ProjectColor color, String link) {
     }
 
     public Project withName(String newName) {
-        return new Project(id, newName, color, link);
+        return new Project(id, newName, color, target);
     }
 
     public Project withColor(ProjectColor newColor) {
-        return new Project(id, name, newColor, link);
+        return new Project(id, name, newColor, target);
     }
 
-    public Project withLink(String newLink) {
-        return new Project(id, name, color, newLink);
+    public Project withTarget(ProjectTarget newTarget) {
+        return new Project(id, name, color, newTarget);
     }
 }

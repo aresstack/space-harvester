@@ -67,19 +67,33 @@ class ProjectStoreTest {
     }
 
     @Test
-    void theLinkTargetIsStoredAndTheDefaultHasNone() {
+    void theTargetIsStoredWithItsKindAndTheDefaultHasNone() {
         ProjectStore store = store();
         Project project = store.create("Mit Ziel", null);
-        assertThat(project.link()).isNull();
-        store.relink(project.id(), "https://beispiel.invalid/projekt");
+        assertThat(project.target()).isNull();
+        store.retarget(project.id(), ProjectTarget.of(ProjectTarget.Kind.WEBSITE, "beispiel.invalid/projekt"));
         Project web = new ProjectStore(() -> home.resolve(ProjectStore.FOLDER)).resolve(project.id());
-        assertThat(web.link()).isEqualTo("https://beispiel.invalid/projekt");
-        assertThat(web.linksToWebsite()).isTrue();
+        assertThat(web.target()).isEqualTo(new ProjectTarget(ProjectTarget.Kind.WEBSITE,
+                "https://beispiel.invalid/projekt"));
 
-        Project folder = store.relink(project.id(), "C:\\Ablage\\Aufgaben");
-        assertThat(folder.linksToWebsite()).isFalse();
-        assertThat(store.relink(project.id(), " ").link()).isNull();
-        assertThat(store.relink(Project.DEFAULT_ID, "https://beispiel.invalid").link()).isNull();
+        ProjectTarget folder = ProjectTarget.of(ProjectTarget.Kind.PATH, "https-ordner/Aufgaben");
+        assertThat(store.retarget(project.id(), folder).target().isWebsite())
+                .as("die Art kommt aus der Wahl, nicht aus dem Inhalt").isFalse();
+        assertThat(store.retarget(project.id(), null).target()).isNull();
+        assertThat(store.retarget(Project.DEFAULT_ID, folder).target()).isNull();
+    }
+
+    @Test
+    void onlyHttpAndHttpsAreWebsites() {
+        assertThat(ProjectTarget.of(ProjectTarget.Kind.WEBSITE, "http://beispiel.invalid").value())
+                .isEqualTo("http://beispiel.invalid");
+        assertThat(ProjectTarget.of(ProjectTarget.Kind.WEBSITE, "beispiel.invalid:8080/x").value())
+                .isEqualTo("https://beispiel.invalid:8080/x");
+        assertThat(ProjectTarget.of(ProjectTarget.Kind.WEBSITE, "file:///C:/x")).isNull();
+        assertThat(ProjectTarget.of(ProjectTarget.Kind.WEBSITE, "javascript:alert(1)")).isNull();
+        assertThat(ProjectTarget.of(ProjectTarget.Kind.WEBSITE, " ")).isNull();
+        assertThat(ProjectTarget.of(ProjectTarget.Kind.PATH, " /ablage/aufgaben ").value())
+                .isEqualTo("/ablage/aufgaben");
     }
 
     @Test

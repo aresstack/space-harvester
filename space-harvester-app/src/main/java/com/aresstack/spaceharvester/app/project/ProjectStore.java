@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
 
 /**
  * Die Projekte im Datenordner der App (ADR 0043, Abschnitt 3 und Nachtrag F4): je Projekt ein Ordner
- * {@code projekte/<id>/}, darin {@code projekt.json} mit Versionsfeld, Name, Farbe und Link-Ziel. Atomar geschrieben, eine
+ * {@code projekte/<id>/}, darin {@code projekt.json} mit Versionsfeld, Name, Farbe und Ziel. Atomar geschrieben, eine
  * unlesbare Datei kommt in Quarantäne und das Projekt fehlt, bis jemand sie repariert; überschrieben wird sie nie.
  *
  * <p>Das Standardprojekt „AresStack“ gibt es immer, ohne Datei; es lässt sich weder umbenennen noch umfärben noch
@@ -179,13 +179,13 @@ public final class ProjectStore {
         return recolored;
     }
 
-    /** Setzt das Link-Ziel ({@code null} oder leer entfernt es); beim Standardprojekt unverändert. */
-    public synchronized Project relink(String projectId, String link) {
+    /** Setzt das Ziel ({@code null} entfernt es); beim Standardprojekt unverändert, sein Ziel ist fest. */
+    public synchronized Project retarget(String projectId, ProjectTarget target) {
         Project project = existing(projectId);
         if (project == null || project.isDefault()) {
             return project;
         }
-        Project relinked = project.withLink(link);
+        Project relinked = project.withTarget(target);
         write(relinked);
         changed();
         return relinked;
@@ -329,8 +329,9 @@ public final class ProjectStore {
         if (project.color() != null) {
             content.put("color", project.color().key());
         }
-        if (project.link() != null) {
-            content.put("link", project.link());
+        if (project.target() != null) {
+            content.put("targetKind", project.target().kind().key());
+            content.put("target", project.target().value());
         }
         try {
             ProfileFiles.writeAtomic(folder.resolve(FILE), JSON.writeValueAsString(content));
@@ -351,7 +352,10 @@ public final class ProjectStore {
                 throw new IllegalStateException("Kennung passt nicht zum Ordner");
             }
             JsonNode name = json.get("name");
-            return new Project(id, text(json, "name"), ProjectColor.of(text(json, "color")), text(json, "link"));
+            ProjectTarget.Kind kind = ProjectTarget.Kind.of(text(json, "targetKind"));
+            String target = text(json, "target");
+            return new Project(id, text(json, "name"), ProjectColor.of(text(json, "color")),
+                    kind == null || target == null || target.isBlank() ? null : new ProjectTarget(kind, target));
         } catch (IOException | RuntimeException e) {
             quarantine(file, e);
             return null;
