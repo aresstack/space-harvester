@@ -255,8 +255,13 @@ public final class ChatArtifactStore {
                 return WriteResult.failed(current, "Es gibt nichts mehr rückgängig zu machen.");
             }
             List<String> changed = changedBetween(current.current().document(), target.document());
+            // Die Abschnitte des Ziels, aber der Zähler bleibt oben: eine zurückgenommene Kennung kommt nie wieder.
+            SectionDocument now = current.current().document();
+            SectionDocument restored = target.document() == null || now == null ? target.document()
+                    : new SectionDocument(target.document().sections(),
+                    Math.max(target.document().nextId(), now.nextId()));
             ChatArtifact.Revision revision = new ChatArtifact.Revision(current.revision() + 1, target.parent(),
-                    System.currentTimeMillis(), origin, "rückgängig", changed, target.document(), target.svg());
+                    System.currentTimeMillis(), origin, "rückgängig", changed, restored, target.svg());
             result = store(folder, chatId, current, current.with(revision), changed);
         }
         if (result.success()) {

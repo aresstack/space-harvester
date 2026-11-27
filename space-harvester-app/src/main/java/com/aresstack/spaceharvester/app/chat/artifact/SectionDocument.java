@@ -21,7 +21,8 @@ public record SectionDocument(List<Section> sections, long nextId) {
     public record Section(String id, int level, String heading, String text) {
         public Section {
             heading = heading == null ? "" : heading.strip();
-            text = text == null ? "" : text.strip();
+            // Nur leere Randzeilen und Leerraum am Ende fallen weg; Einrückung (Codeblock) bleibt.
+            text = text == null ? "" : LEADING_BLANK_LINES.matcher(text).replaceFirst("").stripTrailing();
         }
 
         /** Grob gezählte Wörter des Texts (ohne Überschrift). */
@@ -54,7 +55,9 @@ public record SectionDocument(List<Section> sections, long nextId) {
     public record Change(SectionDocument document, List<String> touched) {
     }
 
-    private static final Pattern HEADING = Pattern.compile("^ {0,3}(#{1,6})[ \\t]+(.*?)[ \\t]*#*[ \\t]*$");
+    // Schließende # nur nach Leerraum, damit „# C#“ seine Raute behält.
+    private static final Pattern HEADING = Pattern.compile("^ {0,3}(#{1,6})[ \\t]+(.*?)(?:[ \\t]+#+)?[ \\t]*$");
+    private static final Pattern LEADING_BLANK_LINES = Pattern.compile("^(?:[ \\t]*\\R)+");
     private static final Pattern FENCE = Pattern.compile("^ {0,3}(`{3,}|~{3,})(.*)$");
     private static final Pattern REFERENCE_DEFINITION = Pattern.compile("^ {0,3}\\[[^\\]]+]:[ \\t]*\\S.*$");
     private static final String PREFIX = "a";
@@ -181,10 +184,8 @@ public record SectionDocument(List<Section> sections, long nextId) {
             throw new SectionException("Die Textstelle kommt in Abschnitt " + old.id() + " " + count
                     + "-mal vor. Mehr Umgebung angeben, damit sie eindeutig ist.");
         }
-        String text = old.text().replace(search, replacement == null ? "" : replacement);
-        List<Section> list = new ArrayList<>(sections);
-        list.set(index, new Section(old.id(), old.level(), old.heading(), text));
-        return new Change(new SectionDocument(list, nextId), List.of(old.id()));
+        // Wie beim Ersetzen des Texts: neue Überschriften in der Ersetzung werden eigene Abschnitte.
+        return split(old.text().replace(search, replacement == null ? "" : replacement), index, old);
     }
 
     /**
