@@ -1813,12 +1813,24 @@ final class Playwright4jDriver implements PlaywrightDriver {
     @Override
     public boolean challengePresent() {
         owner.check();
-        if (closed || !captcha.enabled) {
+        if (!captcha.enabled) {
+            return false;
+        }
+        // Only a VISIBLE/blocking challenge counts here (this drives challenge parking) — a hidden
+        // artifact ('hidden:…') must never park a readable page.
+        return challengeShown();
+    }
+
+    /**
+     * Whether the current page shows a visible, blocking challenge widget by the configured detection, whether or not
+     * challenge handling (parking) is switched on: the chat's page check tells the model and the user about it.
+     */
+    boolean challengeShown() {
+        owner.check();
+        if (closed) {
             return false;
         }
         try {
-            // Only a VISIBLE/blocking challenge counts here (this drives challenge parking) — a hidden
-            // artifact ('hidden:…') must never park a readable page.
             return String.valueOf(readPage(page, SearchPageGuards.challengeDetectScript(captcha)))
                     .startsWith("visible");
         } catch (RuntimeException ex) {

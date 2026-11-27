@@ -1386,7 +1386,8 @@ public final class PageDetailPanel extends JPanel {
         } else if (SOURCE_CARD.equals(pageCard) || wide && pageId == null) {
             more.setEnabled(false);
         }
-        if (artifactTabs != null && (export.selection() != null || !artifactTabs.artifacts().isEmpty())) {
+        if (artifactTabs != null && (export.selection() != null || !artifactTabs.artifacts().isEmpty()
+                || !artifactTabs.deletedArtifacts().isEmpty())) {
             more.setEnabled(true); // „Neuer Export“ und die Artefakte des Chats stehen in jedem Fall im Menü
         }
         heading.revalidate();
@@ -6526,7 +6527,20 @@ public final class PageDetailPanel extends JPanel {
                     ? ARTIFACT_GRAPHIC : ARTIFACT_DOCUMENT;
             menu.add(menuItem(kind + artifact.title(), ARTIFACT_TIP, true, () -> artifactTabs.open(artifact.id())));
         }
+        // Gelöschte bis zum nächsten Start, durchgestrichen wie gelöschte Chats; ein Klick stellt wieder her.
+        for (com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact artifact : artifactTabs.deletedArtifacts()) {
+            String kind = artifact.kind() == com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact.Kind.GRAPHIC
+                    ? ARTIFACT_GRAPHIC : ARTIFACT_DOCUMENT;
+            menu.add(menuItem("<html><s>" + escapeArtifactTitle(kind + artifact.title()) + "</s></html>",
+                    ARTIFACT_RESTORE_TIP, true, () -> artifactTabs.restore(artifact.id())));
+        }
     }
+
+    private static String escapeArtifactTitle(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    static final String ARTIFACT_RESTORE_TIP = "Gelöscht – Klick stellt das Artefakt wieder her";
 
     static final String NEW_EXPORT = "Neuer Export";
     static final String NEW_EXPORT_TIP = "Öffnet einen Export-Reiter für die Auswahl links";

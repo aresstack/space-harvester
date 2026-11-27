@@ -227,7 +227,8 @@ final class PlaywrightChatConnection implements BrowserConnection {
     public BrowserProbe probe(String contextId) throws BrowserException {
         return onOwner(session -> {
             check();
-            return operations.probe(tab(session, contextId));
+            Page page = tab(session, contextId);
+            return operations.probe(page, session::challengeShown);
         });
     }
 

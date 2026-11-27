@@ -208,6 +208,8 @@ Ehrlich festgehalten, weil es der Korrektur widerspricht und in den Schritten ob
 - Space Harvester (#1633) nutzt diese Chat-Engine mit Edge als Vorgabe und hat `enterprise-ai-browser` bereits
   entfernt, also vor der Abnahme. #1633 ist auf develop und auf main: Das latest öffnet im Chat schon Edge, das alte
   Modul fehlt dort. Schritt 8 stellt auf die korrigierte Fassung mit Firefox als Standard um.
+- Nachtrag 27.11.2026 nachts: Schritt 5 und 6 haben die Chat-Engine auf den Recherche-Treiber gelegt (research4j
+  #7 bis #14, eine Implementierung). Schritt 8: Vorgabe ist der installierte Firefox, Edge und Chrome bleiben wählbar.
 - Die Captcha-Messung Edge gegen Camoufox entfällt.
 
 ## Offen
