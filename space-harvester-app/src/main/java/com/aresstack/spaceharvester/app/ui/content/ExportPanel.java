@@ -34,7 +34,6 @@ import com.aresstack.spaceharvester.application.sources.Partition;
 
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
-import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
@@ -307,16 +306,13 @@ public final class ExportPanel extends JPanel {
     static final String NO_SPACES = "keine Spaces bekannt";
     /** Ein leerer Favoriten-Ordner (ADR 0034): nichts zu exportieren. */
     static final String NO_FAVORITES = "keine Favoriten im Ordner";
+    /** Text einer Zeile ohne laufenden Auftrag und ohne Datei; solche Zeilen zeigt die Fläche nicht (siehe unten). */
     static final String NOTHING_YET = "noch nichts ausgegeben";
     /*
      * Die Karte „Stand“ mit „Samt Unterseiten laden“, „Nur diese Seite laden“ und „Bilder/Anhänge beschaffen“ ist weg
      * (Angelo, 20.11.2026): Das ist Indexieren, im Kontextmenü des Baums; wie viel lokal liegt, zeigt dort das
      * Bestandszeichen.
      */
-    static final String NO_DATASET = "Noch nichts ausgegeben; ein Format-Knopf indexiert erst, was in der Auswahl "
-            + "fehlt oder veraltet ist, und erzeugt dann die Datei.";
-    static final String NO_HOLDINGS = "Kein Bestand für diese Auswahl: ein Format-Knopf lädt erst die Seiten von der "
-            + "Quelle und erzeugt dann die Datei.";
     static final String NOT_AVAILABLE = "kein Datenbestand vorhanden";
     static final String NO_SELECTION = "keine Auswahl";
     /** Die Format-Knöpfe sperrt nur ein offener Auftrag der Auswahl (Architekt 17.11.2026), wie beim Space. */
@@ -349,7 +345,16 @@ public final class ExportPanel extends JPanel {
     final JTextArea cardImages = Comic.note("");
     /** Die Dateien dieses Downloads im Ausgabeordner und laufende Exporte, eine Zeile je Datei. */
     final JTextArea files = Comic.note("");
-    private final JLabel output = new JLabel();
+    /** Die Knöpfe der Ausgabe (Formate und Exporte aus der Quelle) für die untere Leiste. */
+    private final JPanel formatBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 4, 0));
+    /**
+     * Was ein Klick auf einen Knopf der Ausgabe tut, wenn nicht diese Fläche den Auftrag startet: die Fläche ohne
+     * Reiter öffnet dafür einen Export-Reiter (ADR 0045 §5); {@code null} startet hier.
+     */
+    private java.util.function.BiConsumer<Selection, String> launcher;
+    /** Ein Knopf, der gedrückt wurde, bevor diese Fläche ihre Auswahl geladen hatte; läuft nach dem ersten Zeigen. */
+    private String pendingStart;
+    private boolean disposed;
     private final ComposerButton openOutput = Comic.button("Ordner öffnen", "Den Ausgabeordner anzeigen");
     /** Hinweise der letzten Konvertierung des gezeigten Downloads (fehlende Bilder, Diagramme …), aufklappbar. */
     final ComposerButton toggleNotices = Comic.button("Hinweise anzeigen", "Was in der Datei fehlt oder vereinfacht ist");
@@ -416,8 +421,6 @@ public final class ExportPanel extends JPanel {
         super(new BorderLayout(0, 8));
         this.context = context;
         setOpaque(false);
-        output.setFont(Comic.regular(13f));
-        output.setForeground(Comic.INK);
         openOutput.addActionListener(e -> {
             if (context.settings() != null) {
                 SettingsView.open(context.settings().outputDirectory(), feedback);
@@ -428,25 +431,26 @@ public final class ExportPanel extends JPanel {
             renderNotices();
         });
 
-        JPanel formats = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+        // Die Knöpfe der Ausgabe stehen mittig in der unteren Leiste mit der Lupe (Angelo 27.11.2026, ADR 0045 §5);
+        // die Seitenmitte holt sie mit formatBar() dorthin.
+        JPanel formats = formatBar;
         formats.setOpaque(false);
         for (String format : FORMATS) {
             IconButton button = new IconButton(FormatIcon.of(format.equals("markdown-package") ? "markdown"
                     : format.equals("json-package") ? "json" : format), EXPORT_TIPS.get(format));
-            button.addActionListener(e -> output(format));
+            button.addActionListener(e -> start(format));
             formatButtons.put(format, button);
             formats.add(button);
         }
         formats.add(javax.swing.Box.createHorizontalStrut(10));
         for (String kind : SOURCE_EXPORTS) {
             IconButton button = new IconButton(FormatIcon.of(kind), SOURCE_TIPS.get(kind));
-            button.addActionListener(e -> startSource(kind));
+            button.addActionListener(e -> start(kind));
             sourceButtons.put(kind, button);
             formats.add(button);
         }
         JPanel outputHead = new JPanel(new BorderLayout(0, 4));
         outputHead.setOpaque(false);
-        outputHead.add(formats, BorderLayout.NORTH);
         outputHead.add(cardImages, BorderLayout.CENTER);
         JPanel produced = new JPanel(new BorderLayout(0, 4));
         produced.setOpaque(false);
@@ -461,7 +465,7 @@ public final class ExportPanel extends JPanel {
         outputBody.setOpaque(false);
         outputBody.add(outputHead, BorderLayout.NORTH);
         outputBody.add(produced, BorderLayout.CENTER);
-        outputBody.add(Comic.row(output, openOutput), BorderLayout.SOUTH);
+        outputBody.add(Comic.row(openOutput), BorderLayout.SOUTH);
         outputPlate = Comic.plate("Ausgabe", Comic.GREEN, outputBody);
 
         // Kein eigener Titel und kein Hinweistext (Angelo): die Kopfzeile nennt die Auswahl, der Reiter heißt Export.
@@ -487,9 +491,73 @@ public final class ExportPanel extends JPanel {
         noticeList.setVisible(false);
         render(Data.NONE);
         context.onChange(ignored -> {
-            subscribe();
-            refresh();
+            if (!disposed) {
+                subscribe();
+                refresh();
+            }
         });
+    }
+
+    /** Ob die Fläche die Daten ihrer Auswahl zeigt (für Tests: geladen). */
+    boolean showsSelection() {
+        return selection != null && Objects.equals(shown.selection(), selection);
+    }
+
+    /** Die Knöpfe der Ausgabe, für die untere Leiste der Seitenmitte. */
+    public JComponent formatBar() {
+        return formatBar;
+    }
+
+    /** Ein Klick auf einen Knopf der Ausgabe geht an {@code launcher} statt einen Auftrag hier zu starten. */
+    void launcher(java.util.function.BiConsumer<Selection, String> launcher) {
+        this.launcher = launcher;
+    }
+
+    /** Startet den Export {@code key} (ein Format oder ein Export aus der Quelle), sobald die Auswahl geladen ist. */
+    void startWhenShown(String key) {
+        if (key == null) {
+            return;
+        }
+        if (Objects.equals(shown.selection(), selection) && selection != null) {
+            run(key);
+        } else {
+            pendingStart = key;
+        }
+    }
+
+    /** Ein Knopf der Ausgabe: an den {@link #launcher} oder hier starten. */
+    void start(String key) {
+        if (launcher != null) {
+            if (selection != null) {
+                launcher.accept(selection, key);
+            }
+            return;
+        }
+        run(key);
+    }
+
+    private void run(String key) {
+        if (SOURCE_EXPORTS.contains(key)) {
+            startSource(key);
+        } else {
+            output(key);
+        }
+    }
+
+    /** Wie der Reiter eines Exports heißt: Format oder Export aus der Quelle. */
+    static String exportTitle(String key) {
+        return SOURCE_EXPORTS.contains(key) ? sourceTitle(key) : Format.title(key);
+    }
+
+    /** Meldet die Fläche ab (Reiter geschlossen); laufende Aufträge laufen weiter. */
+    void dispose() {
+        disposed = true;
+        if (subscription != null) {
+            subscription.close();
+            subscription = null;
+        }
+        holdingsSubscriptions.forEach(Subscription::close);
+        holdingsSubscriptions.clear();
     }
 
     /** Die Auswahl links hat gewechselt (Explorer); {@code null} ohne Auswahl. */
@@ -874,6 +942,11 @@ public final class ExportPanel extends JPanel {
     private void finish(Data data) {
         data.finished().forEach(job -> finishOutput(job, data.produced().get(job.id())));
         data.finishedSource().forEach(this::finishSource);
+        if (pendingStart != null && Objects.equals(data.selection(), selection)) {
+            String key = pendingStart;
+            pendingStart = null;
+            run(key);
+        }
     }
 
     /** Alles, was {@link #render} zeigt; {@link #NONE} ohne Auswahl oder Laufzeit. */
@@ -951,16 +1024,24 @@ public final class ExportPanel extends JPanel {
             }
             return;
         }
+        // Ob schon ausgegeben wurde, merkt sich die App nur intern (Angelo 27.11.2026): Zeilen ohne laufenden Auftrag
+        // und ohne Datei bleiben weg.
+        boolean any = false;
         for (SpaceRow row : rows) {
+            if (row.idle()) {
+                continue;
+            }
+            any = true;
             ComposerButton open = null;
             if (!row.files().isEmpty() && directory != null) {
                 Path file = directory.resolve(row.files().get(0));
                 open = Comic.button("Öffnen", file.toString());
                 open.addActionListener(e -> SettingsView.open(file, feedback));
             }
-            spaces.add(row.label(), row.text(), row.idle() ? Comic.MUTED : Comic.INK, open,
+            spaces.add(row.label(), row.text(), Comic.INK, open,
                     row.files().isEmpty() ? null : String.join("\n", row.files()));
         }
+        spaces.setVisible(any);
     }
 
     /**
@@ -1000,8 +1081,6 @@ public final class ExportPanel extends JPanel {
     private void renderOutput(Data data) {
         ExportDatasetInfo dataset = data.dataset();
         Path directory = context.settings() == null ? null : context.settings().outputDirectory();
-        output.setText("Ausgabeordner: " + (directory == null ? "–" : name(directory)));
-        output.setToolTipText(directory == null ? null : directory.toString());
         outputFiles = data.files();
         boolean other = dataset == null || shownDataset == null
                 || !shownDataset.exportId().equals(dataset.exportId());
@@ -1022,9 +1101,11 @@ public final class ExportPanel extends JPanel {
         }
         if (dataset == null) {
             cardImages.setVisible(false);
+            // Ob schon ausgegeben wurde, merkt sich die App nur intern (Angelo 27.11.2026); gezeigt wird nur ein
+            // laufender Auftrag.
             String running = conversionText(data.conversion());
-            files.setText(running != null ? running
-                    : shownHoldings == null || shownHoldings.counts().stored() == 0 ? NO_HOLDINGS : NO_DATASET);
+            files.setVisible(running != null);
+            files.setText(running == null ? "" : running);
             files.setForeground(Comic.MUTED);
             toggleNotices.setVisible(false);
             noticeList.setVisible(false);

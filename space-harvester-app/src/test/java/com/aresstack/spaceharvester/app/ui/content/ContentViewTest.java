@@ -157,9 +157,8 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.standingFoot().trailing().isVisible())).isFalse();
         // Für den Fehlerfall, versteckt hinter dem Dreieck: die Kennzahlen des Knotens neu aufbauen.
         assertThat(onEdt(() -> detail.moreButton().isEnabled())).isTrue();
-        assertThat(onEdt(() -> java.util.Arrays.stream(detail.moreMenu().getComponents())
-                .map(item -> ((javax.swing.JMenuItem) item).getText()).toList()))
-                .containsExactly(PageDetailPanel.REBUILD_COUNTS);
+        assertThat(onEdt(() -> allMenuEntries(detail)))
+                .containsExactly(PageDetailPanel.REBUILD_COUNTS, "—", PageDetailPanel.NEW_EXPORT);
     }
 
     @Test
@@ -192,6 +191,17 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Export");
         assertThat(onEdt(tabs::focus)).isEqualTo("D1");
+        // Unten nur die Formate des Artefakts; ohne Reiter wieder alle Knöpfe der Ausgabe (ADR 0045 §5).
+        assertThat(onEdt(() -> ((java.awt.Container) detail.footTools().getComponent(0)).getComponent(0)))
+                .isInstanceOf(javax.swing.JPanel.class);
+        assertThat(onEdt(() -> tabs.footBar().getComponentCount())).isEqualTo(3);
+        onEdt(() -> {
+            tabs.showPage();
+            return null;
+        });
+        assertThat(onEdt(tabs::footBar)).isNull();
+        assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(detail.export().formatBar(),
+                detail.footTools()))).isTrue();
     }
 
     @Test
@@ -243,13 +253,8 @@ class ContentViewTest {
                     && javax.swing.SwingUtilities.isDescendingFrom(view.detail().moreButton(), row)
                     && !javax.swing.SwingUtilities.isDescendingFrom(row, view.detail());
         })).isTrue();
-        assertThat(onEdt(() -> {
-            List<String> entries = new java.util.ArrayList<>();
-            for (java.awt.Component item : view.detail().moreMenu().getComponents()) {
-                entries.add(((javax.swing.JMenuItem) item).getText());
-            }
-            return entries;
-        })).containsExactly("Lesezeichen kopieren", "Im Browser öffnen");
+        assertThat(onEdt(() -> allMenuEntries(view.detail()))).containsExactly("Lesezeichen kopieren",
+                "Im Browser öffnen (gesperrt)", "—", PageDetailPanel.NEW_EXPORT + " (gesperrt)");
         // Sichtprüfung der Kopfzeile, nur mit der Umgebungsvariable HEADER_SCREENSHOT (Pfad der PNG-Datei).
         String screenshot = System.getenv("HEADER_SCREENSHOT");
         if (screenshot != null && !screenshot.isBlank()) {
@@ -664,7 +669,20 @@ class ContentViewTest {
     private static final String[] MODEL_ROWS = {"Modell Podcast: Standard", "Modell Bildgenerierung – Plan: Standard",
             "Modell Bildgenerierung – Einzelteile: Standard", "Modell Podcast – Sprache: Standard"};
 
+    /**
+     * Die Einträge des Menüs am Dreieck zur gezeigten Ansicht, ohne den Teil der Schreibumgebung darunter („Neuer
+     * Export“ und die Artefakte, ADR 0045 §5), den theArtifactsOfTheChatStandInTheMoreMenu… prüft.
+     */
     private static List<String> menuEntries(PageDetailPanel detail) {
+        List<String> entries = allMenuEntries(detail);
+        int writing = entries.indexOf(PageDetailPanel.NEW_EXPORT);
+        if (writing < 0) {
+            writing = entries.indexOf(PageDetailPanel.NEW_EXPORT + " (gesperrt)");
+        }
+        return writing <= 0 ? entries : entries.subList(0, writing - 1);
+    }
+
+    private static List<String> allMenuEntries(PageDetailPanel detail) {
         List<String> entries = new java.util.ArrayList<>();
         for (java.awt.Component item : detail.moreMenu().getComponents()) {
             entries.add(item instanceof javax.swing.JMenuItem entry

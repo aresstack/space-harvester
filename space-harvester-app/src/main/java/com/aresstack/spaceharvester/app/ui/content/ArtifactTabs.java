@@ -25,16 +25,19 @@ import java.util.function.Consumer;
 
 /**
  * Die Artefakte des offenen Chats als schließbare Reiter in der Export-Ansicht (ADR 0045, Abschnitt 5; Angelo
- * 27.11.2026: „Schreiben ist eine Art Export“). Die Reiterzeile erscheint erst, wenn ein Artefakt offen ist; in den
- * anderen Ansichten gibt es sie nicht. Ohne gewählten Reiter zeigt die Fläche den Export der Auswahl links; wählt der
- * Benutzer links etwas Neues, kommt er zurück und die Reiter bleiben stehen. Welche Reiter offen waren, merkt sich der Chat ({@link ChatArtifactStore#openTabs}).
+ * 27.11.2026: „Schreiben ist eine Art Export“), daneben die Export-Reiter: Ein Klick auf einen Knopf der Ausgabe
+ * öffnet einen eigenen Reiter für Auswahl und Auftrag, der stehen bleibt. Die Reiterzeile erscheint erst, wenn ein Reiter
+ * offen ist; in den anderen Ansichten gibt es sie nicht. Ohne gewählten Reiter zeigt die Fläche den Export der Auswahl
+ * links; wählt der Benutzer links etwas Neues, kommt er zurück und die Reiter bleiben stehen. Die Knöpfe unten
+ * ({@link #footBar}) richten sich nach dem gewählten Reiter. Welche Reiter offen waren, merkt sich der Chat ({@link ChatArtifactStore#openTabs}).
  */
 final class ArtifactTabs implements ChatPanel.ArtifactHost {
 
     static final String CLOSE = "Reiter schließen (auch Mittelklick auf den Reiter)";
     static final String UNDO = "Letzte Änderung rückgängig machen";
-    static final String EXPORT = "Exportieren (Ablage im Ausgabeordner)";
-    static final String SVG_LABEL = "SVG";
+    static final String EXPORT_AS = "Exportieren als %s (Ablage im Ausgabeordner)";
+    static final String CLOSE_EXPORT = "Reiter schließen; der Auftrag läuft weiter (auch Mittelklick)";
+    static final String NEW_EXPORT = "Export";
     private static final String PAGE = "seite";
     private static final String ARTIFACT = "artefakt";
 
@@ -43,14 +46,21 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     private final JPanel strip = new JPanel(new BorderLayout());
     // Umbrechend mit mitwachsender Höhe, damit bei vielen oder langen Reitern keiner abgeschnitten wird.
     private final JPanel pills = new JPanel(new WrapLayout(FlowLayout.LEFT, 4, 4));
-    /** Rechts in der Reiterzeile, nur bei gewähltem Artefakt: Rückgängig und Export (ADR 0045, Abschnitt 8). */
+    /** Rechts in der Reiterzeile, nur bei gewähltem Artefakt: Rückgängig (ADR 0045, Abschnitt 8). */
     private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 3, 4));
     private final com.aresstack.spaceharvester.app.ui.controls.FlatIconButton undo =
             new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(
                     com.aresstack.spaceharvester.app.ui.Glyph.UNDO, UNDO);
-    private final com.aresstack.spaceharvester.app.ui.controls.FlatIconButton export =
-            new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(
-                    com.aresstack.spaceharvester.app.ui.Glyph.EXPORT, EXPORT);
+    /** Die Formate des gewählten Artefakts für die untere Leiste: nur, was es kann (ADR 0045 §5). */
+    private final JPanel documentBar = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0));
+    private final JPanel graphicBar = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0));
+    /** Export-Reiter der Sitzung, je Kennung; sie gehören keinem Chat und bleiben beim Chatwechsel. */
+    private final Map<String, ExportTab> exports = new LinkedHashMap<>();
+    private final java.util.function.Supplier<ExportPanel> exportPanels;
+    private int nextExport = 1;
+    private String selectedExport;
+    /** Meldet einen Wechsel des gewählten Reiters, damit die untere Leiste folgt. */
+    private Runnable selectionChanged = () -> { };
     private final java.util.function.Supplier<Path> output;
     private final Consumer<String> status;
     private final CardLayout cards = new CardLayout();
@@ -68,26 +78,36 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     private record Tab(ClosableTab pill, ArtifactView view) {
     }
 
+    private record ExportTab(ClosableTab pill, ExportPanel panel) {
+    }
+
     ArtifactTabs(ChatArtifactStore store, JComponent page) {
-        this(store, page, () -> null, text -> { });
+        this(store, page, () -> null, text -> { }, () -> null);
     }
 
     /**
      * @param output der Ausgabeordner der Einstellungen ({@code null} ohne)
      * @param status zeigt eine Meldung in der Statuszeile
+     * @param exportPanels eine neue Export-Fläche für einen Export-Reiter; {@code null} ohne Export-Reiter
      */
     ArtifactTabs(ChatArtifactStore store, JComponent page, java.util.function.Supplier<Path> output,
-                 Consumer<String> status) {
+                 Consumer<String> status, java.util.function.Supplier<ExportPanel> exportPanels) {
         this.store = store;
         this.output = output;
         this.status = status;
+        this.exportPanels = exportPanels;
+        documentBar.setOpaque(false);
+        graphicBar.setOpaque(false);
+        for (com.aresstack.spaceharvester.app.chat.ChatExport.Format format
+                : com.aresstack.spaceharvester.app.chat.ChatExport.Format.values()) {
+            documentBar.add(formatButton(formatIcon(format), format.label, () -> exportSelected(format)));
+        }
+        graphicBar.add(formatButton("svg", "SVG", () -> exportSelected(null)));
         pills.setOpaque(false);
         actions.setOpaque(false);
         actions.add(undo);
-        actions.add(export);
         actions.setVisible(false);
         undo.addActionListener(event -> undo());
-        export.addActionListener(event -> showExportMenu());
         strip.add(pills, BorderLayout.CENTER);
         strip.add(actions, BorderLayout.EAST);
         strip.setOpaque(true);
@@ -120,6 +140,10 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         tabs.clear();
         group = new ButtonGroup();
         pills.removeAll();
+        exports.values().forEach(tab -> {
+            group.add(tab.pill());
+            pills.add(tab.pill());
+        });
         selected = null;
         artifactSlot.removeAll();
         if (folder != null && chatId != null) {
@@ -162,13 +186,103 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         return selected;
     }
 
+    /** Meldet jeden Wechsel des gewählten Reiters (für die untere Leiste). */
+    void onSelectionChanged(Runnable changed) {
+        selectionChanged = changed == null ? () -> { } : changed;
+    }
+
+    /**
+     * Die Knöpfe für die untere Leiste: beim Artefakt nur seine Formate, beim Export-Reiter die Knöpfe seiner Fläche;
+     * {@code null} ohne gewählten Reiter (dann die Knöpfe der Export-Fläche der Auswahl links).
+     */
+    JComponent footBar() {
+        if (selectedExport != null) {
+            ExportTab tab = exports.get(selectedExport);
+            return tab == null ? null : tab.panel().formatBar();
+        }
+        if (selected == null) {
+            return null;
+        }
+        ChatArtifact artifact = store.read(folder, chatId, selected);
+        return artifact != null && artifact.kind() == ChatArtifact.Kind.GRAPHIC ? graphicBar : documentBar;
+    }
+
+    /**
+     * Öffnet einen Export-Reiter für {@code selection} und startet darin {@code key} (Format oder Export aus der
+     * Quelle); ohne {@code key} („Neuer Export“) nur den Reiter. Der Reiter bleibt bei dieser Auswahl stehen.
+     */
+    void openExport(ExportPanel.Selection selection, String key) {
+        ExportPanel panel = exportPanels == null || selection == null ? null : exportPanels.get();
+        if (panel == null) {
+            return;
+        }
+        String id = "E" + nextExport++;
+        String title = (selection.title() == null || selection.title().isBlank() ? NEW_EXPORT : selection.title())
+                + (key == null ? "" : " · " + ExportPanel.exportTitle(key));
+        ClosableTab pill = new ClosableTab(ComposerIcons.export(), title, title, CLOSE_EXPORT, () -> closeExport(id));
+        pill.addActionListener(event -> selectExport(id));
+        exports.put(id, new ExportTab(pill, panel));
+        group.add(pill);
+        pills.add(pill);
+        panel.selection(selection);
+        refreshStrip();
+        selectExport(id);
+        reveal.run();
+        panel.startWhenShown(key);
+    }
+
+    /** Für Tests: die offenen Export-Reiter. */
+    List<String> exportIds() {
+        return new ArrayList<>(exports.keySet());
+    }
+
+    /** Für Tests: die Fläche des gewählten Export-Reiters, sonst {@code null}. */
+    ExportPanel selectedExport() {
+        ExportTab tab = selectedExport == null ? null : exports.get(selectedExport);
+        return tab == null ? null : tab.panel();
+    }
+
+    private void selectExport(String id) {
+        ExportTab tab = exports.get(id);
+        if (tab == null) {
+            return;
+        }
+        selected = null;
+        selectedExport = id;
+        actions.setVisible(false);
+        tab.pill().setSelected(true);
+        artifactSlot.removeAll();
+        artifactSlot.add(tab.panel(), BorderLayout.CENTER);
+        artifactSlot.revalidate();
+        artifactSlot.repaint();
+        cards.show(center, ARTIFACT);
+        selectionChanged.run();
+    }
+
+    /** Schließt einen Export-Reiter; sein Auftrag läuft weiter, keine Datei wird gelöscht. */
+    private void closeExport(String id) {
+        ExportTab tab = exports.remove(id);
+        if (tab == null) {
+            return;
+        }
+        tab.panel().dispose();
+        group.remove(tab.pill());
+        pills.remove(tab.pill());
+        refreshStrip();
+        if (id.equals(selectedExport)) {
+            showPage();
+        }
+    }
+
     /** Die Seite kommt zurück (der Benutzer hat links etwas gewählt); die Reiter bleiben stehen. */
     void showPage() {
         selected = null;
+        selectedExport = null;
         actions.setVisible(false);
         group.clearSelection();
         artifactSlot.removeAll();
         cards.show(center, PAGE);
+        selectionChanged.run();
     }
 
     /** Für Tests: die offenen Reiter. */
@@ -204,6 +318,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
             return;
         }
         selected = id;
+        selectedExport = null;
         tab.pill().setSelected(true);
         artifactSlot.removeAll();
         artifactSlot.add(tab.view(), BorderLayout.CENTER);
@@ -212,6 +327,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         cards.show(center, ARTIFACT);
         actions.setVisible(true);
         refreshUndo();
+        selectionChanged.run();
     }
 
     private void close(String id) {
@@ -236,7 +352,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     }
 
     private void refreshStrip() {
-        strip.setVisible(!tabs.isEmpty());
+        strip.setVisible(!tabs.isEmpty() || !exports.isEmpty());
         strip.revalidate();
         strip.repaint();
     }
@@ -259,27 +375,29 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         undo.setEnabled(artifact != null && artifact.undoable());
     }
 
-    /** Das Menü am Export-Knopf: Markdown, Word, PDF für Dokumente, SVG für Grafiken. */
-    private void showExportMenu() {
+    /** Exportiert das gewählte Artefakt; {@code format} {@code null} heißt SVG. */
+    private void exportSelected(com.aresstack.spaceharvester.app.chat.ChatExport.Format format) {
         ChatArtifact artifact = selected == null ? null : store.read(folder, chatId, selected);
-        if (artifact == null) {
-            return;
+        if (artifact != null) {
+            export(artifact, format);
         }
-        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
-        if (artifact.kind() == ChatArtifact.Kind.GRAPHIC) {
-            javax.swing.JMenuItem item = new javax.swing.JMenuItem(SVG_LABEL);
-            item.addActionListener(event -> export(artifact, null));
-            menu.add(item);
-        } else {
-            for (com.aresstack.spaceharvester.app.chat.ChatExport.Format format
-                    : com.aresstack.spaceharvester.app.chat.ChatExport.Format.values()) {
-                javax.swing.JMenuItem item = new javax.swing.JMenuItem(format.label);
-                item.addActionListener(event -> export(artifact, format));
-                menu.add(item);
-            }
-        }
-        com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(menu, export)
-                .show(export, 0, export.getHeight());
+    }
+
+    private static String formatIcon(com.aresstack.spaceharvester.app.chat.ChatExport.Format format) {
+        return switch (format) {
+            case MARKDOWN -> "markdown";
+            case WORD -> "docx";
+            case PDF -> "pdf";
+        };
+    }
+
+    /** Ein Knopf der unteren Leiste wie die der Export-Fläche (Formatsymbol, Tooltip). */
+    private static com.aresstack.spaceharvester.app.ui.IconButton formatButton(String icon, String label,
+                                                                               Runnable action) {
+        com.aresstack.spaceharvester.app.ui.IconButton button = new com.aresstack.spaceharvester.app.ui.IconButton(
+                com.aresstack.spaceharvester.app.ui.FormatIcon.of(icon), EXPORT_AS.formatted(label));
+        button.addActionListener(event -> action.run());
+        return button;
     }
 
     /** Exportiert im Hintergrund in den Ausgabeordner; {@code format} {@code null} heißt SVG. */

@@ -116,7 +116,8 @@ public final class ContentView implements View {
         // Artefakte des Chats als Reiter, nur in der Export-Ansicht (ADR 0045, Abschnitt 5).
         artifactTabs = new ArtifactTabs(detail.chat().artifactStore(), detail.export(),
                 () -> context.settings() == null ? null : context.settings().outputDirectory(),
-                text -> statusInfo.show(com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(text)));
+                text -> statusInfo.show(com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(text)),
+                () -> new ExportPanel(context));
         detail.artifactTabs(artifactTabs);
         detail.chat().artifactHost(artifactTabs);
         context.onChange(ignored -> renderCrumbs());

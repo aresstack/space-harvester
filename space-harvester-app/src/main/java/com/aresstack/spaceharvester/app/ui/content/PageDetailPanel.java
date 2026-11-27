@@ -162,6 +162,12 @@ public final class PageDetailPanel extends JPanel {
     private final ExportPanel export;
     /** Die Artefakte des Chats in der Export-Ansicht; {@code null}, solange keine eingesetzt sind. */
     private ArtifactTabs artifactTabs;
+    /**
+     * Die untere Leiste von „Export“: mittig die Knöpfe der Ausgabe (Angelo 27.11.2026), je nach Reiter die der
+     * Export-Fläche, eines Export-Reiters oder nur die Formate des gewählten Artefakts (ADR 0045 §5).
+     */
+    private final JPanel exportBarSlot = new JPanel(new BorderLayout());
+    private final TabFoot exportFoot = new TabFoot(exportBarSlot, null);
     private final ChatPanel chat;
     private final StandingTab standing;
     /**
@@ -1222,8 +1228,8 @@ public final class PageDetailPanel extends JPanel {
         } else if (SOURCE_CARD.equals(pageCard) || wide && pageId == null) {
             more.setEnabled(false);
         }
-        if (artifactTabs != null && !artifactTabs.artifacts().isEmpty()) {
-            more.setEnabled(true); // die Artefakte des Chats stehen in jedem Fall im Menü
+        if (artifactTabs != null && (export.selection() != null || !artifactTabs.artifacts().isEmpty())) {
+            more.setEnabled(true); // „Neuer Export“ und die Artefakte des Chats stehen in jedem Fall im Menü
         }
         heading.revalidate();
         heading.repaint();
@@ -1723,6 +1729,9 @@ public final class PageDetailPanel extends JPanel {
         deck.remove(export);
         deck.add(artifactTabs.component(), EXPORT_CARD);
         artifactTabs.reveal(this::showExport);
+        artifactTabs.onSelectionChanged(() -> updateFootTools(tabs.selected()));
+        // Ein Knopf der Ausgabe ohne Reiter öffnet einen Export-Reiter, der bei dieser Auswahl stehen bleibt.
+        export.launcher(artifactTabs::openExport);
         showDeck();
     }
 
@@ -3378,6 +3387,16 @@ public final class PageDetailPanel extends JPanel {
     private void updateFootTools(String selected) {
         // Viewer und Transkript gibt es nur zu einer gezeigten Seite; jeder Wechsel räumt sie ab (closeOriginalFile).
         boolean standingFootShown = ANALYSES.equals(selected) && wide && standingFoot != null;
+        if (EXPORT.equals(selected)) {
+            JComponent bar = artifactTabs == null ? null : artifactTabs.footBar();
+            bar = bar == null ? export.formatBar() : bar;
+            if (exportBarSlot.getComponentCount() != 1 || exportBarSlot.getComponent(0) != bar) {
+                exportBarSlot.removeAll();
+                exportBarSlot.add(bar, BorderLayout.CENTER);
+                exportBarSlot.revalidate();
+                exportBarSlot.repaint();
+            }
+        }
         if (standingFootShown && folder != null) {
             if (folderSubfolders.getParent() != standingTrailing) {
                 standingTrailing.add(folderSubfolders, BorderLayout.CENTER);
@@ -3386,7 +3405,8 @@ public final class PageDetailPanel extends JPanel {
             folderFoot.reclaimTrailing();
         }
         standingTrailing.setVisible(standingFootShown && folder != null);
-        JComponent shown = standingFootShown ? standingFoot
+        JComponent shown = EXPORT.equals(selected) ? exportFoot
+                : standingFootShown ? standingFoot
                 : ANALYSES.equals(selected) && PAGE.equals(pageCard) && !wide ? analysisFoot
                 : ADVANCED.equals(selected) && wide ? wideAdvancedFoot
                 : ADVANCED.equals(selected) && PAGE.equals(pageCard) ? advancedFoot
@@ -6208,14 +6228,17 @@ public final class PageDetailPanel extends JPanel {
      * Export-Ansicht wieder, auch nachdem er geschlossen wurde.
      */
     private void addArtifacts(javax.swing.JPopupMenu menu) {
-        List<com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact> artifacts =
-                artifactTabs == null ? List.of() : artifactTabs.artifacts();
-        if (artifacts.isEmpty()) {
+        if (artifactTabs == null) {
             return;
         }
         if (menu.getComponentCount() > 0) {
             menu.addSeparator();
         }
+        // Ein Export-Reiter für die Auswahl links, ohne einen Auftrag zu starten (ADR 0045 §5).
+        ExportPanel.Selection current = export.selection();
+        menu.add(menuItem(NEW_EXPORT, NEW_EXPORT_TIP, current != null,
+                () -> artifactTabs.openExport(current, null)));
+        List<com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact> artifacts = artifactTabs.artifacts();
         for (com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact artifact : artifacts) {
             String kind = artifact.kind() == com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact.Kind.GRAPHIC
                     ? ARTIFACT_GRAPHIC : ARTIFACT_DOCUMENT;
@@ -6223,6 +6246,8 @@ public final class PageDetailPanel extends JPanel {
         }
     }
 
+    static final String NEW_EXPORT = "Neuer Export";
+    static final String NEW_EXPORT_TIP = "Öffnet einen Export-Reiter für die Auswahl links";
     static final String ARTIFACT_DOCUMENT = "Dokument: ";
     static final String ARTIFACT_GRAPHIC = "Grafik: ";
     static final String ARTIFACT_TIP = "Öffnet das Artefakt dieses Chats als Reiter in der Export-Ansicht";
