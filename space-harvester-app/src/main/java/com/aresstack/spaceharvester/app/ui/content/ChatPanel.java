@@ -1398,17 +1398,17 @@ public final class ChatPanel extends JPanel {
                 // Nur die Seite: der Bereichstext folgt dem Umfang der Aktion, nicht der Auswahl samt Unterseiten.
                 quickActions.add(chip(SUMMARIZE_PAGE, SUMMARIZE_PAGE_TIP, ready, () -> submit(
                         "Fasse die Seite „" + current.title() + "“ zusammen.", onlyPage(resolved, current),
-                        pageAreaText(current), ChatTurn.Kind.QUESTION)));
+                        pageAreaText(current), ChatTurn.Kind.QUESTION, null, summaryUse())));
                 quickActions.add(chip(SUMMARIZE_SUBTREE, SUMMARIZE_SUBTREE_TIP, ready, () -> submit(
                         "Fasse die Seite „" + current.title() + "“ samt ihren Unterseiten zusammen.", resolved, area,
-                        ChatTurn.Kind.QUESTION)));
+                        ChatTurn.Kind.QUESTION, null, summaryUse())));
             } else {
                 quickActions.add(chip(SUMMARIZE_AREA, SUMMARIZE_AREA_TIP, ready, () -> submit(
                         "Fasse den Bereich „" + current.title() + "“ zusammen.", resolved, area,
-                        ChatTurn.Kind.QUESTION)));
+                        ChatTurn.Kind.QUESTION, null, summaryUse())));
             }
             quickActions.add(chip(WHATS_NEW, WHATS_NEW_TIP, ready, () -> submit(WHATS_NEW, resolved, area,
-                    ChatTurn.Kind.WHATS_NEW)));
+                    ChatTurn.Kind.WHATS_NEW, null, summaryUse())));
         }
         // Ohne Auswahl gibt es keine Chips, also auch keine leere Zeile über der Eingabe.
         quickActions.setVisible(quickActions.getComponentCount() > 0);
@@ -2267,15 +2267,32 @@ public final class ChatPanel extends JPanel {
      * Katalog (nur auf einem Hintergrund-Thread des Turns). {@code null}, wenn keine Kontextlänge bekannt ist.
      */
     private com.aresstack.spaceharvester.app.runtime.ModelBudget chatBudget(boolean fetch) {
+        return chatBudget(fetch, null);
+    }
+
+    /**
+     * Wie oben; mit {@code use} gelten Modell und Tokenlänge seiner Zeile (etwa „Zusammenfassung“), soweit dort
+     * eingestellt, sonst die des Text-Modells.
+     */
+    private com.aresstack.spaceharvester.app.runtime.ModelBudget chatBudget(boolean fetch,
+            com.aresstack.spaceharvester.ai.AiServiceSettings.ModelUse use) {
         AppSettings settings = context.settings();
         AppRuntime runtime = context.runtime();
         if (settings == null || settings.ai() == null) {
             return null;
         }
+        String model = use != null && use.model() != null ? use.model() : settings.ai().chatModel();
+        Integer maxTokens = use != null && use.maxTokens() != null ? use.maxTokens() : settings.ai().chatMaxTokens();
         Integer catalog = settings.ai().contextTokens() != null || runtime == null ? null
-                : runtime.workspace().catalogContextTokens(settings.ai().chatModel(), fetch);
+                : runtime.workspace().catalogContextTokens(model, fetch);
         return com.aresstack.spaceharvester.app.runtime.ModelBudget.chat(settings.ai().contextTokens(), catalog,
-                settings.ai().chatMaxTokens());
+                maxTokens);
+    }
+
+    /** Die Zeile „Zusammenfassung“ (Modell, Tokenlänge, Nachdenken) für die Chips „Zusammenfassen“/„Was ist neu?“. */
+    private com.aresstack.spaceharvester.ai.AiServiceSettings.ModelUse summaryUse() {
+        AppSettings settings = context.settings();
+        return settings == null || settings.ai() == null ? null : settings.ai().summary();
     }
 
     /**
@@ -2289,6 +2306,16 @@ public final class ChatPanel extends JPanel {
 
     /** Wie oben; mit {@code custom} bekommt die Frage die Werkzeuge der Perspektive statt des Wissens (#1151). */
     private void submit(String question, PageSelection scope, String area, ChatTurn.Kind kind, ToolScope custom) {
+        submit(question, scope, area, kind, custom, null);
+    }
+
+    /**
+     * Wie oben; mit {@code use} antwortet das Modell einer eigenen Zeile unter KI-Dienst › Modelle (Angelo 27.11.2026:
+     * der Chat nutzt die Spezialmodelle), etwa „Zusammenfassung“ für die Chips; was dort leer ist, kommt vom
+     * Text-Modell und der Auswahl am Chat.
+     */
+    private void submit(String question, PageSelection scope, String area, ChatTurn.Kind kind, ToolScope custom,
+                        com.aresstack.spaceharvester.ai.AiServiceSettings.ModelUse use) {
         if (turn != null || !send.isEnabled()) {
             return;
         }
@@ -2298,8 +2325,11 @@ public final class ChatPanel extends JPanel {
             return;
         }
         var port = runtime.workspace().aiChat();
-        String modelName = context.settings() == null || context.settings().ai() == null ? null
+        String modelName = use != null && use.model() != null ? use.model()
+                : context.settings() == null || context.settings().ai() == null ? null
                 : context.settings().ai().chatModel();
+        String effort = use == null || use.thinking() == null ? effortValue()
+                : "none".equals(use.thinking()) ? null : use.thinking();
         if (port == null || modelName == null || modelName.isBlank()) {
             status.setText(NO_CHAT_MODEL);
             return;
@@ -2347,8 +2377,8 @@ public final class ChatPanel extends JPanel {
         }
         listener.card = thinking;
         thinking.open();
-        turn = new ChatTurn(runtime.workspace(), port, modelName, effortValue(), history, question, scope, area, kind,
-                listener, SwingUtilities::invokeLater).budget(() -> chatBudget(true))
+        turn = new ChatTurn(runtime.workspace(), port, modelName, effort, history, question, scope, area, kind,
+                listener, SwingUtilities::invokeLater).budget(() -> chatBudget(true, use))
                 // Spezialmodelle (Angelo 27.11.2026): Schaubilder über die Zeilen „Bildgenerierung“.
                 .diagrams(runtime.workspace()::composeDiagram);
         if (custom != null) {
