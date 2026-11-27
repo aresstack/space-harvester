@@ -83,7 +83,7 @@ Alles, was die App oder die KI erzeugt und ablegt, ist ein **Artefakt**. Es gibt
 | Grafik | global | Chat oder Benutzer | Projekt | ja, Benutzer und Chat | ja |
 | Buch | global | „Buch schreiben“ am Ordner | Projekt, erreichbar an seinem Ordner | ja, Benutzer und Chat | ja, jede Auflage bleibt |
 | Podcast | lokal | Kopfhörer | Seite, Ordner oder Space | nein, Sprechtext nur lesen | nein, wird überschrieben |
-| Zusammenfassung | lokal | Leseansicht | Seite oder Bereich | nein | nein, wird überschrieben |
+| Zusammenfassung | lokal | Leseansicht | Ordner, Space oder Quelle | nein | nein, wird überschrieben |
 
 ### 2. Globale Artefakte: das Projekt besitzt, nie der Chat
 - Dokumente, Grafiken und Bücher gehören immer dem Projekt, auch im Standardprojekt „AresStack“. Das ersetzt aus
@@ -102,6 +102,10 @@ Alles, was die App oder die KI erzeugt und ablegt, ist ein **Artefakt**. Es gibt
   bisher (ADR 0043, F3). Sonst bleiben Artefakte in ihrem Projekt.
 
 ### 3. Lokale Artefakte: bleiben an der Seite
+- Stand im Code (develop, 27.11.2026): Eine einzelne Seite hat als lokales Artefakt ihren Erklär-Podcast; eine
+  Zusammenfassung einer einzelnen Seite gibt es nicht. Ordner, Space und Quelle haben die Zusammenfassung des
+  Bereichs und den Podcast des Bereichs, der Ordner zusätzlich den Podcast aus dem Buch. Gezeigt wird je Knoten nur,
+  was es für ihn gibt.
 - Zusammenfassung und Podcast bleiben an ihrer Seite, in ihrer heutigen Ablage. Sie sind in jedem Projekt zu sehen,
   weil sie aus dem Wissen entstehen und nicht aus einem Chat.
 - An der Seite sind sie als Artefakte zu sehen. Sie stehen in keiner globalen Übersicht und in keiner Liste des
