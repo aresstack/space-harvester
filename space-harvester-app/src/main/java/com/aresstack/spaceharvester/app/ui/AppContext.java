@@ -989,11 +989,12 @@ public final class AppContext {
         }
         com.aresstack.spaceharvester.app.project.Project active = projects.active();
         PreparedOutput prepared = preparedOutput;
-        if (prepared == null || !prepared.project().equals(active)) {
-            // Selten: noch nicht im Hintergrund vorbereitet (gleich nach dem Start oder einem Wechsel).
-            prepared = new PreparedOutput(active,
-                    com.aresstack.spaceharvester.app.project.ProjectOutput.prepare(active));
+        if (prepared == null || prepared.failed() || !prepared.project().equals(active)) {
+            // Selten: noch nicht im Hintergrund vorbereitet (gleich nach dem Start oder einem Wechsel) oder das
+            // Anlegen schlug zuletzt fehl (etwa Netzlaufwerk kurz weg): dann jetzt erneut versuchen.
+            prepared = PreparedOutput.of(active);
             preparedOutput = prepared;
+            publishExportDirectory(prepared.directory());
         }
         return prepared.directory() == null ? current.outputDirectory() : prepared.directory();
     }
@@ -1017,25 +1018,47 @@ public final class AppContext {
         }
         com.aresstack.spaceharvester.app.project.Project active = projects.active();
         PreparedOutput known = preparedOutput;
-        if (known != null && known.project().equals(active)) {
+        if (known != null && !known.failed() && known.project().equals(active)) {
             return;
         }
-        Background.run(() -> new PreparedOutput(active,
-                com.aresstack.spaceharvester.app.project.ProjectOutput.prepare(active)), done -> {
-            PreparedOutput before = preparedOutput;
+        Background.run(() -> PreparedOutput.of(active), done -> {
             preparedOutput = done;
-            Path oldDirectory = before == null ? null : before.directory();
-            if (!java.util.Objects.equals(oldDirectory, done.directory())) {
-                new ArrayList<>(outputListeners).forEach(Runnable::run);
-            }
+            publishExportDirectory(done.directory());
         }, error -> { });
     }
 
-    /** Der vorbereitete Projektordner zum Stand des Projekts; {@code directory} {@code null} = Ausgabeordner. */
-    private record PreparedOutput(com.aresstack.spaceharvester.app.project.Project project, Path directory) {
+    /**
+     * Meldet den Beobachtern einen anderen Ordner als zuletzt gemeldet, egal ob er im Hintergrund oder beim ersten
+     * Gebrauch vorbereitet wurde; der erste Stand gilt als Ausgangslage.
+     */
+    private void publishExportDirectory(Path directory) {
+        Path[] before = notifiedDirectory;
+        notifiedDirectory = new Path[] {directory};
+        if (before != null && !java.util.Objects.equals(before[0], directory)) {
+            SwingUtilities.invokeLater(() -> new ArrayList<>(outputListeners).forEach(Runnable::run));
+        }
+    }
+
+    /**
+     * Der vorbereitete Projektordner zum Stand des Projekts.
+     *
+     * @param directory {@code null} = Ausgabeordner der Einstellungen
+     * @param failed    der Projektordner gilt, ließ sich aber nicht anlegen; der nächste Gebrauch versucht es erneut
+     */
+    private record PreparedOutput(com.aresstack.spaceharvester.app.project.Project project, Path directory,
+                                  boolean failed) {
+
+        static PreparedOutput of(com.aresstack.spaceharvester.app.project.Project project) {
+            Path wanted = com.aresstack.spaceharvester.app.project.ProjectOutput.directory(project);
+            Path ready = wanted == null ? null
+                    : com.aresstack.spaceharvester.app.project.ProjectOutput.prepare(project);
+            return new PreparedOutput(project, ready, wanted != null && ready == null);
+        }
     }
 
     private volatile PreparedOutput preparedOutput;
+    /** Der zuletzt gemeldete Ordner, in einer Hülle, weil {@code null} (Ausgabeordner) ein gültiger Stand ist. */
+    private volatile Path[] notifiedDirectory;
     private final List<Runnable> outputListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /**
