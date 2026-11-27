@@ -106,6 +106,65 @@ class PagePodcastsTest {
     }
 
     @Test
+    void deletingAPagePodcastRemovesOnlyItsStoreAndTellsTheObservers() {
+        // ADR 0047: lokales Artefakt löschen; erfundene Ablage zweier Seiten-Podcasts.
+        PodcastStore store = new PodcastStore(root.resolve("podcasts"));
+        Clock clock = Clock.fixed(Instant.parse("2026-11-27T22:00:00Z"), ZoneOffset.UTC);
+        PagePodcasts podcasts = new PagePodcasts(new Jobs(new InMemoryJobStore(), Runnable::run,
+                new JobLimits(1, 5, Duration.ofHours(1)), clock), StepModel.NONE, new PodcastSpeech() {
+            @Override
+            public boolean available() {
+                return false;
+            }
+
+            @Override
+            public List<String> models() {
+                return List.of();
+            }
+
+            @Override
+            public List<byte[]> speak(String model, String voice, String text, boolean sentences) throws IOException {
+                throw new IOException("nicht gebraucht");
+            }
+
+            @Override
+            public ReadAloud readAloud(String model, String voice, ReadAloud.Playback playback) {
+                return null;
+            }
+        }, store, PodcastVoices.bundled(), new PagePodcasts.Pages() {
+            @Override
+            public Optional<PagePodcasts.Page> page(AccessContext who, String sourceId, String pageId) {
+                return Optional.empty();
+            }
+
+            @Override
+            public List<String> children(AccessContext who, String sourceId, String pageId) {
+                return List.of();
+            }
+
+            @Override
+            public List<String> ancestors(AccessContext who, String sourceId, String pageId) {
+                return List.of();
+            }
+        }, () -> 2);
+        AccessContext caller = AccessContext.technicalClient("app");
+        String gone = PagePodcasts.key(caller, "wiki", "1");
+        String kept = PagePodcasts.key(caller, "wiki", "2");
+        store.saveMeta(new PodcastStore.Meta(gone, "wiki", null, "DEMO", "1", "a", List.of("1"), null, null, null));
+        store.saveMeta(new PodcastStore.Meta(kept, "wiki", null, "DEMO", "2", "b", List.of("2"), null, null, null));
+        java.util.concurrent.atomic.AtomicInteger notified = new java.util.concurrent.atomic.AtomicInteger();
+        podcasts.subscribe(gone, notified::incrementAndGet);
+
+        assertThat(podcasts.deletable(gone)).isTrue();
+        assertThat(podcasts.delete(gone)).isTrue();
+
+        assertThat(store.meta(gone)).isEmpty();
+        assertThat(store.meta(kept)).as("nur dieser eine").isPresent();
+        assertThat(notified.get()).isEqualTo(1);
+        assertThat(podcasts.delete(gone)).isFalse();
+    }
+
+    @Test
     void aBookIsToldByItsHeadingsAndKeyedByFolder() {
         String markdown = "# Nachtlauf\n\nWozu es ihn gibt.\n\n## Ablauf\n\nErst Prüfung.\n\n### Schritte\n\nDrei.\n\n"
                 + "## Störungen\n\nBereitschaft anrufen.\n";
