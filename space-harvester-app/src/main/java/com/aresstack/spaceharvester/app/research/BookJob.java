@@ -13,12 +13,15 @@ import com.aresstack.writing4j.cornerstone.CornerstoneSurvey;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Clock;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
@@ -48,6 +51,8 @@ public final class BookJob {
         private final BookRun run;
         private final SourceBasket basket;
         private final PageBasketReader reader;
+        /** Ein Auftrag je Sitzung: Abbrechen und Modell gehören der Sitzung, zwei Läufe würden sie teilen. */
+        private final AtomicBoolean busy = new AtomicBoolean();
         private volatile BookRun.Preparation prepared;
 
         Session(String folderId, String folderName, MainModelChat chat, StopSwitch stop, BookRun run,
@@ -76,6 +81,21 @@ public final class BookJob {
         /** Die Vorbereitung; {@code null}, solange sie nicht fertig ist. */
         public BookRun.Preparation prepared() {
             return prepared;
+        }
+
+        /** Ob gerade ein Auftrag dieser Sitzung läuft (Vorbereiten oder Schreiben). */
+        public boolean busy() {
+            return busy.get();
+        }
+
+        private void claim() {
+            if (!busy.compareAndSet(false, true)) {
+                throw new IllegalStateException("Für „" + folderName + "“ läuft schon ein Buch-Auftrag.");
+            }
+        }
+
+        private void release() {
+            busy.set(false);
         }
 
         /** Die Begriffe des Siebs; {@code null} vor der Vorbereitung. */
@@ -108,12 +128,17 @@ public final class BookJob {
         return JobTask.blocking(context -> {
             context.rootTitle(session.folderName);
             context.phase(TITLE, "Vorbereiten");
-            session.stop.bind(() -> stopped(context));
+            session.claim();
             BookRun.Preparation result;
-            try (AutoCloseable cancel = context.whenStopRequested(session.chat::cancelInFlight)) {
-                result = session.run.prepare(session.basket, session.reader, progress(context));
+            try {
+                session.stop.bind(() -> stopped(context));
+                try (AutoCloseable cancel = context.whenStopRequested(session.chat::cancelInFlight)) {
+                    result = session.run.prepare(session.basket, session.reader, progress(context));
+                }
+                context.checkpoint();
+            } finally {
+                session.release();
             }
-            context.checkpoint();
             session.prepared = result;
             context.failed(session.reader.unreadable());
             // Nur Zahlen, nie Titel oder Text (Protokolle tragen keine Inhalte).
@@ -135,15 +160,20 @@ public final class BookJob {
         return JobTask.blocking(context -> {
             context.rootTitle(session.folderName);
             context.phase(TITLE, "Gliederung");
-            session.stop.bind(() -> stopped(context));
+            session.claim();
             BookRun.Result result;
-            try (AutoCloseable cancel = context.whenStopRequested(session.chat::cancelInFlight)) {
-                BookRun.Progress progress = progress(context);
-                BookRun.Opening opening = session.run.open(session.prepared, chosen, progress);
+            try {
+                session.stop.bind(() -> stopped(context));
+                try (AutoCloseable cancel = context.whenStopRequested(session.chat::cancelInFlight)) {
+                    BookRun.Progress progress = progress(context);
+                    BookRun.Opening opening = session.run.open(session.prepared, chosen, progress);
+                    context.checkpoint();
+                    result = session.run.write(opening, progress);
+                }
                 context.checkpoint();
-                result = session.run.write(opening, progress);
+            } finally {
+                session.release();
             }
-            context.checkpoint();
             context.written(result.getSections().size());
             Path book = save(output, fileName, ".md", result.book());
             save(output, fileName + " – Missionsbericht", ".txt", result.report(ZoneId.systemDefault()));
@@ -156,15 +186,22 @@ public final class BookJob {
         });
     }
 
-    /** Schreibt die Datei, ohne eine vorhandene zu überschreiben ({@code Name (2).md}). */
+    /**
+     * Schreibt die Datei, ohne eine vorhandene zu überschreiben ({@code Name (2).md}). Der Name wird beim Anlegen
+     * reserviert ({@code CREATE_NEW}), so überschreiben auch zwei gleichzeitige Läufe einander nicht.
+     */
     static Path save(Path directory, String name, String extension, String text) throws IOException {
         Files.createDirectories(directory);
-        Path target = directory.resolve(name + extension);
-        for (int number = 2; Files.exists(target); number++) {
-            target = directory.resolve(name + " (" + number + ")" + extension);
+        for (int number = 1; ; number++) {
+            Path target = directory.resolve(number == 1 ? name + extension : name + " (" + number + ")" + extension);
+            try {
+                Files.writeString(target, text, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW,
+                        StandardOpenOption.WRITE);
+                return target;
+            } catch (FileAlreadyExistsException taken) {
+                // nächste Nummer
+            }
         }
-        Files.writeString(target, text, StandardCharsets.UTF_8);
-        return target;
     }
 
     static BookRun.Progress progress(JobContext context) {

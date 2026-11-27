@@ -154,6 +154,11 @@ final class BookFlow {
     }
 
     private void write(BookJob.Session session, BookTermsView view) {
+        if (session.busy()) {
+            Dialogs.view(parent, BasketResearchForm.BOOK_TITLE, Comic.note("Für „" + session.folderName()
+                    + "“ läuft schon ein Buch-Auftrag. Warte, bis er fertig ist, oder brich ihn unter „Aufträge“ ab."));
+            return;
+        }
         Path output = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings
                 .defaultOutputDirectory() : context.settings().outputDirectory();
         CornerstoneSurvey.Chosen chosen = view.chosen(session.prepared().basketHints());
