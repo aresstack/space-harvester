@@ -81,6 +81,20 @@ class SearchViewTest {
                 .isEqualTo("passage:abc");
     }
 
+    /** Eine nicht erreichbare Quelle verhindert die Rückfrage für die übrigen nicht und wird später erneut geprüft. */
+    @Test
+    void anUnavailableSourceDoesNotSuppressTheIndexOfferForTheOthers() {
+        List<String> unavailable = new ArrayList<>();
+        List<String> notIndexed = SearchView.notIndexed(List.of("fehlt", "dateien", "fertig"), id -> {
+            if (id.equals("fehlt")) {
+                throw new IllegalStateException("Verzeichnis fehlt");
+            }
+            return id.equals("fertig");
+        }, unavailable::add);
+        assertThat(notIndexed).containsExactly("dateien");
+        assertThat(unavailable).containsExactly("fehlt");
+    }
+
     @Test
     void allSourcesIsOneGlobalKeywordSearchWithExcerptsAndLoadMore() throws Exception {
         start(false);

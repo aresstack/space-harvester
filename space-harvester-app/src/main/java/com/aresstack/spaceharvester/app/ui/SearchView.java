@@ -1165,16 +1165,34 @@ public final class SearchView implements View {
         if (candidates.isEmpty()) {
             return;
         }
-        Background.run(() -> candidates.stream().filter(id -> !indexedAnywhere(runtime, id)).toList(),
+        Background.run(() -> notIndexed(candidates, id -> indexedAnywhere(runtime, id), indexOffered::remove),
                 notIndexed -> {
                     for (String sourceId : notIndexed) {
                         if (indexOffer.accepted(title(sourceId))) {
                             context.navigator().index(sourceId, null, null);
                         }
                     }
-                }, error -> {
-                    // Ohne Spaces der Quelle bleibt es beim Hinweis in der Statuszeile.
-                });
+                }, error -> candidates.forEach(indexOffered::remove));
+    }
+
+    /**
+     * Die Kandidaten, die nirgends zum Indexieren markiert sind. Jede Quelle wird für sich geprüft: Ist eine gerade
+     * nicht erreichbar (etwa ein fehlendes Verzeichnis), fragt die App die übrigen trotzdem, und diese eine wird bei
+     * einer späteren Suche erneut geprüft statt als „schon angeboten“ zu gelten.
+     */
+    static List<String> notIndexed(List<String> candidates, java.util.function.Predicate<String> indexed,
+                                   java.util.function.Consumer<String> unavailable) {
+        List<String> notIndexed = new ArrayList<>();
+        for (String sourceId : candidates) {
+            try {
+                if (!indexed.test(sourceId)) {
+                    notIndexed.add(sourceId);
+                }
+            } catch (RuntimeException failure) {
+                unavailable.accept(sourceId);
+            }
+        }
+        return notIndexed;
     }
 
     /** Ob in irgendeinem Space der Quelle etwas zum Indexieren markiert ist. */
