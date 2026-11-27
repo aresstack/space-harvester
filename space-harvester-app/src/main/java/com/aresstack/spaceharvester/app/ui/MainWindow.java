@@ -332,7 +332,7 @@ public final class MainWindow implements AppContext.Navigator {
         explorer.artifacts(content.artifactStore(), id -> {
             show(AppContext.Section.CONTENT);
             content.openArtifact(id);
-        });
+        }, content::exportArtifact);
         // Die Mitte folgt der Wippe links; ein Verweis im Chat schaltet auf „Artefakte“, ein Reiter der Seitenansicht
         // oder eine geöffnete Seite zurück auf „Wissensquellen“. Was die KI ändert, zählt der Chip an der Wippe.
         explorer.onArtifactsShown(content::showArtifacts);

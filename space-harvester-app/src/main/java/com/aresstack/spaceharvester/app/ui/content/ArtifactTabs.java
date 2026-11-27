@@ -481,6 +481,12 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
 
     /** Exportiert im Hintergrund in den Ausgabeordner; {@code format} {@code null} heißt SVG. */
     void export(ChatArtifact artifact, com.aresstack.spaceharvester.app.chat.ChatExport.Format format) {
+        export(artifact, format, id -> store.read(folder, chatId, id));
+    }
+
+    /** Wie {@link #export}; {@code resolve} findet eingebettete Grafiken (etwa die des Projekts ohne Chat). */
+    void export(ChatArtifact artifact, com.aresstack.spaceharvester.app.chat.ChatExport.Format format,
+                java.util.function.Function<String, ChatArtifact> resolve) {
         Path directory = output.get();
         if (directory == null) {
             status.accept("Export nicht möglich: kein Ausgabeordner eingestellt");
@@ -490,7 +496,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         com.aresstack.spaceharvester.app.ui.Background.run(() -> format == null
                         ? com.aresstack.spaceharvester.app.chat.artifact.ArtifactExport.writeSvg(artifact, directory)
                         : com.aresstack.spaceharvester.app.chat.artifact.ArtifactExport.write(artifact, format,
-                        directory, id -> store.read(folder, chatId, id)),
+                        directory, resolve),
                 file -> status.accept("Export gespeichert: " + file.getFileName()),
                 error -> status.accept("Export fehlgeschlagen: " + error.getClass().getSimpleName()));
     }

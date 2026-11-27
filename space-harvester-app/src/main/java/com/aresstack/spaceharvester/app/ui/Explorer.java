@@ -2843,8 +2843,10 @@ public final class Explorer {
      * was ein Klick öffnet: das Artefakt in der Mitte.
      */
     public void artifacts(com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore store,
-                          Consumer<String> open) {
-        artifacts.connect(store, open);
+                          Consumer<String> open,
+                          java.util.function.BiConsumer<String, com.aresstack.spaceharvester.app.chat.ChatExport.Format>
+                                  export) {
+        artifacts.connect(store, open, export);
     }
 
     /** Meldet jeden Wechsel der Wippe: {@code true} heißt, links stehen die Artefakte. */

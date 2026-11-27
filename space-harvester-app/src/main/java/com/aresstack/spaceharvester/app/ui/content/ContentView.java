@@ -214,6 +214,20 @@ public final class ContentView implements View {
         root.repaint();
     }
 
+    /**
+     * „Ausgeben“ aus der Liste „Artefakte“ links: exportiert ein Artefakt des aktiven Projekts in den Ausgabeordner;
+     * {@code format} {@code null} heißt SVG (Grafik).
+     */
+    public void exportArtifact(String artifactId, com.aresstack.spaceharvester.app.chat.ChatExport.Format format) {
+        String projectId = context.projects().active() == null ? null : context.projects().active().id();
+        com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore store = artifactStore();
+        com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact artifact = store.readInProject(projectId,
+                artifactId);
+        if (artifact != null) {
+            artifactTabs.export(artifact, format, id -> store.readInProject(projectId, id));
+        }
+    }
+
     /** Ob die Artefakt-Mitte vorn steht. */
     public boolean artifactsShown() {
         return artifactsFront;

@@ -34,6 +34,7 @@ final class ArtifactList {
     static final String RENAME = "Umbenennen …";
     static final String RENAME_TITLE = "Artefakt umbenennen";
     static final String DELETE = "Löschen …";
+    static final String EXPORT = "Ausgeben";
     static final String RESTORE = "Wiederherstellen";
     static final String RESTORE_TIP = "Gelöscht – Klick stellt das Artefakt wieder her (bis zum nächsten Start)";
 
@@ -50,6 +51,9 @@ final class ArtifactList {
     private final Consumer<ChatArtifactStore.Event> changed = event -> SwingUtilities.invokeLater(this::reload);
     private ChatArtifactStore store;
     private Consumer<String> open = id -> { };
+    /** „Ausgeben ▸“: Kennung und Format; {@code null} als Format heißt SVG. */
+    private java.util.function.BiConsumer<String, com.aresstack.spaceharvester.app.chat.ChatExport.Format> export =
+            (id, format) -> { };
     private Consumer<String> note = text -> { };
     private String filter = "";
     private List<ChatArtifact> all = List.of();
@@ -117,7 +121,9 @@ final class ArtifactList {
      * Der Speicher der Artefakte (derselbe wie der des Chats, damit jede Änderung hier ankommt) und was ein Klick
      * öffnet.
      */
-    void connect(ChatArtifactStore store, Consumer<String> open) {
+    void connect(ChatArtifactStore store, Consumer<String> open,
+                 java.util.function.BiConsumer<String, com.aresstack.spaceharvester.app.chat.ChatExport.Format> export) {
+        this.export = export == null ? (id, format) -> { } : export;
         if (this.store != null) {
             this.store.removeListener(changed);
         }
@@ -201,9 +207,28 @@ final class ArtifactList {
         javax.swing.JMenuItem deleteItem = new javax.swing.JMenuItem(DELETE);
         deleteItem.addActionListener(event -> delete(artifact));
         menu.add(openItem);
+        menu.add(exportMenu(artifact));
         menu.add(renameItem);
         menu.addSeparator();
         menu.add(deleteItem);
+        return menu;
+    }
+
+    /** „Ausgeben ▸“ mit den Formaten der Art: beim Dokument Markdown, Word, PDF, bei der Grafik SVG. */
+    private javax.swing.JMenu exportMenu(ChatArtifact artifact) {
+        javax.swing.JMenu menu = new javax.swing.JMenu(EXPORT);
+        if (artifact.kind() == ChatArtifact.Kind.GRAPHIC) {
+            javax.swing.JMenuItem svg = new javax.swing.JMenuItem("SVG");
+            svg.addActionListener(event -> export.accept(artifact.id(), null));
+            menu.add(svg);
+            return menu;
+        }
+        for (com.aresstack.spaceharvester.app.chat.ChatExport.Format format
+                : com.aresstack.spaceharvester.app.chat.ChatExport.Format.values()) {
+            javax.swing.JMenuItem item = new javax.swing.JMenuItem(format.label);
+            item.addActionListener(event -> export.accept(artifact.id(), format));
+            menu.add(item);
+        }
         return menu;
     }
 
