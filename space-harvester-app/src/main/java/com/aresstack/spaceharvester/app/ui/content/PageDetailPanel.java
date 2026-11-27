@@ -1166,6 +1166,16 @@ public final class PageDetailPanel extends JPanel {
         standingTrailing.setVisible(false);
         // Die ?-Hilfe der Reiter steht unten rechts in der Ecke der Leiste, wie bei den Aufträgen (Angelo 27.11.2026).
         standingTrailing.add(Comic.row(standingHelp, glossaryHelp, graphHelp), BorderLayout.EAST);
+        // Die Reiter der Analysen einer Auswahl als Symbole, der Name im Tooltip (Angelo 27.11.2026).
+        java.util.Map<String, javax.swing.Icon> standingIcons = new java.util.LinkedHashMap<>();
+        standingIcons.put(StandingTab.TERMS, AnalysisTabIcons.terms());
+        standingIcons.put(StandingTab.STATEMENTS, AnalysisTabIcons.statements());
+        standingIcons.put(StandingTab.READING, AnalysisTabIcons.readFirst());
+        standingIcons.put(StandingTab.CONFLICTS, AnalysisTabIcons.conflicts());
+        standingIcons.put(StandingTab.GLOSSARY, AnalysisTabIcons.glossary());
+        standingIcons.put(StandingTab.GRAPH, AnalysisTabIcons.graph());
+        standingIcons.put(RELATIONS, AnalysisTabIcons.relations());
+        standing.tabs().icons(standingIcons);
         standingFoot = new TabFoot(standing.tabs().detachBar(), standingTrailing);
         deck.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);

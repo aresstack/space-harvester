@@ -464,6 +464,12 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.standing().tabs().names())).containsExactly("Begriffe", "Aussagen",
                 "Zuerst lesen", "Mögliche Widersprüche", "Fachglossar", "Graph", "Beziehungen");
         assertThat(onEdt(() -> detail.standing().tabs().selected())).isEqualTo("Begriffe");
+        // Die Reiter zeigen Symbole, der Name steht im Tooltip (Angelo 27.11.2026).
+        assertThat(onEdt(() -> detail.standing().tabs().names().stream()
+                .map(name -> detail.standing().tabs().button(name))
+                .allMatch(button -> button.getIcon() != null && button.getText() == null))).isTrue();
+        assertThat(onEdt(() -> detail.standing().tabs().button("Zuerst lesen").getToolTipText()))
+                .isEqualTo("Zuerst lesen");
         assertThat(onEdt(() -> detail.overviewTerms().showsSelection())).isTrue();
         assertThat(onEdt(() -> detail.overviewTerms().title())).isEqualTo("Begriffe in handbuch");
         assertThat(onEdt(() -> detail.selectedTab())).isEqualTo(PageDetailPanel.OVERVIEW_TERMS);
