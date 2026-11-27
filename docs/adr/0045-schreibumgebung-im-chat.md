@@ -94,25 +94,36 @@ Ist er aus, bleiben die Artefakte sichtbar, bearbeitbar und exportierbar; die KI
 
 ### 5. Ort: Schreibansicht im Reiter „Export“, Chat rechts
 
-> Geändert am 27.11.2026 nach Angelos Nachricht von 17:27 MEZ: „Du hast für das Schreibtool jetzt überall einen neuen
-> Tab eingebaut, beziehungsweise alles hat jetzt irgendwie eine zusätzliche Tab-Leiste bekommen. Das war eigentlich
-> nicht so vorgesehen. […] Im Grunde ist das Schreiben eine Art Export. Deswegen würde ich die Schreibansicht
-> eigentlich nur im Export darstellen. Und da können wir meinetwegen auch mehrere Tabs machen. […] Wir können quasi
-> einen Vorschau-Tab machen und der Export, der immer mitwandert. Und wenn man […] tatsächlich Export anstößt, dann
-> bleibt er quasi als Tab stehen. […] Den kann der User natürlich auch wieder schließen. Und ich würde oben unter
-> weitere Aktionen, also mit dem Pfeil nach unten, […] die ganzen Artefakte auflisten.“ Vorher öffnete sich ein
-> Artefakt als Reiter über der ganzen Mitte, in jeder Ansicht.
+> Geändert am 27.11.2026 nach zwei Nachrichten von Angelo. Vorher öffnete sich ein Artefakt als Reiter über der ganzen
+> Mitte, in jeder Ansicht.
+>
+> 17:27 MEZ: „Du hast für das Schreibtool jetzt überall einen neuen Tab eingebaut, beziehungsweise alles hat jetzt
+> irgendwie eine zusätzliche Tab-Leiste bekommen. Das war eigentlich nicht so vorgesehen. […] Im Grunde ist das
+> Schreiben eine Art Export. Deswegen würde ich die Schreibansicht eigentlich nur im Export darstellen. Und da können
+> wir meinetwegen auch mehrere Tabs machen. […] Wenn man […] tatsächlich Export anstößt, dann bleibt er quasi als Tab
+> stehen. […] Den kann der User natürlich auch wieder schließen. Und ich würde oben unter weitere Aktionen, also mit
+> dem Pfeil nach unten, […] die ganzen Artefakte auflisten.“
+>
+> 17:30 MEZ: „Eigentlich brauchen wir diesen Vorschau-Tab auch nicht wirklich. Wir können diese ganzen Buttons für die
+> Ausgabe einfach unten in die Toolbar packen, wo die Lupe ist. Und erst wenn ich da draufklicke, öffnet sich ein
+> neuer Tab. […] Diese komische Detailansicht […], da steht halt nur irgendwas von wegen noch nicht ausgegeben oder
+> so. Ich weiß nicht, was ich mit diesen Informationen soll. […] Das kann er sich auch intern irgendwie merken, weil
+> das entscheidet nur darüber, ob er die Daten irgendwie neu generieren muss oder anfordern muss oder ob sie schon
+> vorhanden sind. […] Deswegen würde ich sagen, man packt die Formate einfach unten zentriert in die Toolbar.“
 
 - **Nur im Reiter „Export“:** Die Schreibansicht gibt es nur im Reiter „Export“ der Seitenmitte. Nur dort steht eine
   Reiterzeile. In allen anderen Ansichten der Mitte kommt keine Reiterzeile hinzu. Der Chat bleibt in der rechten
   Seitenleiste.
-- **Reiter „Vorschau“:** Der erste Reiter heißt „Vorschau“, ist nicht schließbar und zeigt den heutigen Inhalt von
-  „Export“. Er wandert wie heute mit der Auswahl links mit.
-- **Artefakte:** Jedes geöffnete Artefakt ist daneben ein schließbarer Reiter (`ClosableTab`), mehrere Artefakte sind
-  mehrere Reiter. Welche Artefakt-Reiter offen waren, merkt sich der Chat.
-- **Angestoßener Export:** Stößt der Benutzer in „Vorschau“ einen Export an, öffnet sich dafür ein eigener
-  schließbarer Reiter. Er bleibt bei der Auswahl und dem Format stehen, für die er gestartet wurde, und zeigt deren
-  Stand und die erzeugten Dateien. „Vorschau“ wandert weiter. Mehrere Exporte sind mehrere Reiter.
+- **Kein Reiter „Vorschau“, keine Detailansicht:** Die bisherige Fläche von „Export“ mit Stand der Ausgabe
+  („noch nichts ausgegeben“), Ausgabeordner und Dateiliste entfällt. Ob Daten vorhanden sind, neu erzeugt oder erst
+  geladen werden müssen, merkt sich die App intern und entscheidet es beim Klick wie bisher; angezeigt wird es nicht.
+- **Formate unten in der Leiste:** Die Knöpfe der Ausgabe stehen im Reiter „Export“ mittig in der unteren Leiste mit
+  der Lupe. Sie gelten wie bisher für die Auswahl links.
+- **Ein Klick, ein Reiter:** Erst ein Klick auf ein Format startet den Auftrag und öffnet dafür einen eigenen
+  schließbaren Reiter. Er bleibt bei der Auswahl und dem Format seines Starts stehen. Mehrere Exporte sind mehrere
+  Reiter. Ein erneuter Klick auf dasselbe Format startet einen neuen Auftrag.
+- **Artefakte:** Jedes geöffnete Artefakt ist ebenfalls ein schließbarer Reiter (`ClosableTab`) in dieser Zeile.
+  Welche Artefakt-Reiter offen waren, merkt sich der Chat.
 - **Wieder öffnen:** Das Menü „Weitere Aktionen zur Seite“ (Dreieck oben) listet alle Artefakte des Besitzers nach
   Abschnitt 1; ein Klick wechselt zu „Export“ und öffnet den Reiter. So ist ein geschlossenes Artefakt nie verloren.
 - **Aus dem Chat:** Unter der Antwort, die ein Artefakt angelegt oder geändert hat, steht eine Zeile mit dessen Titel;
@@ -121,10 +132,18 @@ Ist er aus, bleiben die Artefakte sichtbar, bearbeitbar und exportierbar; die KI
 
 Entscheidungen des Architekten dazu, nicht Angelos Wortlaut:
 
+- Alle Knöpfe der bisherigen Ausgabe ziehen in die Leiste um, keiner entfällt: die Formate und die beiden Exporte
+  aus der Quelle. Form und Platz folgen den Unterreitern, die in anderen Ansichten schon mittig in dieser Leiste
+  stehen; es entsteht kein neues Steuerelement.
+- Der Reiter eines Exports zeigt nur diesen einen Export: Fortschritt des Auftrags, danach die erzeugten Dateien mit
+  „Öffnen“ und „Ordner öffnen“ und die Hinweise der Konvertierung. Bei mehreren Spaces steht je Space eine Zeile, wie
+  in der bisherigen Dateiliste.
+- Ohne offenen Reiter ist die Fläche von „Export“ leer; der Einstieg sind die Knöpfe unten.
 - Die Liste der Artefakte im Menü ist erreichbar, sobald es Artefakte gibt, auch wenn links keine Seite gewählt ist.
 - Das Schließen eines Export-Reiters bricht keinen Auftrag ab und löscht keine Datei; Aufträge bleiben in der rechten
   Seitenleiste. Export-Reiter gelten für die laufende Sitzung der App, die Dateien bleiben im Ausgabeordner.
 - Das Schließen eines Artefakt-Reiters löscht das Artefakt nicht.
+- Der Export-Knopf am Reiter eines Artefakts (Abschnitt 8) bleibt, wie er ist.
 
 Die Ansicht zeigt das Dokument gerendert mit der vorhandenen Markdown-Anzeige. Ändert die KI einen Abschnitt, rollt die
 Ansicht dorthin und hebt ihn hervor, bis die nächste Änderung kommt. Der Benutzer bearbeitet selbst je Abschnitt
