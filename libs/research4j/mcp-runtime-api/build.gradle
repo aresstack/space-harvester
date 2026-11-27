@@ -1,0 +1,9 @@
+// Generic MCP runtime contracts (Java 8, framework-free). NO Solon/Reactor/MCP-SDK types here — the Solon
+// streamable-HTTP transport lives behind this port in a separate adapter module (see problems.md MCP-P004).
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+}
+
+test {
+    useJUnit()
+}

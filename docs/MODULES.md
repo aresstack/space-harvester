@@ -31,6 +31,10 @@ Playwright4j). Nur `:space-harvester-app` hängt davon ab; Core und Server kenne
 (GraalVM 25) läuft nur im Kindprozess: Er liegt im Bootjar unter `playwright-driver/` und nie im Klassenpfad der App;
 `graalLineCheck` prüft, dass dort nur eine GraalJS-Linie steht.
 
+Knowledge4j, Research4j und Writing4j liegen als unveränderte Kopien ihrer Repositorys unter `libs/` und werden als
+eigene Gradle-Projekte per Composite Build eingebunden, weil Maven Central keine neuen `com.aresstack`-Releases mehr annimmt
+(27.11.2026). Abgleich per `libs/sync-from-upstream.sh`, Prüfung bei jedem Build, siehe [libs/README.md](../libs/README.md).
+
 `:document-export` ist die Word-Ausgabe des Enterprise AI Client (Apache POI, flexmark) als eigene Bibliothek ohne Swing,
 eine angepasste Kopie (siehe `document-export/UPSTREAM.md` und [CONVERTERS.md › Word](CONVERTERS.md#word)). Nur der Core
 hängt von ihr ab; sie hat eine eigene Publikation (`com.aresstack:space-harvester-document-export`), damit die Core-POM

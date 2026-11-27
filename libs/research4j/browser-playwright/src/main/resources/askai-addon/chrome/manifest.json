@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "AskAI Research",
+  "version": "0.2.0",
+  "description": "AskAI research browser controls. Shows the research HUD in the browser UI and reads pages from the isolated content-script world instead of the visited page.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAk/6AeCOaUKAL4PR3AIJCGHJfYch2XpoxzUnoezhV1kZwlbfKc079Z5NHosR56rmfrk3bzT0cI1iOMUguJEer4srL3IXxWOzKN8bdS49oiNQsgGc+3dYFlJqKrL7gqxSxJ7M49VAw7FPJQ4UT2KX2VZdGtiCAbIY1kzX++6ZH+BsQJQeqwlaV+XN07XWzinqM8cWn3Uz8+TGJro62oAK36IztdIYROpdrOP6LkySfy34giKn2s6GNhuq+/DEy13uhnB2ioqu/zYFzaaXMhTp9O0MkWmz7VOw3MAB8etZin1ztC7e25xyhBCjciaTjagXF0vd/OSM7bqN5xFlUdkciKwIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "sidePanel",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "AskAI Research"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  }
+}

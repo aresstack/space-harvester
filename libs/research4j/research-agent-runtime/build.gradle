@@ -1,0 +1,70 @@
+// The research agent of the Research Agent plugin. Since the return to Java 21 it is a plain LIBRARY that
+// runs IN-PROCESS inside the plugin (ResearchAgentSession): one instance per research session, prompts and
+// typed service commands come in as method calls, every output line goes to the turn's AgentOutput, and the
+// host tools (research control, browser bridge, internal service) are reached through in-process
+// ToolInvoker lanes over the host's McpToolContributions. No ACP, no MCP client, no separate process.
+apply plugin: 'java-library'
+
+dependencies {
+    // The neutral MCP tool contracts (McpToolContribution/McpToolCall/McpToolResult): the in-process
+    // ContributionToolInvoker dispatches to the host's contributions directly. Host-provided at runtime
+    // (the plugin never bundles it), hence the same class identity as the host endpoints use.
+    implementation project(':mcp-runtime-api')
+    // Public-suffix aware domain families (challenge locks, transit rules) — shared with the browser backend.
+    implementation project(':browser-api')
+    // The research DOMAIN CORE (pure Java, no dependencies): the runtime EXECUTES searches and produces
+    // domain objects (SearchRun/SearchCandidate) that the host persists as project truth. Both sides must
+    // speak the same model, or the wire between them degenerates into untyped strings again.
+    implementation project(':research-domain')
+    // A5: neutral reranker endpoint contract (descriptor + strict codec) published by the host.
+    implementation project(':agent-model-runtime-api')
+    // A4 transport: the layout-repair codec and the model-using repair coordinator (model-free analysis;
+    // the concrete StructuredInferencePort adapter is injected by the runtime).
+    implementation project(':browser-search-analysis')
+    // Slice 2: the async web-search-provider module (Brave/BrightData/DataForSEO over AsyncHttpClient),
+    // consumed behind the existing SearchProvider seam via a thin adapter. File-based config + AES-GCM
+    // secrets live in the module; the runtime never carries provider credentials.
+    implementation project(':web-search-providers')
+    // ADR 0001 lane F: the orchestrated run's decision codec and run record are Gson (the house JSON library,
+    // ADR 3.1), on the root's single Gson version.
+    implementation "com.google.code.gson:gson:${gsonVersion}"
+    // askai #31: Google via Serp4J on AskAI's own search browser (Playwright + Camoufox in this JVM).
+    implementation project(':serp4j-playwright-google')
+    implementation project(':browser-playwright')
+
+    // The E2E tests drive the PRODUCTIVE plugin wiring (factory, endpoints, in-process backend) and the
+    // live local runtimes; the plugin itself depends on this module (a test-only cycle, no task cycle).
+    // The live reranker tests start the REAL local model runtime in-process (as the host does now).
+    // The live Playwright tests start the REAL browser in-process (as the plugin does now).
+    testImplementation project(':browser-playwright')
+    // The live model gates run the roles over the REAL model port (ollama4j) against a local Ollama, as the
+    // host does; only its main classes are needed (askai-app's own tests depend on the plugin: test-only).
+    testImplementation 'junit:junit:4.13.2'
+    testRuntimeOnly 'org.slf4j:slf4j-nop:2.0.17'
+}
+
+test {
+    useJUnit()
+    doFirst {
+        // The live-gate switches (-Daskai.live.main.model=gemma4:e2b, -Daskai.live.probe.target=20,
+        // -Daskai.live.repeat=3, ...) are system properties of the GRADLE JVM; the forked test JVM
+        // sees none of them unless they are forwarded. Every askai.live.* property is forwarded by
+        // prefix, so a new switch can never be lost silently again — askai.live.repeat once was, and
+        // the triple repetition of ScopingConceptLiveTest never ran (every log line said "#1").
+        System.properties.each { key, value ->
+            if (key.toString().startsWith('askai.live.')) {
+                systemProperty key.toString(), value.toString()
+            }
+        }
+    }
+}
+
+// Retain the original host integration tests as reference until standalone fixtures exist.
+sourceSets.test.java {
+    exclude '**/ToolTransportParityTest.java', '**/ProductiveModeFactorySmokeTest.java',
+            '**/ProductiveResearchMvpEndToEndTest.java', '**/LiveLocalRerankerRuntime.java',
+            '**/MainModelScopeProbeGeneratorLiveTest.java', '**/ScopeSweepEndToEndLiveTest.java',
+            '**/ScopingConceptLiveTest.java', '**/ScopingTurnWireTest.java',
+            '**/ResearchLoopPlaywrightIntegrationTest.java', '**/LocalRerankerRuntimeIntegrationTest.java', '**/ScopingBriefSourceTest.java', '**/ProbeGenerationWireRoundTripTest.java', '**/ScopeAdviceWireRoundTripTest.java',
+            '**/PlannedManualSearchWireRoundTripTest.java'
+}

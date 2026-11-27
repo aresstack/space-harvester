@@ -1,0 +1,25 @@
+{
+  "formatVersion": 1,
+  "enabled": false,
+  "baseUrl": "https://serpapi.com",
+  "apiKey": null,
+  "searchEngine": "GOOGLE",
+  "country": "de",
+  "language": "de",
+  "location": null,
+  "googleDomain": "google.de",
+  "noCache": false,
+  "resolveGoogleGotoUrls": true,
+  "urlResolveTimeoutMillis": 0,
+  "transport": {
+    "connectTimeoutMillis": 15000,
+    "readTimeoutMillis": 60000,
+    "requestTimeoutMillis": 60000,
+    "maxConnections": 100,
+    "maxConnectionsPerHost": 20,
+    "followRedirects": true,
+    "keepAlive": true,
+    "compressionEnabled": true,
+    "userAgent": "AskAI-Research/1.0"
+  }
+}

@@ -1,0 +1,21 @@
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+rootProject.name = 'research4j'
+include 'browser-api', 'browser-tools', 'browser-playwright', 'browser-search-analysis', 'browser-static-http'
+include 'web-search-providers', 'serp4j-playwright-google', 'research-domain', 'research-agent-runtime'
+include 'agent-model-runtime-api', 'mcp-runtime-api'
+include 'research-core'
+
+// Knowledge4j comes from a neighbouring checkout (Composite Build), as long as it is not released. The folder is set
+// with -Pknowledge4j.dir=<folder>; without it ../knowledge4j.
+def knowledge4j = file(providers.gradleProperty('knowledge4j.dir').getOrElse('../knowledge4j'))
+if (knowledge4j.isDirectory()) {
+    includeBuild(knowledge4j) {
+        dependencySubstitution {
+            ['knowledge-api', 'knowledge-model', 'knowledge-model-support', 'knowledge-file-support'].each { name ->
+                substitute module("com.aresstack:knowledge4j-${name}") using project(":${name}")
+            }
+        }
+    }
+}

@@ -189,6 +189,15 @@ final class AreaSummaryView extends JPanel {
         /** Aufträge, Meldungen der Quelle, Podcast und Bilder wie bei den Updates. */
         SourceUpdatesView.Actions shared();
 
+        /**
+         * Die Teile des Buchs, wie sein Podcast sie erzählt, als {@code [start, end)} im Markdown; ohne Laufzeit ein
+         * Teil. Die Podcast-Ansicht zeigt das Buch in diesen Stücken und markiert sie wie die Themen des Überblicks.
+         */
+        default List<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span> bookParts(com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
+            return List.of(new com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span(0,
+                    book.markdown().length()));
+        }
+
         /** Der Podcast zum Buch eines Ordners (ADR 0044: der Podcast nutzt das Buch); ohne Laufzeit keiner. */
         default PodcastControl.Source<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book> bookPodcasts() {
             return PodcastControl.Source.none();
@@ -230,6 +239,11 @@ final class AreaSummaryView extends JPanel {
                     return books;
                 }
 
+                @Override
+                public List<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span> bookParts(com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
+                    return workspace.bookPodcastParts(book);
+                }
+
                 private final PodcastControl.Source<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book> books = new PodcastControl.Source<>() {
                     @Override
                     public boolean available() {
@@ -260,6 +274,11 @@ final class AreaSummaryView extends JPanel {
                     @Override
                     public java.util.Optional<String> transcript(com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
                         return workspace.bookPodcastTranscript(book);
+                    }
+
+                    @Override
+                    public List<Integer> focus(com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book, int topic) {
+                        return workspace.bookPodcastFocus(book, topic);
                     }
 
                     @Override
@@ -547,11 +566,15 @@ final class AreaSummaryView extends JPanel {
         return heardSource;
     }
 
+    /** Das gezeigte Buch für den Podcast. */
+    private com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book(BookEditions.Edition shown) {
+        return new com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book(target.folder().folderId(), target.folder().title(), shown.book());
+    }
+
     /** Was die Podcast-Ansicht gerade vorliest; {@code null} ohne Überblick und ohne gezeigtes Buch. */
     private Heard heard() {
         if (bookShown()) {
-            return new Heard(null, new com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book(
-                    target.folder().folderId(), target.folder().title(), edition.book()));
+            return new Heard(null, book(edition));
         }
         return summary == null ? null : new Heard(summary, null);
     }
@@ -800,6 +823,23 @@ final class AreaSummaryView extends JPanel {
     /** Ob sich Seiten der gezeigten Auflage seither geändert haben. */
     boolean bookStale() {
         return edition != null && bookStale;
+    }
+
+    /** Folgt dem Podcast wie beim Abspielen (für Tests). */
+    void followPodcast(List<Integer> statements, java.util.Optional<List<Integer>> covered) {
+        summaryReport.cover(covered);
+        follow(statements);
+    }
+
+    /** Der Hintergrund des Buchteils {@code number} (ab 1), {@code null} ohne Markierung (für Tests). */
+    java.awt.Color bookPartMark(int number) {
+        for (java.awt.Component part : reportBody.getComponents()) {
+            if (part instanceof WidthFitted fitted && fitted.view.getName() != null
+                    && fitted.view.getName().equals("book.part." + number)) {
+                return fitted.isOpaque() ? fitted.getBackground() : null;
+            }
+        }
+        throw new IllegalArgumentException("kein Buchteil " + number);
     }
 
     /** Ob „Neue Auflage erzeugen“ zu sehen ist (für Tests). */
@@ -1148,7 +1188,35 @@ final class AreaSummaryView extends JPanel {
                         com.aresstack.spaceharvester.app.ui.markdown.CachingMermaidImageRenderer.forChat());
         view.setMarkdown(shown.book());
         view.setName("book.text");
-        SummaryReport.add(reportBody, new WidthFitted(view));
+        if (mode == Mode.READ) {
+            SummaryReport.add(reportBody, new WidthFitted(view));
+            return;
+        }
+        // Die Podcast-Ansicht zeigt das Buch in den Teilen, die der Podcast erzählt: das laufende Thema gelb, nie
+        // Erzähltes grau, mit derselben Markierung wie beim Überblick (SummaryReport).
+        String markdown = shown.book();
+        Actions current = actions.get();
+        List<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span> spans = current == null
+                ? List.of() : current.bookParts(book(shown));
+        if (spans.isEmpty()) {
+            spans = List.of(new com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span(0,
+                    markdown.length()));
+        }
+        for (int i = 0; i < spans.size(); i++) {
+            // Lückenlos: Leerraum vor dem ersten und zwischen den Teilen gehört zum Teil davor bzw. danach.
+            int start = i == 0 ? 0 : Math.min(markdown.length(), spans.get(i).start());
+            int end = i == spans.size() - 1 ? markdown.length() : Math.min(markdown.length(), spans.get(i + 1).start());
+            com.aresstack.spaceharvester.app.ui.markdown.MarkdownMessageView part = i == 0 ? view
+                    : new com.aresstack.spaceharvester.app.ui.markdown.MarkdownMessageView(theme,
+                            com.aresstack.spaceharvester.app.ui.markdown.DesktopLinkOpener.systemDefault(),
+                            com.aresstack.spaceharvester.app.ui.markdown.CachingMermaidImageRenderer.forChat());
+            part.setMarkdown(markdown.substring(start, Math.max(start, end)));
+            part.setName("book.part." + (i + 1));
+            WidthFitted fitted = new WidthFitted(part);
+            SummaryReport.add(reportBody, fitted);
+            summaryReport.topicPart(i + 1, fitted);
+        }
+        summaryReport.markFollowed();
     }
 
     /**

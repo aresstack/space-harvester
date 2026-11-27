@@ -287,6 +287,31 @@ public final class PagePodcasts {
         }
     }
 
+    /**
+     * Die Teile des Buchs, wie der Podcast sie erzählt, als Stellen im Markdown {@code [start, end)} in Lesereihenfolge:
+     * Teil n (ab 1) ist Stelle n−1. Die Ansicht zeigt das Buch in diesen Stücken, damit sie das laufende Thema gelb und
+     * nie Erzähltes grau hinterlegen kann wie beim Überblick. Rechnet nur, auch auf dem EDT.
+     */
+    public List<Span> bookParts(Book book) {
+        List<Span> spans = new ArrayList<>();
+        for (Part part : parts(book.page(), reading.get(), Kind.BOOK)) {
+            spans.add(new Span(part.start(), part.end()));
+        }
+        return List.copyOf(spans);
+    }
+
+    /**
+     * Wovon Thema {@code topic} des Buch-Podcasts erzählt, als Nummern (ab 1) der Teile aus {@link #bookParts}; wie
+     * {@link #focus} bei Einstieg und Abschluss der erste Teil. Leer ohne Plan. Liest die Ablage, nie auf dem EDT.
+     */
+    public List<Integer> bookFocus(AccessContext caller, Book book, int topic) {
+        Optional<PodcastPlan> plan = production.store().plan(bookKey(caller, book.folderId()));
+        if (plan.isEmpty() || topic < 0 || topic >= plan.get().topics().size()) {
+            return List.of();
+        }
+        return told(plan.get().topics().get(topic), parts(book.page(), reading.get(), Kind.BOOK));
+    }
+
     /** Bereich eines Buch-Podcasts in der Ablage: davor die Ordner-ID. */
     static final String BOOK_AREA = "book:";
 
@@ -325,9 +350,12 @@ public final class PagePodcasts {
             return new PageText("book-markdown/v1", markdown, sections);
         }
 
+        Page page() {
+            return new Page(folderId, title, null, text());
+        }
+
         PodcastWriter.Material material(Reading reading) {
-            return PagePodcasts.material(new Page(folderId, title, null, text()), List.of(), List.of(), reading,
-                    Kind.BOOK);
+            return PagePodcasts.material(page(), List.of(), List.of(), reading, Kind.BOOK);
         }
     }
 

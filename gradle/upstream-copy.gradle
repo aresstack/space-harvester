@@ -1,0 +1,78 @@
+// Gemeinsame Prüfung unveränderter Upstream-Kopien (enterprise-ai-sources, enterprise-ai-keepass, comic-controls,
+// proleap-parser und die Bibliotheken unter libs/): Jede kopierte Datei muss exakt der Prüfsumme aus ihrem Manifest
+// entsprechen (geschrieben vom jeweiligen sync-from-upstream.sh); fehlende oder zusätzliche Dateien zählen ebenfalls als
+// Abweichung. Läuft offline als Teil von check/build.
+//
+//   apply from: rootProject.file('gradle/upstream-copy.gradle')
+//   registerUpstreamCopyCheck(name: 'comic-controls', manifest: file('UPSTREAM.sha256'), baseDir: projectDir,
+//           files: files('LICENSE', fileTree('src')), upstream: 'aresstack/enterprise-ai-client')
+//
+// Optionen: taskName (Vorgabe verifyUpstreamCopy), normalizeLineEndings (CRLF zählt wie LF, Vorgabe false), hint (Text
+// der Fehlermeldung, wohin Änderungen gehören). Gibt den TaskProvider zurück und hängt ihn an check.
+
+import java.security.MessageDigest
+
+ext.registerUpstreamCopyCheck = { Map args ->
+    def label = args.name as String
+    def manifestFile = args.manifest as File
+    def baseDir = args.baseDir as File
+    def copied = args.files as FileCollection
+    def normalize = (args.normalizeLineEndings ?: false) as boolean
+    def hint = (args.hint ?: "Änderungen gehören in ${args.upstream} und kommen per sync-from-upstream.sh zurück") as String
+    def taskName = (args.taskName ?: 'verifyUpstreamCopy') as String
+
+    def task = tasks.register(taskName) {
+        group = 'verification'
+        description = "Prüft, dass ${label} unverändert dem Upstream-Stand aus ${manifestFile.name} entspricht."
+        inputs.file(manifestFile)
+        inputs.files(copied)
+        def marker = layout.buildDirectory.file("${taskName}/ok")
+        outputs.file(marker)
+        doLast {
+            def root = baseDir.toPath()
+            def expected = [:] as TreeMap
+            manifestFile.eachLine('UTF-8') { line ->
+                if (!line.startsWith('#') && !line.isBlank()) {
+                    def entry = (line =~ /^([0-9a-f]{64}) [ *](.+)$/)
+                    if (!entry.matches()) {
+                        throw new GradleException("Ungültiger Prüfsummeneintrag in ${manifestFile.name}: $line")
+                    }
+                    def path = entry.group(2)
+                    if (expected.containsKey(path)) {
+                        throw new GradleException("Doppelter Prüfsummeneintrag in ${manifestFile.name}: $path")
+                    }
+                    expected[path] = entry.group(1)
+                }
+            }
+            def actual = [:] as TreeMap
+            copied.files.each { file ->
+                def path = root.relativize(file.toPath()).toString().replace(File.separatorChar, '/' as char)
+                byte[] bytes = file.bytes
+                if (normalize) {
+                    def out = new ByteArrayOutputStream(bytes.length)
+                    for (int i = 0; i < bytes.length; i++) {
+                        if (!(bytes[i] == (byte) 13 && i + 1 < bytes.length && bytes[i + 1] == (byte) 10)) {
+                            out.write(bytes[i])
+                        }
+                    }
+                    bytes = out.toByteArray()
+                }
+                actual[path] = MessageDigest.getInstance('SHA-256').digest(bytes).encodeHex().toString()
+            }
+            def problems = []
+            (expected.keySet() - actual.keySet()).each { problems << "fehlt: $it" }
+            (actual.keySet() - expected.keySet()).each { problems << "zusätzlich: $it" }
+            expected.each { path, hash -> if (actual.containsKey(path) && actual[path] != hash) problems << "geändert: $path" }
+            if (problems) {
+                throw new GradleException("${label} weicht vom Upstream-Stand ab. ${hint}:\n  " + problems.join('\n  '))
+            }
+            def out = marker.get().asFile
+            out.parentFile.mkdirs()
+            out.text = "${actual.size()} Dateien geprüft\n"
+        }
+    }
+    tasks.named('check') {
+        dependsOn task
+    }
+    task
+}

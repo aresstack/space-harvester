@@ -142,6 +142,14 @@ final class SummaryReport {
         bodies.clear();
     }
 
+    /**
+     * Ein Teil, das zur Stelle {@code number} gehört, ohne Bericht (etwa ein Kapitel des Buchs): Gelb und Grau
+     * markieren es wie die Teile eines Themas.
+     */
+    void topicPart(int number, JComponent part) {
+        topicParts.computeIfAbsent(number, key -> new ArrayList<>()).add(part);
+    }
+
     /** Ob Themen mit Text dastehen, neben die Bilder kommen können. */
     boolean hasBodies() {
         return !bodies.isEmpty();

@@ -4087,6 +4087,18 @@ public final class Workspace {
         return harvester.pagePodcasts().bookTranscript(caller, book);
     }
 
+    /** Die Teile des Buchs, wie sein Podcast sie erzählt, als Stellen im Markdown; rechnet nur. */
+    public java.util.List<com.aresstack.spaceharvester.application.podcast.PagePodcasts.Span> bookPodcastParts(
+            com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
+        return harvester.pagePodcasts().bookParts(book);
+    }
+
+    /** Wovon ein Thema des Buch-Podcasts erzählt, als Nummern der Teile. Liest die Ablage, nie auf dem EDT. */
+    public java.util.List<Integer> bookPodcastFocus(
+            com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book, int topic) {
+        return harvester.pagePodcasts().bookFocus(caller, book, topic);
+    }
+
     /** Startet den Podcast zum Buch eines Ordners oder setzt ihn fort. */
     public JobStatus startBookPodcast(com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
         return harvester.pagePodcasts().startBook(caller, book);

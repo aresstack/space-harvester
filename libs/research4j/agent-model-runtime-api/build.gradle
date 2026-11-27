@@ -1,0 +1,14 @@
+// Neutral, framework-free agent MODEL-RUNTIME contracts (Java 8): the reranker endpoint descriptor,
+// its selection policy, the versioned configuration document and its codec/validation. Pure DTOs,
+// enums and a hand-written JSON codec — NO askai-app, LocalModelRuntimeManager, Swing, Solon, Ollama,
+// win-directml-java or Playwright types. The AskAI host writes it; the research agent reads it.
+// Package `port` is the model port v2 of ADR 0001 (3.2, 4.5): chat, tools, schema output, streaming,
+// cancel, model slots and the resource contract (endpoint pool, capacity, residency, slot reservation).
+// Interfaces and value objects only; the host implements it on ollama4j.
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+}
+
+test {
+    useJUnit()
+}
