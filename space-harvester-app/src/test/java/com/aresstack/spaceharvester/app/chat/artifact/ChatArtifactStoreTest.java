@@ -32,6 +32,47 @@ class ChatArtifactStoreTest {
     }
 
     @Test
+    void inAProjectTheArtifactsBelongToTheProjectAndAChatBringsItsOwnAlong() throws Exception {
+        // ADR 0043, F3: im Projekt besitzt das Projekt die Artefakte, alle Chats des Projekts arbeiten darauf.
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        Path project = home.resolve("projekte").resolve("p1").resolve("artefakte");
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.projects(id -> "p1".equals(id) ? project : null);
+        List<ChatArtifactStore.Event> events = new ArrayList<>();
+        store.addListener(events::add);
+        ChatRecord first = ChatRecord.fresh(1_000, "p1");
+        ChatRecord second = ChatRecord.fresh(2_000, "p1");
+        store.chatProject(first.id(), "p1");
+        store.chatProject(second.id(), "p1");
+        store.createDocument(folder, first.id(), "Plan", "# Plan\n\nErst säen.", ChatArtifact.Origin.AI);
+        assertThat(store.list(folder, second.id())).extracting(ChatArtifact::id).as("der zweite Chat sieht es")
+                .containsExactly("D1");
+        assertThat(events.get(0).owner()).isEqualTo(project).isEqualTo(store.owner(folder, second.id()));
+        assertThat(Files.isDirectory(chats.artifacts(folder, first.id()))).as("nichts beim Chat").isFalse();
+        store.createGraphic(folder, second.id(), "Ablauf", "<svg/>", ChatArtifact.Origin.AI);
+
+        // Ein Chat aus dem Standardprojekt kommt mit Dokument und eingebundener Grafik ins Projekt.
+        ChatRecord loose = chat(chats);
+        ChatArtifact graphic = store.createGraphic(folder, loose.id(), "Beet", "<svg/>", ChatArtifact.Origin.AI);
+        store.createDocument(folder, loose.id(), "Gartenfibel", "# Gartenfibel\n\n"
+                + GraphicReferences.reference(graphic), ChatArtifact.Origin.AI);
+        store.rememberTabs(folder, loose.id(), List.of("D1", "G1"));
+        assertThat(store.moveToProject(folder, loose.id(), "p1")).isEqualTo(2);
+
+        assertThat(store.list(folder, second.id())).extracting(ChatArtifact::id).containsExactly("D1", "G1", "G2", "D2");
+        assertThat(GraphicReferences.ids(store.read(folder, second.id(), "D2").content()))
+                .as("der Verweis folgt der neuen Kennung").containsExactly("G2");
+        assertThat(store.read(folder, second.id(), "D2").title()).isEqualTo("Gartenfibel");
+        assertThat(store.openTabs(folder, loose.id())).as("die Reiter folgen").containsExactly("D2", "G2");
+        assertThat(store.list(folder, loose.id())).hasSize(4);
+        try (var left = Files.list(chats.artifacts(folder, loose.id()))) {
+            assertThat(left.filter(file -> file.toString().endsWith(ChatArtifactStore.SUFFIX)))
+                    .as("beim Chat bleibt keine Kopie").isEmpty();
+        }
+    }
+
+    @Test
     void documentsAreKeptWithAllRevisionsAndListedInCreationOrder() {
         ChatStore chats = chats();
         ChatRecord chat = chat(chats);

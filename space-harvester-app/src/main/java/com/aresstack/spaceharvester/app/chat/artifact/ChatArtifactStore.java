@@ -12,7 +12,10 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
@@ -24,6 +27,10 @@ import java.util.regex.Pattern;
  * der Vertrag folgt dem {@code AgentArtifactStore} aus Ask AI: lesen mit Revision, schreiben mit erwarteter Revision
  * (die Ansicht) oder auf den neuesten Stand (die Werkzeuge, denn eine Änderung des Benutzers gilt für das nächste
  * Werkzeug, Abschnitt 3). Papierkorb, Wiederherstellen und Löschen gehen mit dem Chat ({@link ChatStore}).
+ *
+ * <p>Besitzer (ADR 0043, F3): Im Standardprojekt gehören die Artefakte dem Chat; gehört der Chat zu einem anderen
+ * Projekt, gehören sie dem Projekt und liegen in dessen Ordner ({@link #projects}), und alle Chats des Projekts
+ * arbeiten darauf. Die offenen Reiter bleiben je Chat.
  *
  * <p>Wer zuschaut, bekommt jede Änderung gemeldet ({@link #addListener}, ADR 0027: kein Polling). In Logs stehen nie
  * Texte aus Artefakten, nur die Ausnahmeklasse (Abschnitt 9).
@@ -43,8 +50,11 @@ public final class ChatArtifactStore {
     /** Ein Schloss für alle Instanzen: Ansicht und Werkzeuge dürfen sich nie überschreiben. */
     private static final Object LOCK = new Object();
 
-    /** Eine Änderung an einem Artefakt, für die Ansicht. */
-    public record Event(Path folder, String chatId, ChatArtifact artifact, List<String> changed) {
+    /**
+     * Eine Änderung an einem Artefakt, für die Ansicht; {@code owner} ist der Ordner des Besitzers ({@link #owner}),
+     * sodass jeder Chat eines Projekts die Änderung eines anderen sieht.
+     */
+    public record Event(Path folder, String chatId, Path owner, ChatArtifact artifact, List<String> changed) {
     }
 
     /** Das Ergebnis eines Schreibens; bei Erfolg der neue Stand, sonst der Grund und der aktuelle Stand. */
@@ -64,9 +74,122 @@ public final class ChatArtifactStore {
 
     private final ChatStore chats;
     private final List<Consumer<Event>> listeners = new CopyOnWriteArrayList<>();
+    /** Der Artefakt-Ordner eines Projekts; {@code null} für das Standardprojekt und unbekannte Projekte. */
+    private volatile java.util.function.Function<String, Path> projectArtifacts = projectId -> null;
+    /** Das Projekt der Chats, die gerade offen sind (auch ein noch nicht gespeicherter); sonst steht es im Chat. */
+    private final Map<String, String> projectOf = new ConcurrentHashMap<>();
 
     public ChatArtifactStore(ChatStore chats) {
         this.chats = chats;
+    }
+
+    /** Wo die Artefakte eines Projekts liegen (F3); {@code null} heißt: die Chats besitzen sie selbst. */
+    public void projects(java.util.function.Function<String, Path> projectArtifacts) {
+        this.projectArtifacts = projectArtifacts == null ? projectId -> null : projectArtifacts;
+    }
+
+    /** Meldet das Projekt eines offenen Chats, auch bevor er gespeichert ist ({@code null} = Standardprojekt). */
+    public void chatProject(String chatId, String projectId) {
+        if (chatId != null) {
+            projectOf.put(chatId, projectId == null ? "" : projectId);
+        }
+    }
+
+    /**
+     * Der Ordner, in dem die Artefakte des Chats liegen: der des Projekts, wenn der Chat zu einem Projekt außer dem
+     * Standardprojekt gehört, sonst der des Chats; {@code null} ohne Datenordner.
+     */
+    public Path owner(Path folder, String chatId) {
+        String projectId = chatId == null ? null : projectOf.get(chatId);
+        if (projectId == null && chatId != null) {
+            com.aresstack.spaceharvester.app.chat.ChatRecord record = chats.load(folder, chatId);
+            projectId = record == null ? null : record.projectId();
+        }
+        Path project = projectId == null || projectId.isEmpty() ? null : projectArtifacts.apply(projectId);
+        return project != null ? project : chats.artifacts(folder, chatId);
+    }
+
+    /**
+     * Ein Chat kommt in ein Projekt (F3): seine eigenen Artefakte ziehen in den Ordner des Projekts um. Dort bekommen
+     * sie freie Kennungen; Verweise zwischen ihnen (Grafiken im Dokument) und die offenen Reiter des Chats folgen. Ohne
+     * eigene Artefakte vergisst der Chat nur seine Reiter, denn die gehörten zum alten Besitzer.
+     *
+     * @return wie viele Artefakte umgezogen sind
+     */
+    public int moveToProject(Path folder, String chatId, String projectId) {
+        chatProject(chatId, projectId);
+        synchronized (LOCK) {
+            Path from = chats.artifacts(folder, chatId);
+            Path to = projectId == null ? null : projectArtifacts.apply(projectId);
+            List<ChatArtifact> own = from == null ? List.of() : listIn(from);
+            if (to == null || to.equals(from)) {
+                return 0;
+            }
+            Map<String, String> renamed = new LinkedHashMap<>();
+            Map<String, Integer> next = new java.util.HashMap<>();
+            for (ChatArtifact existing : listIn(to)) {
+                Matcher match = ID.matcher(existing.id());
+                if (match.matches()) {
+                    next.merge(match.group(1), Integer.parseInt(match.group(2)) + 1, Math::max);
+                }
+            }
+            for (ChatArtifact artifact : own) {
+                String prefix = artifact.kind() == ChatArtifact.Kind.GRAPHIC ? "G" : "D";
+                int number = next.getOrDefault(prefix, 1);
+                next.put(prefix, number + 1);
+                renamed.put(artifact.id(), prefix + number);
+            }
+            int moved = 0;
+            for (ChatArtifact artifact : own) {
+                ChatArtifact copy = renamed(artifact, renamed);
+                if (copy == null || !write(to, copy)) {
+                    continue;
+                }
+                try {
+                    Files.deleteIfExists(from.resolve(artifact.id() + SUFFIX));
+                    moved++;
+                } catch (IOException e) {
+                    LOG.log(System.Logger.Level.WARNING, "Artefakt nicht verschoben: " + e.getClass().getSimpleName());
+                }
+            }
+            List<String> tabs = openTabs(folder, chatId).stream().map(renamed::get)
+                    .filter(java.util.Objects::nonNull).toList();
+            Path tabsFile = from == null ? null : from.resolve(TABS);
+            try {
+                if (tabsFile != null && tabs.isEmpty()) {
+                    Files.deleteIfExists(tabsFile);
+                } else if (tabsFile != null) {
+                    Files.write(tabsFile, tabs, StandardCharsets.UTF_8);
+                }
+            } catch (IOException e) {
+                LOG.log(System.Logger.Level.WARNING, "Offene Reiter nicht umgestellt: " + e.getClass().getSimpleName());
+            }
+            return moved;
+        }
+    }
+
+    /** Verweise auf eine Grafik im Text: {@code artefakt:G1}, ohne weitere Ziffer dahinter. */
+    private static final Pattern LINK = Pattern.compile(Pattern.quote(DocumentChatTools.LINK_SCHEME)
+            + "([DG]\\d{1,6})(?!\\d)", Pattern.CASE_INSENSITIVE);
+
+    /** Das Artefakt mit neuer Kennung, jeder Verweis in jeder Revision umgeschrieben; {@code null}, wenn es scheitert. */
+    private static ChatArtifact renamed(ChatArtifact artifact, Map<String, String> renamed) {
+        try {
+            String json = JSON.writeValueAsString(new ChatArtifact(renamed.get(artifact.id()), artifact.kind(),
+                    artifact.title(), artifact.createdAt(), artifact.revisions()));
+            Matcher match = LINK.matcher(json);
+            StringBuilder out = new StringBuilder();
+            while (match.find()) {
+                String target = renamed.get(match.group(1).toUpperCase(java.util.Locale.ROOT));
+                match.appendReplacement(out, Matcher.quoteReplacement(target == null ? match.group()
+                        : DocumentChatTools.LINK_SCHEME + target));
+            }
+            match.appendTail(out);
+            return JSON.readValue(out.toString(), ChatArtifact.class);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Artefakt nicht umbenannt: " + e.getClass().getSimpleName());
+            return null;
+        }
     }
 
     public void addListener(Consumer<Event> listener) {
@@ -80,8 +203,13 @@ public final class ChatArtifactStore {
     /** Die Artefakte des Chats in der Reihenfolge ihres Anlegens; leer ohne Ordner. */
     public List<ChatArtifact> list(Path folder, String chatId) {
         synchronized (LOCK) {
+            return listIn(owner(folder, chatId));
+        }
+    }
+
+    private static List<ChatArtifact> listIn(Path directory) {
+        synchronized (LOCK) {
             List<ChatArtifact> artifacts = new ArrayList<>();
-            Path directory = chats.artifacts(folder, chatId);
             if (directory == null || !Files.isDirectory(directory)) {
                 return artifacts;
             }
@@ -122,10 +250,12 @@ public final class ChatArtifactStore {
     public void rememberTabs(Path folder, String chatId, List<String> ids) {
         synchronized (LOCK) {
             Path directory = chats.artifacts(folder, chatId);
-            if (directory == null || !Files.isDirectory(directory)) {
+            // Im Projekt liegen die Artefakte beim Projekt; der Ordner des Chats entsteht dann erst für seine Reiter.
+            if (directory == null || !Files.isDirectory(directory) && (ids.isEmpty() || list(folder, chatId).isEmpty())) {
                 return;
             }
             try {
+                Files.createDirectories(directory);
                 Files.write(directory.resolve(TABS), ids.stream().filter(id -> ID.matcher(id).matches()).toList(),
                         StandardCharsets.UTF_8);
             } catch (IOException e) {
@@ -162,7 +292,7 @@ public final class ChatArtifactStore {
                                 String svg) {
         ChatArtifact created;
         synchronized (LOCK) {
-            Path directory = chats.artifacts(folder, chatId);
+            Path directory = owner(folder, chatId);
             if (directory == null) {
                 return null;
             }
@@ -307,7 +437,7 @@ public final class ChatArtifactStore {
 
     private WriteResult store(Path folder, String chatId, ChatArtifact current, ChatArtifact next,
                               List<String> changed) {
-        Path directory = chats.artifacts(folder, chatId);
+        Path directory = owner(folder, chatId);
         if (directory == null || !write(directory, next)) {
             return WriteResult.failed(current, "Das Artefakt konnte nicht gespeichert werden.");
         }
@@ -315,7 +445,7 @@ public final class ChatArtifactStore {
     }
 
     private void notify(Path folder, String chatId, ChatArtifact artifact, List<String> changed) {
-        Event event = new Event(folder, chatId, artifact, changed);
+        Event event = new Event(folder, chatId, owner(folder, chatId), artifact, changed);
         for (Consumer<Event> listener : listeners) {
             try {
                 listener.accept(event);
@@ -344,7 +474,7 @@ public final class ChatArtifactStore {
             return null;
         }
         String id = artifactId.strip().toUpperCase(java.util.Locale.ROOT);
-        Path directory = chats.artifacts(folder, chatId);
+        Path directory = owner(folder, chatId);
         return directory == null || !ID.matcher(id).matches() ? null : directory.resolve(id + SUFFIX);
     }
 

@@ -465,6 +465,8 @@ public final class ChatPanel extends JPanel {
         store = new ChatStore(context::chatsDirectory);
         artifacts = new com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore(store);
         projects = context.projects();
+        // Artefakte gehören im Projekt dem Projekt, im Standardprojekt dem Chat (ADR 0043, F3).
+        artifacts.projects(projects::artifacts);
         chat = freshChat(null);
         // Wechselt das aktive Projekt (Ecke unten) oder ändert sich eine Gruppe, folgt der Chat (ADR 0027, ohne Abfragen).
         projects.addListener(() -> SwingUtilities.invokeLater(this::projectsChanged));
@@ -1853,6 +1855,7 @@ public final class ChatPanel extends JPanel {
         if (artifacts == null) {
             return;
         }
+        artifacts.chatProject(chat.id(), chat.projectId());
         if (!java.util.Objects.equals(artifactFolder, home) || !java.util.Objects.equals(artifactChat, chat.id())) {
             artifactFolder = home;
             artifactChat = chat.id();
@@ -3894,9 +3897,17 @@ public final class ChatPanel extends JPanel {
 
     /** Speichert den offenen Chat mit neuer Zuordnung (ohne leere Datei); die Liste baut sich beim Öffnen neu auf. */
     private void reassign(ChatRecord changed) {
+        boolean moved = !java.util.Objects.equals(chat.projectId(), changed.projectId());
         chat = changed;
         if (home != null && !chat.isEmpty()) {
             store.save(home, chat);
+        }
+        if (moved && artifacts != null) {
+            // Eigene Artefakte ziehen ins neue Projekt um (F3); die Mitte zeigt danach die des neuen Besitzers.
+            artifacts.moveToProject(home, chat.id(), chat.projectId());
+            artifactHost.chat(null, null);
+            artifactFolder = null;
+            announceArtifactChat();
         }
         showChatName();
     }

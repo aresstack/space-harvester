@@ -423,7 +423,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     /** Ein umbenanntes Artefakt bekommt seinen neuen Titel auch am Reiter. */
     private void retitle(ChatArtifactStore.Event event) {
         Runnable update = () -> {
-            if (!Objects.equals(folder, event.folder()) || !Objects.equals(chatId, event.chatId())) {
+            if (chatId == null || !Objects.equals(store.owner(folder, chatId), event.owner())) {
                 return;
             }
             if (event.artifact().id().equals(selected)) {
