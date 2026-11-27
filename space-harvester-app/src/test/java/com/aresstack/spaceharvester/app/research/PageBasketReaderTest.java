@@ -59,4 +59,47 @@ class PageBasketReaderTest {
         assertThat(seen[0]).isEqualTo("freigegeben");
         assertThat(stock.released).containsExactly(key);
     }
+
+    @Test
+    void theEditionKeepsTheVersionThatWasReadNotALaterOne() {
+        HostResearchTest.Stock pages = new HostResearchTest.Stock();
+        PageKey key = new PageKey("wiki", "11");
+        pages.pages.put(key, new PageStock.Page(key, "Erfunden", "Ein erfundener Satz über Bienen im Winter.",
+                "GARTEN", null));
+        String[] version = {"v1"};
+        PageStock stock = new PageStock() {
+            @Override
+            public List<com.aresstack.spaceharvester.application.query.KeywordSearch.Hit> search(String text,
+                                                                                                    int limit) {
+                return pages.search(text, limit);
+            }
+
+            @Override
+            public java.util.Optional<Page> page(PageKey wanted) {
+                return pages.page(wanted);
+            }
+
+            @Override
+            public String version(PageKey wanted) {
+                return version[0];
+            }
+
+            @Override
+            public List<Child> children(PageKey wanted, String spaceKey) {
+                return pages.children(wanted, spaceKey);
+            }
+
+            @Override
+            public void release(java.util.Map<PageKey, String> spaceOfPage) {
+                pages.release(spaceOfPage);
+            }
+        };
+        PageBasketReader reader = new PageBasketReader(stock, new PendingReleases(stock),
+                PageBasketReader.defaultSegmentation());
+
+        reader.passages(PageRefs.of(key, "Erfunden"));
+        version[0] = "v2";
+
+        assertThat(reader.sources()).containsExactly(new BookEditions.Source("wiki", "11", "v1"));
+    }
 }

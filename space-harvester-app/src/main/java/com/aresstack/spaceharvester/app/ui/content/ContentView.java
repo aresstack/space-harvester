@@ -45,6 +45,8 @@ public final class ContentView implements View {
     private final JPanel body = new JPanel(new BorderLayout());
     /** Die Einmalcode-Abfrage der gezeigten Wissensquelle (ADR 0018), etwa für Anhänge und Bilder. */
     private final SignInSlot signIn;
+    /** Die Artefakte des offenen Chats als Reiter in der Mitte (ADR 0045). */
+    private final ArtifactTabs artifactTabs;
 
     private String sourceId;
     /** „Wissensquellen“ im Explorer gewählt: die Bereichsanzeige nennt keine Quelle (Architekt 17.11.2026). */
@@ -110,7 +112,12 @@ public final class ContentView implements View {
         root.add(north, BorderLayout.NORTH);
         body.setOpaque(false);
         root.add(body, BorderLayout.CENTER);
-        body.add(detail, BorderLayout.CENTER);
+        // Artefakte des Chats als Reiter über der Arbeitsfläche (ADR 0045, Abschnitt 5); der Chat bleibt rechts.
+        artifactTabs = new ArtifactTabs(detail.chat().artifactStore(), detail,
+                () -> context.settings() == null ? null : context.settings().outputDirectory(),
+                text -> statusInfo.show(com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(text)));
+        body.add(artifactTabs.component(), BorderLayout.CENTER);
+        detail.chat().artifactHost(artifactTabs);
         context.onChange(ignored -> renderCrumbs());
         renderCrumbs();
         // Die Checkbox am Ordner löst ihn mit der neuen Stellung auf; eine Änderung am Ordner gilt sofort, also auch
@@ -264,6 +271,8 @@ public final class ContentView implements View {
 
     /** Nach dem Laden kennt die Seite ihren Space. */
     private void pageShown(String sourceId, String spaceKey) {
+        // Wählt der Benutzer links etwas, kommt die Seite zurück; offene Artefakt-Reiter bleiben stehen.
+        artifactTabs.showPage();
         this.sourceId = sourceId;
         this.spaceKey = spaceKey == null || spaceKey.isBlank() ? null : spaceKey;
         renderCrumbs();
@@ -398,6 +407,7 @@ public final class ContentView implements View {
      * „Chat“ (Angelo, 13.11.2026); {@code null} ohne Auswahl.
      */
     public void selection(ExportPanel.Selection selection) {
+        artifactTabs.showPage();
         detail.export().selection(selection);
         detail.chat().onResolved(resolved -> detail.graph().within(resolved == null ? null : resolved.pages()));
         detail.chat().selection(selection);

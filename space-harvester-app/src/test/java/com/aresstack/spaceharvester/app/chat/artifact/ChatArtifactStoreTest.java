@@ -117,6 +117,23 @@ class ChatArtifactStoreTest {
     }
 
     @Test
+    void anUndoneInsertionNeverGivesItsIdAgain() {
+        ChatStore chats = chats();
+        ChatRecord chat = chat(chats);
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        Path folder = chats.folder(node);
+        store.createDocument(folder, chat.id(), "Liste", "## Punkt\n\neins", ChatArtifact.Origin.AI);
+        store.edit(folder, chat.id(), "D1", ChatArtifactStore.ANY, ChatArtifact.Origin.AI, "",
+                document -> document.insertAfter("a1", 2, "Zweiter", "zwei"));
+        store.undo(folder, chat.id(), "D1", ChatArtifactStore.ANY, ChatArtifact.Origin.USER);
+
+        ChatArtifactStore.WriteResult again = store.edit(folder, chat.id(), "D1", ChatArtifactStore.ANY,
+                ChatArtifact.Origin.AI, "", document -> document.insertAfter("a1", 2, "Anderer", "drei"));
+
+        assertThat(again.changed()).containsExactly("a3");
+    }
+
+    @Test
     void artifactsGoWithTheChatIntoTheTrashBackAndAway() {
         ChatStore chats = chats();
         ChatRecord chat = chat(chats);

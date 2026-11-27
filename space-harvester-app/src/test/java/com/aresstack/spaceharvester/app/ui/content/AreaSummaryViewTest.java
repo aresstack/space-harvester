@@ -236,6 +236,58 @@ class AreaSummaryViewTest {
     }
 
     @Test
+    void aFolderWithABookShowsItsNewestEditionInsteadOfTheOverviewAndNeverStartsTheModel() throws Exception {
+        // Die Markdown-Darstellung des Chats verlangt den Swing-Thread, wie in der App.
+        javax.swing.SwingUtilities.invokeAndWait(this::showsTheBook);
+    }
+
+    private void showsTheBook() {
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        view.zone(java.time.ZoneId.of("Europe/Berlin"));
+        com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
+                new com.aresstack.spaceharvester.app.research.BookEditions.Edition(2, AT, "# Erfundenes Buch\n\nText.",
+                        "Bericht", List.of(new com.aresstack.spaceharvester.app.research.BookEditions.Source("wiki",
+                        "1", "v1")));
+        view.books(id -> "ordner-buch".equals(id) ? edition : null);
+
+        view.folder(folder("ordner-buch", Root.space("wiki", "BAU")));
+
+        assertThat(view.edition()).isEqualTo(edition);
+        assertThat(view.texts()).contains("Buch, 2. Auflage vom 24.11.2026, 10:00, aus 1 Seite");
+        assertThat(view.copyText()).contains("# Erfundenes Buch");
+        assertThat(actions.summarized).isEmpty();
+        assertThat(view.summarizeOffered()).isFalse();
+    }
+
+    @Test
+    void aFolderWithoutFavoritesStillShowsItsBook() throws Exception {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+            com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
+                    new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, "# Buch", "", List.of());
+            view.books(id -> edition);
+
+            view.folder(folder("ordner-leer"));
+
+            assertThat(view.edition()).isEqualTo(edition);
+            assertThat(view.texts()).doesNotContain(AreaSummaryView.NO_FAVORITES);
+            assertThat(actions.summarized).isEmpty();
+        });
+    }
+
+    @Test
+    void theListeningViewKeepsTheOverviewForNow() {
+        AreaSummaryView view = view(AreaSummaryView.Mode.LISTEN, true);
+        actions.stored = overview("selection-abc");
+        view.books(id -> new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, "Buch", "",
+                List.of()));
+
+        view.folder(folder("ordner-a", Root.space("wiki", "BAU")));
+
+        assertThat(view.edition()).isNull();
+    }
+
+    @Test
     void anEmptyFolderSaysSoWithoutAskingTheModel() {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
         view.folder(folder("ordner-leer"));

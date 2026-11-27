@@ -275,7 +275,8 @@ final class BookFlow {
         Path output = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings
                 .defaultOutputDirectory() : context.settings().outputDirectory();
         CornerstoneSurvey.Chosen chosen = view.chosen(session.prepared().basketHints());
-        context.runtime().workspace().startBook(session.folderId(), session.folderName(), BookJob.write(session, chosen, output,
+        context.runtime().workspace().startBook(session.folderId(), session.folderName(), BookJob.write(session,
+                chosen, dataDirectory(context), output,
                 PageDetailPanel.safeName(session.folderName()),
                 book -> SwingUtilities.invokeLater(() -> written(session, book))));
     }

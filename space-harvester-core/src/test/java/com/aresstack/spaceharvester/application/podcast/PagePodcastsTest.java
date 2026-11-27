@@ -151,6 +151,45 @@ class PagePodcastsTest {
     }
 
     @Test
+    void theCoverageLeavesOutPartsNoTopicTellsAndTheEndThatWasCutBeforeTheModel() {
+        String lang = "Zeile über den Ablauf des Nachtlaufs Nordlicht. ".repeat(100).strip();
+        String text = "Wozu es den Nachtlauf gibt.\nAblauf\n" + lang + "\nHistorie\nAngelegt von Erika Beispiel.";
+        int ablauf = text.indexOf("Ablauf");
+        int historie = text.indexOf("Historie");
+        PagePodcasts.Page root = page("1", "Nachtlauf Nordlicht", text,
+                new PageText.Section("Ablauf", 2, ablauf, historie),
+                new PageText.Section("Historie", 2, historie, text.length()));
+        // Einstieg ohne eigene Teile (zeigt den Anfang), dann nur der Ablauf; die Historie ließ das Modell weg
+        PodcastPlan plan = new PodcastPlan("Nordlicht", List.of(
+                new PodcastPlan.Topic("Einstieg", "", 0.5, List.of(), List.of()),
+                new PodcastPlan.Topic("Ablauf", "", 0.5, List.of(), List.of(2))), List.of());
+
+        List<PagePodcasts.Span> covered = PagePodcasts.coverage(root, plan);
+
+        assertThat(covered).hasSize(2);
+        assertThat(covered.get(0)).isEqualTo(new PagePodcasts.Span(0, ablauf));
+        // Vom langen Ablauf ging nur der Anfang an das Modell: die Abdeckung endet dort, wo der gekürzte Text endet
+        PagePodcasts.Span told = covered.get(1);
+        assertThat(told.start()).isEqualTo(ablauf);
+        assertThat(told.end()).isLessThan(historie).isGreaterThan(ablauf + PagePodcasts.SECTION_CHARS / 2);
+        String sent = PagePodcasts.material(root, List.of(), List.of()).stories().get(1).text();
+        assertThat(sent).endsWith("…");
+        assertThat(text.substring(told.start(), told.end())).isEqualTo(sent.substring(0, sent.length() - 1));
+        // Gelb endet an derselben Grenze: das Laufende verdeckt nie das Grau dahinter
+        assertThat(PagePodcasts.read(text, PagePodcasts.parts(root, PagePodcasts.MAX_SECTIONS).get(1),
+                PagePodcasts.SECTION_CHARS)).isEqualTo(told);
+    }
+
+    @Test
+    void aPartThatWentWhollyToTheModelIsWhollyCovered() {
+        String body = "Ablauf\nErst Prüfung, dann Start.";
+        assertThat(PagePodcasts.reached(body, body)).isEqualTo(body.length());
+        // nicht zu findende Zeile: lieber den ganzen Teil als abgedeckt zeigen als falsch grau
+        assertThat(PagePodcasts.reached(body, "ganz anders…")).isEqualTo(body.length());
+        assertThat(PagePodcasts.reached(body, "Ablauf\nErst…")).isEqualTo("Ablauf\nErst".length());
+    }
+
+    @Test
     void aPageWithoutHeadingsKnowsWhereEachPieceStands() {
         String paragraph = "Ein Absatz über die Testumgebung. ".repeat(60).strip();
         String text = paragraph + "\n" + paragraph + "\n" + paragraph;
