@@ -97,7 +97,8 @@ final class BrowserToolSet {
         for (String part : text.split(",")) {
             String id = part.trim().replace("\"", "");
             if (!id.isEmpty()) {
-                ids.add(id);
+                // A search page's URL comes escaped (its commas would split it), as the engine table stores it.
+                ids.add(com.aresstack.askai.browser.search.engine.BrowserSearchEngineSelection.unescapeId(id));
             }
         }
         return ids;
