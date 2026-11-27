@@ -11,9 +11,13 @@ public class OutlineProcessor implements EnrichmentProcessor {
         return "outline";
     }
 
+    /**
+     * {@code 2}: auch die Überschriften des leichten Markdowns der Quellen ohne Seitenliste (Jira, lokale
+     * Markdown-Dokumente u. a., {@link PageText#markdownSections}); deren Gliederung war bisher leer.
+     */
     @Override
     public String version() {
-        return "1";
+        return "2";
     }
 
     /** Auch je Abschnitt eines Anhangs oder einer enthaltenen Datei (ADR 0026, AP9a); rechnet ohne Netz. */

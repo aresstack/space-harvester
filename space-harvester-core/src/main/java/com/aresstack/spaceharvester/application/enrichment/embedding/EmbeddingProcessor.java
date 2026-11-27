@@ -300,7 +300,7 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
                         Math.min(section.end(), chars)));
             }
         }
-        return new PageText(text.schema(), text.text().substring(0, chars), sections);
+        return new PageText(text.schema(), text.text().substring(0, chars), sections, text.sectionsFromText());
     }
 
     @Override
