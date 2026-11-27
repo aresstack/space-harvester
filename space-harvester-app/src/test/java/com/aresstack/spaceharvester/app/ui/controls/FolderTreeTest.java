@@ -131,6 +131,31 @@ class FolderTreeTest {
     }
 
     @Test
+    void aSingleFolderGetsTheItemsTheOwnerContributes() throws Exception {
+        Recorder recorder = new Recorder();
+        FolderTree<Entry> tree = onEdt(() -> tree(recorder));
+        List<String> asked = new ArrayList<>();
+        JPopupMenu menu = onEdt(() -> {
+            tree.folderItems((id, popup) -> {
+                asked.add(id);
+                popup.add(new JMenuItem("Korb füllen …"));
+            });
+            tree.select(List.of("a"));
+            return tree.menu();
+        });
+        assertThat(asked).containsExactly("a");
+        assertThat(java.util.Arrays.stream(menu.getComponents()).filter(c -> c instanceof JMenuItem)
+                .map(c -> ((JMenuItem) c).getText()).toList()).contains("Korb füllen …");
+
+        JPopupMenu leaf = onEdt(() -> {
+            tree.select(List.of("x"));
+            return tree.menu();
+        });
+        assertThat(asked).as("nur für einen einzelnen Ordner").containsExactly("a");
+        assertThat(leaf.getComponents()).noneMatch(c -> c instanceof JMenuItem m && m.getText().startsWith("Korb"));
+    }
+
+    @Test
     void removeAsksOnlyForFoldersWithContent() throws Exception {
         Recorder recorder = new Recorder();
         List<String> questions = new ArrayList<>();

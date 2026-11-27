@@ -1154,16 +1154,7 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private String sourceTitle(String id) {
-        AppRuntime runtime = context.runtime();
-        if (runtime != null) {
-            for (com.aresstack.spaceharvester.application.sources.HarvestSource source
-                    : runtime.workspace().sources()) {
-                if (source.id().equals(id)) {
-                    return source.title() == null || source.title().isBlank() ? id : source.title();
-                }
-            }
-        }
-        return id;
+        return context.sourceTitle(id);
     }
 
     /** Gefüllt, wenn die gezeigte Seite ein Favorit ist; ohne Seite gesperrt. */

@@ -59,7 +59,7 @@ import java.util.function.BooleanSupplier;
  * <p>Seiten werden über eine Kennung {@code Quelle/Seite} angesprochen. Was das Modell gelesen hat, wird als
  * nummerierte Quelle gemeldet, damit es mit [n] zitieren kann.
  */
-final class ChatTools {
+public final class ChatTools {
 
     static final String LIST = "seiten_auflisten";
     static final String READ = "seite_lesen";
@@ -399,11 +399,11 @@ final class ChatTools {
 
     // ------------------------------------------------------------------ Bereich
 
-    static String ref(PageKey key) {
+    public static String ref(PageKey key) {
         return key.sourceId() + "/" + key.pageId();
     }
 
-    static PageKey parse(String ref) {
+    public static PageKey parse(String ref) {
         if (ref == null) {
             return null;
         }
@@ -440,21 +440,15 @@ final class ChatTools {
         if (live.isFolder(key)) {
             return FOLDER_ONLY;
         }
-        Page page = page(key);
+        Page page;
+        try {
+            page = fetchedPage(workspace, key);
+        } catch (RuntimeException failed) {
+            diagnosis.accept("Chat-Werkzeug " + READ + ": Abruf gescheitert: " + failed.getClass().getSimpleName());
+            return NOT_FETCHED.formatted(failed.getClass().getSimpleName());
+        }
         if (page == null) {
-            // Im Bereich, aber nicht lokal (Angelo 26.11.2026: Auf den gewählten Bereich hat der Chat Zugriff): wie
-            // beim Öffnen in der Leseansicht von der Quelle holen; sie liegt danach lokal und wird wie jede andere
-            // Seite vor dem Senden freigegeben.
-            try {
-                workspace.page(key.sourceId(), key.pageId(), false);
-            } catch (RuntimeException failed) {
-                diagnosis.accept("Chat-Werkzeug " + READ + ": Abruf gescheitert: " + failed.getClass().getSimpleName());
-                return NOT_FETCHED.formatted(failed.getClass().getSimpleName());
-            }
-            page = page(key);
-            if (page == null) {
-                return NOT_STORED;
-            }
+            return NOT_STORED;
         }
         String text = page.text();
         int from = Math.min(offset, text.length());
@@ -493,6 +487,29 @@ final class ChatTools {
 
     /** Titel, Ort und Lesetext aus dem Cache; {@code null}, wenn die Seite nicht lokal liegt. */
     Page page(PageKey key) {
+        return localPage(workspace, key);
+    }
+
+    /**
+     * Die Seite zum Lesen: aus dem Cache oder, im Bereich, aber nicht lokal (Angelo 26.11.2026: Auf den gewählten
+     * Bereich hat der Chat Zugriff), wie beim Öffnen in der Leseansicht von der Quelle geholt; sie liegt danach lokal
+     * und wird wie jede andere Seite vor dem Senden freigegeben. {@code null}, wenn sie danach nicht lokal liegt; wirft,
+     * wenn der Abruf scheitert. Auch die Recherche der Buchfunktion liest so (app.research).
+     */
+    public static Page fetchedPage(Workspace workspace, PageKey key) {
+        Page page = localPage(workspace, key);
+        if (page != null) {
+            return page;
+        }
+        workspace.page(key.sourceId(), key.pageId(), false);
+        return localPage(workspace, key);
+    }
+
+    /**
+     * Titel, Ort und Lesetext aus dem Cache, wie der Chat sie liest; {@code null}, wenn die Seite nicht lokal liegt.
+     * Auch die Recherche der Buchfunktion liest so (app.research).
+     */
+    public static Page localPage(Workspace workspace, PageKey key) {
         try {
             DeliveredPage page = workspace.cachedPage(key.sourceId(), key.pageId()).orElse(null);
             if (page == null) {
@@ -509,7 +526,7 @@ final class ChatTools {
     }
 
     /** @param spaceKey Space laut Kopfdaten (Partition), {@code null}, wenn die Quelle keine nennt */
-    record Page(String title, String location, String text, String spaceKey) {
+    public record Page(String title, String location, String text, String spaceKey) {
     }
 
     // ------------------------------------------------------------------ Liste

@@ -311,6 +311,14 @@ public final class FolderTree<T> {
         return move(selected, new Target(folderId, -1));
     }
 
+    /** Weitere Einträge des Kontextmenüs eines einzelnen Ordners, die der Nutzer des Steuerelements beiträgt. */
+    private java.util.function.BiConsumer<String, JPopupMenu> folderItems = (id, menu) -> { };
+
+    /** Trägt weitere Einträge in das Kontextmenü eines einzelnen Ordners bei (ID des Ordners, Menü). */
+    public void folderItems(java.util.function.BiConsumer<String, JPopupMenu> items) {
+        this.folderItems = java.util.Objects.requireNonNull(items, "items");
+    }
+
     /** Das Kontextmenü zur aktuellen Auswahl (für Tests ohne Mausereignis). */
     public JPopupMenu menu() {
         JPopupMenu menu = new JPopupMenu();
@@ -323,6 +331,7 @@ public final class FolderTree<T> {
         if (selected.size() == 1 && shape.isFolder(first)) {
             menu.add(item(NEW_SUBFOLDER, () -> createFolder(shape.id(first))));
             menu.add(item(RENAME, () -> tree.startEditingAtPath(tree.getSelectionPath())));
+            folderItems.accept(shape.id(first), menu);
         } else {
             menu.add(item(NEW_FOLDER, this::createFolder));
         }
