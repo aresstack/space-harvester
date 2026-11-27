@@ -157,9 +157,51 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.standingFoot().trailing().isVisible())).isFalse();
         // Für den Fehlerfall, versteckt hinter dem Dreieck: die Kennzahlen des Knotens neu aufbauen.
         assertThat(onEdt(() -> detail.moreButton().isEnabled())).isTrue();
-        assertThat(onEdt(() -> java.util.Arrays.stream(detail.moreMenu().getComponents())
-                .map(item -> ((javax.swing.JMenuItem) item).getText()).toList()))
-                .containsExactly(PageDetailPanel.REBUILD_COUNTS);
+        assertThat(onEdt(() -> allMenuEntries(detail)))
+                .containsExactly(PageDetailPanel.REBUILD_COUNTS, "—", PageDetailPanel.NEW_EXPORT);
+    }
+
+    @Test
+    void theArtifactsOfTheChatStandInTheMoreMenuAndOpenInTheExportView() throws Exception {
+        // Angelo 27.11.2026: Schreiben ist eine Art Export; geschlossene Artefakte holt das Menü „Weitere Aktionen“.
+        var chats = new com.aresstack.spaceharvester.app.chat.ChatStore(() -> home.resolve("artefakt-chats"));
+        var node = new com.aresstack.spaceharvester.app.chat.ChatNode("wiki", null, null);
+        var chat = com.aresstack.spaceharvester.app.chat.ChatRecord.fresh(1)
+                .plus(com.aresstack.spaceharvester.app.chat.ChatRecord.Message.user("Schreib", 1), 1);
+        chats.save(node, chat);
+        var store = new com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore(chats);
+        store.createDocument(chats.folder(node), chat.id(), "Gartenfibel", "## Boden\n\nHumus.",
+                com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact.Origin.AI);
+        PageDetailPanel detail = view.detail();
+        ArtifactTabs tabs = onEdt(() -> {
+            ArtifactTabs artifactTabs = new ArtifactTabs(store, detail.export());
+            detail.artifactTabs(artifactTabs);
+            artifactTabs.chat(chats.folder(node), chat.id());
+            detail.tabs().select("Leseansicht");
+            return artifactTabs;
+        });
+        assertThat(onEdt(() -> detail.moreButton().isEnabled())).isTrue();
+        javax.swing.JMenuItem item = onEdt(() -> java.util.Arrays.stream(detail.moreMenu().getComponents())
+                .filter(javax.swing.JMenuItem.class::isInstance).map(javax.swing.JMenuItem.class::cast)
+                .filter(entry -> entry.getText().equals(PageDetailPanel.ARTIFACT_DOCUMENT + "Gartenfibel"))
+                .findFirst().orElseThrow());
+        onEdt(() -> {
+            item.doClick();
+            return null;
+        });
+        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Export");
+        assertThat(onEdt(tabs::focus)).isEqualTo("D1");
+        // Unten nur die Formate des Artefakts; ohne Reiter wieder alle Knöpfe der Ausgabe (ADR 0045 §5).
+        assertThat(onEdt(() -> ((java.awt.Container) detail.footTools().getComponent(0)).getComponent(0)))
+                .isInstanceOf(javax.swing.JPanel.class);
+        assertThat(onEdt(() -> tabs.footBar().getComponentCount())).isEqualTo(3);
+        onEdt(() -> {
+            tabs.showPage();
+            return null;
+        });
+        assertThat(onEdt(tabs::footBar)).isNull();
+        assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(detail.export().formatBar(),
+                detail.footTools()))).isTrue();
     }
 
     @Test
@@ -211,13 +253,8 @@ class ContentViewTest {
                     && javax.swing.SwingUtilities.isDescendingFrom(view.detail().moreButton(), row)
                     && !javax.swing.SwingUtilities.isDescendingFrom(row, view.detail());
         })).isTrue();
-        assertThat(onEdt(() -> {
-            List<String> entries = new java.util.ArrayList<>();
-            for (java.awt.Component item : view.detail().moreMenu().getComponents()) {
-                entries.add(((javax.swing.JMenuItem) item).getText());
-            }
-            return entries;
-        })).containsExactly("Lesezeichen kopieren", "Im Browser öffnen");
+        assertThat(onEdt(() -> allMenuEntries(view.detail()))).containsExactly("Lesezeichen kopieren",
+                "Im Browser öffnen (gesperrt)", "—", PageDetailPanel.NEW_EXPORT + " (gesperrt)");
         // Sichtprüfung der Kopfzeile, nur mit der Umgebungsvariable HEADER_SCREENSHOT (Pfad der PNG-Datei).
         String screenshot = System.getenv("HEADER_SCREENSHOT");
         if (screenshot != null && !screenshot.isBlank()) {
@@ -371,12 +408,12 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
         // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
         // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
-        assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
+        assertThat(onEdt(() -> detail.exportCard().isVisible())).isFalse();
         onEdt(() -> {
             detail.tabs().select("Export");
             return null;
         });
-        assertThat(onEdt(() -> detail.export().isVisible())).isTrue();
+        assertThat(onEdt(() -> detail.exportCard().isVisible())).isTrue();
         onEdt(() -> {
             view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
@@ -450,7 +487,7 @@ class ContentViewTest {
             view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
         });
-        assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
+        assertThat(onEdt(() -> detail.exportCard().isVisible())).isFalse();
         // Eine Seite links: „Analysen“ zeigt wieder die Analysen der Seite.
         onEdt(() -> {
             view.selection(new ExportPanel.Selection.Node("handbuch", "DH", "p1", "Seite"));
@@ -481,7 +518,7 @@ class ContentViewTest {
             detail.tabs().select("Leseansicht");
             return null;
         });
-        assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
+        assertThat(onEdt(() -> detail.exportCard().isVisible())).isFalse();
         assertThat(onEdt(() -> view.tabBar())).isSameAs(detail.tabIcons());
         // Die Schnellaktionen des Chats stehen in seiner Seitenleiste, nicht mehr unten in der Werkzeugleiste.
         // Unten steht in der Leseansicht höchstens der Platz für „Transkript kopieren“ des Podcasts.
@@ -634,7 +671,20 @@ class ContentViewTest {
     private static final String[] MODEL_ROWS = {"Modell Podcast: Standard", "Modell Bildgenerierung – Plan: Standard",
             "Modell Bildgenerierung – Einzelteile: Standard", "Modell Podcast – Sprache: Standard"};
 
+    /**
+     * Die Einträge des Menüs am Dreieck zur gezeigten Ansicht, ohne den Teil der Schreibumgebung darunter („Neuer
+     * Export“ und die Artefakte, ADR 0045 §5), den theArtifactsOfTheChatStandInTheMoreMenu… prüft.
+     */
     private static List<String> menuEntries(PageDetailPanel detail) {
+        List<String> entries = allMenuEntries(detail);
+        int writing = entries.indexOf(PageDetailPanel.NEW_EXPORT);
+        if (writing < 0) {
+            writing = entries.indexOf(PageDetailPanel.NEW_EXPORT + " (gesperrt)");
+        }
+        return writing <= 0 ? entries : entries.subList(0, writing - 1);
+    }
+
+    private static List<String> allMenuEntries(PageDetailPanel detail) {
         List<String> entries = new java.util.ArrayList<>();
         for (java.awt.Component item : detail.moreMenu().getComponents()) {
             entries.add(item instanceof javax.swing.JMenuItem entry

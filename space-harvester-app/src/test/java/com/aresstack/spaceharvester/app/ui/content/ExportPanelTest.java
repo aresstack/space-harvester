@@ -99,7 +99,7 @@ class ExportPanelTest {
             assertThat(panel[0].exportBlocked("pdf")).as("ohne Auswahl").isEqualTo(ExportPanel.NO_SELECTION);
             panel[0].selection(new ExportPanel.Selection.Node("handbuch", space, null, space));
         });
-        await(() -> panel[0].files.getText().equals(ExportPanel.NO_HOLDINGS));
+        await(() -> panel[0].showsSelection() && !panel[0].files.isVisible());
         SwingUtilities.invokeAndWait(() -> {
             assertThat(panel[0].exportBlocked("pdf")).as("ohne Bestand erlaubt: lädt erst").isNull();
             assertThat(panel[0].shownDataset()).isNull();
@@ -133,7 +133,7 @@ class ExportPanelTest {
             panel[0] = new ExportPanel(context);
             panel[0].selection(new ExportPanel.Selection.Node("handbuch", space, null, space));
         });
-        await(() -> panel[0].files.getText().equals(ExportPanel.NO_HOLDINGS));
+        await(() -> panel[0].showsSelection() && !panel[0].files.isVisible());
         SwingUtilities.invokeAndWait(() -> {
             panel[0].output("pdf");
             // Architekt: Die Statuszeile gehört dem Hauptfenster; ein Auswahlwechsel beendet weder die Laufmeldung
@@ -173,7 +173,7 @@ class ExportPanelTest {
             panel[0] = new ExportPanel(context);
             panel[0].selection(new ExportPanel.Selection.Node("handbuch", space, null, space));
         });
-        await(() -> panel[0].files.getText().equals(ExportPanel.NO_HOLDINGS));
+        await(() -> panel[0].showsSelection() && !panel[0].files.isVisible());
         SwingUtilities.invokeAndWait(() -> {
             panel[0].output("pdf");
             panel[0].selection(null);
@@ -381,6 +381,15 @@ class ExportPanelTest {
         assertThat(ExportPanel.affects(new JobStatus("m", JobType.ANALYTICS_EXPORT, "wiki", "OPS", "local",
                 JobState.RUNNING, new JobProgress(3, 1, 1, 0), null, false, Instant.EPOCH, Instant.EPOCH, null, null,
                 null, Map.of(), false, false, null))).isTrue();
+        // Ein zweiter Export-Reiter für dieselbe Auswahl startet denselben Export aus der Quelle nicht noch einmal.
+        JobStatus analytics = new JobStatus("a", JobType.ANALYTICS_EXPORT, "wiki", "OPS", "local", JobState.RUNNING,
+                new JobProgress(3, 1, 1, 0), null, false, Instant.EPOCH, Instant.EPOCH, null, null, null, Map.of(),
+                false, false, null);
+        ExportPanel.Selection space = new ExportPanel.Selection.Node("wiki", "OPS", null, "Betrieb");
+        assertThat(ExportPanel.sourceRunning(List.of(analytics), space, "analytics")).isTrue();
+        assertThat(ExportPanel.sourceRunning(List.of(analytics), space, "metadata")).isFalse();
+        assertThat(ExportPanel.sourceRunning(List.of(analytics),
+                new ExportPanel.Selection.Node("wiki", "DEV", null, "Entwicklung"), "analytics")).isFalse();
     }
 
     @Test
@@ -429,7 +438,7 @@ class ExportPanelTest {
             panel[0] = new ExportPanel(context);
             panel[0].selection(new ExportPanel.Selection.Collection("f1", "Betrieb", List.of(anhang, gone), true));
         });
-        await(() -> panel[0].spaces.isVisible() && texts(panel[0].spaces).contains(ExportPanel.NOTHING_YET));
+        await(() -> panel[0].showsSelection() && !panel[0].spaces.isVisible());
         SwingUtilities.invokeAndWait(() -> {
             assertThat(panel[0].coreSelectionForTest().roots()).as("je Space der Favoriten-Quelle eine Wurzel")
                     .hasSize(1).allMatch(root -> root.sourceId().equals("anhang") && root.spaceKey() != null);
@@ -463,14 +472,13 @@ class ExportPanelTest {
             // Eine Quelle, deren Space nie geladen wurde.
             panel[0].selection(new ExportPanel.Selection.Node("anhang", null, null, "Anhang"));
         });
-        await(() -> panel[0].spaces.isVisible() && texts(panel[0].spaces).contains(ExportPanel.NOTHING_YET));
+        await(() -> panel[0].showsSelection() && !panel[0].spaces.isVisible());
         SwingUtilities.invokeAndWait(() -> {
             assertThat(panel[0].coreSelectionForTest().roots()).as("je Space der Quelle eine Wurzel, auch ohne Bestand")
                     .hasSize(1).allMatch(root -> root.sourceId().equals("anhang") && root.spaceKey() != null);
             panel[0].selection(ExportPanel.Selection.ALL);
         });
-        await(() -> panel[0].spaces.isVisible() && texts(panel[0].spaces).stream()
-                .filter(text -> text.equals(ExportPanel.NOTHING_YET)).count() == 2);
+        await(() -> panel[0].showsSelection() && !panel[0].spaces.isVisible());
         SwingUtilities.invokeAndWait(() -> {
             assertThat(panel[0].coreSelectionForTest().roots()).as("Analytics, Metadaten und Formate je Space")
                     .hasSize(2).extracting(root -> root.sourceId()).containsExactlyInAnyOrder("handbuch", "anhang");
