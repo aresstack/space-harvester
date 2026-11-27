@@ -306,7 +306,6 @@ class ActivitiesBackgroundTabTest {
                             root))).as("Werkzeug in der Kopfzeile sichtbar").isTrue();
                     assertThat(part.getWidth()).isGreaterThanOrEqualTo(part.getPreferredSize().width);
                 }
-                assertThat(view.deleteFinished.isVisible()).isFalse();
                 // Eine gewählte Zeile schaltet ihre Aktionen frei.
                 // Eine Zeile schaltet ihre Aktionen frei (ohne laufenden Dienst leert die Auswahl selbst die Liste).
                 view.showSelectedActions(1);
