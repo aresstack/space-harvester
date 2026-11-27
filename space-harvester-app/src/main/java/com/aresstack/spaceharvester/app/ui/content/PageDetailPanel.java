@@ -6100,9 +6100,13 @@ public final class PageDetailPanel extends JPanel {
             views = result.views();
             analysisView.steps(views, this::stepResult);
             if (page != null) showProgramAnalysis(page.snapshot());
-            int caret = reader.getCaretPosition();
+            // Auswahl samt Anfang und Ende bleibt: die selbsttätige Neuberechnung kommt mitten im Lesen (Codex #1619).
+            int dot = reader.getCaret().getDot();
+            int mark = reader.getCaret().getMark();
             showReader(result.reader(), live);
-            reader.setCaretPosition(Math.min(caret, reader.getDocument().getLength()));
+            int length = reader.getDocument().getLength();
+            reader.setCaretPosition(Math.min(mark, length));
+            reader.moveCaretPosition(Math.min(dot, length));
             if (!run.supported()) {
                 feedback.info("Keine Analysen für dieses Format", null);
             } else if (run.failed() > 0) {

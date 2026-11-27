@@ -91,14 +91,22 @@ public final class PageRecomputation {
                                           Consumer<JobState> state) {
         Objects.requireNonNull(snapshot, "snapshot");
         List<String> ids = localProcessors(snapshot.key(), processorIds);
+        // Abschnitte eines lokalen Originals rechnet DocumentEnrichments mit allen veralteten Dokument-Prozessoren,
+        // auch denen über das Netz (Codex #1619): die bleiben dem Klick.
+        if (com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference.recognizes(snapshot.payload())
+                && localDocuments != null) {
+            List<String> documents = enrichments.documentProcessorIds();
+            ids = ids.stream().filter(id -> !documents.contains(id)).toList();
+        }
         if (ids.isEmpty()) {
             return null;
         }
+        List<String> chosen = ids;
         return execute(owner, snapshot, TASK, state, context -> {
             int computed = 0;
             int current = 0;
             int failed = 0;
-            for (String id : ids) {
+            for (String id : chosen) {
                 Enrichments.Run part = recompute(snapshot, id, context);
                 if (!part.supported()) {
                     continue;
