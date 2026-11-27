@@ -94,7 +94,7 @@ Ist er aus, bleiben die Artefakte sichtbar, bearbeitbar und exportierbar; die KI
 
 ### 5. Ort: Schreibansicht im Reiter „Export“, Chat rechts
 
-> Geändert am 27.11.2026 nach zwei Nachrichten von Angelo. Vorher öffnete sich ein Artefakt als Reiter über der ganzen
+> Geändert am 27.11.2026 nach drei Nachrichten von Angelo. Vorher öffnete sich ein Artefakt als Reiter über der ganzen
 > Mitte, in jeder Ansicht.
 >
 > 17:27 MEZ: „Du hast für das Schreibtool jetzt überall einen neuen Tab eingebaut, beziehungsweise alles hat jetzt
@@ -110,40 +110,67 @@ Ist er aus, bleiben die Artefakte sichtbar, bearbeitbar und exportierbar; die KI
 > so. Ich weiß nicht, was ich mit diesen Informationen soll. […] Das kann er sich auch intern irgendwie merken, weil
 > das entscheidet nur darüber, ob er die Daten irgendwie neu generieren muss oder anfordern muss oder ob sie schon
 > vorhanden sind. […] Deswegen würde ich sagen, man packt die Formate einfach unten zentriert in die Toolbar.“
+>
+> 17:32 MEZ: „Wenn ich jetzt einen anderen Tab auf habe, also so einen Schreibtab, dann ändert sich die Toolbar auch.
+> Dann wird halt nur noch das angezeigt, was diese Toolbar kann. […] Was dann nicht möglich ist, das wird dann nicht
+> angezeigt. Und wenn man dann einfach nur exportieren will, muss man halt diesen Tab schließen und dann, wenn kein
+> Tab angezeigt wird, […] werden mir die vollständigen Tools angezeigt, um die Seite zu exportieren. Alternativ
+> müsste man über den Dropdown oben gehen. Da können wir noch eine Option einfügen, […] neuer Export oder irgendwie
+> sowas. […] Und dann wird direkt so ein Tab geöffnet, wie den wir jetzt aktuell ja schon haben, vielleicht ein
+> bisschen überarbeitet. […] Und auf dem kann man dann halt auch wieder die Tools auswählen zum Exportieren der Seite.“
 
 - **Nur im Reiter „Export“:** Die Schreibansicht gibt es nur im Reiter „Export“ der Seitenmitte. Nur dort steht eine
   Reiterzeile. In allen anderen Ansichten der Mitte kommt keine Reiterzeile hinzu. Der Chat bleibt in der rechten
   Seitenleiste.
-- **Kein Reiter „Vorschau“, keine Detailansicht:** Die bisherige Fläche von „Export“ mit Stand der Ausgabe
-  („noch nichts ausgegeben“), Ausgabeordner und Dateiliste entfällt. Ob Daten vorhanden sind, neu erzeugt oder erst
-  geladen werden müssen, merkt sich die App intern und entscheidet es beim Klick wie bisher; angezeigt wird es nicht.
-- **Formate unten in der Leiste:** Die Knöpfe der Ausgabe stehen im Reiter „Export“ mittig in der unteren Leiste mit
-  der Lupe. Sie gelten wie bisher für die Auswahl links.
-- **Ein Klick, ein Reiter:** Erst ein Klick auf ein Format startet den Auftrag und öffnet dafür einen eigenen
-  schließbaren Reiter. Er bleibt bei der Auswahl und dem Format seines Starts stehen. Mehrere Exporte sind mehrere
-  Reiter. Ein erneuter Klick auf dasselbe Format startet einen neuen Auftrag.
-- **Artefakte:** Jedes geöffnete Artefakt ist ebenfalls ein schließbarer Reiter (`ClosableTab`) in dieser Zeile.
-  Welche Artefakt-Reiter offen waren, merkt sich der Chat.
-- **Wieder öffnen:** Das Menü „Weitere Aktionen zur Seite“ (Dreieck oben) listet alle Artefakte des Besitzers nach
-  Abschnitt 1; ein Klick wechselt zu „Export“ und öffnet den Reiter. So ist ein geschlossenes Artefakt nie verloren.
+- **Kein Reiter „Vorschau“:** Einen eigenen Reiter „Vorschau“ gibt es nicht. Die Anzeige „noch nichts ausgegeben“
+  entfällt. Ob Daten vorhanden sind, neu erzeugt oder erst geladen werden müssen, merkt sich die App intern und
+  entscheidet es beim Klick wie bisher; angezeigt wird es nicht.
+- **Ohne offenen Reiter:** „Export“ zeigt die Export-Fläche für die Auswahl links, ohne Reiterzeile. Sie wandert wie
+  heute mit der Auswahl mit.
+- **Die untere Leiste folgt dem Reiter:** Die Knöpfe der Ausgabe stehen im Reiter „Export“ mittig in der unteren
+  Leiste mit der Lupe. Was dort steht, hängt davon ab, was vorn ist:
+  - Kein Reiter offen: alle Knöpfe der Ausgabe für die Auswahl links. Ein Klick startet den Auftrag und öffnet dafür
+    einen Export-Reiter, der bei dieser Auswahl stehen bleibt.
+  - Ein Export-Reiter vorn: alle Knöpfe der Ausgabe für die Auswahl dieses Reiters. Ein Klick startet den Auftrag in
+    diesem Reiter.
+  - Ein Artefakt vorn: nur die Formate, die dieses Artefakt kann (Abschnitt 8). Was nicht geht, wird nicht gezeigt.
+- **Export-Reiter:** Ein Export-Reiter gehört zu der Auswahl, für die er geöffnet wurde, und bleibt stehen, auch wenn
+  links etwas anderes gewählt wird. Er ist schließbar; mehrere Export-Reiter sind möglich. Er zeigt dieselbe
+  Export-Fläche wie „Export“ ohne Reiter, nur für seine feste Auswahl. Ein erneuter Klick auf dasselbe Format startet
+  einen neuen Auftrag.
+- **„Neuer Export“:** Das Menü „Weitere Aktionen zur Seite“ (Dreieck oben) bekommt den Eintrag „Neuer Export“. Er
+  wechselt zu „Export“ und öffnet einen Export-Reiter für die Auswahl links, ohne einen Auftrag zu starten. So lässt
+  sich die Seite exportieren, ohne einen offenen Schreib-Reiter zu schließen.
+- **Artefakte:** Jedes geöffnete Artefakt ist ein schließbarer Reiter (`ClosableTab`) in derselben Zeile. Welche
+  Artefakt-Reiter offen waren, merkt sich der Chat.
+- **Wieder öffnen:** Dasselbe Menü listet alle Artefakte des Besitzers nach Abschnitt 1; ein Klick wechselt zu
+  „Export“ und öffnet den Reiter. So ist ein geschlossenes Artefakt nie verloren.
 - **Aus dem Chat:** Unter der Antwort, die ein Artefakt angelegt oder geändert hat, steht eine Zeile mit dessen Titel;
   ein Klick wechselt zu „Export“ und öffnet den Reiter. Legt die KI ein Artefakt an oder ändert sie eines, zeigt die
   Mitte es wie bisher von selbst, jetzt im Reiter „Export“.
 
 Entscheidungen des Architekten dazu, nicht Angelos Wortlaut:
 
+- Der Eintrag heißt „Neuer Export“, weil die Auswahl links eine Seite, ein Space, eine Quelle oder ein
+  Favoriten-Ordner sein kann.
 - Alle Knöpfe der bisherigen Ausgabe ziehen in die Leiste um, keiner entfällt: die Formate und die beiden Exporte
   aus der Quelle. Form und Platz folgen den Unterreitern, die in anderen Ansichten schon mittig in dieser Leiste
   stehen; es entsteht kein neues Steuerelement.
-- Der Reiter eines Exports zeigt nur diesen einen Export: Fortschritt des Auftrags, danach die erzeugten Dateien mit
-  „Öffnen“ und „Ordner öffnen“ und die Hinweise der Konvertierung. Bei mehreren Spaces steht je Space eine Zeile, wie
-  in der bisherigen Dateiliste.
-- Ohne offenen Reiter ist die Fläche von „Export“ leer; der Einstieg sind die Knöpfe unten.
-- Die Liste der Artefakte im Menü ist erreichbar, sobald es Artefakte gibt, auch wenn links keine Seite gewählt ist.
+- Die Formate eines Artefakts stehen nur noch in der Leiste. Das bisherige Export-Menü am Reiter des Artefakts
+  entfällt, damit es nicht zwei Wege für dasselbe gibt; „Rückgängig“ bleibt dort. Der Export eines Artefakts öffnet
+  keinen Reiter, er meldet die Datei wie bisher in der Statuszeile.
+- Lesart von „wenn kein Tab angezeigt wird, dann wird wieder die vollständige Seite angezeigt zum Exportieren“: Ohne
+  Reiter bleibt die Export-Fläche sichtbar, sie ist nicht leer.
+- Die Export-Fläche ist die heutige Fläche von „Export“, überarbeitet: ohne die Knöpfe (sie stehen unten) und ohne
+  die Anzeige, ob schon ausgegeben wurde. Sie zeigt die Auswahl, laufende Aufträge mit Fortschritt, die erzeugten
+  Dateien mit „Öffnen“ und „Ordner öffnen“ und die Hinweise der Konvertierung. Bei mehreren Spaces steht je Space
+  eine Zeile, wie in der bisherigen Dateiliste. Es gibt sie einmal im Code, für „ohne Reiter“ und für jeden
+  Export-Reiter.
+- „Neuer Export“ und die Liste der Artefakte sind im Menü erreichbar, auch wenn der Knopf heute in manchen Zuständen
+  gesperrt ist; die Liste der Artefakte auch dann, wenn links keine Seite gewählt ist.
 - Das Schließen eines Export-Reiters bricht keinen Auftrag ab und löscht keine Datei; Aufträge bleiben in der rechten
   Seitenleiste. Export-Reiter gelten für die laufende Sitzung der App, die Dateien bleiben im Ausgabeordner.
 - Das Schließen eines Artefakt-Reiters löscht das Artefakt nicht.
-- Der Export-Knopf am Reiter eines Artefakts (Abschnitt 8) bleibt, wie er ist.
 
 Die Ansicht zeigt das Dokument gerendert mit der vorhandenen Markdown-Anzeige. Ändert die KI einen Abschnitt, rollt die
 Ansicht dorthin und hebt ihn hervor, bis die nächste Änderung kommt. Der Benutzer bearbeitet selbst je Abschnitt
@@ -179,8 +206,8 @@ Element. Die KI bekommt diesen Bezug mit und ändert gezielt dort.
 
 ### 8. Export, Import und Formatvorlagen
 
-- **Export:** Knopf am Reiter des Artefakts, Formate Markdown, Word und PDF über die vorhandenen Schreiber, Ablage im
-  Ausgabeordner, benannt nach dem Titel. Grafiken zusätzlich als SVG.
+- **Export:** Knöpfe in der unteren Leiste (Abschnitt 5), Formate Markdown, Word und PDF über die vorhandenen
+  Schreiber, Ablage im Ausgabeordner, benannt nach dem Titel. Grafiken zusätzlich als SVG.
 - **PowerPoint und Excel** gehören nicht zum ersten Ausbau. Der vorhandene PowerPoint-Schreiber setzt Folien aus
   Bildern zusammen (Podcast), ein Excel-Schreiber fehlt. Beides sind eigene spätere Schritte.
 - **Word-Import (späterer Schritt):** Ein Word-Dokument wird zu einem Dokument-Artefakt in Markdown, ohne
