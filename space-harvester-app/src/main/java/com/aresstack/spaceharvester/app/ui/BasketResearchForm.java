@@ -1,6 +1,12 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.knowledge4j.scope.Fence;
+import com.aresstack.spaceharvester.ai.AiChat;
+import com.aresstack.spaceharvester.app.research.Abbreviations;
+import com.aresstack.spaceharvester.app.research.BookFieldFill;
+import com.aresstack.spaceharvester.app.research.BookFields;
+import com.aresstack.spaceharvester.app.research.BookNotes;
+import com.aresstack.spaceharvester.app.runtime.GlossaryAccess;
 
 import javax.swing.JButton;
 import javax.swing.JComponent;
@@ -13,13 +19,21 @@ import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 
 /**
- * Die Eingabe zu „Korb füllen“ (Buchfunktion Phase 3) und „Buch schreiben“ (Phase 4, Arbeitszweig): sichtbar nur der
- * Auftrag, die Entscheidung des Benutzers; Rand des Themas, was ausdrücklich dazugehört und was ausgeschlossen ist (beim
+ * Die Eingabe zu „Korb füllen“ (Buchfunktion Phase 3) und „Buch schreiben“ (Phase 4, Arbeitszweig): sichtbar Idee und
+ * Stichpunkte, der Auftrag und beim Buch die Fragen an das Buch; der KI-Knopf im Feld „Idee und Stichpunkte“ füllt auf
+ * Klick alle Felder daraus (je Feld eine Anfrage, parallel, gestreamt, abbrechbar; Abkürzungen löst vorher das
+ * Fachglossar auf, nie das Modell; gefüllte Felder ersetzt er nur nach „wirklich ersetzen?“). Rand des Themas, was ausdrücklich dazugehört und was ausgeschlossen ist (beim
  * Buch auch die Länge), stehen unter „Erweitert“. Daraus wird der Weidezaun. Was zum Ordner schon gespeichert ist,
  * steht vorab in den Feldern ({@link #prefill}). Die Eingabe ist ein Overlay wie die übrigen Formulare
  * ({@link Dialogs#formOverlay}).
@@ -39,8 +53,28 @@ final class BasketResearchForm {
     /** Aufgeklappt bekommen die Felder unter „Erweitert“ zusammen so viel Höhe wie der Auftrag mal diesen Faktor. */
     private static final double MORE_WEIGHT = 2;
     private static final int COLUMNS = 50;
+    static final String FILL_TIP = "Felder mit KI aus Idee und Stichpunkten füllen";
+    static final String CANCEL_TIP = "KI abbrechen";
 
-    final JTextArea mission = area(8);
+    /**
+     * Was der KI-Knopf braucht: das Chat-Modell des KI-Dienstes, die Parallelität und das Fachglossar zum Auflösen der
+     * Abkürzungen ({@code null}: keins, dann bleiben alle Abkürzungen unaufgelöst).
+     */
+    record AiAccess(AiChat chat, String model, int capacity, GlossaryAccess glossary) {
+    }
+
+    final JTextArea ideas = area(6);
+    final JTextArea mission = area(6);
+    /** Nur beim Buch: Fragen an das Buch, eine je Zeile (Pflichtfragen neben dem Weidezaun). */
+    final JTextArea questions = area(5);
+    final IconButton fill = new IconButton(Glyph.SPARKLE, FILL_TIP).compact();
+    /** Der eine Statusbereich des Formulars: Stand der KI, unbekannte Abkürzungen, Fehler je Feld. */
+    final JTextArea status = Comic.note("");
+    private AiAccess ai;
+    private BookFieldFill running;
+    private final Map<BookFields.Field, String> problems = new EnumMap<>(BookFields.Field.class);
+    private List<String> unresolved = List.of();
+    private String state = "";
     final JTextArea edge = area(3);
     final JTextArea included = area(4);
     final JTextArea excluded = area(4);
@@ -63,6 +97,20 @@ final class BasketResearchForm {
         return new BasketResearchForm(true);
     }
 
+    /** Mit KI-Knopf; ohne ({@code null}) sagt der Knopf, dass ein KI-Dienst fehlt. */
+    BasketResearchForm withAi(AiAccess access) {
+        this.ai = access;
+        return this;
+    }
+
+    /** Setzt alles vorab, was am Ordner gespeichert ist: Weidezaun, Länge, Stichpunkte und Fragen. */
+    BasketResearchForm prefill(BookNotes notes) {
+        prefill(notes.fence(), notes.targetWords());
+        ideas.setText(notes.ideas());
+        questions.setText(String.join("\n", notes.questions()));
+        return this;
+    }
+
     /** Setzt Auftrag, Rand, Ein- und Ausschlüsse und die Länge (0 = leer) vorab. */
     BasketResearchForm prefill(Fence fence, int targetWords) {
         mission.setText(fence.getMission());
@@ -80,6 +128,7 @@ final class BasketResearchForm {
     Optional<Fence> ask(Component parent, String folderName) {
         boolean start = Dialogs.formOverlaySized(parent, (book ? BOOK_TITLE : TITLE) + " – " + folderName,
                 body(folderName), book ? BOOK_ACTION : ACTION, book ? BOOK_SIZE_KEY : SIZE_KEY, SCREEN_SHARE);
+        cancelFill();
         return start ? fence() : Optional.empty();
     }
 
@@ -103,8 +152,17 @@ final class BasketResearchForm {
                 : "Die Recherche sucht im Wissensbestand Seiten zum Auftrag, prüft jede am "
                 + "Weidezaun und legt passende als Favoriten in den Ordner „" + folderName + "“. Seiten, die schon im "
                 + "Ordner liegen, liest sie nicht noch einmal. Fortschritt unter Aufträge."), 0);
+        row = add(body, row, label("Idee und Stichpunkte (grobe Idee, Fragestellung, Stichpunkte)"), 0);
+        fill.addActionListener(e -> fillClicked(body));
+        row = add(body, row, withButton(field(ideas), fill), 1);
+        status.setForeground(Comic.MUTED);
+        row = add(body, row, status, 0);
         row = add(body, row, label("Auftrag"), 0);
         row = add(body, row, field(mission), 1);
+        if (book) {
+            row = add(body, row, label("Fragen an das Buch (eine je Zeile)"), 0);
+            row = add(body, row, field(questions), 1);
+        }
         row = add(body, row, advanced, 0);
         JPanel more = new JPanel(new GridBagLayout());
         more.setOpaque(false);
@@ -127,7 +185,8 @@ final class BasketResearchForm {
         GridBagConstraints place = constraints(row, 0);
         body.add(more, place);
         advanced.addActionListener(e -> {
-            boolean open = !Comic.disclosed(advanced);
+            boolean open = !Comic.disclosed(advanced) || Boolean.TRUE.equals(advanced.getClientProperty(OPEN_ONLY));
+            advanced.putClientProperty(OPEN_ONLY, null);
             Comic.disclose(advanced, open);
             more.setVisible(open);
             // Aufgeklappt teilen sich die Felder die Höhe; Auftrag und Erweitert wachsen gleich mit.
@@ -139,6 +198,235 @@ final class BasketResearchForm {
         });
         return body;
     }
+
+    private static final String OPEN_ONLY = "basket-research.open-only";
+
+    /** Ob es die Eingabe zu „Buch schreiben“ ist (mit Fragen und Länge). */
+    boolean isBook() {
+        return book;
+    }
+
+    /** Die Fragen an das Buch, eine je Zeile; leer beim Korb. */
+    List<String> questions() {
+        return book ? lines(questions) : List.of();
+    }
+
+    /** Idee und Stichpunkte, wie der Leser sie geschrieben hat. */
+    String ideas() {
+        return ideas.getText().strip();
+    }
+
+    // ------------------------------------------------------------------ KI füllt die Felder
+
+    /** Die Felder, die die KI füllt, in der Reihenfolge der Anfragen. */
+    Map<BookFields.Field, JTextArea> targets() {
+        Map<BookFields.Field, JTextArea> fields = new LinkedHashMap<>();
+        fields.put(BookFields.Field.MISSION, mission);
+        if (book) {
+            fields.put(BookFields.Field.QUESTIONS, questions);
+        }
+        fields.put(BookFields.Field.EDGE, edge);
+        fields.put(BookFields.Field.INCLUDED, included);
+        fields.put(BookFields.Field.EXCLUDED, excluded);
+        return fields;
+    }
+
+    private void fillClicked(JComponent body) {
+        if (running != null) {
+            cancelFill();
+            return;
+        }
+        if (ai == null) {
+            show("Dafür braucht es einen KI-Dienst mit Chat-Modell (Einstellungen › KI-Dienst).");
+            return;
+        }
+        if (ideas().isEmpty()) {
+            show("Schreib zuerst eine Idee, eine Fragestellung oder Stichpunkte ins Feld darüber.");
+            return;
+        }
+        Map<BookFields.Field, JTextArea> all = targets();
+        List<String> filled = new ArrayList<>();
+        all.forEach((field, area) -> {
+            if (!area.getText().isBlank()) {
+                filled.add(field.label());
+            }
+        });
+        boolean replace = filled.isEmpty() || Dialogs.confirmOverlay(body, "Gefüllte Felder wirklich ersetzen?",
+                Comic.note("Schon gefüllt: " + String.join(", ", filled) + ". Bei „Nein“ füllt die KI nur die "
+                        + "leeren Felder."));
+        Map<BookFields.Field, JTextArea> chosen = new LinkedHashMap<>();
+        Map<BookFields.Field, String> fixed = new EnumMap<>(BookFields.Field.class);
+        all.forEach((field, area) -> {
+            if (replace || area.getText().isBlank()) {
+                chosen.put(field, area);
+            } else {
+                fixed.put(field, area.getText());
+            }
+        });
+        if (chosen.isEmpty()) {
+            show("Alle Felder sind gefüllt; die KI hat nichts ersetzt.");
+            return;
+        }
+        if (chosen.keySet().stream().anyMatch(f -> f == BookFields.Field.EDGE || f == BookFields.Field.INCLUDED
+                || f == BookFields.Field.EXCLUDED) && !Comic.disclosed(advanced)) {
+            advanced.putClientProperty(OPEN_ONLY, Boolean.TRUE);
+            advanced.doClick();
+        }
+        String text = ideas();
+        AiAccess access = ai;
+        problems.clear();
+        unresolved = List.of();
+        running = new BookFieldFill(access.chat(), access.model(), access.capacity());
+        BookFieldFill fill = running;
+        busy(true);
+        show("Abkürzungen im Fachglossar nachschlagen …");
+        Function<String, Optional<String>> lookup = access.glossary() == null ? acronym -> Optional.empty()
+                : Abbreviations.glossary(access.glossary());
+        CompletableFuture.supplyAsync(() -> Abbreviations.resolve(text, lookup)).whenComplete((abbreviations,
+                failed) -> javax.swing.SwingUtilities.invokeLater(() -> {
+            if (running != fill) {
+                return;
+            }
+            Abbreviations.Result known = abbreviations == null ? Abbreviations.resolve(text, a -> Optional.empty())
+                    : abbreviations;
+            unresolved = known.unresolved();
+            Map<BookFields.Field, List<AiChat.Message>> requests = new LinkedHashMap<>();
+            chosen.keySet().forEach(field -> requests.put(field, BookFields.messages(field, text, known, fixed)));
+            show("Die KI füllt " + chosen.size() + (chosen.size() == 1 ? " Feld" : " Felder") + " …");
+            fill.start(requests, onEdt(new BookFieldFill.Listener() {
+                @Override
+                public void started(BookFields.Field field) {
+                    chosen.get(field).setText("");
+                }
+
+                @Override
+                public void delta(BookFields.Field field, String piece) {
+                    chosen.get(field).append(piece);
+                }
+
+                @Override
+                public void completed(BookFields.Field field, String result) {
+                    chosen.get(field).setText(result);
+                    chosen.get(field).setCaretPosition(0);
+                }
+
+                @Override
+                public void failed(BookFields.Field field, String reason) {
+                    problems.put(field, reason);
+                    show(state);
+                }
+
+                @Override
+                public void finished() {
+                    if (running == fill) {
+                        running = null;
+                        busy(false);
+                        show(problems.isEmpty() ? "Die KI hat die Felder gefüllt. Prüfe sie und ändere, was nicht "
+                                + "passt." : "Die KI ist fertig; nicht alle Felder sind gefüllt.");
+                    }
+                }
+            }, fill));
+        }));
+    }
+
+    /** Leitet die Meldungen auf den EDT um; die eines abgebrochenen Laufs zählen nicht mehr. */
+    private BookFieldFill.Listener onEdt(BookFieldFill.Listener inner, BookFieldFill fill) {
+        return new BookFieldFill.Listener() {
+            @Override
+            public void started(BookFields.Field field) {
+                later(() -> inner.started(field));
+            }
+
+            @Override
+            public void delta(BookFields.Field field, String text) {
+                later(() -> inner.delta(field, text));
+            }
+
+            @Override
+            public void completed(BookFields.Field field, String text) {
+                later(() -> inner.completed(field, text));
+            }
+
+            @Override
+            public void failed(BookFields.Field field, String reason) {
+                later(() -> inner.failed(field, reason));
+            }
+
+            @Override
+            public void finished() {
+                later(inner::finished);
+            }
+
+            private void later(Runnable work) {
+                javax.swing.SwingUtilities.invokeLater(() -> {
+                    if (running == fill) {
+                        work.run();
+                    }
+                });
+            }
+        };
+    }
+
+    /** Bricht die KI ab; was schon in den Feldern steht, bleibt. */
+    void cancelFill() {
+        BookFieldFill fill = running;
+        running = null;
+        if (fill != null) {
+            fill.cancel();
+            busy(false);
+            show("Abgebrochen; was schon in den Feldern steht, bleibt.");
+        }
+    }
+
+    private void busy(boolean busy) {
+        fill.setIcon(busy ? Glyph.CANCEL : Glyph.SPARKLE);
+        fill.setToolTipText(busy ? CANCEL_TIP : FILL_TIP);
+    }
+
+    /** Der Statusbereich: Stand, nicht aufgelöste Abkürzungen und Fehler je Feld. */
+    private void show(String text) {
+        state = text == null ? "" : text;
+        StringBuilder all = new StringBuilder(state);
+        if (!unresolved.isEmpty()) {
+            all.append(all.isEmpty() ? "" : "\n").append("Nicht im Glossar (bleiben unverändert): ")
+                    .append(String.join(", ", unresolved));
+        }
+        problems.forEach((field, reason) -> all.append(all.isEmpty() ? "" : "\n").append(field.label())
+                .append(": nicht gefüllt (").append(reason).append(")"));
+        status.setText(all.toString());
+        status.setForeground(problems.isEmpty() ? Comic.MUTED : Comic.RED);
+        status.revalidate();
+    }
+
+    /** Ein mehrzeiliges Feld mit einem Knopf oben rechts im Feldrahmen (Feldknöpfe im Feld). */
+    private static JComponent withButton(JComponent field, JComponent button) {
+        javax.swing.JLayeredPane layers = new javax.swing.JLayeredPane() {
+            @Override
+            public void doLayout() {
+                field.setBounds(0, 0, getWidth(), getHeight());
+                Dimension size = button.getPreferredSize();
+                Insets frame = field.getInsets();
+                button.setBounds(getWidth() - size.width - frame.right - BUTTON_GAP, frame.top + BUTTON_GAP,
+                        size.width, size.height);
+            }
+
+            @Override
+            public Dimension getPreferredSize() {
+                return field.getPreferredSize();
+            }
+
+            @Override
+            public Dimension getMinimumSize() {
+                return field.getMinimumSize();
+            }
+        };
+        layers.add(field, javax.swing.JLayeredPane.DEFAULT_LAYER);
+        layers.add(button, javax.swing.JLayeredPane.PALETTE_LAYER);
+        return layers;
+    }
+
+    /** Abstand des Feldknopfs vom Feldrahmen. */
+    private static final int BUTTON_GAP = 2;
 
     /**
      * Ist das Fenster für die aufgeklappten Felder zu niedrig, wird es so hoch, dass jedes Feld seine Zeilen zeigt

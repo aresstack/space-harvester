@@ -22,10 +22,16 @@ import java.util.Optional;
  * Mal das Sieb. Eine Datei je Ordner im Datenordner der App ({@code app/books/<Ordner>.json}); geschrieben wird nur,
  * wenn der Benutzer „Korb füllen“ oder „Buch schreiben“ startet.
  *
+ * Dazu Idee und Stichpunkte des Lesers und seine Fragen an das Buch (Pflichtfragen neben dem Weidezaun). Die
+ * Stichpunkte sind Inhalt des Lesers: sie bleiben in dieser Datei und gehen nie in ein Protokoll.
+ *
  * @param targetWords gewünschte Länge in Wörtern; 0 = nach den Belegen
+ * @param ideas       Idee und Stichpunkte, aus denen die KI auf Klick die Felder füllt
+ * @param questions   Fragen an das Buch, eine je Eintrag
  */
 public record BookNotes(String mission, String edge, List<String> included, List<String> excluded, int targetWords,
-                        Map<String, List<String>> chosen, List<String> unchosen, List<String> excludedFields) {
+                        Map<String, List<String>> chosen, List<String> unchosen, List<String> excludedFields,
+                        String ideas, List<String> questions) {
 
     private static final ObjectMapper JSON = JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build();
     static final String FOLDER = "books";
@@ -39,6 +45,14 @@ public record BookNotes(String mission, String edge, List<String> included, List
         chosen = chosen == null ? Map.of() : Map.copyOf(chosen);
         unchosen = unchosen == null ? List.of() : List.copyOf(unchosen);
         excludedFields = excludedFields == null ? List.of() : List.copyOf(excludedFields);
+        ideas = ideas == null ? "" : ideas;
+        questions = questions == null ? List.of() : List.copyOf(questions);
+    }
+
+    /** Ohne Stichpunkte und Fragen (Notizen von vor dem 27.11.2026). */
+    public BookNotes(String mission, String edge, List<String> included, List<String> excluded, int targetWords,
+                     Map<String, List<String>> chosen, List<String> unchosen, List<String> excludedFields) {
+        this(mission, edge, included, excluded, targetWords, chosen, unchosen, excludedFields, null, null);
     }
 
     /** Ohne Wahl des Lesers, nur der Weidezaun. */
@@ -53,13 +67,20 @@ public record BookNotes(String mission, String edge, List<String> included, List
 
     /** Derselbe Weidezaun mit einer neuen Wahl des Lesers. */
     public BookNotes withChoice(Map<String, List<String>> chosen, List<String> unchosen, List<String> excludedFields) {
-        return new BookNotes(mission, edge, included, excluded, targetWords, chosen, unchosen, excludedFields);
+        return new BookNotes(mission, edge, included, excluded, targetWords, chosen, unchosen, excludedFields, ideas,
+                questions);
     }
 
     /** Ein neuer Weidezaun; die Wahl des Lesers bleibt. */
     public BookNotes withFence(Fence fence, int targetWords) {
         return new BookNotes(fence.getMission(), fence.getEdge(), fence.getIncluded(), fence.getExcluded(), targetWords,
-                chosen, unchosen, excludedFields);
+                chosen, unchosen, excludedFields, ideas, questions);
+    }
+
+    /** Neue Stichpunkte und Fragen; Weidezaun und Wahl des Lesers bleiben. */
+    public BookNotes withIdeas(String ideas, List<String> questions) {
+        return new BookNotes(mission, edge, included, excluded, targetWords, chosen, unchosen, excludedFields, ideas,
+                questions);
     }
 
     /** Die Notizen des Ordners; leer, wenn es keine gibt oder die Datei nicht lesbar ist. */

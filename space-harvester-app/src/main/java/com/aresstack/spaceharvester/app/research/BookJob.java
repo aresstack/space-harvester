@@ -108,10 +108,12 @@ public final class BookJob {
      * Ein Lauf für den Korb-Ordner: der Korb sind seine Seiten-Favoriten mit dem Weidezaun aus Auftrag und Rand.
      *
      * @param chat     das Chat-Modell des KI-Dienstes für alle Schritte (Kapazität in {@code settings})
-     * @param settings Sprache, Länge, Kapazität und die Einstellungen der Schritte
+     * @param questions die Fragen des Lesers an das Buch (leer: keine)
+     * @param settings  Sprache, Länge, Kapazität und die Einstellungen der Schritte
      */
     public static Session session(MainModelChat chat, PageStock stock, FavoritesBasket basket, String folderId,
-                                  String folderName, Fence fence, BookRun.Settings settings) {
+                                  String folderName, Fence fence, List<String> questions,
+                                  BookRun.Settings settings) {
         Objects.requireNonNull(fence, "fence");
         PendingReleases releases = new PendingReleases(stock);
         StopSwitch stop = new StopSwitch();
@@ -120,7 +122,10 @@ public final class BookJob {
         // Ohne Embedding-Modell: gemeinsame Wörter wählen die Passagen einer Pflichtfrage (Writing4j).
         BookRun run = new BookRun(model, model, model, null, settings, Clock.systemUTC(),
                 line -> LOG.log(System.Logger.Level.DEBUG, line));
-        return new Session(folderId, folderName, chat, stop, run, basket.basket().withFence(fence), reader);
+        // Die Fragen des Lesers gehen als Pflichtfragen neben dem Weidezaun mit (Writing4j: immer verfolgt, ohne Beleg
+        // eine Lücke im Missionsbericht).
+        return new Session(folderId, folderName, chat, stop, run,
+                basket.basket().withFence(fence).withQuestions(questions), reader);
     }
 
     /** Vorbereiten als Auftrag; {@code prepared} bekommt die Sitzung, wenn die Vorbereitung fertig ist. */
