@@ -166,7 +166,9 @@ tasks.named('test') {
     systemProperty 'space-harvester.system-functions', systemFunctions.absolutePath
     doFirst { systemFunctions.delete() }
     // Die App-Tests rendern PDFs mit Systemschriften und bauen viele Swing-Oberflächen; 512 MB (Vorgabe) reichen nicht mehr.
-    maxHeapSize = '1g'
+    // Auch 1 GB reichte am 27.11.2026 nicht mehr: AttachmentViewerPanelTest rendert eine PDF-Seite bis zur Pixelgrenze
+    // (40 Mio. Pixel, rund 160 MB) und lief nach den übrigen Tests derselben JVM in OutOfMemoryError (develop wechselnd rot).
+    maxHeapSize = '2g'
     // Echttest des Chats mit Werkzeugen (ADR 0033) gegen einen Ollama-Server, nur auf Anfrage:
     // -PchatLiveOllama=http://localhost:11434 [-PchatLiveModel=gemma4:12b] [-PchatLiveNoToolsModel=qwen2.5-coder:1.5b-base]
     ['chatLiveOllama', 'chatLiveModel', 'chatLiveNoToolsModel'].each { name ->
