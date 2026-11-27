@@ -1217,6 +1217,14 @@ public final class Workspace {
         return harvester.imageAnalysis().visionModel();
     }
 
+    /**
+     * Ein Schaubild für den Chat (Bildgenerierung – Plan und – Einzelteile), als SVG; leer ohne Modell oder ohne
+     * brauchbaren Plan. Nie auf dem EDT.
+     */
+    public Optional<String> composeDiagram(String topic, String material) {
+        return harvester.composeDiagram(topic, material).map(diagram -> diagram.svg());
+    }
+
     /** Ob das Vision-Modell geladen ist und sofort antwortet (bei Ollama laut {@code /api/ps}). */
     public boolean visionModelLoaded() {
         return harvester.imageAnalysis().modelLoaded();
@@ -2400,6 +2408,11 @@ public final class Workspace {
 
     public AiChat aiChat() {
         return harvester.aiChat();
+    }
+
+    /** Der Chat mit Modell, Tokenlänge und Nachdenken der Zeile {@code use} ({@code Harvester#aiChat(ModelUse)}). */
+    public AiChat aiChat(com.aresstack.spaceharvester.ai.AiServiceSettings.ModelUse use) {
+        return harvester.aiChat(use);
     }
 
     // ------------------------------------------------------------------ Abgleich

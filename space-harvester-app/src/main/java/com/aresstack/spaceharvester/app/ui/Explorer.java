@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.spaceharvester.app.ui.controls.Cursors;
+import com.aresstack.spaceharvester.app.ui.controls.TreeTextTip;
 import com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons;
 import com.aresstack.spaceharvester.app.ui.content.AnalyzerNames;
 import com.aresstack.spaceharvester.app.event.Severity;
@@ -836,7 +837,9 @@ public final class Explorer {
                 TreePath path = tree.getPathForLocation(event.getX(), event.getY());
                 int starRow = onStar(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
                 int badgeRow = onBadge(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
-                tree.setToolTipText(starRow >= 0 ? STAR_TIP : badgeRow >= 0 ? refreshTip(badgeTip(path)) : null);
+                // Über dem Titel: ein rechts abgeschnittener Eintrag zeigt seinen vollständigen Text (Angelo, 27.11.2026).
+                tree.setToolTipText(starRow >= 0 ? STAR_TIP : badgeRow >= 0 ? refreshTip(badgeTip(path))
+                        : TreeTextTip.fullText(tree, path));
                 if (starRow != hoverStarRow || badgeRow != hoverBadgeRow) {
                     hoverStarRow = starRow;
                     hoverBadgeRow = badgeRow;
