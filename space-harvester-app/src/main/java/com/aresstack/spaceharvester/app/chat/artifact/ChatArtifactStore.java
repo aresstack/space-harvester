@@ -397,7 +397,19 @@ public final class ChatArtifactStore {
     /** Die gelöschten Artefakte des Besitzers (Papierkorb bis zum nächsten Start), zuletzt angelegte zuletzt. */
     public List<ChatArtifact> deleted(Path folder, String chatId) {
         synchronized (LOCK) {
-            Path owner = owner(folder, chatId);
+            return deletedAt(owner(folder, chatId));
+        }
+    }
+
+    /** Die gelöschten Artefakte eines Projekts (Liste „Artefakte“ links, durchgestrichen bis zum nächsten Start). */
+    public List<ChatArtifact> deletedInProject(String projectId) {
+        synchronized (LOCK) {
+            return deletedAt(projectOwner(projectId));
+        }
+    }
+
+    private static List<ChatArtifact> deletedAt(Path owner) {
+        synchronized (LOCK) {
             purgeOnce(owner);
             List<ChatArtifact> artifacts = new ArrayList<>();
             if (owner == null || !Files.isDirectory(owner)) {
@@ -458,9 +470,20 @@ public final class ChatArtifactStore {
 
     /** Holt ein gelöschtes Artefakt aus dem Papierkorb zurück; {@code null}, wenn es dort nicht (mehr) liegt. */
     public ChatArtifact restore(Path folder, String chatId, String artifactId) {
+        return restoreAt(() -> owner(folder, chatId), folder, chatId, artifactId);
+    }
+
+    /** Wie {@link #restore}, für ein Artefakt des Projekts ohne Chat (Liste „Artefakte“ links). */
+    public ChatArtifact restoreInProject(String projectId, String artifactId) {
+        return restoreAt(() -> projectOwner(projectId), null, null, artifactId);
+    }
+
+    private ChatArtifact restoreAt(java.util.function.Supplier<Path> where, Path folder, String chatId,
+                                   String artifactId) {
         ChatArtifact restored;
+        Path owner;
         synchronized (LOCK) {
-            Path owner = owner(folder, chatId);
+            owner = where.get();
             String id = artifactId == null ? "" : artifactId.strip().toUpperCase(java.util.Locale.ROOT);
             if (owner == null || !ID.matcher(id).matches()) {
                 return null;
@@ -480,7 +503,7 @@ public final class ChatArtifactStore {
             restored = read(target);
         }
         if (restored != null) {
-            notify(folder, chatId, restored, List.of());
+            notify(new Event(folder, chatId, owner, restored, List.of()));
         }
         return restored;
     }

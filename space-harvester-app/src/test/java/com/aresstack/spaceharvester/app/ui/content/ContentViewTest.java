@@ -176,8 +176,9 @@ class ContentViewTest {
     }
 
     @Test
-    void theArtifactsOfTheChatStandInTheMoreMenuAndOpenInTheExportView() throws Exception {
-        // Angelo 27.11.2026: Schreiben ist eine Art Export; geschlossene Artefakte holt das Menü „Weitere Aktionen“.
+    void theArtifactsOpenInTheArtifactMiddleAndNoLongerStandInTheMoreMenu() throws Exception {
+        // ADR 0047 §5: Die Artefakte stehen links unter „Artefakte“, die Mitte folgt der Wippe; unter „Export“ und im
+        // Menü „Weitere Aktionen“ stehen nur Exporte.
         var chats = new com.aresstack.spaceharvester.app.chat.ChatStore(() -> home.resolve("artefakt-chats"));
         var node = new com.aresstack.spaceharvester.app.chat.ChatNode("wiki", null, null);
         var chat = com.aresstack.spaceharvester.app.chat.ChatRecord.fresh(1)
@@ -188,34 +189,67 @@ class ContentViewTest {
                 com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact.Origin.AI);
         PageDetailPanel detail = view.detail();
         ArtifactTabs tabs = onEdt(() -> {
-            ArtifactTabs artifactTabs = new ArtifactTabs(store, detail.export());
-            detail.artifactTabs(artifactTabs);
+            ArtifactTabs artifactTabs = new ArtifactTabs(store, new javax.swing.JLabel());
             artifactTabs.chat(chats.folder(node), chat.id());
             detail.tabs().select("Leseansicht");
             return artifactTabs;
         });
-        assertThat(onEdt(() -> detail.moreButton().isEnabled())).isTrue();
-        javax.swing.JMenuItem item = onEdt(() -> java.util.Arrays.stream(detail.moreMenu().getComponents())
-                .filter(javax.swing.JMenuItem.class::isInstance).map(javax.swing.JMenuItem.class::cast)
-                .filter(entry -> entry.getText().equals(PageDetailPanel.ARTIFACT_DOCUMENT + "Gartenfibel"))
-                .findFirst().orElseThrow());
+        assertThat(onEdt(() -> allMenuEntries(detail))).noneMatch(entry -> entry.contains("Gartenfibel"));
+
         onEdt(() -> {
-            item.doClick();
+            tabs.open("D1");
             return null;
         });
-        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Export");
         assertThat(onEdt(tabs::focus)).isEqualTo("D1");
-        // Unten nur die Formate des Artefakts; ohne Reiter wieder alle Knöpfe der Ausgabe (ADR 0045 §5).
-        assertThat(onEdt(() -> ((java.awt.Container) detail.footTools().getComponent(0)).getComponent(0)))
-                .isInstanceOf(javax.swing.JPanel.class);
+        // Unten nur die Formate des Artefakts; ohne gewählten Reiter keine.
         assertThat(onEdt(() -> tabs.footBar().getComponentCount())).isEqualTo(3);
         onEdt(() -> {
             tabs.showPage();
             return null;
         });
         assertThat(onEdt(tabs::footBar)).isNull();
-        assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(detail.export().formatBar(),
-                detail.footTools()))).isTrue();
+
+        // Die Mitte folgt der Wippe: unter „Artefakte“ die Artefakt-Mitte, sonst die Seitenansicht samt ihrer Leiste.
+        onEdt(() -> {
+            view.showArtifacts(true);
+            return null;
+        });
+        assertThat(onEdt(() -> view.artifactTabs().component().isVisible())).isTrue();
+        assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(detail.footTools(), view.tools())))
+                .isFalse();
+        onEdt(() -> {
+            view.showArtifacts(false);
+            return null;
+        });
+        assertThat(onEdt(() -> detail.isVisible())).isTrue();
+        assertThat(onEdt(() -> javax.swing.SwingUtilities.isDescendingFrom(detail.footTools(), view.tools())))
+                .isTrue();
+        // Die Suchleiste fragt die Hülle, ob die Werkzeuge die Zeile füllen: sie folgt dem gezeigten Inhalt.
+        String fill = com.aresstack.spaceharvester.app.ui.View.TOOLS_FILL;
+        onEdt(() -> {
+            detail.footTools().putClientProperty(fill, Boolean.TRUE);
+            return null;
+        });
+        assertThat(onEdt(() -> view.tools().getClientProperty(fill))).isEqualTo(Boolean.TRUE);
+        onEdt(() -> {
+            detail.footTools().putClientProperty(fill, Boolean.FALSE);
+            return null;
+        });
+        assertThat(onEdt(() -> view.tools().getClientProperty(fill))).isEqualTo(Boolean.FALSE);
+
+        // Wer ausdrücklich eine Seitenansicht anfordert (etwa „Inhalte öffnen“ eines Auftrags), holt die Seite zurück.
+        int[] wanted = {0};
+        onEdt(() -> {
+            view.onPageWanted(() -> {
+                wanted[0]++;
+                view.showArtifacts(false);
+            });
+            view.showArtifacts(true);
+            view.showExport();
+            return null;
+        });
+        assertThat(wanted[0]).isEqualTo(1);
+        assertThat(onEdt(view::artifactsShown)).isFalse();
     }
 
     @Test
@@ -546,7 +580,8 @@ class ContentViewTest {
         // Unten steht in der Leseansicht höchstens der Platz für „Transkript kopieren“ des Podcasts.
         assertThat(onEdt(() -> {
             javax.swing.JComponent foot = view.detail().footTools();
-            if (view.tools() != foot || foot.getComponentCount() > 1) {
+            if (view.tools().getComponentCount() != 1 || view.tools().getComponent(0) != foot
+                    || foot.getComponentCount() > 1) {
                 return false;
             }
             // Unten stehen nur Symbolknöpfe des Podcasts: links „Transkript kopieren“, rechts „Untertitel“.
