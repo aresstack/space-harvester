@@ -322,6 +322,11 @@ public final class CommandDeck {
         ndv.storedProgramSearch(context, () -> area == DeckArea.NDV);
     }
 
+    /** „Als Wissensquelle hinzufügen“ im FTP-Bereich über die Wissensquellen der App. */
+    public void ftpSources(FtpSourceLink link) {
+        ftp.sourceLink(link);
+    }
+
     public void ftpNavigation(FtpNavigationObserver observer) {
         ftp.navigationObserver(observer);
     }

@@ -58,7 +58,14 @@ public enum Glyph implements Icon {
     /** „Zurücknehmen“: ein Bogen nach links mit Pfeilspitze, wie Rückgängig in jedem Editor. */
     UNDO,
     /** Export a list of source references. */
-    SOURCES_EXPORT;
+    SOURCES_EXPORT,
+    /**
+     * „Programmsuche“ (#1486): spitze Klammern wie in Quelltext, unten rechts eine Lupe. Bewusst nicht die blanke Lupe
+     * der Fußleiste, die nur im gezeigten Bereich sucht.
+     */
+    PROGRAM_SEARCH,
+    /** „Als Wissensquelle hinzufügen“: ein Datenbankzylinder, unten rechts ein Plus. */
+    SOURCE_ADD;
 
     private static final int SIZE = 16;
     /** Das Favoriten-Gelb des EAC ({@code ResearchUiPalette.FAVORITE_YELLOW}). */
@@ -204,6 +211,32 @@ public enum Glyph implements Icon {
                     g.draw(new Line2D.Double(12.0, 8.5, 12.0, 15.0));
                     g.draw(new Line2D.Double(9.5, 12.5, 12.0, 15.0));
                     g.draw(new Line2D.Double(14.5, 12.5, 12.0, 15.0));
+                }
+                case PROGRAM_SEARCH -> {
+                    Path2D left = new Path2D.Double();
+                    left.moveTo(5, 2.5);
+                    left.lineTo(1.5, 6);
+                    left.lineTo(5, 9.5);
+                    g.draw(left);
+                    Path2D right = new Path2D.Double();
+                    right.moveTo(8.5, 2.5);
+                    right.lineTo(12, 6);
+                    right.lineTo(10.6, 7.4);
+                    g.draw(right);
+                    g.draw(new Ellipse2D.Double(7, 8, 5, 5));
+                    g.draw(new Line2D.Double(11.4, 12.4, 14.4, 15.2));
+                }
+                case SOURCE_ADD -> {
+                    g.draw(new Ellipse2D.Double(1.5, 1.5, 9, 3.4));
+                    Path2D body = new Path2D.Double();
+                    body.moveTo(1.5, 3.2);
+                    body.lineTo(1.5, 11.6);
+                    body.curveTo(1.5, 13.4, 6.4, 14, 8.2, 13.1);
+                    g.draw(body);
+                    g.draw(new Line2D.Double(10.5, 3.2, 10.5, 8));
+                    g.draw(new Arc2D.Double(1.5, 5.6, 9, 3.4, 180, 180, Arc2D.OPEN));
+                    g.draw(new Line2D.Double(12.5, 9, 12.5, 15));
+                    g.draw(new Line2D.Double(9.5, 12, 15.5, 12));
                 }
                 case EXPORT -> {
                     // Ablage mit Pfeil nach oben: etwas verlässt die App.
