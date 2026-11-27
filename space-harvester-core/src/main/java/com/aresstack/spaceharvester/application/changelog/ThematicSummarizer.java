@@ -196,6 +196,16 @@ final class ThematicSummarizer {
      */
     Result summarize(List<Material> materials, ObjectNode frame, ObjectNode combineFrame, int withheld,
                      JobContext context) {
+        return summarize(materials, frame, combineFrame, withheld, context, null);
+    }
+
+    /**
+     * Wie {@link #summarize(List, ObjectNode, ObjectNode, int, JobContext)}; {@code partial} bekommt nach jedem fertigen
+     * Teil den vorläufigen Stand: die Themen aller bisher fertigen Teile, noch nicht zusammengeführt, ohne Überblickstext
+     * (Angelo: „Teilergebnisse sofort“). {@code null} ohne. Ein Fehler darin hält den Lauf nicht auf.
+     */
+    Result summarize(List<Material> materials, ObjectNode frame, ObjectNode combineFrame, int withheld,
+                     JobContext context, java.util.function.Consumer<Result> partial) {
         int unknown = (int) materials.stream().filter(Material::unknown).count();
         context.phase(COMPONENT, PHASE);
         List<Planned> planned = plan(materials, context);
@@ -233,11 +243,19 @@ final class ThematicSummarizer {
         for (int i = 0; i < count; i++) {
             indexes.add(i);
         }
+        java.util.NavigableMap<Integer, List<Answer>> done = new java.util.TreeMap<>();
+        int withheldAll = withheld + unknown;
         List<Answer> answers = runner().run(indexes, index -> "Teil " + (index + 1) + " von " + count
                                 + (topics.get(index) == null ? "" : ": " + cut(topics.get(index), 60)),
                         index -> parts.get(index).size(),
-                        (index, lane) -> part(parts.get(index), framed(frame, topics.get(index)), lane, lost,
-                                lostPages), context).stream()
+                        (index, lane) -> {
+                            List<Answer> answered = part(parts.get(index), framed(frame, topics.get(index)), lane,
+                                    lost, lostPages);
+                            if (partial != null && count > 1) {
+                                publish(partial, done, index, answered, parts, withheldAll);
+                            }
+                            return answered;
+                        }, context).stream()
                 .flatMap(List::stream)
                 .filter(partial -> !partial.text().isBlank() || !partial.statements().isEmpty()).toList();
         if (answers.isEmpty()) {
@@ -251,6 +269,33 @@ final class ThematicSummarizer {
                         material.page().pageId(), material.content()))
                 .toList();
         return new Result(answer.text(), answer.statements(), withheld + unknown, inputs, lostPages.get());
+    }
+
+    /**
+     * Meldet den vorläufigen Stand nach einem fertigen Teil: die Themen der fertigen Teile in der Reihenfolge der Teile,
+     * die Seiten genau dieser Teile. Teile laufen gleichzeitig; die Meldungen sind deshalb geordnet.
+     */
+    private static void publish(java.util.function.Consumer<Result> partial,
+                                java.util.NavigableMap<Integer, List<Answer>> done, int index, List<Answer> answered,
+                                List<List<Material>> parts, int withheld) {
+        Result snapshot;
+        synchronized (done) {
+            done.put(index, answered);
+            List<StoredSummary.Statement> statements = new ArrayList<>();
+            List<StoredSummary.InputPage> inputs = new ArrayList<>();
+            done.forEach((part, answers) -> {
+                answers.forEach(answer -> statements.addAll(answer.statements()));
+                parts.get(part).forEach(material -> inputs.add(new StoredSummary.InputPage(
+                        material.page().sourceId(), material.spaceKey(), material.page().pageId(),
+                        material.content())));
+            });
+            snapshot = new Result("", List.copyOf(statements), withheld, List.copyOf(inputs));
+            try {
+                partial.accept(snapshot);
+            } catch (RuntimeException e) {
+                // Der vorläufige Stand ist nur eine Anzeige; der Lauf geht weiter.
+            }
+        }
     }
 
     /**

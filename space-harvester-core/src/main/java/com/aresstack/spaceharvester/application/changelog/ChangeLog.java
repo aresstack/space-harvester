@@ -63,6 +63,12 @@ public final class ChangeLog implements AutoCloseable {
     private java.util.function.Predicate<String> globalSources = id -> true;
     private final Listeners<ChangeLogListener> listeners = new Listeners<>("Änderungsprotokoll");
     private final Coalescer<String, String> coalescer;
+    /**
+     * Vorläufige Bereichszusammenfassungen laufender Aufträge je Platz ({@link SummaryScope#key}): die Themen der schon
+     * fertigen Teile, noch nicht zusammengeführt (Angelo: „Teilergebnisse sofort“). Nur im Speicher, solange der
+     * Auftrag läuft; die Ablage ersetzt sie am Ende, ein Fehler oder Abbruch nimmt sie weg.
+     */
+    private final Map<String, StoredSummary> partialAreas = new java.util.concurrent.ConcurrentHashMap<>();
     private final Summaries summaries;
     /** Zeitzone der Tage, wenn je Tag ein Update gilt ({@link #perDay}); {@code null}: jede Marke ein Update. */
     private volatile ZoneId days;
@@ -738,6 +744,37 @@ public final class ChangeLog implements AutoCloseable {
         if (stored.isEmpty()) {
             return Optional.empty();
         }
+        boolean stale = !areaState(caller, stock, selection).equals(stored.get().reportSha256());
+        return Optional.of(areaView(stored.get(), selection, scope, stale));
+    }
+
+    /**
+     * Der vorläufige Stand eines laufenden „Zusammenfassen“ dieser Auswahl: die Themen der schon fertigen Teile, noch
+     * nicht zusammengeführt und ohne Überblickstext; leer, wenn keiner läuft, noch kein Teil fertig ist oder der
+     * Aufrufer nicht alle eingegangenen Seiten sehen darf. Jeder fertige Teil meldet {@link #subscribe} für jede Quelle
+     * der Auswahl.
+     *
+     * @throws IllegalStateException  ohne angeschlossenen Bestand ({@link #areas})
+     * @throws UnknownSourceException wenn die erste Quelle der Auswahl nicht konfiguriert ist
+     */
+    public Optional<UpdateSummary> areaPartial(AccessContext caller,
+                                               com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(selection, "selection");
+        requireAreas();
+        requireReadable(caller, selection.roots().getFirst().sourceId());
+        SummaryScope.Selected scope = SummaryScope.selection(caller, selection);
+        Visibility visible = new Visibility(caller);
+        return Optional.ofNullable(partialAreas.get(scope.key())).filter(found -> valid(found, visible))
+                .map(found -> areaView(found, selection, scope, false));
+    }
+
+    /** Eine abgelegte oder vorläufige Bereichszusammenfassung, wie die Ansicht sie zeigt. */
+    private UpdateSummary areaView(StoredSummary shown,
+                                   com.aresstack.spaceharvester.application.holdings.Selection selection,
+                                   SummaryScope.Selected scope, boolean stale) {
+        String sourceId = selection.roots().getFirst().sourceId();
+        Optional<StoredSummary> stored = Optional.of(shown);
         Map<PageKey, String> aliases = ThematicSummarizer.aliases(stored.get().inputPages().stream()
                 .map(page -> new PageKey(page.sourceIdOr(sourceId), page.pageId())).toList());
         Map<String, StoredSummary.InputPage> byAlias = new HashMap<>();
@@ -762,10 +799,9 @@ public final class ChangeLog implements AutoCloseable {
         }
         Map<String, String> spaceNames = new HashMap<>();
         pageSpaces.forEach((source, spaces) -> spaceNames.putAll(spaceNames(source, spaces)));
-        boolean stale = !areaState(caller, stock, selection).equals(stored.get().reportSha256());
-        return Optional.of(new UpdateSummary(sourceId, UpdateSummary.AREA, areaSpace(selection), stored.get().text(),
+        return new UpdateSummary(sourceId, UpdateSummary.AREA, areaSpace(selection), stored.get().text(),
                 statements, stored.get().model(), stored.get().createdAt(), stored.get().unreadableChanges(), stale,
-                spaceNames, scope.key()));
+                spaceNames, scope.key());
     }
 
     /**
@@ -850,25 +886,41 @@ public final class ChangeLog implements AutoCloseable {
                 int unstored = Math.max(0, resolved.selection().unlockedSize() - stored.size());
                 String state = areaState(caller, stock, selection);
                 ThematicSummarizer.Result result;
+                Runnable announce = () -> selection.roots().stream()
+                        .map(com.aresstack.spaceharvester.application.holdings.Selection.Root::sourceId).distinct()
+                        .forEach(coalescer::mark);
+                // Nach jedem fertigen Teil der vorläufige Stand, sofort für die Ansichten (Teilergebnisse sofort).
+                java.util.function.Consumer<ThematicSummarizer.Result> partial = interim -> {
+                    Instant at = runtime.clock().instant();
+                    partialAreas.put(scope.key(), new StoredSummary(scope.key(), SummaryScope.Selected.STORED_UPDATE,
+                            null, interim.text(), interim.statements(), runtime.model().version(), at, at,
+                            interim.unreadable(), state + "+vorlaeufig", interim.inputPages(), null));
+                    announce.run();
+                };
                 try {
-                    result = new AreaSummarizer(runtime.model(), runtime.released(),
-                            new SummaryChildJobs(runtime.jobs(), runtime.model(), runtime.clock(),
-                                    JobType.UPDATE_SUMMARY, context.jobId(), sourceId, spaceKey, caller.jobOwner(),
-                                    area),
-                            runtime.planner())
-                            .summarize(pages, text, names, unstored, context);
-                } catch (com.aresstack.spaceharvester.ai.AiServiceException e) {
-                    // Sonst meldet der Auftrag nur „Unerwarteter Fehler (AiServiceException)“; der Grund gehört dazu.
-                    throw ThematicSummarizer.jobFailure(e);
+                    try {
+                        result = new AreaSummarizer(runtime.model(), runtime.released(),
+                                new SummaryChildJobs(runtime.jobs(), runtime.model(), runtime.clock(),
+                                        JobType.UPDATE_SUMMARY, context.jobId(), sourceId, spaceKey,
+                                        caller.jobOwner(), area),
+                                runtime.planner())
+                                .summarize(pages, text, names, unstored, context, partial);
+                    } catch (com.aresstack.spaceharvester.ai.AiServiceException e) {
+                        // Sonst meldet der Auftrag nur „Unerwarteter Fehler (AiServiceException)“; der Grund gehört dazu.
+                        throw ThematicSummarizer.jobFailure(e);
+                    }
+                    Instant now = runtime.clock().instant();
+                    store.saveSummary(new StoredSummary(scope.key(), SummaryScope.Selected.STORED_UPDATE, null,
+                            result.text(), result.statements(), runtime.model().version(), now, now,
+                            result.unreadable(), state + (result.lost() > 0 ? "+unvollstaendig:" + result.lost() : ""),
+                            result.inputPages(), null));
+                } finally {
+                    // Abgelegt, gescheitert oder abgebrochen: der vorläufige Stand ist erst nach der Ablage weg, so
+                    // steht die Ansicht nie ohne beides da.
+                    partialAreas.remove(scope.key());
                 }
-                Instant now = runtime.clock().instant();
-                store.saveSummary(new StoredSummary(scope.key(), SummaryScope.Selected.STORED_UPDATE, null,
-                        result.text(), result.statements(), runtime.model().version(), now, now, result.unreadable(),
-                        state + (result.lost() > 0 ? "+unvollstaendig:" + result.lost() : ""), result.inputPages(),
-                        null));
                 // Die Ablage meldet den Platz; die Ansichten hören auf ihre Quellen.
-                selection.roots().stream().map(com.aresstack.spaceharvester.application.holdings.Selection.Root
-                        ::sourceId).distinct().forEach(coalescer::mark);
+                announce.run();
                 context.written(1);
             });
             return interactive

@@ -139,6 +139,13 @@ final class AreaSummarizer {
      */
     ThematicSummarizer.Result summarize(List<Page> pages, Function<Page, Optional<String>> text,
                                         Map<String, String> spaceNames, int skipped, JobContext context) {
+        return summarize(pages, text, spaceNames, skipped, context, null);
+    }
+
+    /** Wie oben; {@code partial} bekommt nach jedem fertigen Teil den vorläufigen Stand, {@code null} ohne. */
+    ThematicSummarizer.Result summarize(List<Page> pages, Function<Page, Optional<String>> text,
+                                        Map<String, String> spaceNames, int skipped, JobContext context,
+                                        java.util.function.Consumer<ThematicSummarizer.Result> partial) {
         List<Page> readable = new ArrayList<>();
         Map<String, int[]> spaces = new TreeMap<>();
         int withheld = Math.max(0, skipped);
@@ -164,7 +171,8 @@ final class AreaSummarizer {
         }
         return new ThematicSummarizer(model, runner, planner, PROMPTS).summarize(materials,
                 frame(pages.size() + Math.max(0, skipped), spaces, spaceNames, withheld),
-                frame(pages.size() + Math.max(0, skipped), Map.of(), spaceNames, withheld), withheld, context);
+                frame(pages.size() + Math.max(0, skipped), Map.of(), spaceNames, withheld), withheld, context,
+                partial);
     }
 
     private static String spaceName(String spaceKey, Map<String, String> spaceNames) {

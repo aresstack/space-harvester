@@ -4007,6 +4007,15 @@ public final class Workspace {
     }
 
     /**
+     * Der vorläufige Stand eines laufenden „Zusammenfassen“ dieser Auswahl (die Themen der schon fertigen Teile), leer
+     * ohne. Nie auf dem EDT.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.changelog.UpdateSummary> areaPartial(
+            com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        return harvester.changeLog().areaPartial(caller, selection);
+    }
+
+    /**
      * Startet „Zusammenfassen“ für den Bestand einer beliebigen Auswahl.
      *
      * @param interactive ein Klick auf „Zusammenfassen“; {@code false} für den Lauf beim Öffnen

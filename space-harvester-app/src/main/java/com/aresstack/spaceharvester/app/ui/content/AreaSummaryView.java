@@ -63,6 +63,7 @@ final class AreaSummaryView extends JPanel {
     static final String NO_SUMMARY = "Noch kein Überblick über diesen Bereich.";
     static final String SUMMARIZING = "Überblick wird erstellt …";
     static final String LOADING = "Überblick wird gelesen …";
+    static final String PARTIAL = "Vorläufig: die Themen der schon fertigen Teile; am Ende werden sie zusammengeführt.";
     static final String EMPTY = "Dieser Bereich hat noch keine geladene Seite, die sich zusammenfassen lässt.";
     static final String NO_MODEL = "Für den Überblick ist kein Chat-Modell eingestellt. Unter Einstellungen › "
             + "Modelle wählen; danach entsteht er beim Öffnen von selbst.";
@@ -169,6 +170,11 @@ final class AreaSummaryView extends JPanel {
         /** Ob ein Chat-Modell eingestellt ist. */
         boolean available();
 
+        /** Der vorläufige Stand eines laufenden Überblicks (Themen der fertigen Teile), {@code null} ohne. */
+        default UpdateSummary partial(Target target) {
+            return null;
+        }
+
         /** Startet „Zusammenfassen“ für den Bereich; {@code interactive} für einen Klick. */
         JobStatus summarize(Target target, boolean interactive);
 
@@ -189,6 +195,11 @@ final class AreaSummaryView extends JPanel {
                 @Override
                 public boolean available() {
                     return workspace.areaSummariesAvailable();
+                }
+
+                @Override
+                public UpdateSummary partial(Target target) {
+                    return workspace.areaPartial(target.core()).orElse(null);
                 }
 
                 @Override
@@ -228,6 +239,11 @@ final class AreaSummaryView extends JPanel {
 
     private Target target;
     private UpdateSummary summary;
+    /**
+     * Der vorläufige Stand, solange der Überblick entsteht: die Themen der schon fertigen Teile, sofort gezeigt statt
+     * hinter dem Schleier (Angelo: „Teilergebnisse sofort“); {@code null} ohne.
+     */
+    private UpdateSummary partial;
     private boolean available = true;
     private boolean empty;
     /**
@@ -402,6 +418,7 @@ final class AreaSummaryView extends JPanel {
         generation++;
         target = next;
         summary = null;
+        partial = null;
         empty = next != null && next.empty();
         failure = null;
         loaded = false;
@@ -472,7 +489,9 @@ final class AreaSummaryView extends JPanel {
             return;
         }
         int mine = ++generation;
-        runner.run(() -> new Loaded(current.area(of), current.available()), found -> {
+        boolean running = runningJob != null;
+        runner.run(() -> new Loaded(current.area(of), current.available(), running ? current.partial(of) : null),
+                found -> {
             if (mine != generation || !Objects.equals(of, target)) {
                 return;
             }
@@ -480,10 +499,16 @@ final class AreaSummaryView extends JPanel {
             available = found.available();
             boolean same = found.summary() != null && found.summary().equals(summary);
             summary = found.summary();
-            if (!same) {
-                if (mode == Mode.LISTEN) {
-                    podcast.summary(summary);
-                }
+            UpdateSummary interim = runningJob == null ? null : found.partial();
+            boolean interimChanged = !Objects.equals(interim, partial);
+            if (interimChanged) {
+                partial = interim;
+                offer();
+            }
+            if (!same && mode == Mode.LISTEN) {
+                podcast.summary(summary);
+            }
+            if (!same || interimChanged) {
                 render();
             }
             autoSummarize();
@@ -495,7 +520,7 @@ final class AreaSummaryView extends JPanel {
         });
     }
 
-    private record Loaded(UpdateSummary summary, boolean available) {
+    private record Loaded(UpdateSummary summary, boolean available, UpdateSummary partial) {
     }
 
     private void becameVisible() {
@@ -658,11 +683,16 @@ final class AreaSummaryView extends JPanel {
         if (!status.state().terminal()) {
             // Teilfortschritt sofort: wie viele Teile schon gelesen sind, unter dem Ring.
             JobProgress progress = status.progress();
+            String before = busy.text();
             busy.setText(progress != null && progress.discovered() > 0
                     ? SUMMARIZING + " " + progress.processed() + "/" + progress.discovered() : SUMMARIZING);
+            if (partial != null && !before.equals(busy.text())) {
+                render();
+            }
             return;
         }
         runningJob = null;
+        partial = null;
         jobWatch.close();
         jobWatch = Subscription.NONE;
         String outcome = switch (status.state()) {
@@ -708,7 +738,8 @@ final class AreaSummaryView extends JPanel {
         } else if (!busy.isBusy() || busy.text().isEmpty()) {
             busy.setText(SUMMARIZING);
         }
-        busy.setBusy(working);
+        // Mit vorläufigem Stand kein Schleier: die fertigen Teile sind zu lesen, der Fortschritt steht darüber.
+        busy.setBusy(working && partial == null);
     }
 
     private void render() {
@@ -719,7 +750,12 @@ final class AreaSummaryView extends JPanel {
             SummaryReport.add(reportBody, Comic.wrapped(failure, Comic.RED, 13.5f));
             reportBody.add(Box.createVerticalStrut(8));
         }
-        if (summary != null) {
+        if (partial != null && runningJob != null) {
+            SummaryReport.add(reportBody, Comic.wrapped(busy.text().isEmpty() ? PARTIAL : busy.text() + " " + PARTIAL,
+                    Comic.BLUE, 13.5f));
+            reportBody.add(Box.createVerticalStrut(8));
+            summaryReport.render(partial, () -> { });
+        } else if (summary != null) {
             summaryReport.render(summary, () -> {
                 summaryReport.markFollowed();
                 showPictures();
