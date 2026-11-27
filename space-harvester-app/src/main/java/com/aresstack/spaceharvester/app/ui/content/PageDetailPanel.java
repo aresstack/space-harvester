@@ -229,6 +229,8 @@ public final class PageDetailPanel extends JPanel {
     private final List<com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle> scopeToggles =
             new java.util.ArrayList<>();
     private final List<JComponent> scopeRows = new java.util.ArrayList<>();
+    private final List<com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle> bookToggles =
+            new java.util.ArrayList<>();
     /** „Eigenschaften“ der Quellenseite: Kennzahlen und Einstellungen der Quelle. */
     private final SourcePropertiesView sourceProperties;
     private final JLabel state = Comic.muted(" ");
@@ -473,11 +475,33 @@ public final class PageDetailPanel extends JPanel {
         com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle toggle = AreaSummaryView.scopeToggle();
         scopeToggles.add(toggle);
         toggle.onSelect(this::scopeChosen);
+        // An einem Ordner mit Buch an derselben Stelle „Buch | Bereich“ (Architekt 27.11.2026), Wahl je Ordner.
+        com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle book = AreaSummaryView.bookToggle();
+        bookToggles.add(book);
+        book.onSelect(this::bookChosen);
+        book.setVisible(false);
         JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
         row.setOpaque(false);
         row.add(toggle);
+        row.add(book);
         scopeRows.add(row);
         return row;
+    }
+
+    private void bookChosen(String chosen) {
+        ExportPanel.Selection.Collection folder = areaView.folder();
+        AreaSummaryView.chooseBook(folder == null ? null : folder.folderId(), AreaSummaryView.BOOK.equals(chosen));
+        for (com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle toggle : bookToggles) {
+            toggle.select(chosen);
+        }
+        areaView.bookChanged();
+        areaPodcast.bookChanged();
+        showDeck();
+    }
+
+    /** Ob der gezeigte Ordner ein Buch hat: dann steht unten „Buch | Bereich“. */
+    private boolean bookAtFolder() {
+        return folderShown() && areaView.edition() != null;
     }
 
     private void scopeChosen(String chosen) {
@@ -505,6 +529,11 @@ public final class PageDetailPanel extends JPanel {
 
     List<com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle> scopeToggles() {
         return scopeToggles;
+    }
+
+    /** Für Tests: die Umschalter „Buch | Bereich“ an einem Ordner mit Buch. */
+    List<com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle> bookToggles() {
+        return bookToggles;
     }
     private VideoViewerPanel originalVideoViewer;
     /** Das gezeigte MP4-Video für seine Standbilder in „Analysen › Bilder“; {@code null} ohne Video. */
@@ -645,6 +674,7 @@ public final class PageDetailPanel extends JPanel {
             });
         }
         areaPodcast.podcastEvents(context.events()::publish);
+        areaView.onBook(() -> javax.swing.SwingUtilities.invokeLater(this::showDeck));
         // Hat ein Favoritenordner ein Buch, zeigt die Leseansicht dessen neueste Auflage (Architekt 27.11.2026).
         areaView.books(folderId -> context.settings() == null || context.settings().storage() == null ? null
                 : com.aresstack.spaceharvester.app.research.BookEditions.latest(
@@ -1201,9 +1231,20 @@ public final class PageDetailPanel extends JPanel {
         String selected = tabs.selected();
         // Die Werkzeuge der Updates stehen nur da, wo die Updates zu sehen sind.
         boolean area = areaShown();
-        // Ein Ordner hat keine Änderungen: dort kein Umschalter.
+        // Ein Ordner hat keine Änderungen: dort kein „Änderungen | Bereich“, mit Buch aber „Buch | Bereich“.
         boolean folderNow = folderShown();
-        scopeRows.forEach(row -> row.setVisible(!folderNow));
+        boolean book = bookAtFolder();
+        ExportPanel.Selection.Collection folder = areaView.folder();
+        String bookChoice = AreaSummaryView.bookChosen(folder == null ? null : folder.folderId())
+                ? AreaSummaryView.BOOK : AreaSummaryView.AREA;
+        for (JComponent row : scopeRows) {
+            row.setVisible(!folderNow || book);
+            for (java.awt.Component part : row.getComponents()) {
+                boolean isBook = bookToggles.contains(part);
+                part.setVisible(isBook ? book : !folderNow);
+            }
+        }
+        bookToggles.forEach(toggle -> toggle.select(bookChoice));
         sourceView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected) && !area);
         sourceChanges.tools().setVisible(SOURCE_CARD.equals(pageCard) && READ.equals(selected) && !area);
         areaView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected) && area);
