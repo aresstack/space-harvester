@@ -48,8 +48,42 @@ public final class TextContextMenu {
         /** Ob dieses Feld zitiert werden kann (nicht die Chat-Eingabe selbst, nur solange der Chat zu sehen ist). */
         boolean accepts(JTextComponent field);
 
-        /** Hängt {@code text} als Zitat an die nächste Nachricht an. */
-        void quote(String text);
+        /**
+         * Hängt {@code text} als Zitat an die nächste Nachricht an; {@code reference} nennt, woher es stammt (etwa
+         * Artefakt und Abschnitt, ADR 0045 §7), sonst {@code null}.
+         */
+        void quote(String text, String reference);
+    }
+
+    /**
+     * Schlüssel einer Client-Eigenschaft (Text) an einem Feld oder einem seiner Vorfahren: der Bezug, den ein Zitat
+     * aus diesem Bereich mitträgt (ADR 0045 §7), etwa „Dokument D1 „Gartenfibel“, Abschnitt a2“.
+     */
+    public static final String QUOTE_REFERENCE = "spaceharvester.quoteReference";
+
+    /** Der Bezug für Zitate aus {@code field}: die nächste {@link #QUOTE_REFERENCE} nach außen, sonst {@code null}. */
+    public static String quoteReference(Component field) {
+        for (Component at = field; at != null; at = at.getParent()) {
+            if (at instanceof javax.swing.JComponent component
+                    && component.getClientProperty(QUOTE_REFERENCE) instanceof String reference) {
+                return reference;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Gibt markierten Text aus {@code field} als Zitat an den Chat, mit dem Bezug des Bereichs; ein Weg für Menü und
+     * schwebenden Knopf. {@code false}, wenn kein Chat ihn annimmt.
+     */
+    public static boolean quote(JTextComponent field, String text) {
+        QuoteTarget target = quoteTarget.get();
+        if (target == null || text == null || text.isBlank() || field instanceof JPasswordField
+                || !target.accepts(field)) {
+            return false;
+        }
+        target.quote(text, quoteReference(field));
+        return true;
     }
 
     private static AWTEventListener installed;
@@ -143,7 +177,7 @@ public final class TextContextMenu {
             if (selected != null && !selected.isBlank()) {
                 menu.addSeparator();
                 JMenuItem quote = new JMenuItem(QUOTE, new QuoteIcon());
-                quote.addActionListener(e -> target.quote(selected));
+                quote.addActionListener(e -> quote(field, selected));
                 menu.add(quote);
             }
         }

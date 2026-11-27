@@ -42,6 +42,8 @@ final class ArtifactView extends JPanel {
     private final Path folder;
     private final String chatId;
     private final String artifactId;
+    /** Der Ordner des Besitzers (Chat oder Projekt), aus dem die Ansicht liest. */
+    private final Path owner;
     private final JPanel column = new JPanel();
     private final JScrollPane scroll;
     private final Map<String, JComponent> blocks = new LinkedHashMap<>();
@@ -54,6 +56,11 @@ final class ArtifactView extends JPanel {
     private javax.swing.JTextArea editor;
     private ChatArtifact pending;
     private final Consumer<String> status;
+    /** „Zitieren“ über einer Markierung, wie im Chatverlauf (ADR 0045 §7); das Zitat trägt den Abschnitt mit. */
+    private final com.aresstack.spaceharvester.app.ui.controls.QuoteOverlayButton quoteOverlay =
+            new com.aresstack.spaceharvester.app.ui.controls.QuoteOverlayButton();
+    private final javax.swing.JLayeredPane layers;
+    private com.aresstack.spaceharvester.app.ui.markdown.QuoteSelection quoted;
 
     static final String EDIT = "Abschnitt bearbeiten (Markdown)";
     static final String SAVE = "Übernehmen (Strg+Enter)";
@@ -70,6 +77,7 @@ final class ArtifactView extends JPanel {
         this.folder = folder;
         this.chatId = chatId;
         this.artifactId = artifactId;
+        this.owner = store.owner(folder, chatId);
         setBackground(Comic.SURFACE);
         column.setLayout(new BoxLayout(column, BoxLayout.Y_AXIS));
         column.setOpaque(false);
@@ -79,7 +87,18 @@ final class ArtifactView extends JPanel {
         scroll = Comic.scroll(holder);
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        add(scroll, BorderLayout.CENTER);
+        layers = new javax.swing.JLayeredPane() {
+            @Override
+            public void doLayout() {
+                scroll.setBounds(0, 0, getWidth(), getHeight());
+            }
+        };
+        layers.add(scroll, javax.swing.JLayeredPane.DEFAULT_LAYER);
+        layers.add(quoteOverlay, javax.swing.JLayeredPane.POPUP_LAYER);
+        quoteOverlay.setVisible(false);
+        quoteOverlay.addActionListener(event -> acceptQuote());
+        scroll.getViewport().addChangeListener(event -> hideQuoteOverlay());
+        add(layers, BorderLayout.CENTER);
         store.addListener(listener);
         ChatArtifact artifact = store.read(folder, chatId, artifactId);
         if (artifact != null) {
@@ -108,7 +127,8 @@ final class ArtifactView extends JPanel {
     }
 
     private void changed(ChatArtifactStore.Event event) {
-        if (!chatId.equals(event.chatId()) || !java.util.Objects.equals(folder, event.folder())) {
+        // Ein Projekt teilt seine Artefakte mit allen seinen Chats (ADR 0043, F3): maßgeblich ist der Besitzer.
+        if (!java.util.Objects.equals(owner, event.owner())) {
             return;
         }
         if (!artifactId.equals(event.artifact().id())) {
@@ -149,7 +169,8 @@ final class ArtifactView extends JPanel {
         blocks.clear();
         MarkdownTheme theme = MarkdownTheme.forSurface(Comic.SURFACE);
         if (artifact.kind() == ChatArtifact.Kind.GRAPHIC) {
-            column.add(block("````svg\n" + artifact.current().svg().strip() + "\n````", theme, false));
+            column.add(referenced(block("````svg\n" + artifact.current().svg().strip() + "\n````", theme, false),
+                    reference(artifact, null)));
         } else if (artifact.document().sections().isEmpty()) {
             column.add(block("*Das Dokument ist noch leer.*", theme, false));
         } else {
@@ -160,6 +181,7 @@ final class ArtifactView extends JPanel {
                 JComponent block = block(com.aresstack.spaceharvester.app.chat.artifact.GraphicReferences.inline(
                         section.markdown(), this::svgOf) + references, theme, highlighted.contains(section.id()));
                 ((Section) block).pen(() -> edit(section.id()));
+                referenced(block, reference(artifact, section.id()));
                 block.setName(section.id());
                 blocks.put(section.id(), block);
                 column.add(block);
@@ -175,9 +197,69 @@ final class ArtifactView extends JPanel {
         return graphic == null || graphic.kind() != ChatArtifact.Kind.GRAPHIC ? null : graphic.current().svg();
     }
 
+    /**
+     * Der Bezug eines Zitats aus diesem Artefakt (ADR 0045 §7), so wie ihn die KI in ihren Werkzeugen wiederfindet:
+     * „Dokument D1 „Gartenfibel“, Abschnitt a2“ oder „Grafik G1 „Ablauf““.
+     */
+    static String reference(ChatArtifact artifact, String sectionId) {
+        String kind = artifact.kind() == ChatArtifact.Kind.GRAPHIC ? "Grafik" : "Dokument";
+        return kind + " " + artifact.id() + " \u201E" + artifact.title() + "\u201C"
+                + (sectionId == null ? "" : ", Abschnitt " + sectionId);
+    }
+
+    private static JComponent referenced(JComponent block, String reference) {
+        block.putClientProperty(com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.QUOTE_REFERENCE,
+                reference);
+        return block;
+    }
+
+    /** Eine Markierung im Artefakt: „Zitieren“ mittig darüber. */
+    private void showQuoteOverlay(com.aresstack.spaceharvester.app.ui.markdown.QuoteSelection selection) {
+        if (selection == null || selection.anchor() == null || !selection.anchor().isShowing()) {
+            hideQuoteOverlay();
+            return;
+        }
+        quoted = selection;
+        quoteOverlay.place(selection.anchor(), selection.bounds(), layers);
+    }
+
+    private void hideQuoteOverlay() {
+        quoted = null;
+        if (quoteOverlay.isVisible()) {
+            quoteOverlay.setVisible(false);
+            layers.repaint();
+        }
+    }
+
+    /** „Zitieren“ geklickt: über denselben Weg wie „An Chat anhängen“, mit Artefakt und Abschnitt. */
+    void acceptQuote() {
+        com.aresstack.spaceharvester.app.ui.markdown.QuoteSelection selection = quoted;
+        hideQuoteOverlay();
+        if (selection != null && com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.quote(
+                selection.anchor(), selection.selectedText())) {
+            selection.clearHighlight();
+        }
+    }
+
+    /** Der schwebende Knopf „Zitieren“ (für Tests). */
+    com.aresstack.spaceharvester.app.ui.controls.QuoteOverlayButton quoteOverlay() {
+        return quoteOverlay;
+    }
+
     private JComponent block(String markdown, MarkdownTheme theme, boolean changed) {
         MarkdownMessageView view = new MarkdownMessageView(theme, DesktopLinkOpener.systemDefault(), mermaid);
         view.setMarkdown(markdown);
+        view.setQuoteSelectionListener(new com.aresstack.spaceharvester.app.ui.markdown.QuoteSelectionListener() {
+            @Override
+            public void selectionMade(com.aresstack.spaceharvester.app.ui.markdown.QuoteSelection selection) {
+                showQuoteOverlay(selection);
+            }
+
+            @Override
+            public void selectionCleared() {
+                hideQuoteOverlay();
+            }
+        });
         Section block = new Section(view);
         block.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createMatteBorder(0, 3, 0, 0, changed ? CHANGED : Comic.SURFACE),
@@ -358,6 +440,11 @@ final class ArtifactView extends JPanel {
         public Dimension getMinimumSize() {
             return new Dimension(0, getPreferredSize().height);
         }
+    }
+
+    /** Der Block eines Abschnitts (für Tests), sonst {@code null}. */
+    JComponent block(String sectionId) {
+        return blocks.get(sectionId);
     }
 
     /** Für Tests: die Blöcke der Abschnitte in der Reihenfolge der Anzeige. */

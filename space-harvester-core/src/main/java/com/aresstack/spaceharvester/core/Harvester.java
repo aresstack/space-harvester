@@ -1363,6 +1363,12 @@ public final class Harvester implements AutoCloseable {
             this.diagramModels = new com.aresstack.spaceharvester.application.podcast.DiagramComposer.Models(
                     podcastPlanner, podcastDrawer);
             this.pagePodcasts.pictures(podcastPlanner, podcastDrawer, podcastImages);
+            // Was der Erklär-Podcast von einer Seite liest, folgt den Einstellungen (Angelo 27.11.2026: keine Grenzen).
+            this.pagePodcasts.reading(() -> {
+                com.aresstack.spaceharvester.ai.AiServiceSettings current = podcastAi.get();
+                return current == null ? com.aresstack.spaceharvester.application.podcast.PagePodcasts.Reading.DEFAULT
+                        : com.aresstack.spaceharvester.application.podcast.PagePodcasts.Reading.of(current.speech());
+            });
             // B1: Bilder automatisch beschreiben nach dem Abgleich und nach neuer KI-Freigabe, nur mit images.automatic.
             com.aresstack.spaceharvester.application.configuration.ImageSettings startImages = builder.images;
             // D2: jeder Lauf „Bilder beschreiben“ über das Auftragssystem, im Hintergrund ein Unterauftrag je Space.

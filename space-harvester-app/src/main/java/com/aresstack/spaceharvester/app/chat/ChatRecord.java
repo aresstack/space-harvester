@@ -73,6 +73,19 @@ public record ChatRecord(String id, String title, long createdAt, long modifiedA
         return new ChatRecord(id, title, createdAt, modifiedAt, messages, projectId, newGroupId);
     }
 
+    /**
+     * Derselbe Chat mit umgeschriebenem Text jeder Nachricht (etwa Verweise auf umgezogene Artefakte, ADR 0043 F3);
+     * Änderungszeit und alles andere bleiben.
+     */
+    public ChatRecord withTexts(java.util.function.UnaryOperator<String> rewrite) {
+        List<Message> next = new ArrayList<>(messages.size());
+        for (Message message : messages) {
+            next.add(new Message(message.role(), rewrite.apply(message.text()), message.cancelled(), message.at(),
+                    message.area(), message.scope(), message.sources()));
+        }
+        return new ChatRecord(id, title, createdAt, modifiedAt, next, projectId, groupId);
+    }
+
     /** Ob der Titel vom Benutzer stammt (nicht mehr die Kennung). */
     public boolean renamed() {
         return !title.equals(id);

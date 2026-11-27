@@ -21,6 +21,14 @@ import com.aresstack.spaceharvester.app.chat.ChatRecord;
 import com.aresstack.spaceharvester.app.chat.ChatRoom;
 import com.aresstack.spaceharvester.app.chat.ChatStore;
 import com.aresstack.spaceharvester.app.chat.ChatTurn;
+import com.aresstack.spaceharvester.app.group.GroupColor;
+import com.aresstack.spaceharvester.app.project.ChatGroup;
+import com.aresstack.spaceharvester.app.project.Project;
+import com.aresstack.spaceharvester.app.project.ProjectStore;
+import com.aresstack.spaceharvester.app.ui.controls.ColorDot;
+import com.aresstack.spaceharvester.app.ui.controls.GroupColors;
+import com.aresstack.spaceharvester.app.ui.controls.FlatIconButton;
+import com.aresstack.spaceharvester.app.ui.controls.GroupStripe;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.speech.Dictation;
 import com.aresstack.spaceharvester.app.speech.LiveDictationSettings;
@@ -55,6 +63,7 @@ import javax.swing.JLabel;
 import javax.swing.JLayeredPane;
 import javax.swing.JProgressBar;
 import javax.swing.Timer;
+import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -121,6 +130,15 @@ public final class ChatPanel extends JPanel {
     static final String NO_CHATS = "Noch keine Chats";
     static final String NO_CHATS_HERE = "Noch keine Chats in diesem Bereich";
     static final String NEW_CHAT = "Neuer Chat";
+    static final String NAME_TIP = "Rechtsklick: Umbenennen, Gruppe, Projekt, Chat löschen";
+    static final String NEW_CHAT_IN_GROUP = "Neuer Chat in dieser Gruppe";
+    static final String ADD_TO_GROUP = "Zu Gruppe hinzufügen";
+    static final String NEW_GROUP = "Neue Gruppe …";
+    static final String REMOVE_FROM_GROUP = "Aus Gruppe entfernen";
+    static final String MOVE_TO_PROJECT = "In Projekt verschieben";
+    static final String GROUP_RENAME = "Umbenennen …";
+    static final String GROUP_COLOR = "Farbe";
+    static final String GROUP_DISSOLVE = "Gruppe auflösen";
     static final String PLACEHOLDER = "Nachricht…";
     static final String SEND = "Senden";
     static final String STOP = "Stopp";
@@ -256,6 +274,12 @@ public final class ChatPanel extends JPanel {
     private final JPanel header = new JPanel(new BorderLayout(6, 0));
     private final JPanel headerActions = Comic.row(newChat, deleteChat);
     private final ChatStore store;
+    /** Die Projekte der App; die Chat-Liste zeigt nur das aktive (ADR 0043, Nachtrag F2, F6). */
+    private final ProjectStore projects;
+    /** Die in der Chat-Liste aufgeklappten Gruppen. */
+    private final Set<String> expandedGroups = new HashSet<>();
+    /** Die gerade offene Chat-Liste unter ▾, damit Auf- und Zuklappen sie an Ort und Stelle neu aufbaut. */
+    private JPopupMenu chatsMenu;
     /** Der Bereich der Chats: die Auswahl links als Knoten; {@code null} ohne Auswahl. */
     private ChatNode node;
     /**
@@ -266,7 +290,7 @@ public final class ChatPanel extends JPanel {
     /** Ob die erste Auswahl nach dem Start schon ihren zuletzt geänderten Chat gezeigt hat. */
     private boolean resumed;
     /** Der aktuelle Chat; immer gesetzt, anfangs leer und ungespeichert. */
-    private ChatRecord chat = ChatRecord.fresh(System.currentTimeMillis());
+    private ChatRecord chat;
     /** Der laufende Turn oder {@code null}. */
     private ChatTurn turn;
     /** Der Empfänger des laufenden Turns; beim Loslassen wird er abgemeldet, damit er nur noch speichert. */
@@ -440,12 +464,19 @@ public final class ChatPanel extends JPanel {
 
         store = new ChatStore(context::chatsDirectory);
         artifacts = new com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore(store);
+        projects = context.projects();
+        // Artefakte gehören im Projekt dem Projekt, im Standardprojekt dem Chat (ADR 0043, F3).
+        artifacts.projects(projects::artifacts);
+        chat = freshChat(null);
+        // Wechselt das aktive Projekt (Ecke unten) oder ändert sich eine Gruppe, folgt der Chat (ADR 0027, ohne Abfragen).
+        projects.addListener(() -> SwingUtilities.invokeLater(this::projectsChanged));
         JLabel heading = new JLabel("Chat:");
         heading.setFont(Comic.semiBold(16f));
         heading.setForeground(Comic.INK);
         chatName.setFont(Comic.regular(15f));
         chatName.setForeground(Comic.INK);
-        chatName.setToolTipText("Rechtsklick: Umbenennen, Chat löschen");
+        chatName.setToolTipText(NAME_TIP);
+        chatName.setIconTextGap(6);
         chatName.addMouseListener(new MouseAdapter() {
             @Override
             public void mousePressed(MouseEvent e) {
@@ -590,6 +621,8 @@ public final class ChatPanel extends JPanel {
             showModel();
             bindReadAloud();
             refresh();
+            // Erst nach dem Laden der Einstellungen ist das gewählte Projekt bekannt (ADR 0043, F6).
+            projectsChanged();
         });
         showModel();
         renderKnowledge(null, null, true);
@@ -1257,7 +1290,7 @@ public final class ChatPanel extends JPanel {
         home = store.folder(stored());
         if (!resumed && node != null) {
             resumed = true;
-            List<ChatRecord> saved = store.list(stored());
+            List<ChatRecord> saved = inActiveProject(store.list(stored()));
             if (!saved.isEmpty()) {
                 open(saved.get(0));
                 return;
@@ -1817,11 +1850,29 @@ public final class ChatPanel extends JPanel {
                 && java.util.Objects.equals(artifactChat, chatId);
     }
 
+    /**
+     * Meldet dem Speicher das Projekt des offenen Chats; hat der Chat in einem Projekt noch eigene Artefakte, ziehen
+     * sie ins Projekt um (ADR 0043 F3), und die Verweise in seinen Antworten folgen den neuen Kennungen.
+     */
+    private java.util.Map<String, String> adoptArtifacts() {
+        java.util.Map<String, String> renamed = artifacts.moveToProject(home, chat.id(), chat.projectId());
+        if (renamed.isEmpty()) {
+            return renamed;
+        }
+        chat = chat.withTexts(text -> com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore.relink(text,
+                renamed));
+        if (home != null && !chat.isEmpty()) {
+            store.save(home, chat);
+        }
+        return renamed;
+    }
+
     /** Meldet der Mitte einen Wechsel des offenen Chats (neuer, geladener oder erstmals gespeicherter Chat). */
     private void announceArtifactChat() {
         if (artifacts == null) {
             return;
         }
+        adoptArtifacts();
         if (!java.util.Objects.equals(artifactFolder, home) || !java.util.Objects.equals(artifactChat, chat.id())) {
             artifactFolder = home;
             artifactChat = chat.id();
@@ -2276,16 +2327,27 @@ public final class ChatPanel extends JPanel {
      * einmal; die Eingabe bekommt den Fokus, damit gleich die Frage folgen kann.
      */
     void quote(String text) {
+        quote(text, null);
+    }
+
+    /**
+     * Wie {@link #quote(String)}, mit dem Bezug, woher der Ausschnitt stammt (ADR 0045 §7: Artefakt und Abschnitt):
+     * er steht als erste Zeile im Zitat, damit die KI gezielt dort ändert, und im Tooltip des Chips.
+     */
+    void quote(String text, String reference) {
         if (text == null || text.isBlank()) {
             return;
         }
-        String passage = text.strip();
+        String excerpt = text.strip();
+        String passage = reference == null || reference.isBlank() ? excerpt
+                : quoteReferenceLine(reference) + "\n" + excerpt;
         if (!quotes.contains(passage)) {
             quotes.add(passage);
-            String line = passage.replaceAll("\\s+", " ");
+            String line = excerpt.replaceAll("\\s+", " ");
             quoteChips.put(passage, addChip(new com.aresstack.spaceharvester.app.ui.controls.QuoteIcon(),
                     ellipsize(line, QUOTE_CHIP_CHARS),
-                    QUOTE + ": \u201E" + ellipsize(line, QUOTE_TOOLTIP_CHARS) + "\u201C", "Zitat entfernen", () -> {
+                    (reference == null || reference.isBlank() ? "" : reference.strip() + " · ")
+                            + QUOTE + ": \u201E" + ellipsize(line, QUOTE_TOOLTIP_CHARS) + "\u201C", "Zitat entfernen", () -> {
                         quotes.remove(passage);
                         quoteChips.remove(passage);
                     }));
@@ -2294,6 +2356,12 @@ public final class ChatPanel extends JPanel {
     }
 
     static final String QUOTE = "Zitat";
+
+    /** Die erste Zeile eines Zitats mit Bezug, so wie sie die Regeln der Schreibumgebung nennen. */
+    static String quoteReferenceLine(String reference) {
+        return "(" + com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools.QUOTE_REFERENCE + " "
+                + reference.strip() + ")";
+    }
     private static final int QUOTE_CHIP_CHARS = 28;
     private static final int QUOTE_TOOLTIP_CHARS = 240;
 
@@ -2338,8 +2406,8 @@ public final class ChatPanel extends JPanel {
                 }
 
                 @Override
-                public void quote(String text) {
-                    ChatPanel.this.quote(text);
+                public void quote(String text, String reference) {
+                    ChatPanel.this.quote(text, reference);
                 }
             };
 
@@ -2350,23 +2418,8 @@ public final class ChatPanel extends JPanel {
             return;
         }
         quotedSelection = selection;
-        Dimension size = quoteOverlay.getPreferredSize();
-        java.awt.Rectangle area = SwingUtilities.convertRectangle(selection.anchor(), selection.bounds(),
-                transcriptLayers);
-        int x = area.x + area.width / 2 - size.width / 2;
-        x = Math.max(QUOTE_OVERLAY_GAP, Math.min(x, transcriptLayers.getWidth() - size.width - QUOTE_OVERLAY_GAP));
-        int y = area.y - size.height - QUOTE_OVERLAY_GAP;
-        if (y < QUOTE_OVERLAY_GAP) {
-            y = area.y + area.height + QUOTE_OVERLAY_GAP;
-        }
-        // Reicht die Markierung über die ganze Höhe, bleibt der Knopf trotzdem im sichtbaren Verlauf.
-        y = Math.max(QUOTE_OVERLAY_GAP, Math.min(y, transcriptLayers.getHeight() - size.height - QUOTE_OVERLAY_GAP));
-        quoteOverlay.setBounds(x, y, size.width, size.height);
-        quoteOverlay.setVisible(true);
-        transcriptLayers.repaint();
+        quoteOverlay.place(selection.anchor(), selection.bounds(), transcriptLayers);
     }
-
-    private static final int QUOTE_OVERLAY_GAP = 6;
 
     private void hideQuoteOverlay() {
         quotedSelection = null;
@@ -2384,7 +2437,8 @@ public final class ChatPanel extends JPanel {
             return;
         }
         selection.clearHighlight();
-        quote(selection.selectedText());
+        quote(selection.selectedText(), com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.quoteReference(
+                selection.anchor()));
     }
 
     /**
@@ -3730,7 +3784,7 @@ public final class ChatPanel extends JPanel {
         if (turn != null) {
             detachTurn();
         }
-        open(ChatRecord.fresh(System.currentTimeMillis()), store.folder(stored()));
+        open(freshChat(null), store.folder(stored()));
         editor.requestFocusInWindow();
     }
 
@@ -3777,6 +3831,10 @@ public final class ChatPanel extends JPanel {
     private void showChatName() {
         announceArtifactChat();
         chatName.setText(com.aresstack.spaceharvester.app.chat.ChatExport.displayTitle(chat));
+        // Gehört der Chat zu einer Gruppe, steht deren Punkt davor (UX: 10 px, Tooltip = Name der Gruppe).
+        ChatGroup group = groupOfChat();
+        chatName.setIcon(group == null ? null : new ColorDot(GroupColors.of(group.color())));
+        chatName.setToolTipText(group == null ? NAME_TIP : group.name() + " · " + NAME_TIP);
         titleAi.setEnabled(!chat.isEmpty() && !titlePending && turn == null);
         chats.setEnabled(true);
         updateHeaderActions();
@@ -3807,16 +3865,164 @@ public final class ChatPanel extends JPanel {
         return headerActions;
     }
 
+    // ------------------------------------------------------------------ Projekte und Gruppen (ADR 0043, F2, F6)
+
+    /** Ein neuer, leerer Chat im aktiven Projekt, auf Wunsch gleich in einer seiner Gruppen. */
+    private ChatRecord freshChat(String groupId) {
+        return ChatRecord.fresh(System.currentTimeMillis(), ChatListing.idFor(projects.active()), groupId);
+    }
+
+    private Set<String> knownProjectIds() {
+        Set<String> ids = new HashSet<>();
+        for (Project project : projects.list()) {
+            ids.add(project.id());
+        }
+        return ids;
+    }
+
+    /** Nur die Chats des aktiven Projekts, Reihenfolge bleibt. */
+    private List<ChatRecord> inActiveProject(List<ChatRecord> records) {
+        String active = projects.active().id();
+        Set<String> known = knownProjectIds();
+        return records.stream().filter(record -> ChatListing.projectOf(record, known).equals(active)).toList();
+    }
+
+    /** Das Projekt des offenen Chats. */
+    private String projectOfChat() {
+        return ChatListing.projectOf(chat, knownProjectIds());
+    }
+
     /**
-     * Der Pfeil: zuerst die Chats des links gewählten Bereichs, darunter abgetrennt alle übrigen, je Gruppe zuletzt
-     * geänderte zuerst, der offene mit Haken (Angelo, 21.11.2026).
+     * Projekte oder Gruppen haben sich geändert: Gehört der offene Chat nicht mehr zum aktiven Projekt (Wechsel unten in
+     * der Ecke, Projekt gelöscht), steht der zuletzt geänderte Chat des aktiven Projekts in diesem Bereich da, sonst
+     * ein neuer. Ein Wechsel startet nichts, keine Antwort wird abgebrochen.
+     */
+    private void projectsChanged() {
+        if (!projectOfChat().equals(projects.active().id())) {
+            // Eine laufende Antwort schreibt ihren Chat zu Ende ({@link #open} lässt sie nur los).
+            List<ChatRecord> saved = inActiveProject(store.list(stored()));
+            open(saved.isEmpty() ? freshChat(null) : saved.get(0), store.folder(stored()));
+            return;
+        }
+        showChatName();
+    }
+
+    /** Die Gruppe des offenen Chats in seinem Projekt; {@code null} ohne. */
+    private ChatGroup groupOfChat() {
+        return projects.group(projectOfChat(), chat.groupId());
+    }
+
+    /** Speichert den offenen Chat mit neuer Zuordnung (ohne leere Datei); die Liste baut sich beim Öffnen neu auf. */
+    private void reassign(ChatRecord changed) {
+        boolean moved = !java.util.Objects.equals(chat.projectId(), changed.projectId());
+        chat = changed;
+        if (home != null && !chat.isEmpty()) {
+            store.save(home, chat);
+        }
+        if (moved && artifacts != null) {
+            // Eigene Artefakte ziehen ins neue Projekt um (F3); die Mitte zeigt danach die des neuen Besitzers.
+            if (adoptArtifacts().isEmpty()) {
+                // Nichts umgezogen: Die offenen Reiter gehörten zum alten Besitzer.
+                artifacts.rememberTabs(home, chat.id(), List.of());
+            }
+            artifactHost.chat(null, null);
+            artifactFolder = null;
+            announceArtifactChat();
+        }
+        showChatName();
+    }
+
+    /** „Zu Gruppe hinzufügen“: die Gruppen des Projekts und „Neue Gruppe …“; „Aus Gruppe entfernen“; „In Projekt …“. */
+    private void addGroupItems(JPopupMenu menu, MouseEvent e) {
+        String project = projectOfChat();
+        JMenu add = new JMenu(ADD_TO_GROUP);
+        for (ChatGroup group : projects.groups(project)) {
+            JMenuItem item = new JMenuItem(group.name(), new ColorDot(GroupColors.of(group.color())));
+            item.setEnabled(!group.id().equals(chat.groupId()));
+            item.addActionListener(ignored -> reassign(chat.inGroup(group.id())));
+            add.add(item);
+        }
+        if (add.getItemCount() > 0) {
+            add.addSeparator();
+        }
+        JMenuItem create = new JMenuItem(NEW_GROUP);
+        create.addActionListener(ignored -> editGroup(null, chatName, e.getX(), e.getY(),
+                group -> reassign(chat.inGroup(group.id()))));
+        add.add(create);
+        menu.add(add);
+        if (groupOfChat() != null) {
+            JMenuItem remove = new JMenuItem(REMOVE_FROM_GROUP);
+            remove.addActionListener(ignored -> reassign(chat.inGroup(null)));
+            menu.add(remove);
+        }
+        List<Project> others = projects.list().stream().filter(other -> !other.id().equals(project)).toList();
+        if (!others.isEmpty()) {
+            JMenu move = new JMenu(MOVE_TO_PROJECT);
+            for (Project other : others) {
+                JMenuItem item = new JMenuItem(other.name());
+                // Der Chat zieht ohne Gruppe um und verschwindet aus der Liste, das aktive Projekt bleibt.
+                item.addActionListener(ignored -> {
+                    reassign(chat.inProject(ChatListing.idFor(other)));
+                    projectsChanged();
+                });
+                move.add(item);
+            }
+            menu.add(move);
+        }
+    }
+
+    /** Das Gruppen-Popup: neue Gruppe ({@code group} null) oder umbenennen/umfärben. */
+    private void editGroup(ChatGroup group, java.awt.Component anchor, int x, int y,
+                           java.util.function.Consumer<ChatGroup> created) {
+        String project = projectOfChat();
+        java.util.Set<GroupColor> used = java.util.EnumSet.noneOf(GroupColor.class);
+        projects.groups(project).forEach(known -> used.add(known.color()));
+        new GroupEditor(group, GroupColor.next(used), (name, color) -> {
+            if (group == null) {
+                ChatGroup made = projects.createGroup(project, name, color);
+                if (made != null) {
+                    expandedGroups.add(made.id());
+                    created.accept(made);
+                }
+            } else {
+                projects.updateGroup(project, group.withName(name).withColor(color));
+            }
+        }).open(anchor, x, y);
+    }
+
+    /**
+     * Der Pfeil: nur die Chats des aktiven Projekts (ADR 0043, F2). Oben dessen Gruppen in ihrer Farbe zum Aufklappen
+     * mit „Neuer Chat in dieser Gruppe“, darunter die Chats ohne Gruppe: zuerst die des links gewählten Bereichs,
+     * abgetrennt alle übrigen, je Gruppe zuletzt geänderte zuerst, der offene mit Haken (Angelo, 21.11.2026). Ohne
+     * Gruppen sieht die Liste aus wie bisher.
      */
     private void showChatsMenu() {
+        // Steht der offene Chat in einer zugeklappten Gruppe, klappt sie auf, damit sein Haken zu sehen ist (UX-Strang).
+        ChatGroup current = groupOfChat();
+        if (current != null) {
+            expandedGroups.add(current.id());
+        }
         JPopupMenu menu = new JPopupMenu();
+        chatsMenu = menu;
         for (Component item : chatMenuItems()) {
             menu.add(item);
         }
         PopupHover.clearOnClose(menu, chats).show(chats, 0, chats.getHeight());
+    }
+
+    /** Baut die offene Liste nach Auf- oder Zuklappen an Ort und Stelle neu auf. */
+    private void rebuildChatsMenu() {
+        JPopupMenu menu = chatsMenu;
+        if (menu == null || !menu.isVisible()) {
+            return;
+        }
+        menu.removeAll();
+        for (Component item : chatMenuItems()) {
+            menu.add(item);
+        }
+        menu.pack();
+        menu.revalidate();
+        menu.repaint();
     }
 
     /** Die Einträge des Menüs unter ▾; für Tests ohne geöffnetes Popup. */
@@ -3832,27 +4038,240 @@ public final class ChatPanel extends JPanel {
         }
         all.sort(java.util.Comparator.comparingLong((ChatStore.Entry entry) -> entry.record().modifiedAt())
                 .reversed());
-        List<ChatStore.Entry> local = all.stream().filter(entry -> entry.folder().equals(here)).toList();
-        List<ChatStore.Entry> others = all.stream().filter(entry -> !entry.folder().equals(here)).toList();
-        if (all.isEmpty()) {
+        String project = projects.active().id();
+        ChatListing listing = ChatListing.of(all, project, knownProjectIds(), projects.groups(project));
+        for (java.util.Map.Entry<ChatGroup, List<ChatStore.Entry>> group : listing.grouped().entrySet()) {
+            boolean open = expandedGroups.contains(group.getKey().id());
+            items.add(new GroupRow(group.getKey(), group.getValue().size(), open, () -> {
+                if (chatsMenu != null) {
+                    chatsMenu.setVisible(false);
+                }
+                if (turn != null) {
+                    detachTurn();
+                }
+                open(freshChat(group.getKey().id()), here);
+                editor.requestFocusInWindow();
+            }));
+            if (open) {
+                for (ChatStore.Entry entry : group.getValue()) {
+                    JMenuItem item = chatItem(entry, deletedIds.contains(entry.record().id()));
+                    item.setBorder(BorderFactory.createCompoundBorder(
+                            new GroupStripe(GroupColors.of(group.getKey().color()), STRIPE_INDENT, CHAT_INSET),
+                            plainInsets(item)));
+                    items.add(item);
+                }
+            }
+        }
+        if (!listing.grouped().isEmpty()) {
+            items.add(new JPopupMenu.Separator());
+        }
+        List<ChatStore.Entry> ungrouped = listing.ungrouped();
+        List<ChatStore.Entry> local = ungrouped.stream().filter(entry -> entry.folder().equals(here)).toList();
+        List<ChatStore.Entry> others = ungrouped.stream().filter(entry -> !entry.folder().equals(here)).toList();
+        if (ungrouped.isEmpty() && listing.grouped().isEmpty()) {
             JMenuItem none = new JMenuItem(NO_CHATS);
             none.setEnabled(false);
             items.add(none);
             return items;
         }
+        boolean grouped = !listing.grouped().isEmpty();
+        java.util.function.Function<ChatStore.Entry, JMenuItem> loose = entry -> {
+            JMenuItem item = chatItem(entry, deletedIds.contains(entry.record().id()));
+            if (grouped) {
+                // Eine Fluchtlinie mit den Chats der Gruppen darüber (UX-Strang).
+                item.setBorder(BorderFactory.createCompoundBorder(
+                        BorderFactory.createEmptyBorder(0, CHAT_INSET, 0, 0), plainInsets(item)));
+            }
+            return item;
+        };
         items.add(menuHeading(CHATS_HERE));
         if (local.isEmpty()) {
             JMenuItem none = new JMenuItem(NO_CHATS_HERE);
             none.setEnabled(false);
             items.add(none);
         }
-        local.forEach(entry -> items.add(chatItem(entry, deletedIds.contains(entry.record().id()))));
+        local.forEach(entry -> items.add(loose.apply(entry)));
         if (!others.isEmpty()) {
             items.add(new JPopupMenu.Separator());
             items.add(menuHeading(CHATS_ELSEWHERE));
-            others.forEach(entry -> items.add(chatItem(entry, deletedIds.contains(entry.record().id()))));
+            others.forEach(entry -> items.add(loose.apply(entry)));
         }
         return items;
+    }
+
+    /** Abstand des Gruppenstreifens vom linken Rand: unter der Mitte des Farbpunkts der Gruppenzeile (UX-Strang). */
+    private static final int STRIPE_INDENT = GroupRow.dotCenter() - GroupStripe.WIDTH / 2;
+    /** Linker Einzug aller Chat-Titel, sobald Gruppen da sind: eine Fluchtlinie mit und ohne Gruppe. */
+    private static final int CHAT_INSET = GroupRow.dotCenter() + 14;
+
+    /**
+     * Die Zeile einer Gruppe in der Liste (UX-Strang): Pfeil, gefüllter Punkt, Name halbfett, Zahl der Chats normal und
+     * gedämpft, rechts ein Plus für einen neuen Chat in der Gruppe (sichtbar beim Darüberfahren und aufgeklappt).
+     * Linksklick klappt auf und zu, ohne die Liste zu schließen; Rechtsklick öffnet Umbenennen, Farbe und Auflösen.
+     */
+    final class GroupRow extends JMenuItem {
+
+        private final ChatGroup group;
+        private final boolean open;
+        private final JLabel count;
+        private final FlatIconButton start;
+        private boolean overStart;
+
+        GroupRow(ChatGroup group, int chats, boolean open, Runnable newChat) {
+            super(group.name(), new GroupRowIcon(open, GroupColors.of(group.color())));
+            this.group = group;
+            this.open = open;
+            float size = getFont().getSize2D();
+            setFont(Comic.semiBold(size));
+            setLayout(null);
+            count = new JLabel("(" + chats + ")");
+            count.setFont(Comic.regular(size));
+            count.setForeground(Comic.MUTED);
+            add(count);
+            start = new FlatIconButton(Glyph.PLUS, NEW_CHAT_IN_GROUP);
+            start.addActionListener(e -> newChat.run());
+            start.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    overStart = true;
+                    showStart();
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    overStart = false;
+                    showStart();
+                }
+            });
+            add(start);
+            getModel().addChangeListener(e -> showStart());
+            showStart();
+            setToolTipText(open ? "Zuklappen; Rechtsklick: Umbenennen, Farbe, Auflösen"
+                    : "Aufklappen; Rechtsklick: Umbenennen, Farbe, Auflösen");
+            getAccessibleContext().setAccessibleName("Gruppe " + group.name());
+        }
+
+        /** Waagerechte Mitte des Farbpunkts, gemessen vom linken Rand der Zeile. */
+        static int dotCenter() {
+            JMenuItem probe = new JMenuItem();
+            java.awt.Insets insets = probe.getInsets();
+            return insets.left + Glyph.EXPAND.getIconWidth() + 4 + ColorDot.SIZE / 2;
+        }
+
+        private void showStart() {
+            start.setVisible(open || overStart || getModel().isArmed());
+        }
+
+        ChatGroup group() {
+            return group;
+        }
+
+        /** Der Knopf „Neuer Chat in dieser Gruppe“; für Tests. */
+        FlatIconButton newChatButton() {
+            return start;
+        }
+
+        /** Klappt auf oder zu und baut die Liste neu auf. */
+        void toggle() {
+            if (!expandedGroups.remove(group.id())) {
+                expandedGroups.add(group.id());
+            }
+            rebuildChatsMenu();
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            Dimension size = super.getPreferredSize();
+            return new Dimension(size.width + 6 + count.getPreferredSize().width + 12 + FlatIconButton.SIZE,
+                    Math.max(size.height, FlatIconButton.SIZE));
+        }
+
+        @Override
+        public void doLayout() {
+            java.awt.Insets insets = getInsets();
+            int textWidth = getFontMetrics(getFont()).stringWidth(getText());
+            int x = insets.left + getIcon().getIconWidth() + getIconTextGap() + textWidth + 6;
+            Dimension countSize = count.getPreferredSize();
+            count.setBounds(x, (getHeight() - countSize.height) / 2, countSize.width, countSize.height);
+            start.setBounds(getWidth() - insets.right - FlatIconButton.SIZE - 4,
+                    (getHeight() - FlatIconButton.SIZE) / 2, FlatIconButton.SIZE, FlatIconButton.SIZE);
+        }
+
+        @Override
+        protected void processMouseEvent(MouseEvent e) {
+            if (e.getID() == MouseEvent.MOUSE_RELEASED) {
+                if (SwingUtilities.isRightMouseButton(e) || e.isPopupTrigger()) {
+                    showGroupMenu(this, e.getX(), e.getY());
+                } else if (SwingUtilities.isLeftMouseButton(e)) {
+                    toggle();
+                }
+                e.consume();
+                return;
+            }
+            if (e.getID() == MouseEvent.MOUSE_PRESSED && e.isPopupTrigger()) {
+                e.consume();
+                return;
+            }
+            super.processMouseEvent(e);
+        }
+
+        @Override
+        public void doClick(int pressTime) {
+            toggle();
+        }
+    }
+
+    /** Pfeil auf/zu und Farbpunkt der Gruppenzeile nebeneinander. */
+    private static final class GroupRowIcon implements javax.swing.Icon {
+        private final javax.swing.Icon arrow;
+        private final javax.swing.Icon dot;
+
+        GroupRowIcon(boolean open, GroupColors color) {
+            arrow = open ? Glyph.COLLAPSE : Glyph.EXPAND;
+            dot = new ColorDot(color);
+        }
+
+        @Override
+        public void paintIcon(Component c, java.awt.Graphics g, int x, int y) {
+            arrow.paintIcon(c, g, x, y + (getIconHeight() - arrow.getIconHeight()) / 2);
+            dot.paintIcon(c, g, x + arrow.getIconWidth() + 4, y + (getIconHeight() - dot.getIconHeight()) / 2);
+        }
+
+        @Override
+        public int getIconWidth() {
+            return arrow.getIconWidth() + 4 + dot.getIconWidth();
+        }
+
+        @Override
+        public int getIconHeight() {
+            return Math.max(arrow.getIconHeight(), dot.getIconHeight());
+        }
+    }
+
+    /** Rechtsklick auf eine Gruppe: Umbenennen …, Farbe ▸ (Punkt und Name je Farbe), Gruppe auflösen. */
+    void showGroupMenu(GroupRow row, int x, int y) {
+        ChatGroup group = row.group();
+        String project = projects.active().id();
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem rename = new JMenuItem(GROUP_RENAME);
+        rename.addActionListener(e -> editGroup(group, chats, 0, chats.getHeight(), made -> { }));
+        menu.add(rename);
+        JMenu colors = new JMenu(GROUP_COLOR);
+        for (GroupColor color : GroupColor.values()) {
+            JMenuItem item = new JMenuItem((color == group.color() ? "✓ " : "") + color.label(),
+                    new ColorDot(GroupColors.of(color)));
+            item.addActionListener(e -> projects.updateGroup(project, group.withColor(color)));
+            colors.add(item);
+        }
+        menu.add(colors);
+        JMenuItem dissolve = new JMenuItem(GROUP_DISSOLVE);
+        dissolve.setToolTipText("Die Chats bleiben, nur ohne Gruppe");
+        dissolve.addActionListener(e -> {
+            expandedGroups.remove(group.id());
+            projects.dissolveGroup(project, group.id());
+        });
+        menu.add(dissolve);
+        menu.show(chats, 0, chats.getHeight());
     }
 
     private JMenuItem chatItem(ChatStore.Entry entry, boolean deleted) {
@@ -3860,6 +4279,7 @@ public final class ChatPanel extends JPanel {
         boolean current = !deleted && record.id().equals(chat.id());
         String label = (current ? "✓ " : "    ") + com.aresstack.spaceharvester.app.chat.ChatExport.displayTitle(record);
         JMenuItem item = new JMenuItem(deleted ? "<html><s>" + escapeHtml(label) + "</s></html>" : label);
+        item.setFont(Comic.regular(item.getFont().getSize2D()));
         String area = lastArea(record);
         item.setToolTipText(deleted ? DELETED_TIP : Texts.count(record.messages().size(), "Nachricht", "Nachrichten")
                 + (area == null ? "" : " · zuletzt: " + areaName(area)));
@@ -3873,6 +4293,12 @@ public final class ChatPanel extends JPanel {
             }
         });
         return item;
+    }
+
+    /** Leerer Rand mit den Abständen des Standardrands: gleiche Zeilenhöhe, ohne dessen Kantenlinien eingerückt zu malen. */
+    private static javax.swing.border.Border plainInsets(JMenuItem item) {
+        java.awt.Insets insets = item.getInsets();
+        return BorderFactory.createEmptyBorder(insets.top, insets.left, insets.bottom, insets.right);
     }
 
     private static String escapeHtml(String text) {
@@ -4250,12 +4676,18 @@ public final class ChatPanel extends JPanel {
         return marks;
     }
 
-    /** Rechtsklick auf den Namen: Umbenennen an Ort und Stelle, Chat löschen mit Rückfrage. */
+    /**
+     * Rechtsklick auf den Namen: Umbenennen an Ort und Stelle, Zu Gruppe hinzufügen / Aus Gruppe entfernen, In Projekt
+     * verschieben (ADR 0043, F2), Chat löschen.
+     */
     private void showNameMenu(MouseEvent e) {
         JPopupMenu menu = new JPopupMenu();
         JMenuItem rename = new JMenuItem(RENAME);
         rename.addActionListener(ignored -> startRename());
         menu.add(rename);
+        menu.addSeparator();
+        addGroupItems(menu, e);
+        menu.addSeparator();
         JMenuItem delete = new JMenuItem(DELETE);
         delete.addActionListener(ignored -> deleteChat());
         menu.add(delete);
@@ -4305,8 +4737,8 @@ public final class ChatPanel extends JPanel {
         if (home != null && !chat.isEmpty()) {
             store.trash(home, chat.id());
         }
-        List<ChatRecord> saved = store.list(stored());
-        open(saved.isEmpty() ? ChatRecord.fresh(System.currentTimeMillis()) : saved.get(0), store.folder(stored()));
+        List<ChatRecord> saved = inActiveProject(store.list(stored()));
+        open(saved.isEmpty() ? freshChat(null) : saved.get(0), store.folder(stored()));
     }
 
     /**
@@ -4321,7 +4753,7 @@ public final class ChatPanel extends JPanel {
         List<String> ids = new ArrayList<>(store.deleteAll());
         ids.add(chat.id());
         deleteBrowserProfiles(ids);
-        open(ChatRecord.fresh(System.currentTimeMillis()), store.folder(stored()));
+        open(freshChat(null), store.folder(stored()));
     }
 
     /** Bricht eine laufende Antwort ab, deren Chat gelöscht wird: Sie schreibt ihn nicht wieder auf die Platte. */
