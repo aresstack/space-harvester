@@ -186,10 +186,12 @@ public final class ChatArtifactStore {
             // Der bisherige Besitzer, bevor das neue Projekt gilt: Wechselt der Chat das Projekt, ziehen die von ihm
             // erzeugten Artefakte mit (ADR 0047, erzeugender Chat); die übrigen bleiben im alten Projekt.
             Path previous = owner(folder, chatId);
+            String before = chatId == null ? null : projectOf.get(chatId);
             chatProject(chatId, projectId);
             Path chatFolder = chats.artifacts(folder, chatId);
             Path to = projectOwner(projectId);
             if (to == null) {
+                restoreProject(chatId, before);
                 return Map.of();
             }
             Map<ChatArtifact, Path> origins = new LinkedHashMap<>();
@@ -200,10 +202,37 @@ public final class ChatArtifactStore {
                 listIn(previous).stream().filter(artifact -> chatId != null && chatId.equals(artifact.chatId()))
                         .forEach(artifact -> origins.put(artifact, previous));
             }
+            // Grafiken, die ein mitziehendes Dokument einbettet, aber ein anderer Chat erzeugt hat, werden mitkopiert
+            // (das Original bleibt bei seinem Chat), damit das Dokument im neuen Projekt dieselbe Grafik zeigt.
+            Map<ChatArtifact, Path> borrowed = new LinkedHashMap<>();
+            if (previous != null && !previous.equals(to)) {
+                Map<String, ChatArtifact> there = new LinkedHashMap<>();
+                listIn(previous).forEach(artifact -> there.put(artifact.id(), artifact));
+                java.util.Set<String> moving = new java.util.HashSet<>();
+                origins.forEach((artifact, from) -> {
+                    if (from.equals(previous)) {
+                        moving.add(artifact.id());
+                    }
+                });
+                for (ChatArtifact artifact : List.copyOf(origins.keySet())) {
+                    if (artifact.kind() != ChatArtifact.Kind.DOCUMENT) {
+                        continue;
+                    }
+                    for (String referenced : references(artifact)) {
+                        ChatArtifact graphic = there.get(referenced);
+                        if (graphic != null && !moving.contains(referenced) && !borrowed.containsKey(graphic)) {
+                            borrowed.put(graphic, previous);
+                        }
+                    }
+                }
+            }
             List<ChatArtifact> own = List.copyOf(origins.keySet());
             if (own.isEmpty()) {
+                restoreProject(chatId, before);
                 return Map.of();
             }
+            List<ChatArtifact> copied = new ArrayList<>(own);
+            copied.addAll(borrowed.keySet());
             Map<String, String> renamed = new LinkedHashMap<>();
             Map<String, Integer> next = new java.util.HashMap<>();
             for (ChatArtifact existing : listIn(to)) {
@@ -212,7 +241,7 @@ public final class ChatArtifactStore {
                     next.merge(match.group(1), Integer.parseInt(match.group(2)) + 1, Math::max);
                 }
             }
-            for (ChatArtifact artifact : own) {
+            for (ChatArtifact artifact : copied) {
                 Matcher own_ = ID.matcher(artifact.id());
                 String prefix = own_.matches() ? own_.group(1)
                         : artifact.kind() == ChatArtifact.Kind.GRAPHIC ? "G" : "D";
@@ -222,7 +251,7 @@ public final class ChatArtifactStore {
             }
             // Ganz oder gar nicht: erst alle Kopien schreiben; scheitert eine, bleibt der Chat, wie er war.
             List<ChatArtifact> copies = new ArrayList<>();
-            for (ChatArtifact artifact : own) {
+            for (ChatArtifact artifact : copied) {
                 // Ältere Artefakte bekommen beim Umzug den Chat, aus dessen Ordner sie kommen.
                 ChatArtifact copy = renamed(artifact.chatId() != null || origins.get(artifact) != chatFolder
                         ? artifact : artifact.withChat(chatId), renamed);
@@ -237,6 +266,8 @@ public final class ChatArtifactStore {
                     }
                     LOG.log(System.Logger.Level.WARNING, "Artefakte eines Chats nicht umgezogen (Bereich " + folder
                             + "); sie bleiben beim Chat.");
+                    // Der Chat bleibt beim bisherigen Besitzer, damit ein neuer Versuch die Originale wiederfindet.
+                    restoreProject(chatId, before);
                     return Map.of();
                 }
                 copies.add(copy);
@@ -265,6 +296,33 @@ public final class ChatArtifactStore {
             }
             return moved;
         }
+    }
+
+    /** Setzt das gemerkte Projekt eines offenen Chats auf den Stand vor einem gescheiterten Umzug zurück. */
+    private void restoreProject(String chatId, String before) {
+        if (chatId == null) {
+            return;
+        }
+        if (before == null) {
+            projectOf.remove(chatId);
+        } else {
+            projectOf.put(chatId, before);
+        }
+    }
+
+    /** Die Kennungen, auf die ein Dokument in irgendeinem Stand verweist ({@code artefakt:G1}). */
+    private static java.util.Set<String> references(ChatArtifact artifact) {
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        for (ChatArtifact.Revision revision : artifact.revisions()) {
+            if (revision.document() == null) {
+                continue;
+            }
+            Matcher match = LINK.matcher(revision.document().markdown());
+            while (match.find()) {
+                ids.add(match.group(1).toUpperCase(java.util.Locale.ROOT));
+            }
+        }
+        return ids;
     }
 
     /** {@code text} mit jedem Verweis {@code artefakt:D1} auf die neue Kennung aus {@code renamed}. */
@@ -454,7 +512,11 @@ public final class ChatArtifactStore {
             if (problem != null) {
                 return WriteResult.failed(current, problem);
             }
-            SectionDocument document = SectionDocument.parse(markdown == null ? "" : markdown);
+            // Kennungen werden nie wieder vergeben, auch nicht über Auflagen: ein alter Verweis trifft sonst einen anderen
+            // Abschnitt. Höchster Zähler über alle Stände, denn Rückgängig holt auch ältere Stände zurück.
+            long nextId = current.revisions().stream().map(ChatArtifact.Revision::document)
+                    .filter(java.util.Objects::nonNull).mapToLong(SectionDocument::nextId).max().orElse(1);
+            SectionDocument document = SectionDocument.parseFrom(markdown == null ? "" : markdown, nextId);
             List<String> changed = document.sections().stream().map(SectionDocument.Section::id).toList();
             // Rückgängig führt nicht über die Grenze einer Auflage zurück: der erste Stand hat keinen Vorgänger.
             ChatArtifact.Revision revision = new ChatArtifact.Revision(current.revision() + 1, 0,

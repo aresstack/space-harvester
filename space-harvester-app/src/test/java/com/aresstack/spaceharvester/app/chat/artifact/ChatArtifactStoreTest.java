@@ -171,6 +171,45 @@ class ChatArtifactStoreTest {
     }
 
     @Test
+    void anEmbeddedGraphicOfAnotherChatIsCopiedAlongAndAFailedMoveCanBeRetried() throws Exception {
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        Path standard = home.resolve("projekte").resolve("standard").resolve("artefakte");
+        Path p1 = home.resolve("projekte").resolve("p1").resolve("artefakte");
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.projects(id -> "p1".equals(id) ? p1 : "standard".equals(id) ? standard : null);
+        ChatRecord moving = chat(chats);
+        ChatRecord drawing = ChatRecord.fresh(2_000).plus(ChatRecord.Message.user("Mal", 2_000), 2_000);
+        chats.save(node, drawing);
+        store.chatProject(moving.id(), null);
+        store.chatProject(drawing.id(), null);
+        // Erfunden: Chat B zeichnet den Grundriss, Chat A bettet ihn in seinen Bericht ein.
+        store.createDocument(folder, drawing.id(), "Platzhalter", "# Platz", ChatArtifact.Origin.AI);
+        ChatArtifact plan = store.createGraphic(folder, drawing.id(), "Grundriss",
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"4\" height=\"2\"/></svg>",
+                ChatArtifact.Origin.AI);
+        store.createDocument(folder, moving.id(), "Bericht", "# Bericht\n\n![Grundriss](artefakt:" + plan.id()
+                + ")", ChatArtifact.Origin.AI);
+
+        // Das Ziel ist nicht beschreibbar: nichts zieht um, und der Chat bleibt beim bisherigen Besitzer.
+        java.nio.file.Files.createDirectories(p1.getParent());
+        java.nio.file.Files.writeString(p1, "keine Ablage");
+        assertThat(store.moveToProject(folder, moving.id(), "p1")).isEmpty();
+        assertThat(store.owner(folder, moving.id())).isEqualTo(standard);
+
+        // Neuer Versuch, nun beschreibbar: das Dokument zieht um, die Grafik kommt als Kopie mit.
+        java.nio.file.Files.delete(p1);
+        store.moveToProject(folder, moving.id(), "p1");
+        List<ChatArtifact> moved = ChatArtifactStore.listIn(p1);
+        assertThat(moved).extracting(ChatArtifact::title).containsExactlyInAnyOrder("Bericht", "Grundriss");
+        ChatArtifact report = moved.stream().filter(a -> a.title().equals("Bericht")).findFirst().orElseThrow();
+        ChatArtifact copy = moved.stream().filter(a -> a.title().equals("Grundriss")).findFirst().orElseThrow();
+        assertThat(report.content()).contains("artefakt:" + copy.id());
+        assertThat(ChatArtifactStore.listIn(standard)).extracting(ChatArtifact::title)
+                .as("das Original bleibt bei seinem Chat").containsExactlyInAnyOrder("Platzhalter", "Grundriss");
+    }
+
+    @Test
     void aBookIsADocumentOfTheProjectAndEveryEditionStaysReadable() {
         // ADR 0047 (Angelo 27.11.): ein Buch je Ordner, Kennung B…, ohne Chat; jede Auflage bleibt ansehbar.
         ChatStore chats = chats();
@@ -204,6 +243,10 @@ class ChatArtifactStoreTest {
         assertThat(now.edition(1).document().markdown()).as("die erste Auflage samt Nachbearbeitung")
                 .contains("Locker und humos.");
         assertThat(now.undoable()).as("Rückgängig führt nicht in die alte Auflage").isFalse();
+        // Kennungen werden auch über Auflagen nie wieder vergeben: der alte Abschnitt trifft keinen neuen.
+        assertThat(now.document().sections()).extracting(SectionDocument.Section::id).doesNotContain(section);
+        assertThat(store.edit(folder, chat.id(), "B1", ChatArtifactStore.ANY, ChatArtifact.Origin.AI, "alt",
+                document -> document.replaceText(section, "Falsch.")).success()).isFalse();
     }
 
     @Test
