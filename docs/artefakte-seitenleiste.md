@@ -74,53 +74,57 @@ Man sieht drei Dinge:
 Steht links schon „Artefakte“, verhält sich die Mitte wie heute der Reiter „Export“: Ein Artefakt, das die KI anlegt
 oder ändert, öffnet sich als Reiter und kommt nach vorn (`ArtifactHost.open`). Daran ändert der Umzug nichts.
 
-## 3. Sortieren bei vielen Artefakten: drei Varianten für Angelo
+## 3. Ordnen bei vielen Artefakten
 
-Grundlage in allen dreien: neueste zuerst, das Filterfeld des `SideHead` filtert nach Titel.
+Entschieden von Angelo am 27.11.2026, 23:07 MEZ (Wortlaut in ADR 0047):
 
-**A. Farbige Gruppen wie bei den Chats.** Gruppen mit Namen und Farbe, zugeklappt oder offen, mit dem
-durchgehenden Streifen links (`GroupStripe`, `ColorDot`, dieselbe Palette). Ein Artefakt steht in höchstens einer
-Gruppe; Rechtsklick „Gruppe ▸“ mit den Gruppen und „Neue Gruppe“. Ohne Gruppe steht es oben.
-Dafür: Man kennt es schon von den Chats, kein neues Bedienmuster, schnell eingerichtet.
-Dagegen: nur eine Ebene; bei sehr vielen Gruppen wird auch das lang.
+- Der Filter ist das vorhandene Filterfeld des `SideHead`, unverändert. Er filtert nach dem Titel.
+- Im `SideFoot` steht links ein Schalter „Nach Art gruppieren“. Aus: eine Liste, neueste zuerst. An: je Art eine
+  Gruppe (Dokumente, Grafiken, Bücher) mit Überschrift und Zahl, darin neueste zuerst; eine Art ohne Artefakte zeigt
+  keine Gruppe.
+- Der Zustand des Schalters wird einmal global im Zustand der Anwendung gemerkt und gilt überall, auch nach dem
+  Neustart.
+- Keine farbigen Gruppen wie bei den Chats und keine eigenen Ordner.
 
-**B. Eigene Ordner.** Ein Baum aus selbst angelegten Ordnern (`FolderTree`), beliebig tief, Verschieben per Ziehen
-oder „Verschieben nach …“.
-Dafür: trägt auch sehr viele Artefakte, vertraut vom Dateisystem.
-Dagegen: Man muss Ordnung halten; ein zweiter Baum neben dem der Wissensquellen, der anders gefüllt wird; mehr
-Bauaufwand (Anlegen, Umbenennen, Verschieben, Löschen von Ordnern).
-
-**C. Nur Suche und Filter je Art.** Keine Ordnung von Hand. Über der Liste drei `CountChip` „Dokumente“,
-„Grafiken“, „Bücher“ als Filter, dazu das Filterfeld.
-Dafür: nichts zu pflegen, sofort fertig, bleibt mit A oder B später vereinbar.
-Dagegen: Zusammengehöriges (etwa alles zu einem Vorhaben) steht nicht beieinander.
-
-Meine Neigung, keine Entscheidung: C sofort, weil es nichts kostet, und A dazu, sobald die Liste lang wird.
+```
+ [ Wissensquellen | Artefakte ]                    (o) (o)
+ [ Titel filtern …                                  🔍 ]
+ ──────────────────────────────────────────────────────
+ Dokumente  2
+ ▤  Betriebshandbuch Lagerverwaltung             14:02
+ ▤  Notizen Jahresabschluss                      19.11.
+ Grafiken  1
+ ◔  Ablauf Wareneingang                          13:40
+ Bücher  1
+ ▥  Lagerprozesse                    [Veraltet]  23.11.
+ ──────────────────────────────────────────────────────
+ (Nach Art gruppieren: an)
+```
 
 ## 4. Lokale Artefakte an der Seite
 
-Leseansicht und Podcast-Ansicht bleiben unverändert. „Als Artefakte zu sehen“ sind Zusammenfassung und Podcast im
-▾-Menü „Weitere Aktionen zur Seite“, an der Stelle, an der bisher die Artefakte des Chats standen:
+Entschieden von Angelo am 27.11.2026, 23:07 MEZ: Sie stehen auf der leeren Seite von „Export“ und zusätzlich im
+▾-Menü. Leseansicht und Podcast-Ansicht bleiben unverändert.
+
+**„Export“ ohne offenen Export-Reiter** zeigt die lokalen Artefakte der Seite:
 
 ```
- Neuer Export
- ─────────────────────────────
  Aus dieser Seite erzeugt
-   Zusammenfassung        heute 09:15
-   Podcast                Veraltet
+ ──────────────────────────────────────────────────────
+ Zusammenfassung                         heute 09:15
+ Podcast                    [Veraltet]        21.11.
 ```
 
-- Es stehen nur Einträge da, die es für diese Seite gibt. Gibt es nichts, entfällt der Abschnitt.
+- Eine Zeile je Artefakt mit Symbol, Name, Marke „Veraltet“ als Knopf zum Neuerzeugen und Zeit. Dieselbe Zeile wie in
+  der Liste links.
 - Klick auf „Zusammenfassung“ zeigt die Leseansicht, Klick auf „Podcast“ die Podcast-Ansicht. Kein zweiter Player.
-- Jeder Eintrag hat ein Untermenü: Öffnen, Neu erzeugen (überschreibt, weil lokale Artefakte nicht versioniert
-  sind), Löschen … mit „wirklich löschen?“ Ja/Nein.
-- Für Ordner, Space und Quelle gilt dasselbe Menü mit deren lokalen Artefakten.
+- Rechtsklick: Öffnen, Neu erzeugen (überschreibt, weil lokale Artefakte nicht versioniert sind), Löschen … mit
+  „wirklich löschen?“ Ja/Nein.
+- Gibt es für die Seite nichts, steht dort über `PlaceholderList` „Aus dieser Seite ist noch nichts erzeugt.“
+- Für Ordner, Space und Quelle gilt dasselbe mit deren lokalen Artefakten.
 
-Begründung: Das Menü gibt es schon, es hängt an der Seite, und es war bisher der Ort für Artefakte. Es kommt kein
-neuer Reiter und keine neue Leiste dazu.
-
-Andere Möglichkeit, falls Angelo sie dauerhaft sichtbar will: ein Abschnitt „Erzeugt“ im Technik-Reiter unter
-„Analyse“, weil dort alles aufwendig Berechnete steht. Das wäre mehr Fläche, aber einen Klick weiter weg.
+**▾-Menü „Weitere Aktionen zur Seite“:** unter „Neuer Export“ derselbe Abschnitt „Aus dieser Seite erzeugt“ mit
+denselben Einträgen und Aktionen, damit man sie auch erreicht, wenn ein Export-Reiter offen ist.
 
 ## 5. Entschieden vom Architekten (27.11.2026)
 
@@ -128,6 +132,7 @@ Andere Möglichkeit, falls Angelo sie dauerhaft sichtbar will: ein Abschnitt „
    Titelzeile steht; Angelos Bild von 21:30 MEZ zeigt diese Stelle. Das ist eine bewusste Ausnahme von der Regel
    „Reiter einer Seitenleiste stehen mittig im `SideFoot`“.
 2. Abschnitte 1 und 2 werden so gebaut. Die eigene Artefakt-Mitte ist die Lesart des Architekten, Angelo genannt.
-3. Abschnitt 3 ist nicht entschieden. Gebaut wird zunächst nur: neueste zuerst und das Filterfeld.
-4. Abschnitt 4 ist ein Vorschlag für Angelos „als Artefakte zu sehen an der Seite“ und noch nicht zum Bau vergeben.
+3. Abschnitt 3 hat Angelo entschieden. Die Gruppen heißen wie die Arten in der App: Dokumente, Grafiken, Bücher.
+4. Abschnitt 4 hat Angelo entschieden; Zeile, Aktionen und der leere Zustand dort sind Entscheidungen des
+   Architekten.
 5. Die Marke „Veraltet“ wird aus den Analysen herausgelöst und geteilt, nicht kopiert.
