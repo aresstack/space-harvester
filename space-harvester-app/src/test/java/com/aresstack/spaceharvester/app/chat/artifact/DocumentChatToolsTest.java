@@ -240,8 +240,12 @@ class DocumentChatToolsTest {
         assertThat(opened).contains("G1");
 
         assertThat(call("grafik_element_ersetzen", "{\"element\":\"e9\",\"svg\":\"\"}")).contains("e9");
+        // Codex-Befund zu #1650: Änderungen gehen vom neuesten Stand aus, unter dem Schloss des Speichers.
+        store.changeSvg(folder, chatId, "G1", ChatArtifactStore.ANY, ChatArtifact.Origin.AI, "", svgText ->
+                SvgElements.replace(svgText, "e1", "<rect width='9' height='9'/>"));
+        assertThat(store.read(folder, chatId, "G1").current().svg()).contains("Erbsen").contains("width=\"9\"");
         assertThat(call("grafik_ersetzen", "{\"svg\":\"kein svg\"}")).contains("kein vollständiges SVG");
-        assertThat(call("grafik_ersetzen", "{\"svg\":\"" + SVG.replace("\"", "\\\"") + "\"}")).contains("Stand 3");
+        assertThat(call("grafik_ersetzen", "{\"svg\":\"" + SVG.replace("\"", "\\\"") + "\"}")).contains("Stand 4");
         assertThat(store.read(folder, chatId, "G1").current().svg()).doesNotContain("Erbsen");
     }
 

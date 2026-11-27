@@ -188,7 +188,7 @@ final class ArtifactView extends JPanel {
             String references = definitions.isEmpty() ? "" : "\n\n" + String.join("\n", definitions) + "\n";
             for (SectionDocument.Section section : artifact.document().sections()) {
                 JComponent block = block(com.aresstack.spaceharvester.app.chat.artifact.GraphicReferences.inline(
-                        section.markdown(), this::svgOf) + references, theme, highlighted.contains(section.id()));
+                        section.markdown(), this::svgOf, true) + references, theme, highlighted.contains(section.id()));
                 ((Section) block).pen(() -> edit(section.id()));
                 referenced(block, reference(artifact, section.id()));
                 block.setName(section.id());
@@ -338,20 +338,10 @@ final class ArtifactView extends JPanel {
         if (sectionId == null) {
             return null;
         }
-        String shownSvg = panel.getDiagramCode().strip();
-        try {
-            for (String id : com.aresstack.spaceharvester.app.chat.artifact.GraphicReferences.ids(
-                    current.document().section(sectionId).markdown())) {
-                ChatArtifact graphic = store.read(folder, chatId, id);
-                if (graphic != null && graphic.kind() == ChatArtifact.Kind.GRAPHIC
-                        && graphic.current().svg().strip().equals(shownSvg)) {
-                    return graphic;
-                }
-            }
-        } catch (SectionDocument.SectionException gone) {
-            return null;
-        }
-        return null;
+        // Das gezeigte SVG trägt die Kennung seiner Grafik (GraphicReferences.inline), nie raten über den Inhalt.
+        String id = com.aresstack.spaceharvester.app.chat.artifact.GraphicReferences.idOf(panel.getDiagramCode());
+        ChatArtifact graphic = id == null ? null : store.read(folder, chatId, id);
+        return graphic != null && graphic.kind() == ChatArtifact.Kind.GRAPHIC ? graphic : null;
     }
 
     /**

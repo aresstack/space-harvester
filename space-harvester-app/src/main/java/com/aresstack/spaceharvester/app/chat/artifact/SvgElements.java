@@ -87,6 +87,8 @@ public final class SvgElements {
         Document document = parse(svg);
         List<Item> items = new ArrayList<>();
         if (document != null) {
+            // Ältere Grafiken ohne Kennungen bekommen dieselben, die das nächste Speichern festschreibt.
+            assignIds(document);
             collect(document.getDocumentElement(), 0, items);
         }
         return items;
@@ -108,6 +110,9 @@ public final class SvgElements {
     /** Ein Element als SVG-Text, etwa um es dem Modell zu zeigen. */
     public static String element(String svg, String id) {
         Document document = parse(svg);
+        if (document != null) {
+            assignIds(document);
+        }
         Element element = document == null ? null : byId(document, id);
         if (element == null) {
             throw new SvgException("Element '" + id + "' gibt es in dieser Grafik nicht. Mit grafik_elemente nachsehen.");
@@ -124,6 +129,7 @@ public final class SvgElements {
         if (document == null) {
             throw new SvgException("Die Grafik ist kein lesbares SVG; nur grafik_ersetzen hilft.");
         }
+        assignIds(document);
         Element target = byId(document, id);
         if (target == null) {
             throw new SvgException("Element '" + id + "' gibt es in dieser Grafik nicht. Mit grafik_elemente nachsehen.");

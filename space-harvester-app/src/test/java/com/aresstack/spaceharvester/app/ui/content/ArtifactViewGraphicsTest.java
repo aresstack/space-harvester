@@ -122,6 +122,37 @@ class ArtifactViewGraphicsTest {
         assertThat(GraphicReferences.replaceBlock(section, code, "x")).as("schon übernommen").isNull();
     }
 
+    @Test
+    void twoEqualLookingGraphicsAreTellApartAndOldGraphicsGetElementIds() throws Exception {
+        // Codex-Befunde zu #1650: Kennung statt Inhalt; eine Grafik ohne Kennungen bekommt sie beim Lesen.
+        String old = "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"4\" height=\"4\"/></svg>";
+        ChatArtifact first = store.createGraphic(folder, chatId, "Erste", old, ChatArtifact.Origin.AI);
+        ChatArtifact second = store.createGraphic(folder, chatId, "Zweite", old, ChatArtifact.Origin.AI);
+        store.createDocument(folder, chatId, "Fibel", "## Plan\n\n" + GraphicReferences.reference(first) + "\n\n"
+                + GraphicReferences.reference(second), ChatArtifact.Origin.AI);
+        assertThat(SvgElements.list(old)).extracting(SvgElements.Item::id).containsExactly("e1");
+        SwingUtilities.invokeAndWait(() -> {
+            ArtifactView document = new ArtifactView(store, folder, chatId, "D1");
+            List<MermaidDiagramPanel> panels = new ArrayList<>();
+            panelsIn(document.block("a1"), panels);
+            assertThat(panels).hasSize(2);
+            ((JMenuItem) document.diagramMenu(panels.get(1)).getComponent(0)).doClick();
+        });
+        assertThat(quotes).containsExactly("Grafik G2 \u201EZweite\u201C | Grafik \u201EZweite\u201C");
+        assertThat(GraphicReferences.replaceBlock("```mermaid\nA[\"A B\"]\n```\n\n```mermaid\nA[\"AB\"]\n```",
+                "A[\"AB\"]", "X")).as("Leerraum in Beschriftungen zählt").isEqualTo("```mermaid\nA[\"A B\"]\n```\n\nX");
+    }
+
+    private static void panelsIn(Component component, List<MermaidDiagramPanel> out) {
+        if (component instanceof MermaidDiagramPanel panel) {
+            out.add(panel);
+        } else if (component instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                panelsIn(child, out);
+            }
+        }
+    }
+
     private static MermaidDiagramPanel panelIn(Component component) {
         if (component instanceof MermaidDiagramPanel panel) {
             return panel;

@@ -470,9 +470,8 @@ public final class DocumentChatTools {
     /** Ändert das SVG einer Grafik auf den neuesten Stand; die Ansicht zeigt die Grafik danach. */
     private String changeGraphic(JsonNode arguments, String note, java.util.function.UnaryOperator<String> change) {
         ChatArtifact graphic = graphic(arguments);
-        String next = change.apply(graphic.current().svg());
-        ChatArtifactStore.WriteResult result = store.replaceSvg(folder, chatId, graphic.id(), ChatArtifactStore.ANY,
-                ChatArtifact.Origin.AI, note, next);
+        ChatArtifactStore.WriteResult result = store.changeSvg(folder, chatId, graphic.id(), ChatArtifactStore.ANY,
+                ChatArtifact.Origin.AI, note, change);
         if (!result.success()) {
             return "Fehler: " + result.reason();
         }
