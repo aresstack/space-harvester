@@ -200,12 +200,12 @@ final class ThematicSummarizer {
     }
 
     /**
-     * Wie {@link #summarize(List, ObjectNode, ObjectNode, int, JobContext)}; {@code partial} bekommt nach jedem fertigen
+     * Wie {@link #summarize(List, ObjectNode, ObjectNode, int, JobContext)}; {@code onPartial} bekommt nach jedem fertigen
      * Teil den vorläufigen Stand: die Themen aller bisher fertigen Teile, noch nicht zusammengeführt, ohne Überblickstext
      * (Angelo: „Teilergebnisse sofort“). {@code null} ohne. Ein Fehler darin hält den Lauf nicht auf.
      */
     Result summarize(List<Material> materials, ObjectNode frame, ObjectNode combineFrame, int withheld,
-                     JobContext context, java.util.function.Consumer<Result> partial) {
+                     JobContext context, java.util.function.Consumer<Result> onPartial) {
         int unknown = (int) materials.stream().filter(Material::unknown).count();
         context.phase(COMPONENT, PHASE);
         List<Planned> planned = plan(materials, context);
@@ -251,8 +251,8 @@ final class ThematicSummarizer {
                         (index, lane) -> {
                             List<Answer> answered = part(parts.get(index), framed(frame, topics.get(index)), lane,
                                     lost, lostPages);
-                            if (partial != null && count > 1) {
-                                publish(partial, done, index, answered, parts, withheldAll);
+                            if (onPartial != null && count > 1) {
+                                publish(onPartial, done, index, answered, parts, withheldAll);
                             }
                             return answered;
                         }, context).stream()
