@@ -145,12 +145,15 @@ public final class BookArtifacts {
         synchronized (BookArtifacts.class) {
             String id = artifactOf(folderId, projectId);
             ChatArtifact artifact = id == null ? null : store.readInProject(projectId, id);
-            // Übernommen wird nach Nummer der Auflage, nicht nach Anzahl: eine gerade unlesbare Auflage verschiebt
-            // sonst die folgenden und käme doppelt.
+            // Übernommen wird nach Nummer der Auflage, lückenlos und der Reihe nach: eine gerade unlesbare Auflage
+            // hält die folgenden zurück, statt sie zu verschieben oder selbst verloren zu gehen.
             int imported = artifact == null ? 0 : imported(dir, folderId, projectId, artifact);
             for (BookEditions.Edition edition : editions) {
                 if (edition.number() <= imported) {
                     continue;
+                }
+                if (edition.number() != imported + 1) {
+                    break; // Lücke: die fehlende Auflage ist gerade nicht lesbar, beim nächsten Mal geht es dort weiter
                 }
                 if (artifact == null) {
                     artifact = store.createBook(projectId, title == null || title.isBlank() ? "Buch" : title,

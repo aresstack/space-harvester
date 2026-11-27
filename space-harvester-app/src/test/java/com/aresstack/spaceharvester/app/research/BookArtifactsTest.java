@@ -86,12 +86,14 @@ class BookArtifactsTest {
         assertThat(books.publish("ordner-4", null, "Ordner").editions()).hasSize(1);
 
         BookEditions.add(data, "ordner-4", at.plusSeconds(120), "# Drei", "", List.of());
+        assertThat(books.publish("ordner-4", null, "Ordner").editions()).as("Drei wartet auf Zwei").hasSize(1);
         java.nio.file.Files.write(second, saved);
         ChatArtifact book = books.publish("ordner-4", null, "Ordner");
 
         // Auflage 2 war beim ersten Mal nicht lesbar; danach zählt die Nummer, nicht die Anzahl
         assertThat(book.editions()).hasSize(3);
         assertThat(book.edition(1).document().markdown()).contains("Eins");
+        assertThat(book.edition(2).document().markdown()).contains("Zwei");
         assertThat(book.content()).contains("Drei");
     }
 }
