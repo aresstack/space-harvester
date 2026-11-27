@@ -1204,10 +1204,14 @@ public final class SearchView implements View {
         Set<String> spaces = chosenSpaces();
         List<Explorer.Scope> area = searchedScopes;
         List<String> issueAddresses = issueAddresses(text);
+        // Eine Seitennummer (Angelo, 27.11.2026) fragt jede Quelle per Lesezeichen, wie ein Vorgangsschlüssel.
+        boolean byPageId = issueAddresses.isEmpty();
+        List<String> keyAddresses = byPageId ? pageIdAddresses(configuredSources(), text) : issueAddresses;
+        String keyCaption = byPageId ? PinnedHits.PAGE_ID : PinnedHits.TICKET;
         Background.run(() -> {
             // Ein Vorgangsschlüssel (HAVDBAR-86012) ist bei Jira eine Adresse unter …/browse/KEY (Angelo, 23.11.2026).
             List<Hit> tickets = new ArrayList<>();
-            for (String address : issueAddresses) {
+            for (String address : keyAddresses) {
                 try {
                     runtime.workspace().resolveAddress(address).matches().stream().map(Hit::of)
                             .filter(hit -> inArea(area, hit) && sources.contains(hit.sourceId())
@@ -1219,7 +1223,7 @@ public final class SearchView implements View {
             }
             return tickets.isEmpty() ? java.util.Map.entry(PinnedHits.TITLES, titleHits(runtime, sources, spaces, text)
                     .stream().filter(hit -> inArea(area, hit)).toList())
-                    : java.util.Map.entry(PinnedHits.TICKET, (List<Hit>) tickets);
+                    : java.util.Map.entry(keyCaption, (List<Hit>) tickets);
         }, found -> {
             if (id == titleRequest) {
                 pinned.show(found.getKey(), found.getValue());
@@ -1248,6 +1252,37 @@ public final class SearchView implements View {
             }
         }
         return List.copyOf(addresses);
+    }
+
+    /** Eine Seitennummer, wie Confluence und andere Quellen sie als Seiten-ID führen (nur Ziffern). */
+    static final java.util.regex.Pattern PAGE_ID = java.util.regex.Pattern.compile("[0-9]{1,19}");
+
+    /**
+     * Zu einer Seitennummer die Lesezeichen {@code space-harvester://<Quelle>/page/<Nummer>} aller eingetragenen
+     * Quellen; jede Quelle löst sie gleich auf (aus dem Bestand, sonst gezielt live), keine Sonderfälle je Quellentyp.
+     * Auch der Titelfilter im Explorer nutzt das.
+     */
+    static List<String> pageIdAddresses(List<String> sourceIds, String text) {
+        String id = PageAddresses.normalize(text);
+        if (id == null || !PAGE_ID.matcher(id).matches()) {
+            return List.of();
+        }
+        List<String> addresses = new ArrayList<>();
+        for (String sourceId : sourceIds) {
+            try {
+                addresses.add(new com.aresstack.spaceharvester.application.query.PageBookmark(sourceId, id, null)
+                        .value());
+            } catch (IllegalArgumentException unusable) {
+                // Quellen-ID taugt nicht für Lesezeichen: diese Quelle fällt weg.
+            }
+        }
+        return List.copyOf(addresses);
+    }
+
+    /** Die IDs der eingetragenen Quellen, in der Reihenfolge der Einstellungen. */
+    private List<String> configuredSources() {
+        return context.settings() == null ? List.of()
+                : context.settings().sources().stream().map(entry -> entry.id()).toList();
     }
 
     /**

@@ -157,6 +157,10 @@ class SearchViewTest {
                 .as("eine Seite als Bereich heißt wie die Seite").isEqualTo("Betriebshandbuch");
         assertThat(SearchView.ISSUE_KEY.matcher("HAVDBAR-86012").matches()).isTrue();
         assertThat(SearchView.ISSUE_KEY.matcher("Betrieb 2026").matches()).isFalse();
+        // Projektteil alphanumerisch, Groß-/Kleinschreibung egal (Angelo, 27.11.2026).
+        assertThat(SearchView.ISSUE_KEY.matcher("Prio-1234").matches()).isTrue();
+        assertThat(SearchView.ISSUE_KEY.matcher("dev2-7").matches()).isTrue();
+        assertThat(SearchView.ISSUE_KEY.matcher("4711").matches()).isFalse();
 
         // Ein Klick (Auswahl) zeigt die Seite des Treffers schon im Explorer, ohne sie zu öffnen.
         List<String> revealed = new ArrayList<>();
@@ -180,6 +184,15 @@ class SearchViewTest {
         assertThat(revealed).containsExactly(expected[0]);
         assertThat(opened).isEmpty();
         assertThat(view[0].heading.selected()).as("ein gewählter Treffer hebt die Markierung auf").isFalse();
+    }
+
+    @Test
+    void aPageNumberBecomesABookmarkForEverySource() {
+        assertThat(SearchView.pageIdAddresses(List.of("wiki", "handbuch"), " 4711\u200B"))
+                .containsExactly("space-harvester://wiki/page/4711", "space-harvester://handbuch/page/4711");
+        assertThat(SearchView.pageIdAddresses(List.of("wiki"), "Plan 4711")).isEmpty();
+        assertThat(SearchView.pageIdAddresses(List.of("wiki"), "DEV-4711")).isEmpty();
+        assertThat(SearchView.pageIdAddresses(List.of(), "4711")).isEmpty();
     }
 
     @Test
