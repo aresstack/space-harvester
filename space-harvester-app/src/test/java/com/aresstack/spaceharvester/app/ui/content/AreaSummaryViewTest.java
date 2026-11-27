@@ -178,6 +178,20 @@ class AreaSummaryViewTest {
         assertThat(actions.summarized).containsExactly("ordner:ordner-c|null|false");
     }
 
+    @Test
+    void aSummaryTheUserDeletedNeverStartsByItselfAgainOnlyAClickBringsItBack() {
+        // ADR 0047 §5a: „Löschen“ unter „Aus dieser Seite erzeugt“; gilt über Neustarts (Zustand der Anwendung).
+        ExportPanel.Selection.Collection folder = folder("ordner-geloescht", Root.space("wiki", "BAU"));
+        AreaSummaryView.deletedByUser(folder, true);
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        view.folder(folder);
+        assertThat(actions.summarized).isEmpty();
+        assertThat(view.summarizeOffered()).isTrue();
+
+        AreaSummaryView.deletedByUser(folder, false);
+        assertThat(AreaSummaryView.deletedByUser(AreaSummaryView.Target.of(folder))).isFalse();
+    }
+
     /**
      * Angelo 27.11.2026: Der Ring verschwand, der Auftrag lief weiter, das fertige Ergebnis erschien nicht. Der laufende
      * Überblick gehört zum Ordner: wer weg- und zurückwechselt oder die andere Ansicht öffnet, sieht den Ring wieder, und
@@ -236,104 +250,50 @@ class AreaSummaryViewTest {
     }
 
     @Test
-    void aFolderWithABookShowsItsNewestEditionInsteadOfTheOverviewAndNeverStartsTheModel() throws Exception {
-        // Die Markdown-Darstellung des Chats verlangt den Swing-Thread, wie in der App.
-        javax.swing.SwingUtilities.invokeAndWait(this::showsTheBook);
-    }
+    void theReadingViewShowsTheOverviewEvenForAFolderWithABook() throws Exception {
+        // Das Buch steht als Artefakt unter „Artefakte“ (ADR 0047, Nachtrag ADR 0044); die Leseansicht zeigt den
+        // Überblick und startet ihn nur per Klick, auch wenn am Ordner „Buch“ gewählt ist.
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+            view.zone(java.time.ZoneId.of("Europe/Berlin"));
+            com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
+                    new com.aresstack.spaceharvester.app.research.BookEditions.Edition(2, AT, "# Erfundenes Buch",
+                            "Bericht", List.of());
+            view.books(id -> edition);
+            AreaSummaryView.chooseBook("ordner-wahl", true);
 
-    private void showsTheBook() {
-        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
-        view.zone(java.time.ZoneId.of("Europe/Berlin"));
-        com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
-                new com.aresstack.spaceharvester.app.research.BookEditions.Edition(2, AT, "# Erfundenes Buch\n\nText.",
-                        "Bericht", List.of(new com.aresstack.spaceharvester.app.research.BookEditions.Source("wiki",
-                        "1", "v1")));
-        view.books(id -> "ordner-buch".equals(id) ? edition : null);
+            view.folder(folder("ordner-wahl", Root.space("wiki", "BAU")));
 
-        view.folder(folder("ordner-buch", Root.space("wiki", "BAU")));
-
-        assertThat(view.edition()).isEqualTo(edition);
-        assertThat(view.texts()).contains("Buch, 2. Auflage vom 24.11.2026, 10:00, aus 1 Seite");
-        assertThat(view.copyText()).contains("# Erfundenes Buch");
-        assertThat(actions.summarized).isEmpty();
-        assertThat(view.summarizeOffered()).isFalse();
+            assertThat(view.bookShown()).isFalse();
+            assertThat(view.texts()).contains(AreaSummaryView.NO_SUMMARY);
+            assertThat(view.texts()).noneMatch(text -> text.startsWith("Buch, "));
+            assertThat(view.summarizeOffered()).isTrue();
+            assertThat(actions.summarized).isEmpty();
+        });
     }
 
     @Test
-    void changedPagesMarkTheBookAndOfferANewEditionThatStartsOnlyOnAClick() throws Exception {
+    void changedPagesMarkTheBookInThePodcast() throws Exception {
         javax.swing.SwingUtilities.invokeAndWait(() -> {
-            AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+            AreaSummaryView view = view(AreaSummaryView.Mode.LISTEN, true);
             com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
                     new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, "# Buch", "",
                             List.of(new com.aresstack.spaceharvester.app.research.BookEditions.Source("wiki", "1",
                                     "v1")));
             boolean[] changed = {false};
-            List<String> started = new java.util.ArrayList<>();
             view.books(id -> edition);
             view.staleness((folderId, shown) -> changed[0]);
-            view.onNewEdition(started::add);
 
             view.folder(folder("ordner-buch", Root.space("wiki", "BAU")));
 
+            assertThat(view.bookShown()).isTrue();
             assertThat(view.bookStale()).isFalse();
-            assertThat(view.newEditionOffered()).isTrue();
-            assertThat(view.texts()).noneMatch(text -> text.contains(com.aresstack.spaceharvester.app.ui.Texts
-                    .BOOK_STALE));
 
             changed[0] = true;
             view.reload();
 
             assertThat(view.bookStale()).isTrue();
-            assertThat(view.texts()).anyMatch(text -> text.contains(com.aresstack.spaceharvester.app.ui.Texts
-                    .BOOK_STALE));
-            assertThat(started).isEmpty();
             assertThat(actions.summarized).isEmpty();
-
-            view.clickNewEdition();
-
-            assertThat(started).containsExactly("ordner-buch");
-        });
-    }
-
-    @Test
-    void aFolderWithoutFavoritesStillShowsItsBook() throws Exception {
-        javax.swing.SwingUtilities.invokeAndWait(() -> {
-            AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
-            com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
-                    new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, "# Buch", "", List.of());
-            view.books(id -> edition);
-
-            view.folder(folder("ordner-leer"));
-
-            assertThat(view.edition()).isEqualTo(edition);
-            assertThat(view.texts()).doesNotContain(AreaSummaryView.NO_FAVORITES);
-            assertThat(actions.summarized).isEmpty();
-        });
-    }
-
-    @Test
-    void underAreaTheBookFolderShowsTheOverviewAndStartsItOnlyOnAClick() throws Exception {
-        javax.swing.SwingUtilities.invokeAndWait(() -> {
-            AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
-            com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
-                    new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, "# Buch", "", List.of());
-            view.books(id -> edition);
-            AreaSummaryView.chooseBook("ordner-wahl", false);
-            try {
-                view.folder(folder("ordner-wahl", Root.space("wiki", "BAU")));
-
-                assertThat(view.bookShown()).isFalse();
-                assertThat(view.texts()).contains(AreaSummaryView.NO_SUMMARY);
-                assertThat(actions.summarized).isEmpty();
-                assertThat(view.summarizeOffered()).isTrue();
-
-                AreaSummaryView.chooseBook("ordner-wahl", true);
-                view.bookChanged();
-                assertThat(view.bookShown()).isTrue();
-                assertThat(view.summarizeOffered()).isFalse();
-            } finally {
-                AreaSummaryView.chooseBook("ordner-wahl", true);
-            }
         });
     }
 

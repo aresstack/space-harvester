@@ -360,6 +360,8 @@ public final class ExportPanel extends JPanel {
     final ComposerButton toggleNotices = Comic.button("Hinweise anzeigen", "Was in der Datei fehlt oder vereinfacht ist");
     final JTextArea noticeList = Comic.note("");
     private final JComponent outputPlate;
+    /** Über der Ausgabe, nur auf der Seite ohne Reiter: „Aus dieser Seite erzeugt“ ({@link #extra}). */
+    private final JPanel extraSlot = new JPanel(new BorderLayout());
     /**
      * Für eine Quelle, „Wissensquellen“ und eine Sammlung statt {@link #files}: je Space bzw. Favorit eine Zeile mit
      * ihren laufenden Aufträgen und fertigen Dateien; die jüngste Datei öffnet ein Knopf in der Zeile.
@@ -489,7 +491,8 @@ public final class ExportPanel extends JPanel {
             }
         });
         add(feedback, BorderLayout.NORTH);
-        add(Comic.column(outputPlate), BorderLayout.CENTER);
+        extraSlot.setOpaque(false);
+        add(Comic.column(extraSlot, outputPlate), BorderLayout.CENTER);
         toggleNotices.setVisible(false);
         noticeList.setVisible(false);
         render(Data.NONE);
@@ -584,6 +587,17 @@ public final class ExportPanel extends JPanel {
 
     Selection selection() {
         return selection;
+    }
+
+    /** Setzt den Abschnitt über der Ausgabe (die lokalen Artefakte der Auswahl, ADR 0047 §5a). */
+    void extra(JComponent extra) {
+        extraSlot.removeAll();
+        if (extra != null) {
+            extra.setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 8, 0));
+            extraSlot.add(extra, BorderLayout.CENTER);
+        }
+        extraSlot.revalidate();
+        extraSlot.repaint();
     }
 
     /** Für Tests: ersetzt die Rückfrage vor einem Start für „Wissensquellen“. */

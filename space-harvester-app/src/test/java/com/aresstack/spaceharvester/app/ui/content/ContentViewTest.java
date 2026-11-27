@@ -1017,9 +1017,12 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.canGoForward())).isFalse();
     }
 
-    /** Architekt 27.11.2026: ein Ordner mit Buch zeigt es in der Leseansicht, unten „Buch | Bereich“. */
+    /**
+     * ADR 0047 (Nachtrag ADR 0044): das Buch steht unter „Artefakte“; die Leseansicht eines Ordners mit Buch zeigt den
+     * Überblick, nur der Podcast behält „Buch | Bereich“.
+     */
     @Test
-    void aFolderWithABookShowsItAndOffersBookOrArea() throws Exception {
+    void aFolderWithABookOffersBookOrAreaOnlyInThePodcast() throws Exception {
         com.aresstack.spaceharvester.app.research.BookEditions.add(home.resolve("data"), "ordner-buch",
                 java.time.Instant.parse("2026-11-27T14:00:00Z"), "# Erfundenes Buch\n\nText.", "Bericht", List.of());
         String space = space("handbuch");
@@ -1030,10 +1033,12 @@ class ContentViewTest {
             view.detail().showFolder(folder);
             return null;
         });
-        await(() -> view.detail().areaView().edition() != null);
+        await(() -> view.detail().areaPodcast().edition() != null);
         await(() -> view.detail().bookToggles().stream().anyMatch(java.awt.Component::isVisible));
 
-        assertThat(onEdt(() -> view.detail().areaView().bookShown())).isTrue();
+        assertThat(onEdt(() -> view.detail().areaView().bookShown())).as("Leseansicht: Überblick").isFalse();
+        assertThat(onEdt(() -> view.detail().areaPodcast().bookShown())).isTrue();
+        assertThat(onEdt(() -> view.detail().bookToggles())).as("nur in der Podcast-Leiste").hasSize(1);
         assertThat(onEdt(() -> view.detail().scopeToggles())).noneSatisfy(toggle ->
                 assertThat(toggle.isVisible()).isTrue());
         assertThat(onEdt(() -> view.detail().bookToggles())).allSatisfy(toggle ->
