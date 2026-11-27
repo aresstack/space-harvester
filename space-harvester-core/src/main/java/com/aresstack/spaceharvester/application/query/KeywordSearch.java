@@ -78,6 +78,12 @@ import java.util.regex.Pattern;
  *       Anhang wird nie ohne seine lesbare Seite sichtbar.</li>
  * </ol>
  *
+ * <p><b>Lokal zuerst</b> (Angelo 27.11.2026): Die Online-Suche der Quellen ist nur der Rückfall für Bereiche, die
+ * nicht vollständig und aktuell lokal vorliegen ({@link LocalCoverage}), und dient dort nur dem Einsammeln, auch mit
+ * Varianten der Anfrage. Abgedeckte Spaces fragt sie nicht, ganz abgedeckte Quellen gar nicht
+ * ({@link SourceState.Status#LOCAL}); was schon im lokalen Index liegt und dort nicht trifft, erscheint auch nicht als
+ * vorläufiger Treffer.
+ *
  * <p>Der Space-Filter gilt in beiden Suchen. Nicht freigegebene Seiten erscheinen nirgends, auch nicht als Titel,
  * Auszug oder Zähler; was nicht mehr existiert, fällt ohne Spur weg. Der Cursor („Weitere laden“) merkt sich je Quelle,
  * wie weit sie gefunden hat, und welche Seiten schon ausgeliefert sind; der nächste Stapel findet weiter und sucht
@@ -324,13 +330,22 @@ public class KeywordSearch {
      * Kleinschreibung zählt nicht), höchstens {@code maxQueries}.
      */
     List<String> nativeQueries(String text) {
-        if (maxQueries == 1 || SearchTerms.isConcise(text)) {
+        if (maxQueries == 1) {
             return List.of(text);
         }
         Map<String, String> queries = new LinkedHashMap<>();
         List<String> derived = new ArrayList<>();
-        derived.add(SearchTerms.literalQuery(text));
-        derived.addAll(SearchTerms.keywordQueries(SearchTerms.withoutRequestWords(text), maxQueries));
+        if (SearchTerms.isConcise(text)) {
+            derived.add(text);
+        } else {
+            derived.add(SearchTerms.literalQuery(text));
+            derived.addAll(SearchTerms.keywordQueries(SearchTerms.withoutRequestWords(text), maxQueries));
+        }
+        // Lokal zuerst (Angelo 27.11.2026): Die Online-Suche sammelt nur Seiten ein; dafür fragt sie auch mit den
+        // Varianten ohne Modell (schwächste Begriffe weglassen, dann die stärksten einzeln), damit auch Seiten
+        // ankommen, die nicht alle Begriffe enthalten. Getroffen wird danach nur im lokalen Index.
+        derived.addAll(new com.aresstack.spaceharvester.application.query.progressive.RuleBasedExpansion()
+                .expand(text, maxQueries));
         for (String candidate : derived) {
             String trimmed = candidate.strip();
             if (!trimmed.isEmpty() && queries.size() < maxQueries) {
@@ -530,6 +545,17 @@ public class KeywordSearch {
         return recorded ? results.withSearchRun(id.value()) : results;
     }
 
+    /** Was lokal vollständig und aktuell vorliegt; ohne Aufruf nichts (jede Quelle mit Online-Suche wird gefragt). */
+    private volatile LocalCoverage coverage = LocalCoverage.NONE;
+
+    /**
+     * Lokal zuerst (Angelo 27.11.2026): Für abgedeckte Spaces fragt die Suche die Quelle nicht online, und ist der ganze
+     * Umfang einer Quelle abgedeckt, gar nicht; dort sucht nur der lokale Index.
+     */
+    public void coverage(LocalCoverage value) {
+        this.coverage = Objects.requireNonNull(value, "coverage");
+    }
+
     /** Ausgeschlossenes lässt die Suche weg; ohne Aufruf ist nichts ausgeschlossen. */
     public void exclusions(com.aresstack.spaceharvester.application.sync.Exclusions exclusions) {
         this.exclusions = Objects.requireNonNull(exclusions, "exclusions");
@@ -665,6 +691,16 @@ public class KeywordSearch {
                 }
                 continue;
             }
+            LocalCoverage.Coverage covered = cached ? coverage.coverage(source, query.spaces())
+                    : LocalCoverage.Coverage.NONE;
+            if (covered.all()) {
+                // Lokal vollständig und aktuell: nur der lokale Index, keine Online-Suche (Angelo 27.11.2026).
+                searchable.add(sourceId);
+                if (position == null) {
+                    states.add(new SourceState(sourceId, SourceState.Status.LOCAL, null));
+                }
+                continue;
+            }
             if (offsets != null && !offsets.containsKey(sourceId)) {
                 // Fertig gesucht; ihre geladenen Seiten stehen weiter im Cache.
                 if (cached && !position.unavailable().contains(sourceId)) {
@@ -673,7 +709,8 @@ public class KeywordSearch {
                 continue;
             }
             int offset = offsets == null ? 0 : offsets.get(sourceId);
-            searches.add(new LiveSearch(source, offset, Math.min(offset + limit + 1, MAX_DEPTH), states.size()));
+            searches.add(new LiveSearch(source, offset, Math.min(offset + limit + 1, MAX_DEPTH), states.size(),
+                    withoutCovered(query.spaces(), covered.spaces())));
             states.add(null);
         }
         // Alle Quellen und alle Anfragen zugleich; ausgewertet in der Reihenfolge der Quellen. Je Quelle kommen die
@@ -699,7 +736,7 @@ public class KeywordSearch {
                 asked.put(search.source().id(), List.copyOf(all));
                 for (SourceQuery sent : all) {
                     perQuery.add(searching.submit(Jobs.carryingWithheld(() -> search.source().searchPages(sent.text(),
-                            search.wanted(), query.spaces()))));
+                            search.wanted(), search.spaces()))));
                 }
                 calls.add(perQuery);
                 if (observer != null) {
@@ -956,8 +993,11 @@ public class KeywordSearch {
         // Vorläufig bleibt, was der Volltextindex (noch) nicht liefert, in der Rangfolge nach Titel und Auszug.
         Set<PageKey> fromIndex = new HashSet<>();
         checked.hits().forEach(hit -> fromIndex.add(new PageKey(hit.sourceId(), hit.pageId())));
+        // Lokal zuerst (Angelo 27.11.2026): Was schon im lokalen Index liegt und dort nicht trifft, ist kein Treffer;
+        // vorläufig bleiben nur Funde, die noch nicht lokal liegen.
         List<Hit> provisional = finalListOnly ? List.of() : ranked.stream()
-                .filter(hit -> !fromIndex.contains(new PageKey(hit.sourceId(), hit.pageId()))).toList();
+                .filter(hit -> !fromIndex.contains(new PageKey(hit.sourceId(), hit.pageId())))
+                .filter(hit -> !locallyIndexed(new PageKey(hit.sourceId(), hit.pageId()))).toList();
         return new Results(scope.sourceId(), HitReason.proposedSynonymsLast(checked.hits(), Hit::reasons), states,
                 nextCursor, checkedAll && exhausted, loading, HitReason.proposedSynonymsLast(provisional, Hit::reasons),
                 progress);
@@ -1391,7 +1431,31 @@ public class KeywordSearch {
     }
 
     /** @param state Platz der Quelle in den Zuständen des Stapels */
-    private record LiveSearch(HarvestSource source, int offset, int wanted, int state) {
+    private record LiveSearch(HarvestSource source, int offset, int wanted, int state, SearchSpaces spaces) {
+    }
+
+    /** Ob die Seite schon im lokalen Volltextindex liegt; ohne Cache nie. */
+    private boolean locallyIndexed(PageKey key) {
+        if (texts == null) {
+            return false;
+        }
+        try {
+            return texts.inputSha256(key).isPresent();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** Der Space-Filter der Online-Suche ohne die lokal abgedeckten Spaces: Die fragt sie nicht mehr. */
+    static SearchSpaces withoutCovered(SearchSpaces spaces, Set<String> covered) {
+        if (covered.isEmpty()) {
+            return spaces;
+        }
+        Set<String> only = new LinkedHashSet<>(spaces.only());
+        only.removeAll(covered);
+        Set<String> excluded = new LinkedHashSet<>(spaces.excluded());
+        excluded.addAll(covered);
+        return new SearchSpaces(only, excluded);
     }
 
     /**
@@ -1882,7 +1946,9 @@ public class KeywordSearch {
             /** Die Quelle kann nicht selbst suchen, und es gibt keinen Index; ihre Seiten fehlen. */
             NOT_SUPPORTED,
             /** Die Quelle hat nicht oder fehlerhaft geantwortet. */
-            UNAVAILABLE
+            UNAVAILABLE,
+            /** Lokal vollständig und aktuell: nur der Volltextindex hat gesucht, die Quelle wurde nicht gefragt. */
+            LOCAL
         }
     }
 }

@@ -2935,7 +2935,8 @@ public final class SearchView implements View {
     /** Ob mindestens eine Quelle gesucht hat. */
     private boolean searched() {
         return states.values().stream().anyMatch(s -> s.status() == KeywordSearch.SourceState.Status.SEARCHED
-                || s.status() == KeywordSearch.SourceState.Status.INDEXED);
+                || s.status() == KeywordSearch.SourceState.Status.INDEXED
+                || s.status() == KeywordSearch.SourceState.Status.LOCAL);
     }
 
     private String title(String sourceId) {

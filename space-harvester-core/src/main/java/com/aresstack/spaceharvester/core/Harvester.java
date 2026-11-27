@@ -1166,6 +1166,10 @@ public final class Harvester implements AutoCloseable {
             this.navigationMarks = new FileNavigationMarks(builder.dataDirectory);
             syncs.navigationMarks(navigationMarks);
             keywordSearch.exclusions(exclusions);
+            // Lokal zuerst (Angelo 27.11.2026): vollständig und aktuell abgeglichene Spaces fragt die Suche nicht online.
+            keywordSearch.coverage(new com.aresstack.spaceharvester.application.sync.CatalogCoverage(syncs,
+                    () -> this.settings != null ? this.settings.search().cacheFreshness() : builder.cacheFreshness,
+                    clock));
             findings.exclusions(exclusions);
             syncs.exclusions(exclusions);
             // Automatische Auslöser laden Ausgeschlossenes nie; ausdrückliches Öffnen, Lesen und Export bleiben möglich.
