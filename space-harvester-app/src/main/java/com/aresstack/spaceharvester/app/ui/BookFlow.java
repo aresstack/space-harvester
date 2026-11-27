@@ -5,8 +5,13 @@ import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.app.research.AiChatModel;
 import com.aresstack.spaceharvester.app.research.BookJob;
 import com.aresstack.spaceharvester.app.research.BookNotes;
+import com.aresstack.spaceharvester.app.research.BookProfiles;
 import com.aresstack.spaceharvester.app.research.FavoritesBasket;
 import com.aresstack.spaceharvester.app.research.WorkspacePageStock;
+import com.aresstack.spaceharvester.app.runtime.Workspace;
+import com.aresstack.spaceharvester.application.jobs.JobArea;
+import com.aresstack.spaceharvester.application.jobs.JobNotResumableException;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.app.ui.content.PageDetailPanel;
 import com.aresstack.writing4j.book.BookRun;
 import com.aresstack.writing4j.book.StockQuestions;
@@ -19,6 +24,8 @@ import javax.swing.SwingUtilities;
 import java.awt.Component;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -42,6 +49,15 @@ final class BookFlow {
     BookFlow(AppContext context, Component parent) {
         this.context = Objects.requireNonNull(context, "context");
         this.parent = Objects.requireNonNull(parent, "parent");
+        // Der Dienst startet meist erst nach den Ansichten und kann neu starten: nach jedem Start neu anmelden.
+        registerResumer(context);
+        context.onChange(this::registerResumer);
+    }
+
+    private void registerResumer(AppContext current) {
+        if (current.runtime() != null) {
+            current.runtime().workspace().bookResumer(this::resume);
+        }
     }
 
     /**
@@ -129,19 +145,91 @@ final class BookFlow {
             return;
         }
         rememberFence(context, folderId, fence.get(), form.targetWords(), form);
+        BookJob.Session session = session(chat.get(), folderId, name, fence.get(), form.targetWords(),
+                form.questions());
+        context.runtime().workspace().startBook(folderId, name, BookJob.prepare(session,
+                done -> SwingUtilities.invokeLater(() -> prepared(done))));
+    }
+
+    /**
+     * ▶ an einem abgebrochenen oder unterbrochenen „Buch schreiben“ (Angelo 27.11.2026): bereitet im selben Eintrag
+     * mit den Angaben am Ordner neu vor; fertige Quellensteckbriefe kommen aus dem Gedächtnis am Ordner. Danach geht es
+     * weiter wie nach jedem Vorbereiten.
+     */
+    JobStatus resume(JobStatus job) {
+        Favorites favorites = context.favorites();
+        String folderId = folderOf(job, favorites);
+        if (folderId == null) {
+            throw new JobNotResumableException(job.id(), "der Favoritenordner des Buchs ist nicht mehr da");
+        }
+        String name = favorites.folder(folderId).map(Favorites.Folder::name).orElse("Ordner");
+        BookNotes notes = notes(folderId).orElseThrow(() -> new JobNotResumableException(job.id(),
+                "zum Ordner sind keine Angaben gemerkt; bitte „Buch schreiben …“ am Ordner neu starten"));
+        var ai = context.settings() == null ? null : context.settings().ai();
+        var chat = context.runtime() == null ? null : context.runtime().workspace().aiChat();
+        if (chat == null || ai == null || ai.chatModel() == null || ai.chatModel().isBlank()) {
+            throw new JobNotResumableException(job.id(), "dafür braucht es einen KI-Dienst mit Chat-Modell");
+        }
+        AiChatModel model = new AiChatModel(chat, ai.chatModel(), null,
+                ai.contextTokens() == null ? 0 : ai.contextTokens());
+        BookJob.Session session = session(model, folderId, name, notes.fence(), notes.targetWords(),
+                notes.questions());
+        return context.runtime().workspace().rerunBook(job.id(), folderId, BookJob.prepare(session,
+                done -> SwingUtilities.invokeLater(() -> prepared(done))));
+    }
+
+    /**
+     * Der Ordner eines Buch-Auftrags: aus seinen Angaben, bei Aufträgen von vor dieser Angabe über den Ordnernamen in
+     * „Bereich“, wenn genau ein Ordner so heißt.
+     */
+    static String folderOf(JobStatus job, Favorites favorites) {
+        String id = job.parameter(Workspace.BOOK_FOLDER);
+        if (id != null && favorites.folder(id).isPresent()) {
+            return id;
+        }
+        String area = job.parameter(JobArea.PARAMETER);
+        if (area == null || !area.startsWith("Ordner „") || !area.endsWith("“")) {
+            return null;
+        }
+        String name = area.substring("Ordner „".length(), area.length() - 1);
+        List<String> matches = new ArrayList<>();
+        named(favorites.tree(), name, matches);
+        return matches.size() == 1 ? matches.get(0) : null;
+    }
+
+    private static void named(List<Favorites.Entry> entries, String name, List<String> matches) {
+        for (Favorites.Entry entry : entries) {
+            if (entry instanceof Favorites.Folder folder) {
+                if (name.equals(folder.name())) {
+                    matches.add(folder.id());
+                }
+                named(folder.children(), name, matches);
+            }
+        }
+    }
+
+    /** Eine Sitzung für den Ordner mit Weidezaun, Länge und Fragen; die Quellensteckbriefe bleiben am Ordner. */
+    private BookJob.Session session(AiChatModel chat, String folderId, String name, Fence fence, int targetWords,
+                                    List<String> questions) {
+        Favorites favorites = context.favorites();
         var workspace = context.runtime().workspace();
         var ai = context.settings().ai();
         int contextTokens = ai.contextTokens() == null ? 0 : ai.contextTokens();
         // Bündel nach der Kontextlänge des Modells laut Einstellung; ohne Angabe die Vorgaben von Writing4j.
-        BookRun.Settings settings = new BookRun.Settings("de", form.targetWords(), capacity(context), null,
+        BookRun.Settings settings = new BookRun.Settings("de", targetWords, capacity(context), null,
                 contextTokens > 0 ? StockQuestions.Options.defaults().withContextTokens(contextTokens) : null,
                 contextTokens > 0 ? EvidenceBundleJudge.Options.defaults().withContextTokens(contextTokens) : null,
                 null);
-        BookJob.Session session = BookJob.session(chat.get(), new WorkspacePageStock(workspace, null),
-                new FavoritesBasket(favorites, folderId, context::sourceTitle), folderId, name, fence.get(),
-                form.questions(), settings, parent -> workspace.childJobs(parent, settings.getCapacity(), name));
+        Path data = dataDirectory(context);
+        if (data != null) {
+            // Fertige Quellensteckbriefe bleiben am Ordner: ein neuer Start fragt nur die übrigen ab (Angelo 27.11.2026).
+            settings.withProfileMemory(BookProfiles.of(data, folderId));
+        }
+        BookJob.Session session = BookJob.session(chat, new WorkspacePageStock(workspace, null),
+                new FavoritesBasket(favorites, folderId, context::sourceTitle), folderId, name, fence,
+                questions, settings, parent -> workspace.childJobs(parent, settings.getCapacity(), name));
         sessions.put(folderId, session);
-        workspace.startBook(name, BookJob.prepare(session, done -> SwingUtilities.invokeLater(() -> prepared(done))));
+        return session;
     }
 
     /** Nach dem Vorbereiten: fragt nur, wenn das Sieb unsicher war oder nichts sicher drin sah. */
@@ -187,7 +275,7 @@ final class BookFlow {
         Path output = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings
                 .defaultOutputDirectory() : context.settings().outputDirectory();
         CornerstoneSurvey.Chosen chosen = view.chosen(session.prepared().basketHints());
-        context.runtime().workspace().startBook(session.folderName(), BookJob.write(session, chosen, output,
+        context.runtime().workspace().startBook(session.folderId(), session.folderName(), BookJob.write(session, chosen, output,
                 PageDetailPanel.safeName(session.folderName()),
                 book -> SwingUtilities.invokeLater(() -> written(session, book))));
     }

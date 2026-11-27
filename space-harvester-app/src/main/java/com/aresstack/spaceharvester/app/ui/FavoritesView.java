@@ -104,7 +104,7 @@ final class FavoritesView {
         favorites.target(() -> SwingUtilities.isEventDispatchThread() ? tree.targetFolderId() : null);
         JTree view = tree.component();
         view.getAccessibleContext().setAccessibleName("Favoriten");
-        tree.setCellRenderer(new javax.swing.tree.DefaultTreeCellRenderer() {
+        tree.setCellRenderer(new com.aresstack.spaceharvester.app.ui.controls.ComicTreeRenderer() {
             @Override
             public Component getTreeCellRendererComponent(JTree owner, Object value, boolean selected,
                                                           boolean expanded, boolean leaf, int row, boolean focus) {
@@ -124,10 +124,6 @@ final class FavoritesView {
                     }
                     case null -> setText("");
                 }
-                setFont(Comic.regular(13f));
-                setBackgroundSelectionColor(Comic.YELLOW);
-                setTextSelectionColor(Comic.INK);
-                setBorderSelectionColor(null);
                 setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 2));
                 return this;
             }

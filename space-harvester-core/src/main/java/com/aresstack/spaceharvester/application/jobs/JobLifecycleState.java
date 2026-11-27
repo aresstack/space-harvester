@@ -55,7 +55,8 @@ public sealed interface JobLifecycleState {
     /** Der wirksame Zustand eines Auftrags. */
     static JobLifecycleState of(JobStatus status) {
         Objects.requireNonNull(status, "status");
-        boolean resumable = status.type().resumable();
+        // Ein Unterauftrag setzt nie für sich fort, nur sein Auftrag darüber (Klammer mit Unteraufträgen).
+        boolean resumable = status.type().resumable() && status.parameter(ChildJobs.PARENT_PARAMETER) == null;
         // Downloads und Abgleiche laden gezielt nach oder erzwingen einen neuen Stand (ADR 0025); ein reiner
         // Katalogabgleich lädt keine Inhalte und hat nichts zu erzwingen.
         boolean download = status.type() == JobType.EXPORT;

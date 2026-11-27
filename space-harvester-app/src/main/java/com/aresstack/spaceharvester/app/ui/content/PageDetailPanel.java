@@ -724,13 +724,15 @@ public final class PageDetailPanel extends JPanel {
         sourceFoot.add(scopeRow(), BorderLayout.CENTER);
         readingSourceFoot.add(scopeRow(), BorderLayout.CENTER);
         areaFoot.add(Comic.row(areaPodcast.podcast().transcriptCopy()), BorderLayout.WEST);
-        areaFoot.add(Comic.row(areaPodcast.podcast().subtitleToggle()), BorderLayout.EAST);
-        JPanel areaCenter = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
-        areaCenter.setOpaque(false);
+        // „mit Unterseiten“ eines Ordners steht in jeder Ansicht an derselben Stelle: ganz rechts in der Ecke, wie in
+        // der Ordnerleiste und unter „Analysen“ (TabFoot); früher hier mittig, so sprang sie (Angelo 27.11.2026).
+        JPanel areaEast = new JPanel(new BorderLayout());
+        areaEast.setOpaque(false);
+        areaEast.add(Comic.row(areaPodcast.podcast().subtitleToggle()), BorderLayout.CENTER);
         areaFolderSlot.setOpaque(false);
-        areaCenter.add(scopeRow());
-        areaCenter.add(areaFolderSlot);
-        areaFoot.add(areaCenter, BorderLayout.CENTER);
+        areaEast.add(areaFolderSlot, BorderLayout.EAST);
+        areaFoot.add(areaEast, BorderLayout.EAST);
+        areaFoot.add(scopeRow(), BorderLayout.CENTER);
         readerPage.setOrb(pagePodcast.orb());
         // Der Chat liest mit derselben Sprachausgabe vor; sein Knopf steht auf der Höhe dieser Knöpfe (Angelo 23.11.2026).
         chat.useReadAloud(this::readAloudBinding);
@@ -3374,7 +3376,7 @@ public final class PageDetailPanel extends JPanel {
                 : READ.equals(selected) && PAGE.equals(pageCard) ? pageFoot
                 : wide && folder != null ? folderFoot
                 : null;
-        // Podcast-Ansicht eines Ordners: „mit Unterseiten“ mittig in ihrer Leiste, wie sonst in der Ordnerleiste.
+        // Podcast-Ansicht eines Ordners: „mit Unterseiten“ rechts in ihrer Leiste, wie in der Ordnerleiste.
         if (shown == areaFoot && folderShown() && folderSubfolders.getParent() != areaFolderSlot) {
             areaFolderSlot.add(folderSubfolders);
             areaFolderSlot.revalidate();

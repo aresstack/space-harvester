@@ -264,6 +264,8 @@ public class JobActions {
             }
             // Podcast: derselbe Auftrag läuft im selben Eintrag neu und erzeugt nur, was auf der Platte fehlt.
             case UPDATE_PODCAST -> jobs.resume(current.id(), owner);
+            // „Buch schreiben“ ohne App, die ihn neu aufbaut: dieselbe Arbeit im selben Eintrag, solange sie im Speicher ist.
+            case BOOK -> jobs.resume(current.id(), owner);
             case BACKGROUND -> {
                 com.aresstack.spaceharvester.application.background.BackgroundJobs bound = background;
                 yield bound != null ? bound.resumeJob(current.id(), caller) : jobs.resume(current.id(), owner);

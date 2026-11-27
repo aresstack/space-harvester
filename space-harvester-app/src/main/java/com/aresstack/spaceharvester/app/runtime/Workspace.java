@@ -2392,15 +2392,60 @@ public final class Workspace {
      * jedem wartenden Hintergrund. Die Aufträge kommen aus {@code app.research.BookJob}.
      */
     public JobStatus startBook(String folderName, com.aresstack.spaceharvester.application.jobs.JobTask task) {
-        return startBookFunction(JobType.BOOK, folderName, task);
+        return startBook(null, folderName, task);
+    }
+
+    /**
+     * Wie {@link #startBook(String, com.aresstack.spaceharvester.application.jobs.JobTask)}; der Auftrag trägt den
+     * Ordner ({@link #BOOK_FOLDER}), damit ▶ ihn nach Abbruch oder Neustart wieder aufbauen kann.
+     */
+    public JobStatus startBook(String folderId, String folderName,
+                               com.aresstack.spaceharvester.application.jobs.JobTask task) {
+        return startBookFunction(JobType.BOOK, folderId, folderName, task);
+    }
+
+    /** Angabe eines Buch-Auftrags: die ID seines Favoritenordners. */
+    public static final String BOOK_FOLDER = "book.folder";
+
+    /** Baut einen unterbrochenen Buch-Auftrag neu auf (aus {@code app.ui.BookFlow}); {@code null}: keiner. */
+    private volatile java.util.function.Function<JobStatus, JobStatus> bookResumer;
+
+    /**
+     * Wer ▶ an „Buch schreiben“ ausführt (Angelo 27.11.2026: nach Abbruch oder Neustart fortsetzen): bekommt den
+     * Auftrag und startet ihn mit {@link #rerunBook} im selben Eintrag neu.
+     */
+    public void bookResumer(java.util.function.Function<JobStatus, JobStatus> resumer) {
+        this.bookResumer = resumer;
+    }
+
+    /**
+     * Startet einen beendeten oder angehaltenen Buch-Auftrag im selben Eintrag mit neuer Arbeit, auch nach einem
+     * Neustart der App; {@code folderId} kommt in die Angaben, falls er sie noch nicht trug.
+     */
+    public JobStatus rerunBook(String jobId, String folderId,
+                               com.aresstack.spaceharvester.application.jobs.JobTask task) {
+        JobStatus current = job(jobId);
+        java.util.Map<String, String> parameters = new java.util.HashMap<>(
+                current.parameters() == null ? java.util.Map.of() : current.parameters());
+        if (folderId != null) {
+            parameters.put(BOOK_FOLDER, folderId);
+        }
+        return harvester.jobs().rerun(jobId, current.owner(), parameters, task);
     }
 
     /** Der Bereich eines Auftrags der Buchfunktion ist sein Favoritenordner, in der Auftragsliste unter „Bereich“. */
     private JobStatus startBookFunction(JobType type, String folderName,
                                         com.aresstack.spaceharvester.application.jobs.JobTask task) {
+        return startBookFunction(type, null, folderName, task);
+    }
+
+    private JobStatus startBookFunction(JobType type, String folderId, String folderName,
+                                        com.aresstack.spaceharvester.application.jobs.JobTask task) {
+        java.util.Map<String, String> parameters = folderId == null ? java.util.Map.of()
+                : java.util.Map.of(BOOK_FOLDER, folderId);
         JobStatus status = harvester.jobs().submitInteractive(type,
                 com.aresstack.spaceharvester.application.jobs.Jobs.ALL_SOURCES, null, null, caller.jobOwner(),
-                com.aresstack.spaceharvester.application.jobs.JobArea.with(java.util.Map.of(), folderArea(folderName)),
+                com.aresstack.spaceharvester.application.jobs.JobArea.with(parameters, folderArea(folderName)),
                 task);
         activities.remember(status.id());
         return status;
@@ -2867,6 +2912,9 @@ public final class Workspace {
      */
     public JobStatus resumeJob(String jobId) {
         JobStatus status = job(jobId);
+        if (bookRun(status)) {
+            return resumeBook(status);
+        }
         if (!Harvester.OWNER.equals(status.owner())) {
             // Aufträge des Aufrufers (Zusammenfassen, Synonymlauf, Aussagenanalyse) setzt der Core selbst fort.
             return harvester.jobActions().perform(jobId, status.owner(), JobAction.RESUME,
@@ -2888,6 +2936,20 @@ public final class Workspace {
             case PURGE -> harvester.jobActions().perform(jobId, Harvester.OWNER, JobAction.RESUME);
             default -> harvester.resumeExport(jobId);
         };
+    }
+
+    /** „Buch schreiben“ mit einer App, die ihn neu aufbaut (kein Unterauftrag). */
+    private boolean bookRun(JobStatus status) {
+        return status.type() == JobType.BOOK && bookResumer != null
+                && status.parameter(com.aresstack.spaceharvester.application.jobs.ChildJobs.PARENT_PARAMETER) == null;
+    }
+
+    private JobStatus resumeBook(JobStatus status) {
+        if (!status.lifecycle().allows(JobAction.RESUME)) {
+            throw new com.aresstack.spaceharvester.application.jobs.JobActionNotAllowedException(status.id(),
+                    JobAction.RESUME, status.lifecycle());
+        }
+        return bookResumer.apply(status);
     }
 
     /** Ein Unterauftrag „Bilder beschreiben“ im Hintergrund (D2). */
@@ -2939,6 +3001,9 @@ public final class Workspace {
         }
         if (action == JobAction.RESUME && graphRun(current)) {
             return harvester.knowledgeGraphJobs().resume(caller, jobId);
+        }
+        if (action == JobAction.RESUME && bookRun(current)) {
+            return resumeBook(current);
         }
         JobStatus status = Harvester.OWNER.equals(owner) ? harvester.performJobAction(jobId, action)
                 : harvester.jobActions().perform(jobId, owner, action, java.util.function.UnaryOperator.identity(),

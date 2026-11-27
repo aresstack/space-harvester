@@ -2302,7 +2302,7 @@ public final class Explorer {
      * für Seiten; Hinweise gedämpft), rechtsbündig Bestandszeichen und Stern im Stil der Space-Aktionen
      * ({@link RoundHover}).
      */
-    private final class Renderer extends javax.swing.tree.DefaultTreeCellRenderer {
+    private final class Renderer extends com.aresstack.spaceharvester.app.ui.controls.ComicTreeRenderer {
 
         /** Ob die Zeile der hervorgehobene Suchtreffer ist ({@link #hint}). */
         private boolean hinted;
@@ -2323,15 +2323,6 @@ public final class Explorer {
         private boolean favorite;
         private int row = -1;
         private int width;
-
-        Renderer() {
-            // Auswahl wie die gewählte Quellenkarte: Comic-Gelb mit Tinte.
-            setBackgroundNonSelectionColor(new java.awt.Color(0, 0, 0, 0));
-            setBackgroundSelectionColor(Comic.YELLOW);
-            setTextSelectionColor(Comic.INK);
-            setBorderSelectionColor(null);
-            setFont(Comic.regular(13f));
-        }
 
         @Override
         public java.awt.Component getTreeCellRendererComponent(JTree tree, Object value, boolean selected,

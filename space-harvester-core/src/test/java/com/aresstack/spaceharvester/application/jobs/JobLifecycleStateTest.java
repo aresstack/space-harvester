@@ -261,4 +261,15 @@ class JobLifecycleStateTest {
         assertThat(JobLifecycleState.of(part.apply(JobState.COMPLETED, Map.of())).allows(JobAction.RETRY_FAILED))
                 .as("eine Art ohne Wiederholung").isFalse();
     }
+
+    @Test
+    void anInterruptedOrCancelledBookOffersResumeButItsChildJobsDoNot() {
+        // Angelo 27.11.2026: ein abgebrochenes „Buch schreiben“ muss sich wieder starten lassen.
+        assertThat(actions(JobType.BOOK, JobState.CANCELLED, 0, false)).contains(JobAction.RESUME);
+        assertThat(actions(JobType.BOOK, JobState.FAILED, 0, false)).contains(JobAction.RESUME);
+        JobStatus child = new JobStatus("j", JobType.BOOK, "confluence", "DEV", "client-a", JobState.CANCELLED,
+                new JobProgress(1, 1, 1, 0), null, false, T0, null, null, null, null,
+                Map.of(ChildJobs.PARENT_PARAMETER, "eltern"), false, false, null);
+        assertThat(child.lifecycle().actions()).containsExactly(JobAction.DELETE);
+    }
 }

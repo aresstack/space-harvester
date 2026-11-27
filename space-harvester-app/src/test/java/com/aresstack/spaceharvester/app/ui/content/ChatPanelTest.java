@@ -887,4 +887,27 @@ class ChatPanelTest {
 
         assertThat(asked).endsWith("(Bild: Das Vision-Modell gemma hat nicht geantwortet: Zeitüberschreitung)");
     }
+
+    /** Angelo 27.11.2026: Das Bild wird schon beim Anhängen gelesen; beim Senden wird nur noch auf diesen Text gewartet. */
+    @Test
+    void anImageReadWhenAttachedIsNotReadAgainWhenSent() throws Exception {
+        Path png = home.resolve("tafel.png");
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB),
+                "png", png.toFile());
+        List<String> instructions = new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.concurrent.CompletableFuture<String> early = ChatPanel.readImageEarly(png,
+                new ChatPanel.AttachmentImageReading("gemma4:12b", (bytes, type, instruction) -> {
+                    instructions.add(instruction);
+                    return "Sprint-Ziele: Login fertig";
+                }), Runnable::run);
+
+        String asked = ChatPanel.withAttachments("Was steht da?", List.of(png), 10_000,
+                new ChatPanel.AttachmentImageReading("gemma4:12b", (bytes, type, instruction) -> {
+                    throw new AssertionError("beim Senden nicht noch einmal lesen");
+                }), java.util.Map.of(png, early));
+
+        assertThat(asked).endsWith("(Bildinhalt, abgelesen vom Vision-Modell gemma4:12b)\nSprint-Ziele: Login fertig");
+        // Beim Anhängen steht die Frage noch nicht fest: das Modell liest mit der allgemeinen Anweisung.
+        assertThat(instructions).containsExactly(com.aresstack.spaceharvester.app.chat.AttachmentImages.PROMPT);
+    }
 }
