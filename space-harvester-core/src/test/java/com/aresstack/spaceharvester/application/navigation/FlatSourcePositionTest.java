@@ -45,6 +45,17 @@ class FlatSourcePositionTest {
     }
 
     @Test
+    void subtaskKeepsItsParentIssueAsAncestorLikeTheTree() {
+        FlatSource source = new FlatSource(false);
+
+        PageNavigation.Position position = navigation(source, null).position(READER, SOURCE, "ABC-9");
+
+        assertThat(position.spaceKey()).isEqualTo("ABC");
+        assertThat(position.ancestors()).extracting(HarvestSource.PageNode::pageId).containsExactly("ABC-7");
+        assertThat(position.page().pageId()).isEqualTo("ABC-9");
+    }
+
+    @Test
     void storedTicketNeedsNoRequestToTheSource() {
         InMemoryPageCache cache = new InMemoryPageCache();
         cache.publish(SOURCE, "ABC", InMemoryPageCache.confirmed("g1"),
@@ -128,7 +139,9 @@ class FlatSourcePositionTest {
         @Override
         public PageMetadata pageMetadata(String pageId) {
             metadataCalls.incrementAndGet();
-            return new PageMetadata(pageId, "tickets:issue/" + pageId, "Vorgang " + pageId, "ABC", null, "1", null,
+            // ABC-9 ist eine Unteraufgabe von ABC-7.
+            String parent = "ABC-9".equals(pageId) ? "ABC-7" : null;
+            return new PageMetadata(pageId, "tickets:issue/" + pageId, "Vorgang " + pageId, "ABC", parent, "1", null,
                     null, PageMetadata.sorted(Map.of()));
         }
     }

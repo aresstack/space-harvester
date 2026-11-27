@@ -315,19 +315,47 @@ public class PageNavigation {
                     com.aresstack.spaceharvester.application.sources.SourceCapability.NAVIGATION)) {
                 throw unsupported;
             }
-            com.aresstack.spaceharvester.application.sources.PageMetadata metadata = storedMetadata(sourceId, pageId)
-                    .orElseGet(() -> source.pageMetadata(pageId));
+            com.aresstack.spaceharvester.application.sources.PageMetadata metadata =
+                    metadata(source, sourceId, pageId);
             if (metadata.partitionKey() == null || metadata.partitionKey().isBlank()) {
                 throw unsupported;
             }
-            return flatPosition(pageId, metadata);
+            String partition = metadata.partitionKey();
+            return new HarvestSource.PagePosition(partition, null,
+                    metadataAncestors(source, sourceId, metadata),
+                    new PageNode(pageId, metadata.title(), partition, null, PageNode.Kind.PAGE));
         }
     }
 
-    private static HarvestSource.PagePosition flatPosition(String pageId,
-            com.aresstack.spaceharvester.application.sources.PageMetadata metadata) {
-        return new HarvestSource.PagePosition(metadata.partitionKey(), null, List.of(),
-                new PageNode(pageId, metadata.title(), metadata.partitionKey(), null, PageNode.Kind.PAGE));
+    /**
+     * Die Vorfahren aus den Eltern-IDs der Kopfdaten, von oben nach unten, so wie der Baum solche Quellen aus denselben
+     * Kopfdaten aufbaut (Jira: Unteraufgabe unter ihrem Vorgang). Fehlt ein Glied, bleibt die Liste leer statt
+     * lückenhaft; der Baum sucht die Seite dann direkt unter der Partition.
+     */
+    private List<PageNode> metadataAncestors(HarvestSource source, String sourceId,
+                                             com.aresstack.spaceharvester.application.sources.PageMetadata page) {
+        List<PageNode> ancestors = new java.util.ArrayList<>();
+        Set<String> visited = new java.util.HashSet<>();
+        visited.add(page.pageId());
+        String parentId = page.parentPageId();
+        try {
+            while (parentId != null && !parentId.isBlank() && visited.add(parentId)) {
+                com.aresstack.spaceharvester.application.sources.PageMetadata parent =
+                        metadata(source, sourceId, parentId);
+                ancestors.add(new PageNode(parent.pageId(), parent.title(), page.partitionKey(), Boolean.TRUE,
+                        PageNode.Kind.PAGE));
+                parentId = parent.parentPageId();
+            }
+        } catch (SourceAccessException missing) {
+            return List.of();
+        }
+        java.util.Collections.reverse(ancestors);
+        return List.copyOf(ancestors);
+    }
+
+    private com.aresstack.spaceharvester.application.sources.PageMetadata metadata(HarvestSource source,
+                                                                                  String sourceId, String pageId) {
+        return storedMetadata(sourceId, pageId).orElseGet(() -> source.pageMetadata(pageId));
     }
 
     private Optional<com.aresstack.spaceharvester.application.sources.PageMetadata> storedMetadata(String sourceId,
