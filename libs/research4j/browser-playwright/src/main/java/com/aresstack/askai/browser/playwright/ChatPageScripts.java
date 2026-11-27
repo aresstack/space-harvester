@@ -270,10 +270,10 @@ final class ChatPageScripts {
             + "   var l = (buttons[j].innerText || buttons[j].value || '').replace(/\\s+/g, ' ').trim();"
             + "   if (l && l.length < 60 && shown(buttons[j])) labels.push(l); }"
             + "  consent = labels.length > 0; if (!consent) labels = []; }"
+            // The challenge widgets are recognised by the research's configured detection (SearchPageGuards); this
+            // script adds the interstitial titles and the login form.
             + " var challenge = '';"
-            + " if (document.querySelector('iframe[src*=recaptcha], iframe[src*=hcaptcha], iframe[src*=turnstile],"
-            + " iframe[src*=\"challenges.cloudflare\"], #challenge-form, #cf-challenge-running, .g-recaptcha, .h-captcha')"
-            + "  || /just a moment|attention required|verify you are human|sicherheitsüberprüfung|bist du ein mensch/i"
+            + " if (/just a moment|attention required|verify you are human|sicherheitsüberprüfung|bist du ein mensch/i"
             + "  .test(document.title)) challenge = 'captcha';"
             + " else { var pw = document.querySelectorAll('input[type=password]');"
             + "  for (var k = 0; k < pw.length; k++) { if (shown(pw[k])) { challenge = 'login'; break; } } }"
