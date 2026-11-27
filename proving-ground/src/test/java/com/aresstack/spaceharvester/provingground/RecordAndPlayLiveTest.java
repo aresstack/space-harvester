@@ -160,7 +160,7 @@ class RecordAndPlayLiveTest {
         TestStep password = recorded.steps().stream()
                 .filter(step -> "fill".equals(step.name()) && step.selector().contains("Passwort")).findFirst()
                 .orElseThrow();
-        assertEquals("${secret.Passwort}", password.text(), "the password is not in the recording");
+        assertEquals("{{secret.Passwort}}", password.text(), "the password is not in the recording");
         assertEquals(2, recorded.steps().stream().filter(step -> "fill".equals(step.name())).count(),
                 "one fill per field, both fields kept");
         assertTrue(recorded.steps().stream().anyMatch(step -> step.signal("popup") != null), "popup noticed");

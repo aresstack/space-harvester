@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.provingground.player;
 
+import com.aresstack.spaceharvester.provingground.expressions.ExpressionException;
+import com.aresstack.spaceharvester.provingground.expressions.MapResolutionContext;
+import com.aresstack.spaceharvester.provingground.expressions.ResolveTemplateUseCase;
 import com.aresstack.spaceharvester.provingground.model.TestCase;
 import com.aresstack.spaceharvester.provingground.model.TestStep;
 import com.google.gson.JsonElement;
@@ -18,8 +21,8 @@ import com.microsoft.playwright.options.MouseButton;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -50,7 +53,10 @@ public final class TestPlayer {
         }
     }
 
-    /** Plays {@code testCase} in {@code context}. */
+    /**
+     * Plays {@code testCase} in {@code context}; values come from {@link PlaybackOptions#variables()} (a value of a
+     * {@code secret.*} variable never shows in the result).
+     */
     public RunResult play(TestCase testCase, BrowserContext context, PlaybackOptions options) {
         if (options.actionTimeout().toMillis() > 0) {
             context.setDefaultTimeout(options.actionTimeout().toMillis());
@@ -60,56 +66,70 @@ public final class TestPlayer {
             context.tracing().start(new Tracing.StartOptions().setScreenshots(true).setSnapshots(true)
                     .setTitle(testCase.name()));
         }
-        Map<String, Page> pages = new HashMap<>();
-        List<StepResult> results = new ArrayList<>();
-        Path screenshot = null;
-        boolean failed = false;
+        RunResult result;
         try {
-            for (int i = 0; i < testCase.size(); i++) {
-                TestStep step = testCase.step(i);
-                String description = step.describe();
-                if (failed) {
-                    results.add(new StepResult(i, description, StepResult.Status.SKIPPED, 0, null));
-                    continue;
-                }
-                long started = System.nanoTime();
-                try {
-                    perform(step, context, pages, options);
-                    results.add(new StepResult(i, description, StepResult.Status.PASSED, millisSince(started), null));
-                } catch (RuntimeException | AssertionError failure) {
-                    failed = true;
-                    results.add(new StepResult(i, description, StepResult.Status.FAILED, millisSince(started),
-                            redacted(firstLine(failure), options.variables())));
-                    screenshot = photograph(pages.get(step.pageGuid()), options.screenshotOnFailure());
-                }
-            }
+            result = play(testCase, new MapEnvironment(context, options.variables()), new Pages(), options);
         } finally {
             if (tracing) {
                 context.tracing().stop(new Tracing.StopOptions().setPath(options.traceFile()));
             }
         }
-        return new RunResult(testCase.name(), results, options.traceFile(), screenshot);
+        return new RunResult(result.testCase(), result.steps(), options.traceFile(), result.screenshot());
     }
 
-    private void perform(TestStep step, BrowserContext context, Map<String, Page> pages, PlaybackOptions options) {
+    /**
+     * Plays {@code testCase} with the contexts and values of {@code environment}, on the pages of {@code pages} (a
+     * precondition's pages stay open for the test case). Tracing is the caller's (it owns the contexts); the trace
+     * file of {@code options} is not used here.
+     */
+    public RunResult play(TestCase testCase, StepEnvironment environment, Pages pages, PlaybackOptions options) {
+        List<StepResult> results = new ArrayList<>();
+        Path screenshot = null;
+        boolean failed = false;
+        for (int i = 0; i < testCase.size(); i++) {
+            TestStep step = testCase.step(i);
+            String description = environment.describe(step);
+            if (failed) {
+                results.add(new StepResult(i, description, StepResult.Status.SKIPPED, 0, null));
+                continue;
+            }
+            long started = System.nanoTime();
+            try {
+                perform(step, environment, pages, options);
+                waitForMinimum(environment.minDuration(step), started);
+                results.add(new StepResult(i, description, StepResult.Status.PASSED, millisSince(started), null));
+            } catch (RuntimeException | AssertionError failure) {
+                failed = true;
+                results.add(new StepResult(i, description, StepResult.Status.FAILED, millisSince(started),
+                        environment.redact(firstLine(failure))));
+                screenshot = photograph(pages.get(step.pageGuid()), options.screenshotOnFailure());
+            }
+        }
+        return new RunResult(testCase.name(), results, null, screenshot);
+    }
+
+    private void perform(TestStep step, StepEnvironment environment, Pages pages, PlaybackOptions options) {
         String name = step.name();
+        BrowserContext context = environment.context(step);
         if ("openPage".equals(name)) {
-            if (!pages.containsKey(step.pageGuid())) {
+            if (!pages.has(step.pageGuid())) {
                 Page page = context.newPage();
                 pages.put(step.pageGuid(), page);
+                pages.setCurrent(page);
                 String url = step.url();
                 if (url != null && !url.equals("about:blank") && !url.startsWith("chrome://")) {
-                    page.navigate(Variables.resolve(url, options.variables()));
+                    page.navigate(environment.resolve(url, step));
                 }
             }
             return;
         }
         Page page = pages.get(step.pageGuid());
-        if (page == null) {
+        if (page == null || page.context() != context) {
             // A test case that starts without openPage (edited, or recorded into an existing page).
             page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
             pages.put(step.pageGuid(), page);
         }
+        pages.setCurrent(page);
         Page subject = page;
         if (step.signal("dialog") != null) {
             // As Playwright's generator: the recorded dialog is dismissed.
@@ -117,12 +137,13 @@ public final class TestPlayer {
         }
         JsonObject popup = step.signal("popup");
         JsonObject download = step.signal("download");
-        Runnable call = () -> act(step, subject, options);
+        Runnable call = () -> act(step, subject, environment, options);
         if (popup != null) {
             Page opened = subject.waitForPopup(call);
             if (popup.has("popupPageGuid")) {
                 pages.put(popup.get("popupPageGuid").getAsString(), opened);
             }
+            pages.setCurrent(opened);
         } else if (download != null) {
             subject.waitForDownload(call);
         } else {
@@ -130,15 +151,14 @@ public final class TestPlayer {
         }
     }
 
-    private void act(TestStep step, Page page, PlaybackOptions options) {
+    private void act(TestStep step, Page page, StepEnvironment environment, PlaybackOptions options) {
         JsonObject action = step.actionJson();
-        Map<String, String> variables = options.variables();
         String name = step.name();
         // Assertions take the action timeout when one is set, else Playwright's assertion default.
         Double timeout = options.actionTimeout().toMillis() > 0 ? (double) options.actionTimeout().toMillis() : null;
         switch (name) {
             case "closePage" -> page.close();
-            case "navigate" -> page.navigate(Variables.resolve(step.url(), variables));
+            case "navigate" -> page.navigate(environment.resolve(step.url(), step));
             case "click" -> {
                 Locator.ClickOptions click = new Locator.ClickOptions();
                 String button = string(action, "button");
@@ -163,7 +183,7 @@ public final class TestPlayer {
             case "hover" -> locator(page, step).hover();
             case "check" -> locator(page, step).check();
             case "uncheck" -> locator(page, step).uncheck();
-            case "fill" -> locator(page, step).fill(Variables.resolve(step.text(), variables));
+            case "fill" -> locator(page, step).fill(environment.resolve(step.text(), step));
             case "press" -> {
                 List<String> keys = new ArrayList<>();
                 for (KeyboardModifier modifier : modifiers(action)) {
@@ -178,7 +198,7 @@ public final class TestPlayer {
                 JsonElement chosen = action.get("options");
                 if (chosen != null && chosen.isJsonArray()) {
                     for (JsonElement value : chosen.getAsJsonArray()) {
-                        values.add(Variables.resolve(value.getAsString(), variables));
+                        values.add(environment.resolve(value.getAsString(), step));
                     }
                 }
                 locator(page, step).selectOption(values.toArray(String[]::new));
@@ -188,13 +208,13 @@ public final class TestPlayer {
                 JsonElement chosen = action.get("files");
                 if (chosen != null && chosen.isJsonArray()) {
                     for (JsonElement file : chosen.getAsJsonArray()) {
-                        files.add(Path.of(Variables.resolve(file.getAsString(), variables)));
+                        files.add(Path.of(environment.resolve(file.getAsString(), step)));
                     }
                 }
                 locator(page, step).setInputFiles(files.toArray(Path[]::new));
             }
             case "assertText" -> {
-                String text = Variables.resolve(step.text(), variables);
+                String text = environment.resolve(step.text(), step);
                 if (action.has("substring") && action.get("substring").getAsBoolean()) {
                     LocatorAssertions.ContainsTextOptions o = new LocatorAssertions.ContainsTextOptions();
                     if (timeout != null) {
@@ -210,7 +230,7 @@ public final class TestPlayer {
                 }
             }
             case "assertValue" -> {
-                String value = Variables.resolve(step.value(), variables);
+                String value = environment.resolve(step.value(), step);
                 if (value == null || value.isEmpty()) {
                     LocatorAssertions.IsEmptyOptions o = new LocatorAssertions.IsEmptyOptions();
                     if (timeout != null) {
@@ -306,10 +326,45 @@ public final class TestPlayer {
         for (Map.Entry<String, String> variable : variables.entrySet()) {
             String value = variable.getValue();
             if (variable.getKey().startsWith("secret.") && value != null && !value.isEmpty()) {
-                result = result.replace(value, "${" + variable.getKey() + "}");
+                result = result.replace(value, "{{" + variable.getKey() + "}}");
             }
         }
         return result;
+    }
+
+    private static void waitForMinimum(Duration minimum, long startedNanos) {
+        long remaining = minimum.toNanos() - (System.nanoTime() - startedNanos);
+        if (remaining > 0) {
+            try {
+                Thread.sleep(Duration.ofNanos(remaining));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Abgebrochen", interrupted);
+            }
+        }
+    }
+
+    /** A single test case in one context, values from a map. */
+    private record MapEnvironment(BrowserContext context, Map<String, String> variables) implements StepEnvironment {
+
+        @Override
+        public BrowserContext context(TestStep step) {
+            return context;
+        }
+
+        @Override
+        public String resolve(String value, TestStep step) {
+            try {
+                return ResolveTemplateUseCase.resolve(value, new MapResolutionContext(variables));
+            } catch (ExpressionException missing) {
+                throw new IllegalStateException(missing.getMessage(), missing);
+            }
+        }
+
+        @Override
+        public String redact(String text) {
+            return redacted(text, variables);
+        }
     }
 
     /** Playwright's message up to its call log (expected and received value), as one line. */

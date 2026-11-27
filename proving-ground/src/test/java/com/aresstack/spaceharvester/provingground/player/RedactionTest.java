@@ -11,7 +11,7 @@ class RedactionTest {
     @Test
     void secretValuesLeaveFailureMessagesAsTheirReference() {
         String message = "Locator expected to have value · Expected: geheim · Received: falsch";
-        assertEquals("Locator expected to have value · Expected: ${secret.Passwort} · Received: falsch",
+        assertEquals("Locator expected to have value · Expected: {{secret.Passwort}} · Received: falsch",
                 TestPlayer.redacted(message, Map.of("secret.Passwort", "geheim", "user", "falsch")));
     }
 }
