@@ -369,6 +369,8 @@ public final class Harvester implements AutoCloseable {
     /** Die Update-Zusammenfassung als Podcast (Angelo 21.11.2026). */
     private final com.aresstack.spaceharvester.application.podcast.UpdatePodcasts podcasts;
     private final com.aresstack.spaceharvester.application.podcast.PagePodcasts pagePodcasts;
+    /** Plan und Einzelteile der Schaubilder (Bildgenerierung); {@code null} ohne Anreicherung. */
+    private com.aresstack.spaceharvester.application.podcast.DiagramComposer.Models diagramModels;
     private final SpaceSyncJobs syncs;
     private final Indexing indexing;
     private final Exclusions exclusions;
@@ -1357,6 +1359,9 @@ public final class Harvester implements AutoCloseable {
                 return ai == null ? null : ai.imageParts();
             }, () -> null, catalog, trustBundles, builder.userAgent);
             this.podcasts.pictures(podcastPlanner, podcastDrawer, podcastImages);
+            // Schaubilder im Chat (Angelo 27.11.2026): dieselben Zeilen „Bildgenerierung – Plan/Einzelteile“.
+            this.diagramModels = new com.aresstack.spaceharvester.application.podcast.DiagramComposer.Models(
+                    podcastPlanner, podcastDrawer);
             this.pagePodcasts.pictures(podcastPlanner, podcastDrawer, podcastImages);
             // B1: Bilder automatisch beschreiben nach dem Abgleich und nach neuer KI-Freigabe, nur mit images.automatic.
             com.aresstack.spaceharvester.application.configuration.ImageSettings startImages = builder.images;
@@ -3290,6 +3295,35 @@ public final class Harvester implements AutoCloseable {
     /** Änderungsprotokoll und Updates je Quelle (ADR 0030), mit den Rechten des Aufrufers je Seite. */
     public ChangeLog changeLog() {
         return changeLog;
+    }
+
+    /**
+     * Ein Schaubild zu {@code topic} aus {@code material} (Chat, Angelo 27.11.2026), gezeichnet wie die Bilder im
+     * Podcast mit den Zeilen „Bildgenerierung – Plan“ und „– Einzelteile“; die Einzelteile laufen höchstens
+     * {@code ai.parallel} gleichzeitig. Leer, wenn kein Modell eingestellt ist oder kein brauchbarer Plan entsteht.
+     * Nie auf dem EDT.
+     */
+    public java.util.Optional<com.aresstack.spaceharvester.application.podcast.DiagramComposer.Diagram> composeDiagram(
+            String topic, String material) {
+        var models = diagramModels;
+        if (models == null || !models.available()) {
+            return java.util.Optional.empty();
+        }
+        AiServiceSettings ai = currentAi.get();
+        int parallel = ai == null ? AiServiceSettings.DEFAULT_PARALLEL : ai.parallel();
+        java.util.concurrent.ExecutorService parts = java.util.concurrent.Executors.newFixedThreadPool(
+                Math.max(1, parallel), work -> {
+                    Thread thread = new Thread(work, "chat-schaubild");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+        try {
+            return new com.aresstack.spaceharvester.application.podcast.DiagramComposer(models, parts, attempt -> { })
+                    .compose(topic, material, com.aresstack.spaceharvester.application.podcast.DiagramComposer
+                            .Memory.NONE);
+        } finally {
+            parts.shutdownNow();
+        }
     }
 
     /** Der Erklär-Podcast einer Seite (Angelo 21.11.2026). */
