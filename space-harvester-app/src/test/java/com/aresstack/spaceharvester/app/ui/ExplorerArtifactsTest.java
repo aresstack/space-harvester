@@ -139,6 +139,63 @@ class ExplorerArtifactsTest {
     }
 
     @Test
+    void aStaleBookShowsTheMarkAndOffersANewEditionAndItsFolder() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        // Erfunden: ein Buch aus einem Ordner, dessen Seite seither nicht mehr im Ordner liegt (also veraltet).
+        Path data = context.settings().storage().dataDirectory();
+        var page = new com.aresstack.spaceharvester.app.research.BookEditions.Source("wiki", "1", null);
+        com.aresstack.spaceharvester.app.research.BookEditions.add(data, "ordner-lager",
+                java.time.Instant.parse("2026-11-27T10:00:00Z"), "# Lager", "",
+                List.of(new com.aresstack.spaceharvester.app.research.BookEditions.Source("wiki", "1", "v1")),
+                List.of(page));
+        ChatArtifact book = context.bookArtifacts().publish("ordner-lager", null, "Lagerbuch");
+        ChatStore chats = new ChatStore(context::chatsDirectory);
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.projects(context.projects()::artifacts);
+
+        List<String> editions = new ArrayList<>();
+        List<String> folders = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            Explorer explorer = new Explorer(context);
+            ArtifactList list = explorer.artifactList();
+            list.background = (work, done) -> {
+                try {
+                    done.accept(work.call());
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            };
+            explorer.artifacts(store, id -> { }, (id, format) -> { });
+            list.books(editions::add, folders::add);
+            explorer.view.select(Explorer.ARTIFACTS_TAB);
+            assertThat(list.shownIds()).containsExactly(book.id());
+            assertThat(list.staleBooks()).containsExactly(book.id());
+
+            javax.swing.JPopupMenu menu = list.menu(list.list().getModel().getElementAt(0));
+            List<String> labels = new ArrayList<>();
+            for (java.awt.Component item : menu.getComponents()) {
+                if (item instanceof javax.swing.JMenuItem entry) {
+                    labels.add(entry.getText());
+                    if (Texts.NEW_EDITION.equals(entry.getText()) || ArtifactList.SHOW_FOLDER.equals(entry.getText())) {
+                        entry.doClick();
+                    }
+                }
+            }
+            assertThat(labels).contains(Texts.NEW_EDITION, ArtifactList.SHOW_FOLDER);
+        });
+        assertThat(editions).containsExactly("ordner-lager");
+        assertThat(folders).containsExactly("ordner-lager");
+    }
+
+    @Test
     void theTimeShowsTheClockTodayAndTheDateOtherwise() {
         java.time.ZoneId zone = java.time.ZoneId.of("Europe/Berlin");
         java.time.LocalDate today = java.time.LocalDate.of(2026, 11, 27);

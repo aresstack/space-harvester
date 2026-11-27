@@ -2852,6 +2852,23 @@ public final class Explorer {
                           java.util.function.BiConsumer<String, com.aresstack.spaceharvester.app.chat.ChatExport.Format>
                                   export) {
         artifacts.connect(store, open, export);
+        artifacts.books(this::newBookEdition, this::showFavoriteFolder);
+    }
+
+    /** „Ordner in den Wissensquellen zeigen“ am Buch: links die Favoriten, der Ordner gewählt. */
+    void showFavoriteFolder(String folderId) {
+        if (folderId == null) {
+            return;
+        }
+        showArtifacts(false);
+        showOnlyFavorites(true);
+        favorites.select(folderId);
+    }
+
+    /** Öffnet ein Artefakt des Projekts über den Navigator: links „Artefakte“, die Liste frisch gelesen. */
+    void revealArtifacts() {
+        showArtifacts(true);
+        artifacts.reload();
     }
 
     /** Meldet jeden Wechsel der Wippe: {@code true} heißt, links stehen die Artefakte. */

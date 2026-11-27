@@ -37,6 +37,9 @@ final class ArtifactList {
     static final String EXPORT = "Ausgeben";
     static final String RESTORE = "Wiederherstellen";
     static final String RESTORE_TIP = "Gelöscht – Klick stellt das Artefakt wieder her (bis zum nächsten Start)";
+    static final String SHOW_FOLDER = "Ordner in den Wissensquellen zeigen";
+    static final String STALE_TIP = Texts.BOOK_STALE + " – Klick auf „" + com.aresstack.spaceharvester.app.ui
+            .controls.TabHeader.STALE + "“ erzeugt eine neue Auflage";
 
     private final AppContext context;
     private final DefaultListModel<ChatArtifact> model = new DefaultListModel<>();
@@ -60,6 +63,18 @@ final class ArtifactList {
     /** Gelöschte bis zum nächsten Start, durchgestrichen am Ende der Liste wie gelöschte Chats. */
     private List<ChatArtifact> trash = List.of();
     private final java.util.Set<String> trashed = new java.util.HashSet<>();
+    /** Bücher: ihr Favoritenordner und ob die neueste Auflage veraltet ist; im Hintergrund gelesen. */
+    private final java.util.Map<String, String> bookFolders = new java.util.HashMap<>();
+    private final java.util.Set<String> staleBooks = new java.util.HashSet<>();
+    private int bookCheck;
+    private Consumer<String> newEdition = folderId -> { };
+    private Consumer<String> showFolder = folderId -> { };
+    /** Hält die Meldung neuer Auflagen, solange die Liste lebt. */
+    @SuppressWarnings("unused")
+    private final AutoCloseable editions;
+    /** Liest Dateien abseits des EDT und meldet auf dem EDT zurück; Tests rechnen gleich. */
+    java.util.function.BiConsumer<java.util.concurrent.Callable<BookStates>, Consumer<BookStates>> background =
+            (work, done) -> Background.run(work, done, failure -> { });
     /** Die „wirklich“-Rückfrage (Ja/Nein) vor dem Löschen; Tests antworten selbst. */
     java.util.function.BiPredicate<String, String> confirm = (title, question) ->
             Dialogs.confirm(list, title, question);
@@ -73,13 +88,21 @@ final class ArtifactList {
         list.setFont(Comic.regular(13f));
         list.setSelectionBackground(Comic.YELLOW);
         list.setSelectionForeground(Comic.INK);
-        list.setCellRenderer(new Row(trashed));
+        list.setCellRenderer(new Row(trashed, staleBooks));
         list.getAccessibleContext().setAccessibleName("Artefakte");
         javax.swing.ToolTipManager.sharedInstance().registerComponent(list);
         list.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {
-                if (SwingUtilities.isLeftMouseButton(event)) {
+                if (!SwingUtilities.isLeftMouseButton(event)) {
+                    return;
+                }
+                int row = list.locationToIndex(event.getPoint());
+                String folderId = row < 0 ? null : bookFolders.get(model.get(row).id());
+                // „Veraltet“ am Buch ist zugleich der Knopf, wie im Analysebereich.
+                if (folderId != null && onStaleBadge(row, event.getPoint())) {
+                    newEdition.accept(folderId);
+                } else {
                     openSelected();
                 }
             }
@@ -111,6 +134,15 @@ final class ArtifactList {
         scroll = Comic.scroll(list);
         context.projects().addListener(() -> SwingUtilities.invokeLater(this::reload));
         context.onChange(ignored -> reload());
+        // Eine neue Auflage macht das Buch wieder aktuell (oder legt es an).
+        editions = com.aresstack.spaceharvester.app.research.BookArtifacts.onChange(
+                folderId -> SwingUtilities.invokeLater(this::reload));
+    }
+
+    /** Was „Neue Auflage erzeugen“ und „Ordner in den Wissensquellen zeigen“ am Buch tun (Ordner-ID). */
+    void books(Consumer<String> newEdition, Consumer<String> showFolder) {
+        this.newEdition = newEdition == null ? folderId -> { } : newEdition;
+        this.showFolder = showFolder == null ? folderId -> { } : showFolder;
     }
 
     JComponent component() {
@@ -159,6 +191,69 @@ final class ArtifactList {
                     .toList();
         }
         show();
+        checkBooks();
+    }
+
+    /** Ordner und Stand der Bücher; nach einer Auflage oder einem Wechsel des Projekts neu. */
+    record BookStates(java.util.Map<String, String> folders, java.util.Set<String> stale) {
+    }
+
+    private void checkBooks() {
+        List<String> books = all.stream().map(ChatArtifact::id).filter(id -> id.startsWith(ChatArtifactStore.BOOK))
+                .toList();
+        int mine = ++bookCheck;
+        var artifacts = context.bookArtifacts();
+        if (books.isEmpty() || artifacts == null) {
+            applyBooks(new BookStates(java.util.Map.of(), java.util.Set.of()));
+            return;
+        }
+        String projectId = projectId();
+        background.accept(() -> {
+            java.util.Map<String, String> folders = new java.util.HashMap<>();
+            java.util.Set<String> stale = new java.util.HashSet<>();
+            for (String id : books) {
+                String folderId = artifacts.folderOf(projectId, id);
+                if (folderId != null) {
+                    folders.put(id, folderId);
+                    if (artifacts.stale(folderId)) {
+                        stale.add(id);
+                    }
+                }
+            }
+            return new BookStates(folders, stale);
+        }, states -> {
+            if (mine == bookCheck) {
+                applyBooks(states);
+            }
+        });
+    }
+
+    private void applyBooks(BookStates states) {
+        bookFolders.clear();
+        bookFolders.putAll(states.folders());
+        staleBooks.clear();
+        staleBooks.addAll(states.stale());
+        list.repaint();
+    }
+
+    /** Für Tests: die Bücher mit veralteter neuester Auflage. */
+    java.util.Set<String> staleBooks() {
+        return java.util.Set.copyOf(staleBooks);
+    }
+
+    /** Ob der Punkt in der Zeile auf dem Abzeichen „Veraltet“ liegt. */
+    boolean onStaleBadge(int row, java.awt.Point point) {
+        java.awt.Rectangle cell = list.getCellBounds(row, row);
+        if (cell == null || !cell.contains(point) || !staleBooks.contains(model.get(row).id())) {
+            return false;
+        }
+        Row renderer = (Row) list.getCellRenderer().getListCellRendererComponent(list, model.get(row), row,
+                list.isSelectedIndex(row), false);
+        renderer.setBounds(0, 0, cell.width, cell.height);
+        renderer.doLayout();
+        renderer.side.doLayout();
+        java.awt.Rectangle badge = SwingUtilities.convertRectangle(renderer.side, renderer.stale.getBounds(), renderer);
+        return renderer.stale.isVisible() && badge.contains(point.x - cell.x, point.y - cell.y);
     }
 
     /** Für Tests: die gezeigten Kennungen in ihrer Reihenfolge. */
@@ -209,6 +304,19 @@ final class ArtifactList {
         menu.add(openItem);
         menu.add(exportMenu(artifact));
         menu.add(renameItem);
+        String folderId = bookFolders.get(artifact.id());
+        if (artifact.id().startsWith(ChatArtifactStore.BOOK)) {
+            javax.swing.JMenuItem editionItem = new javax.swing.JMenuItem(Texts.NEW_EDITION);
+            editionItem.setToolTipText(Texts.NEW_EDITION_TIP);
+            editionItem.addActionListener(event -> newEdition.accept(folderId));
+            editionItem.setEnabled(folderId != null);
+            javax.swing.JMenuItem folderItem = new javax.swing.JMenuItem(SHOW_FOLDER);
+            folderItem.addActionListener(event -> showFolder.accept(folderId));
+            folderItem.setEnabled(folderId != null);
+            menu.addSeparator();
+            menu.add(editionItem);
+            menu.add(folderItem);
+        }
         menu.addSeparator();
         menu.add(deleteItem);
         return menu;
@@ -314,16 +422,24 @@ final class ArtifactList {
     private static final class Row extends javax.swing.JPanel implements javax.swing.ListCellRenderer<ChatArtifact> {
         private final javax.swing.JLabel title = new javax.swing.JLabel();
         private final javax.swing.JLabel time = new javax.swing.JLabel();
+        /** „Veraltet“ am Buch, dasselbe Abzeichen wie im Analysebereich. */
+        final javax.swing.JLabel stale = com.aresstack.spaceharvester.app.ui.controls.TabHeader.staleBadge();
+        final javax.swing.JPanel side = new javax.swing.JPanel(new java.awt.BorderLayout(6, 0));
         private final java.util.Set<String> trashed;
+        private final java.util.Set<String> staleBooks;
 
-        Row(java.util.Set<String> trashed) {
+        Row(java.util.Set<String> trashed, java.util.Set<String> staleBooks) {
             super(new java.awt.BorderLayout(6, 0));
             this.trashed = trashed;
+            this.staleBooks = staleBooks;
             setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 6));
             title.setIconTextGap(6);
             time.setForeground(Comic.MUTED);
+            side.setOpaque(false);
+            side.add(stale, java.awt.BorderLayout.WEST);
+            side.add(time, java.awt.BorderLayout.EAST);
             add(title, java.awt.BorderLayout.CENTER);
-            add(time, java.awt.BorderLayout.EAST);
+            add(side, java.awt.BorderLayout.EAST);
         }
 
         @Override
@@ -340,8 +456,12 @@ final class ArtifactList {
             time.setText(when(changedAt(artifact), java.time.ZoneId.systemDefault(), java.time.LocalDate.now()));
             java.awt.Insets in = getInsets();
             int room = owner.getWidth() - in.left - in.right;
-            time.setVisible(!gone && title.getPreferredSize().width + 6 + time.getPreferredSize().width <= room);
-            setToolTipText(gone ? RESTORE_TIP : text);
+            // Das Abzeichen bleibt immer (der Titel kürzt sich davor); die Zeit weicht zuerst.
+            boolean old = !gone && staleBooks.contains(artifact.id());
+            stale.setVisible(old);
+            time.setVisible(!gone);
+            time.setVisible(!gone && title.getPreferredSize().width + 6 + side.getPreferredSize().width <= room);
+            setToolTipText(gone ? RESTORE_TIP : old ? text + " · " + STALE_TIP : text);
             setOpaque(selected);
             setBackground(owner.getSelectionBackground());
             return this;
