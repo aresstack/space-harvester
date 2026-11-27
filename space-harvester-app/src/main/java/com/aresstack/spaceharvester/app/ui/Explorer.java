@@ -554,6 +554,8 @@ public final class Explorer {
     final com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle view =
             new com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle();
     private final ArtifactList artifacts;
+    /** Wer erfährt, ob links die Artefakte stehen: die Mitte folgt der Wippe (ADR 0047 §5). */
+    private Consumer<Boolean> artifactsListener = shown -> { };
     /** Ob beim Drücken auf „Wissensquellen“ diese Hälfte schon gewählt war: dann wählt der Klick alles, wie bisher. */
     private boolean sourcesBeforePress;
     /** Rechts neben den Kopfknöpfen: die Spalte der Sterne bleibt frei. */
@@ -2816,6 +2818,7 @@ public final class Explorer {
         favorites.newFolderButton().setVisible(!shown && onlyFavorites);
         head.setOpaque(!shown && global);
         head.repaint();
+        artifactsListener.accept(shown);
         if (shown) {
             note.setText(" ");
             cards.show(deck, ARTIFACTS);
@@ -2842,6 +2845,20 @@ public final class Explorer {
     public void artifacts(com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore store,
                           Consumer<String> open) {
         artifacts.connect(store, open);
+    }
+
+    /** Meldet jeden Wechsel der Wippe: {@code true} heißt, links stehen die Artefakte. */
+    public void onArtifactsShown(Consumer<Boolean> listener) {
+        artifactsListener = listener == null ? shown -> { } : listener;
+    }
+
+    /**
+     * Die Zahl am Chip der Hälfte „Artefakte“ (Entwurf UX 27.11.2026): wie viele Artefakte die KI seit dem letzten Blick
+     * angelegt oder geändert hat; 0 ohne Chip.
+     */
+    public void unseenArtifacts(int count) {
+        view.count(ARTIFACTS_TAB, count, Comic.PETROL, Texts.count(count, "Artefakt neu oder geändert",
+                "Artefakte neu oder geändert"), ARTIFACTS_TIP);
     }
 
     /** Für Tests: die Liste der Artefakte. */

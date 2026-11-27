@@ -24,18 +24,22 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
- * Die Artefakte des offenen Chats als schließbare Reiter in der Export-Ansicht (ADR 0045, Abschnitt 5; Angelo
- * 27.11.2026: „Schreiben ist eine Art Export“), daneben die Export-Reiter: Ein Klick auf einen Knopf der Ausgabe
- * öffnet einen eigenen Reiter für Auswahl und Auftrag, der stehen bleibt. Die Reiterzeile erscheint erst, wenn ein Reiter
- * offen ist; in den anderen Ansichten gibt es sie nicht. Ohne gewählten Reiter zeigt die Fläche den Export der Auswahl
- * links; wählt der Benutzer links etwas Neues, kommt er zurück und die Reiter bleiben stehen. Die Knöpfe unten
- * ({@link #footBar}) richten sich nach dem gewählten Reiter. Welche Reiter offen waren, merkt sich der Chat ({@link ChatArtifactStore#openTabs}).
+ * Schließbare Reiter über einer Fläche, in zwei Rollen (ADR 0047 §5, Entwurf UX 27.11.2026):
+ * <ul>
+ *   <li>als <b>Artefakt-Mitte</b>, wenn links „Artefakte“ steht: die geöffneten Artefakte des Projekts, über einem
+ *       Hinweis, solange keines gewählt ist. Welche Reiter offen waren, merkt sich der Chat
+ *       ({@link ChatArtifactStore#openTabs}).</li>
+ *   <li>im Reiter <b>„Export“</b>: nur die Export-Reiter über der Export-Fläche der Auswahl links. Ein Klick auf einen
+ *       Knopf der Ausgabe öffnet einen eigenen Reiter für Auswahl und Auftrag, der stehen bleibt.</li>
+ * </ul>
+ * Die Reiterzeile erscheint erst, wenn ein Reiter offen ist. Die Knöpfe unten ({@link #footBar}) richten sich nach dem
+ * gewählten Reiter.
  */
 final class ArtifactTabs implements ChatPanel.ArtifactHost {
 
     static final String CLOSE = "Reiter schließen (auch Mittelklick auf den Reiter)";
     static final String UNDO = "Letzte Änderung rückgängig machen";
-    static final String DELETE = "Artefakt löschen (bis zum nächsten Start im ▾-Menü wiederherstellbar)";
+    static final String DELETE = "Artefakt löschen (bis zum nächsten Start links unter „Artefakte“ wiederherstellbar)";
     static final String DELETE_TITLE = com.aresstack.spaceharvester.app.ui.Texts.ARTIFACT_DELETE_TITLE;
 
     static String deleteQuestion(String title) {
@@ -86,6 +90,10 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     private Path folder;
     private String chatId;
     private volatile String selected;
+    /** Ob diese Fläche vorn steht; nur die Artefakt-Mitte wird je verdeckt. */
+    private boolean front = true;
+    private int unseen;
+    private java.util.function.IntConsumer unseenChanged = count -> { };
 
     private record Tab(ClosableTab pill, ArtifactView view) {
     }
@@ -189,9 +197,48 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         reveal.run();
     }
 
-    /** Was beim Öffnen eines Artefakts die Export-Ansicht nach vorn holt. */
+    /** Was beim Öffnen eines Artefakts die Artefakt-Mitte nach vorn holt (links „Artefakte“). */
     void reveal(Runnable reveal) {
         this.reveal = reveal == null ? () -> { } : reveal;
+    }
+
+    /**
+     * Die KI hat ein Artefakt angelegt oder geändert (ADR 0047 §5, Entwurf UX): Steht die Artefakt-Mitte vorn, wie
+     * {@link #open}. Sonst schaltet nichts um: Der Reiter kommt still dazu, die Zahl am Chip der Wippe steigt, und die
+     * Statuszeile meldet es einmal.
+     */
+    @Override
+    public void changed(String artifactId) {
+        if (front || chatId == null || artifactId == null) {
+            open(artifactId);
+            return;
+        }
+        String id = artifactId.strip().toUpperCase(java.util.Locale.ROOT);
+        ChatArtifact artifact = store.read(folder, chatId, id);
+        if (artifact == null) {
+            return;
+        }
+        if (!tabs.containsKey(id) && add(id) != null) {
+            remember();
+        }
+        unseen++;
+        unseenChanged.accept(unseen);
+        status.accept((artifact.kind() == ChatArtifact.Kind.GRAPHIC ? "Grafik" : "Dokument") + " „"
+                + artifact.title() + "“ " + (artifact.revision() <= 1 ? "angelegt" : "geändert"));
+    }
+
+    /** Ob die Artefakt-Mitte vorn steht; beim Öffnen verschwindet die Zahl am Chip. */
+    void front(boolean shown) {
+        front = shown;
+        if (shown && unseen > 0) {
+            unseen = 0;
+            unseenChanged.accept(0);
+        }
+    }
+
+    /** Meldet, wie viele Artefakte seit dem letzten Blick neu oder geändert sind (Chip an „Artefakte“). */
+    void onUnseen(java.util.function.IntConsumer listener) {
+        unseenChanged = listener == null ? count -> { } : listener;
     }
 
     /** Alle Artefakte des offenen Chats (für das Menü „Weitere Aktionen“), auch die ohne offenen Reiter. */
@@ -398,21 +445,8 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         if (result.success()) {
             close(artifact.id());
         }
-        status.accept(result.success() ? "Gelöscht: " + artifact.title() + " (bis zum nächsten Start im ▾-Menü "
-                + "wiederherstellbar)" : result.reason());
-    }
-
-    /** Die gelöschten Artefakte für das ▾-Menü (durchgestrichen, Klick stellt wieder her). */
-    List<ChatArtifact> deletedArtifacts() {
-        return folder == null ? List.of() : store.deleted(folder, chatId);
-    }
-
-    /** Stellt ein gelöschtes Artefakt wieder her und öffnet es. */
-    void restore(String artifactId) {
-        ChatArtifact restored = folder == null ? null : store.restore(folder, chatId, artifactId);
-        if (restored != null) {
-            open(restored.id());
-        }
+        status.accept(result.success() ? "Gelöscht: " + artifact.title() + " (bis zum nächsten Start links unter "
+                + "„Artefakte“ wiederherstellbar)" : result.reason());
     }
 
     private void refreshUndo() {

@@ -1356,9 +1356,8 @@ public final class PageDetailPanel extends JPanel {
         } else if (SOURCE_CARD.equals(pageCard) || wide && pageId == null) {
             more.setEnabled(false);
         }
-        if (artifactTabs != null && (export.selection() != null || !artifactTabs.artifacts().isEmpty()
-                || !artifactTabs.deletedArtifacts().isEmpty())) {
-            more.setEnabled(true); // „Neuer Export“ und die Artefakte des Chats stehen in jedem Fall im Menü
+        if (artifactTabs != null && export.selection() != null) {
+            more.setEnabled(true); // „Neuer Export“ steht in jedem Fall im Menü
         }
         heading.revalidate();
         heading.repaint();
@@ -1849,9 +1848,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Setzt die Export-Ansicht mit den Artefakt-Reitern ein (ADR 0045, Abschnitt 5): Sie umschließt den Export und
-     * steht an seiner Stelle; ein geöffnetes Artefakt holt den Reiter „Export“ nach vorn. Im Menü
-     * „Weitere Aktionen“ stehen danach alle Artefakte des Chats.
+     * Setzt die Export-Ansicht mit den Export-Reitern ein (ADR 0045 §5, ADR 0047 §5): Sie umschließt den Export und
+     * steht an seiner Stelle; ein neuer Export-Reiter holt den Reiter „Export“ nach vorn.
      */
     void artifactTabs(ArtifactTabs artifactTabs) {
         this.artifactTabs = artifactTabs;
@@ -6412,8 +6410,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Unter einer Linie alle Artefakte des Chats (Angelo 27.11.2026): Ein Klick öffnet den Reiter in der
-     * Export-Ansicht wieder, auch nachdem er geschlossen wurde.
+     * Unter einer Linie „Neuer Export“ (ADR 0045 §5). Die Artefakte stehen nicht mehr hier, sondern links unter
+     * „Artefakte“ (ADR 0047 §5).
      */
     private void addArtifacts(javax.swing.JPopupMenu menu) {
         if (artifactTabs == null) {
@@ -6426,32 +6424,10 @@ public final class PageDetailPanel extends JPanel {
         ExportPanel.Selection current = export.selection();
         menu.add(menuItem(NEW_EXPORT, NEW_EXPORT_TIP, current != null,
                 () -> artifactTabs.openExport(current, null)));
-        List<com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact> artifacts = artifactTabs.artifacts();
-        for (com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact artifact : artifacts) {
-            String kind = artifact.kind() == com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact.Kind.GRAPHIC
-                    ? ARTIFACT_GRAPHIC : ARTIFACT_DOCUMENT;
-            menu.add(menuItem(kind + artifact.title(), ARTIFACT_TIP, true, () -> artifactTabs.open(artifact.id())));
-        }
-        // Gelöschte bis zum nächsten Start, durchgestrichen wie gelöschte Chats; ein Klick stellt wieder her.
-        for (com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact artifact : artifactTabs.deletedArtifacts()) {
-            String kind = artifact.kind() == com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact.Kind.GRAPHIC
-                    ? ARTIFACT_GRAPHIC : ARTIFACT_DOCUMENT;
-            menu.add(menuItem("<html><s>" + escapeArtifactTitle(kind + artifact.title()) + "</s></html>",
-                    ARTIFACT_RESTORE_TIP, true, () -> artifactTabs.restore(artifact.id())));
-        }
     }
-
-    private static String escapeArtifactTitle(String text) {
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-    }
-
-    static final String ARTIFACT_RESTORE_TIP = "Gelöscht – Klick stellt das Artefakt wieder her";
 
     static final String NEW_EXPORT = "Neuer Export";
     static final String NEW_EXPORT_TIP = "Öffnet einen Export-Reiter für die Auswahl links";
-    static final String ARTIFACT_DOCUMENT = "Dokument: ";
-    static final String ARTIFACT_GRAPHIC = "Grafik: ";
-    static final String ARTIFACT_TIP = "Öffnet das Artefakt dieses Chats als Reiter in der Export-Ansicht";
 
     private javax.swing.JPopupMenu pageMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();

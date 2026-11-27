@@ -21,6 +21,44 @@ class ArtifactTabsTest {
     Path home;
 
     @Test
+    void whatTheAiChangesWhileTheArtifactsAreHiddenOnlyCountsAndIsReported() throws Exception {
+        // ADR 0047 §5: Steht links „Wissensquellen“, schaltet nichts um; Chip an der Wippe und eine Statusmeldung.
+        ChatStore chats = new ChatStore(() -> home.resolve("chats"));
+        ChatNode node = new ChatNode("wiki", null, null);
+        ChatRecord chat = ChatRecord.fresh(1).plus(ChatRecord.Message.user("Schreib", 1), 1);
+        chats.save(node, chat);
+        Path folder = chats.folder(node);
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.createDocument(folder, chat.id(), "Gartenfibel", "# Gartenfibel", ChatArtifact.Origin.AI);
+        java.util.List<String> status = new java.util.ArrayList<>();
+        java.util.List<Integer> counts = new java.util.ArrayList<>();
+        int[] revealed = {0};
+        ArtifactTabs[] tabs = new ArtifactTabs[1];
+        SwingUtilities.invokeAndWait(() -> {
+            tabs[0] = new ArtifactTabs(store, new JLabel("Kein Artefakt"), () -> null, status::add, null);
+            tabs[0].reveal(() -> revealed[0]++);
+            tabs[0].onUnseen(counts::add);
+            tabs[0].front(false);
+            tabs[0].chat(folder, chat.id());
+            tabs[0].changed("D1");
+        });
+        assertThat(revealed[0]).as("nichts schaltet um").isZero();
+        assertThat(tabs[0].focus()).isNull();
+        assertThat(tabs[0].openIds()).containsExactly("D1");
+        assertThat(counts).containsExactly(1);
+        assertThat(status).containsExactly("Dokument „Gartenfibel“ angelegt");
+
+        // Unter „Artefakte“ verschwindet die Zahl; dann wie bisher: öffnen und zeigen.
+        SwingUtilities.invokeAndWait(() -> {
+            tabs[0].front(true);
+            tabs[0].changed("D1");
+        });
+        assertThat(counts).containsExactly(1, 0);
+        assertThat(tabs[0].focus()).isEqualTo("D1");
+        assertThat(revealed[0]).isEqualTo(1);
+    }
+
+    @Test
     void anArtifactIsDeletedAfterAskingAndComesBackFromTheTrash() throws Exception {
         // ADR 0047: Löschen am Artefakt nach „wirklich löschen?“; bis zum nächsten Start wiederherstellbar.
         ChatStore chats = new ChatStore(() -> home.resolve("chats"));
@@ -50,14 +88,14 @@ class ArtifactTabsTest {
         SwingUtilities.invokeAndWait(() -> tabs[0].deleteSelected());
         assertThat(tabs[0].artifacts()).isEmpty();
         assertThat(tabs[0].openIds()).as("der Reiter geht zu").isEmpty();
-        assertThat(tabs[0].deletedArtifacts()).extracting(ChatArtifact::id).containsExactly("D1");
+        assertThat(store.deleted(folder, chat.id())).extracting(ChatArtifact::id).containsExactly("D1");
         assertThat(store.createDocument(folder, chat.id(), "Brief", "", ChatArtifact.Origin.AI).id())
                 .as("die Kennung im Papierkorb wird nicht neu vergeben").isEqualTo("D2");
 
-        SwingUtilities.invokeAndWait(() -> tabs[0].restore("D1"));
+        // Zurück holt es die Liste „Artefakte“ links (ArtifactList); hier nur der Speicher.
+        assertThat(store.restore(folder, chat.id(), "D1")).isNotNull();
         assertThat(tabs[0].artifacts()).extracting(ChatArtifact::id).containsExactly("D1", "D2");
-        assertThat(tabs[0].openIds()).containsExactly("D1");
-        assertThat(tabs[0].deletedArtifacts()).isEmpty();
+        assertThat(store.deleted(folder, chat.id())).isEmpty();
     }
 
     @Test

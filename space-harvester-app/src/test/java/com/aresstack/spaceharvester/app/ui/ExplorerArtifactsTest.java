@@ -106,7 +106,13 @@ class ExplorerArtifactsTest {
         SwingUtilities.invokeAndWait(() -> { });
         SwingUtilities.invokeAndWait(() -> {
             ArtifactList list = holder[0].artifactList();
-            assertThat(list.shownIds()).containsExactly(book.id(), flow.id());
+            // Gelöscht steht es durchgestrichen am Ende, bis zum nächsten Start; ein Klick holt es zurück.
+            assertThat(list.shownIds()).containsExactly(book.id(), flow.id(), notes.id());
+            assertThat(list.menu(list.list().getModel().getElementAt(2)).getComponentCount()).isEqualTo(1);
+            list.restore(list.list().getModel().getElementAt(2));
+            assertThat(opened).containsExactly(flow.id(), notes.id());
+            assertThat(store.listInProject(null)).extracting(ChatArtifact::id)
+                    .containsExactlyInAnyOrder(book.id(), flow.id(), notes.id());
 
             list.askTitle = current -> "Lagerprozesse 2027";
             list.rename(store.readInProject(null, book.id()));

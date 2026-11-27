@@ -28,12 +28,14 @@ import java.util.function.Consumer;
  */
 final class ArtifactList {
 
-    static final String EMPTY = "Noch keine Artefakte im Projekt: Dokumente und Grafiken entstehen im Chat";
+    static final String EMPTY = "In diesem Projekt gibt es noch keine Artefakte.";
     static final String NOTHING_FOUND = "Kein Artefakt mit diesem Titel";
     static final String OPEN = "Öffnen";
     static final String RENAME = "Umbenennen …";
     static final String RENAME_TITLE = "Artefakt umbenennen";
     static final String DELETE = "Löschen …";
+    static final String RESTORE = "Wiederherstellen";
+    static final String RESTORE_TIP = "Gelöscht – Klick stellt das Artefakt wieder her (bis zum nächsten Start)";
 
     private final AppContext context;
     private final DefaultListModel<ChatArtifact> model = new DefaultListModel<>();
@@ -51,6 +53,9 @@ final class ArtifactList {
     private Consumer<String> note = text -> { };
     private String filter = "";
     private List<ChatArtifact> all = List.of();
+    /** Gelöschte bis zum nächsten Start, durchgestrichen am Ende der Liste wie gelöschte Chats. */
+    private List<ChatArtifact> trash = List.of();
+    private final java.util.Set<String> trashed = new java.util.HashSet<>();
     /** Die „wirklich“-Rückfrage (Ja/Nein) vor dem Löschen; Tests antworten selbst. */
     java.util.function.BiPredicate<String, String> confirm = (title, question) ->
             Dialogs.confirm(list, title, question);
@@ -64,7 +69,7 @@ final class ArtifactList {
         list.setFont(Comic.regular(13f));
         list.setSelectionBackground(Comic.YELLOW);
         list.setSelectionForeground(Comic.INK);
-        list.setCellRenderer(new Row());
+        list.setCellRenderer(new Row(trashed));
         list.getAccessibleContext().setAccessibleName("Artefakte");
         javax.swing.ToolTipManager.sharedInstance().registerComponent(list);
         list.addMouseListener(new MouseAdapter() {
@@ -139,7 +144,9 @@ final class ArtifactList {
     void reload() {
         if (store == null) {
             all = List.of();
+            trash = List.of();
         } else {
+            trash = store.deletedInProject(projectId());
             all = store.listInProject(projectId()).stream()
                     .sorted(Comparator.comparingLong(ArtifactList::changedAt).reversed()
                             .thenComparing(ChatArtifact::id))
@@ -165,7 +172,9 @@ final class ArtifactList {
     private void show() {
         String keep = list.getSelectedValue() == null ? null : list.getSelectedValue().id();
         model.clear();
-        for (ChatArtifact artifact : all) {
+        trashed.clear();
+        trash.forEach(artifact -> trashed.add(artifact.id()));
+        for (ChatArtifact artifact : java.util.stream.Stream.concat(all.stream(), trash.stream()).toList()) {
             if (filter.isEmpty() || artifact.title().toLowerCase(Locale.ROOT).contains(filter)) {
                 model.addElement(artifact);
                 if (artifact.id().equals(keep)) {
@@ -179,6 +188,12 @@ final class ArtifactList {
     /** Das Rechtsklick-Menü: nur, was für die Art gilt (Entwurf UX 27.11.2026). */
     javax.swing.JPopupMenu menu(ChatArtifact artifact) {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        if (trashed.contains(artifact.id())) {
+            javax.swing.JMenuItem restoreItem = new javax.swing.JMenuItem(RESTORE);
+            restoreItem.addActionListener(event -> restore(artifact));
+            menu.add(restoreItem);
+            return menu;
+        }
         javax.swing.JMenuItem openItem = new javax.swing.JMenuItem(OPEN);
         openItem.addActionListener(event -> open.accept(artifact.id()));
         javax.swing.JMenuItem renameItem = new javax.swing.JMenuItem(RENAME);
@@ -217,7 +232,7 @@ final class ArtifactList {
 
     /** Löscht nach Rückfrage; bis zum nächsten Start im Papierkorb. */
     void delete(ChatArtifact artifact) {
-        if (artifact == null || store == null
+        if (artifact == null || store == null || trashed.contains(artifact.id())
                 || !confirm.test(Texts.ARTIFACT_DELETE_TITLE, Texts.artifactDeleteQuestion(artifact.title()))) {
             return;
         }
@@ -230,8 +245,24 @@ final class ArtifactList {
 
     private void openSelected() {
         ChatArtifact artifact = list.getSelectedValue();
-        if (artifact != null) {
+        if (artifact == null) {
+            return;
+        }
+        if (trashed.contains(artifact.id())) {
+            restore(artifact);
+        } else {
             open.accept(artifact.id());
+        }
+    }
+
+    /** Holt ein gelöschtes Artefakt zurück und öffnet es. */
+    void restore(ChatArtifact artifact) {
+        if (artifact == null || store == null) {
+            return;
+        }
+        ChatArtifact restored = store.restoreInProject(projectId(), artifact.id());
+        if (restored != null) {
+            open.accept(restored.id());
         }
     }
 
@@ -258,9 +289,11 @@ final class ArtifactList {
     private static final class Row extends javax.swing.JPanel implements javax.swing.ListCellRenderer<ChatArtifact> {
         private final javax.swing.JLabel title = new javax.swing.JLabel();
         private final javax.swing.JLabel time = new javax.swing.JLabel();
+        private final java.util.Set<String> trashed;
 
-        Row() {
+        Row(java.util.Set<String> trashed) {
             super(new java.awt.BorderLayout(6, 0));
+            this.trashed = trashed;
             setBorder(BorderFactory.createEmptyBorder(3, 2, 3, 6));
             title.setIconTextGap(6);
             time.setForeground(Comic.MUTED);
@@ -273,14 +306,17 @@ final class ArtifactList {
                                                       int index, boolean selected, boolean focus) {
             title.setFont(owner.getFont());
             time.setFont(owner.getFont().deriveFont(owner.getFont().getSize2D() - 1f));
-            title.setForeground(selected ? owner.getSelectionForeground() : Comic.INK);
-            title.setText(artifact.title());
+            boolean gone = trashed.contains(artifact.id());
+            title.setForeground(selected ? owner.getSelectionForeground() : gone ? Comic.MUTED : Comic.INK);
+            String text = artifact.title() == null ? "" : artifact.title();
+            title.setText(gone ? "<html><s>" + text.replace("&", "&amp;").replace("<", "&lt;") + "</s></html>"
+                    : text);
             title.setIcon(icon(artifact));
             time.setText(when(changedAt(artifact), java.time.ZoneId.systemDefault(), java.time.LocalDate.now()));
             java.awt.Insets in = getInsets();
             int room = owner.getWidth() - in.left - in.right;
-            time.setVisible(title.getPreferredSize().width + 6 + time.getPreferredSize().width <= room);
-            setToolTipText(artifact.title());
+            time.setVisible(!gone && title.getPreferredSize().width + 6 + time.getPreferredSize().width <= room);
+            setToolTipText(gone ? RESTORE_TIP : text);
             setOpaque(selected);
             setBackground(owner.getSelectionBackground());
             return this;

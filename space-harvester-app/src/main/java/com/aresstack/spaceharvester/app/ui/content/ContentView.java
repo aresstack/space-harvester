@@ -43,9 +43,28 @@ public final class ContentView implements View {
     private final com.aresstack.spaceharvester.app.ui.controls.StatusLabel statusInfo =
             new com.aresstack.spaceharvester.app.ui.controls.StatusLabel();
     private final JPanel body = new JPanel(new BorderLayout());
+    /**
+     * Die Mitte folgt der Wippe links (ADR 0047 §5): unter „Wissensquellen“ die Seitenansicht, unter „Artefakte“ die
+     * geöffneten Artefakte. Beim Zurückschalten steht die Seite, wie man sie verlassen hat.
+     */
+    private final java.awt.CardLayout middle = new java.awt.CardLayout();
+    private final JPanel middleDeck = new JPanel(middle);
+    private static final String PAGE_MIDDLE = "seite";
+    private static final String ARTIFACT_MIDDLE = "artefakte";
+    static final String NO_ARTIFACT = "Kein Artefakt geöffnet: links eines wählen";
+    /** Die untere Leiste: unter „Artefakte“ die Formate des Artefakts vorn, sonst die der Seitenansicht. */
+    private final JPanel tools = new JPanel(new BorderLayout());
+    private boolean artifactsFront;
+    private JPanel north;
+    /** Wünscht die Artefakt-Mitte (Klick auf einen Verweis im Chat): links auf „Artefakte“ schalten. */
+    private Runnable artifactsWanted = () -> { };
+    /** Wünscht die Seite (ein Reiter der Seitenansicht wurde gewählt): links auf „Wissensquellen“ schalten. */
+    private Runnable pageWanted = () -> { };
+    /** Die Export-Reiter im Reiter „Export“; Artefakte stehen dort nicht mehr. */
+    private final ArtifactTabs exportTabs;
     /** Die Einmalcode-Abfrage der gezeigten Wissensquelle (ADR 0018), etwa für Anhänge und Bilder. */
     private final SignInSlot signIn;
-    /** Die Artefakte des offenen Chats als Reiter in der Mitte (ADR 0045). */
+    /** Die geöffneten Artefakte als Reiter in der Artefakt-Mitte (ADR 0047 §5). */
     private final ArtifactTabs artifactTabs;
 
     private String sourceId;
@@ -104,7 +123,7 @@ public final class ContentView implements View {
         top.add(detail.headerTitle(), BorderLayout.CENTER);
         top.add(detail.headerActions(), BorderLayout.EAST);
 
-        JPanel north = new JPanel(new BorderLayout());
+        north = new JPanel(new BorderLayout());
         north.setOpaque(false);
         north.add(top, BorderLayout.NORTH);
         signIn.setBorder(BorderFactory.createEmptyBorder(8, 12, 0, 12));
@@ -112,14 +131,28 @@ public final class ContentView implements View {
         root.add(north, BorderLayout.NORTH);
         body.setOpaque(false);
         root.add(body, BorderLayout.CENTER);
-        body.add(detail, BorderLayout.CENTER);
-        // Artefakte des Chats als Reiter, nur in der Export-Ansicht (ADR 0045, Abschnitt 5).
-        artifactTabs = new ArtifactTabs(detail.chat().artifactStore(), detail.export(),
-                () -> context.settings() == null ? null : context.settings().outputDirectory(),
-                text -> statusInfo.show(com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(text)),
+        middleDeck.setOpaque(false);
+        body.add(middleDeck, BorderLayout.CENTER);
+        middleDeck.add(detail, PAGE_MIDDLE);
+        java.util.function.Supplier<java.nio.file.Path> output =
+                () -> context.settings() == null ? null : context.settings().outputDirectory();
+        java.util.function.Consumer<String> status =
+                text -> statusInfo.show(com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(text));
+        // Unter „Export“ nur noch Exporte (Entwurf UX 27.11.2026); derselbe Baustein ohne Chat.
+        exportTabs = new ArtifactTabs(detail.chat().artifactStore(), detail.export(), output, status,
                 () -> new ExportPanel(context));
-        detail.artifactTabs(artifactTabs);
+        detail.artifactTabs(exportTabs);
+        // Die Artefakt-Reiter ziehen aus „Export“ in die Artefakt-Mitte um (ADR 0047 §5).
+        JLabel none = Comic.muted(NO_ARTIFACT);
+        none.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
+        artifactTabs = new ArtifactTabs(detail.chat().artifactStore(), none, output, status, null);
+        artifactTabs.front(false);
+        artifactTabs.reveal(() -> artifactsWanted.run());
+        artifactTabs.onSelectionChanged(this::refreshTools);
+        middleDeck.add(artifactTabs.component(), ARTIFACT_MIDDLE);
         detail.chat().artifactHost(artifactTabs);
+        tools.setOpaque(false);
+        refreshTools();
         context.onChange(ignored -> renderCrumbs());
         renderCrumbs();
         // Die Checkbox am Ordner löst ihn mit der neuen Stellung auf; eine Änderung am Ordner gilt sofort, also auch
@@ -164,6 +197,60 @@ public final class ContentView implements View {
     /** Öffnet ein Artefakt des Projekts in der Mitte (Klick in der Liste „Artefakte“ links). */
     public void openArtifact(String artifactId) {
         artifactTabs.open(artifactId);
+    }
+
+    /**
+     * Die Mitte folgt der Wippe links (ADR 0047 §5): {@code true} zeigt die geöffneten Artefakte, {@code false} die
+     * Seitenansicht, wie man sie verlassen hat.
+     */
+    public void showArtifacts(boolean shown) {
+        artifactsFront = shown;
+        middle.show(middleDeck, shown ? ARTIFACT_MIDDLE : PAGE_MIDDLE);
+        north.setVisible(!shown);
+        artifactTabs.front(shown);
+        detail.tabs().showSelection(!shown);
+        refreshTools();
+        root.revalidate();
+        root.repaint();
+    }
+
+    /** Ob die Artefakt-Mitte vorn steht. */
+    public boolean artifactsShown() {
+        return artifactsFront;
+    }
+
+    /** Wer links auf „Artefakte“ schaltet, wenn ein Verweis im Chat ein Artefakt öffnet. */
+    public void onArtifactsWanted(Runnable listener) {
+        artifactsWanted = listener == null ? () -> { } : listener;
+    }
+
+    /** Wer links auf „Wissensquellen“ schaltet, wenn unter „Artefakte“ ein Reiter der Seitenansicht gewählt wird. */
+    public void onPageWanted(Runnable listener) {
+        pageWanted = listener == null ? () -> { } : listener;
+    }
+
+    /** Wie viele Artefakte die KI geändert hat, seit man zuletzt unter „Artefakte“ war (Chip an der Wippe). */
+    public void onUnseenArtifacts(java.util.function.IntConsumer listener) {
+        artifactTabs.onUnseen(listener);
+    }
+
+    /** Die Formate des Artefakts vorn unter „Artefakte“, sonst die Werkzeuge der Seitenansicht. */
+    private void refreshTools() {
+        JComponent shown = artifactsFront ? artifactTabs.footBar() : detail.footTools();
+        if (tools.getComponentCount() == 1 && tools.getComponent(0) == shown) {
+            return;
+        }
+        tools.removeAll();
+        if (shown != null) {
+            tools.add(shown, BorderLayout.CENTER);
+        }
+        tools.revalidate();
+        tools.repaint();
+    }
+
+    /** Für Tests: die Artefakt-Mitte. */
+    ArtifactTabs artifactTabs() {
+        return artifactTabs;
     }
 
     @Override
@@ -283,8 +370,13 @@ public final class ContentView implements View {
 
     /** Nach dem Laden kennt die Seite ihren Space. */
     private void pageShown(String sourceId, String spaceKey) {
-        // Wählt der Benutzer links etwas, kommt der Export der Auswahl zurück; offene Artefakt-Reiter bleiben stehen.
-        artifactTabs.showPage();
+        // Wählt der Benutzer links etwas, kommt der Export der Auswahl zurück; offene Export-Reiter bleiben stehen.
+        exportTabs.showPage();
+        // Öffnet sich eine Seite (etwa über einen Quellen-Link im Chat), während die Artefakte vorn stehen, kommt die
+        // Seite nach vorn und links „Wissensquellen“.
+        if (artifactsFront) {
+            pageWanted.run();
+        }
         this.sourceId = sourceId;
         this.spaceKey = spaceKey == null || spaceKey.isBlank() ? null : spaceKey;
         renderCrumbs();
@@ -383,7 +475,16 @@ public final class ContentView implements View {
      * (Angelo, 13.11.2026).
      */
     public JComponent tabBar() {
-        return detail.tabIcons();
+        JComponent bar = detail.tabIcons();
+        // Ein Reiter der Seitenansicht unter „Artefakte“ holt die Seite zurück und schaltet links um.
+        for (String name : detail.tabs().names()) {
+            detail.tabs().button(name).addActionListener(event -> {
+                if (artifactsFront) {
+                    pageWanted.run();
+                }
+            });
+        }
+        return bar;
     }
 
     /**
@@ -393,7 +494,7 @@ public final class ContentView implements View {
      */
     @Override
     public JComponent tools() {
-        return detail.footTools();
+        return tools;
     }
 
     /**
@@ -411,7 +512,7 @@ public final class ContentView implements View {
 
     /** Ob die Reiter ihre Auswahl zeigen: nur, solange die Mitte die Seitenansicht zeigt ({@link PillTabs#showSelection}). */
     public void tabsActive(boolean active) {
-        detail.tabs().showSelection(active);
+        detail.tabs().showSelection(active && !artifactsFront);
     }
 
     /**
@@ -419,7 +520,7 @@ public final class ContentView implements View {
      * „Chat“ (Angelo, 13.11.2026); {@code null} ohne Auswahl.
      */
     public void selection(ExportPanel.Selection selection) {
-        artifactTabs.showPage();
+        exportTabs.showPage();
         detail.export().selection(selection);
         detail.chat().onResolved(resolved -> detail.graph().within(resolved == null ? null : resolved.pages()));
         detail.chat().selection(selection);
