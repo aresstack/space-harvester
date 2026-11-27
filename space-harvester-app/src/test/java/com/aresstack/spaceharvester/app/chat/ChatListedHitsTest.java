@@ -30,4 +30,14 @@ class ChatListedHitsTest {
 
         assertEquals(List.of("lama", "alpaka"), ids);
     }
+
+    @Test
+    void sourcesWithoutOnlineSearchAreNamedSoTheModelDoesNotClaimNothingExists() {
+        String one = ChatTools.localOnlyNote(List.of("Ablage"));
+        String two = ChatTools.localOnlyNote(List.of("Ablage", "Dateien"));
+
+        assertEquals(true, one.startsWith("Hinweis: Ablage kann nicht online durchsucht werden"));
+        assertEquals(true, two.startsWith("Hinweis: Ablage, Dateien können nicht online durchsucht werden"));
+        assertEquals(true, two.contains("zuerst indexieren"));
+    }
 }

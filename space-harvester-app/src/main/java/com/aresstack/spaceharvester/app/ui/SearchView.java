@@ -1114,6 +1114,75 @@ public final class SearchView implements View {
                 && (scope.spaceKey() == null || scope.spaceKey().equals(hit.spaceKey())));
     }
 
+    /**
+     * Statuszeile einer Quelle ohne Online-Suche: Gesucht wurde nur im Index; was nicht indexiert ist, muss der Benutzer
+     * erst indexieren (Angelo 27.11.2026).
+     */
+    static final String NOT_ONLINE_SEARCHABLE = "keine Online-Suche, nur Indexiertes durchsucht – zum Durchsuchen "
+            + "zuerst indexieren (Rechtsklick › " + Explorer.INDEX + ")";
+
+    /** Titel der Rückfrage, ob eine nicht durchsuchbare Quelle indexiert werden soll. */
+    static final String INDEX_OFFER_TITLE = "Quelle indexieren?";
+
+    /**
+     * Die Rückfrage (Angelo 27.11.2026): Eine Quelle ohne Online-Suche findet die Suche nur, soweit sie indexiert ist.
+     * Ist nichts davon indexiert, fragt die App einmal je Sitzung, ob jetzt indexiert werden soll; nur nach „Ja“ startet
+     * der Auftrag, und er lässt sich unter Aufträge abbrechen.
+     */
+    static String indexOfferQuestion(String title) {
+        return "„" + title + "“ kann nicht online durchsucht werden und ist noch nicht indexiert. Die Suche findet ihre "
+                + "Inhalte erst, wenn sie indexiert sind. Das Indexieren läuft als Auftrag, den du unter Aufträge "
+                + "jederzeit abbrechen kannst. Quelle wirklich jetzt indexieren?";
+    }
+
+    /** Fragt, ob eine Quelle indexiert werden soll; {@code true} nur nach „Ja“. */
+    interface IndexOffer {
+        boolean accepted(String sourceTitle);
+    }
+
+    /** Quellen, denen das Indexieren in dieser Sitzung schon angeboten wurde: jede höchstens einmal. */
+    private final Set<String> indexOffered = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Die Rückfrage; ohne Bildschirm (Tests) wird nie gefragt. */
+    IndexOffer indexOffer = title -> !java.awt.GraphicsEnvironment.isHeadless()
+            && Dialogs.confirm(component(), INDEX_OFFER_TITLE, indexOfferQuestion(title));
+
+    /**
+     * Bietet das Indexieren für jede Quelle ohne Online-Suche ({@code INDEXED}) an, die nirgends zum Indexieren markiert
+     * ist. Das Nachsehen liest nur die Markierungen; nach „Ja“ startet derselbe Auftrag wie „Indexieren“ im Baum.
+     */
+    private void offerIndexing(List<KeywordSearch.SourceState> sources) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        List<String> candidates = new ArrayList<>();
+        for (KeywordSearch.SourceState state : sources) {
+            if (state.status() == KeywordSearch.SourceState.Status.INDEXED && indexOffered.add(state.sourceId())) {
+                candidates.add(state.sourceId());
+            }
+        }
+        if (candidates.isEmpty()) {
+            return;
+        }
+        Background.run(() -> candidates.stream().filter(id -> !indexedAnywhere(runtime, id)).toList(),
+                notIndexed -> {
+                    for (String sourceId : notIndexed) {
+                        if (indexOffer.accepted(title(sourceId))) {
+                            context.navigator().index(sourceId, null, null);
+                        }
+                    }
+                }, error -> {
+                    // Ohne Spaces der Quelle bleibt es beim Hinweis in der Statuszeile.
+                });
+    }
+
+    /** Ob in irgendeinem Space der Quelle etwas zum Indexieren markiert ist. */
+    static boolean indexedAnywhere(AppRuntime runtime, String sourceId) {
+        return runtime.workspace().spaces(sourceId).stream()
+                .anyMatch(space -> runtime.workspace().indexedAnywhere(sourceId, space.key()));
+    }
+
     /** Höchstens so viele Titeltreffer stehen oben. */
     static final int MAX_TITLE_HITS = 5;
 
@@ -2483,6 +2552,7 @@ public final class SearchView implements View {
                 == KeywordSearch.SourceState.Status.UNAVAILABLE);
         // Folgestapel nennen nur noch offene Quellen; ein späterer Ausfall ersetzt den früheren Zustand.
         results.sources().forEach(state -> states.put(state.sourceId(), state));
+        offerIndexing(results.sources());
         updateMore();
         StringBuilder line = new StringBuilder(Texts.count(model.rows.size(), "Treffer", "Treffer"));
         if (results.progress() != null && !results.progress().done()) {
@@ -2497,7 +2567,7 @@ public final class SearchView implements View {
                 case UNAVAILABLE -> line.append(" · ").append(title(state.sourceId())).append(": nicht erreichbar")
                         .append(state.reason() == null ? "" : " (" + reason(state.reason()) + ")");
                 case INDEXED -> line.append(" · ").append(title(state.sourceId()))
-                        .append(": Volltext im Cache");
+                        .append(": ").append(NOT_ONLINE_SEARCHABLE);
                 case SEARCHED -> {
                     // Von der Quelle gefunden und im Cache gesucht (ADR 0013): der Normalfall, ohne Zusatz.
                 }

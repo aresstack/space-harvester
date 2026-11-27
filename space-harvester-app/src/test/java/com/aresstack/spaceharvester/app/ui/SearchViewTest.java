@@ -86,8 +86,10 @@ class SearchViewTest {
         start(false);
 
         SearchView[] view = new SearchView[1];
+        List<String> offered = new java.util.concurrent.CopyOnWriteArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
             view[0] = new SearchView(context);
+            view[0].indexOffer = title -> offered.add(title) && false;
             view[0].search("betrieb");
         });
         JTable table = find(whole(view[0]), JTable.class).get(0);
@@ -96,7 +98,11 @@ class SearchViewTest {
         // Antworten noch lädt, kommt über „Weitere laden“. Die Funde einer Quelle stehen schon da, während die Suche
         // läuft (Ring über der Liste); die Zeile unter der Liste gilt erst mit dem fertigen Stapel.
         await(() -> table.getRowCount() > 0 && !view[0].overlay.isBusy());
-        assertThat(view[0].statusText()).contains("Dateien: Volltext im Cache").doesNotContain("Bestand");
+        assertThat(view[0].statusText()).contains("Dateien: " + SearchView.NOT_ONLINE_SEARCHABLE).doesNotContain("Bestand");
+        // Angelo 27.11.2026: Eine nicht indexierte Quelle ohne Online-Suche bekommt einmal die Rückfrage; „Nein“ startet
+        // nichts, und weitere Stapel fragen nicht erneut.
+        await(() -> !offered.isEmpty());
+        assertThat(offered).containsExactly("Dateien");
         loadAll(view[0], table, more, 2 * PAGES_PER_SOURCE);
         // Vorläufige Treffer kennen ihren Space erst, wenn ihre Seite geladen ist: bis zum Ende des Ladens warten.
         await(() -> view[0].progressText.getText().startsWith(SearchView.DONE));
