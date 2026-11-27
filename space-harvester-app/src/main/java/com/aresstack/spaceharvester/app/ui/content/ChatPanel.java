@@ -393,7 +393,7 @@ public final class ChatPanel extends JPanel {
     private JPanel footerEast;
     private final ComposerButton web = ComposerButton.iconButton(ChatIcons.globe(), WEB);
     /** Schalter „Schreiben“ (ADR 0045), Vorgabe aus, jederzeit mitten im Chat umschaltbar. */
-    private final ComposerButton write = ComposerButton.iconButton(PageTabIcons.export(), WRITE_OFF);
+    private final ComposerButton write = ComposerButton.iconButton(ComposerIcons.pencil(), WRITE_OFF);
     private final java.awt.Component writeGap = Box.createHorizontalStrut(4);
     private boolean writeOn;
     private final ComposerButton appSearch = ComposerButton.iconButton(
@@ -1802,8 +1802,6 @@ public final class ChatPanel extends JPanel {
     boolean writing(boolean on) {
         writeOn = on;
         write.setEmphasized(on);
-        // Eingerastet ist die Fläche blau: der Kolben steht dann in der Schriftfarbe des Knopfs, sonst in seinem Blau.
-        write.setIcon(on ? PageTabIcons.exportInk() : PageTabIcons.export());
         write.setToolTipText(on ? WRITE_ON : WRITE_OFF);
         return writeOn;
     }
