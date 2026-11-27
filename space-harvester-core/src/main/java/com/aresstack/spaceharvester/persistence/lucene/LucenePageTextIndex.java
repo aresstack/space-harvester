@@ -567,6 +567,19 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     @Override
     public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, PageSet within,
                               Set<DocumentKind> kinds, int limit) {
+        return search(text, sourceIds, spaces, within, kinds, Fields.ALL, limit);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Mit {@link Fields#HEADINGS} zählen nur Seiten, und nur ihr Titel und ihre Überschriften; die Rangfolge und
+     * die exakte Überschrift oben bleiben wie sonst.
+     */
+    @Override
+    public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, PageSet within,
+                              Set<DocumentKind> kinds, Fields fields, int limit) {
+        Objects.requireNonNull(fields, "fields");
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(sourceIds, "sourceIds");
         Objects.requireNonNull(spaces, "spaces");
@@ -597,11 +610,17 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         for (String excluded : spaces.excluded()) {
             query.add(new TermQuery(new Term(SPACE_KEY, excluded)), BooleanClause.Occur.MUST_NOT);
         }
+        boolean headingsOnly = fields == Fields.HEADINGS;
+        if (headingsOnly) {
+            query.add(new TermQuery(new Term(KIND, PAGE_KIND)), BooleanClause.Occur.FILTER);
+        }
         for (String term : terms) {
-            query.add(new TermQuery(new Term(TEXT, term)), BooleanClause.Occur.SHOULD);
+            if (!headingsOnly) {
+                query.add(new TermQuery(new Term(TEXT, term)), BooleanClause.Occur.SHOULD);
+                query.add(new BoostQuery(new TermQuery(new Term(PART_TITLE, term)), TITLE_BOOST),
+                        BooleanClause.Occur.SHOULD);
+            }
             query.add(new BoostQuery(new TermQuery(new Term(TITLE, term)), TITLE_BOOST), BooleanClause.Occur.SHOULD);
-            query.add(new BoostQuery(new TermQuery(new Term(PART_TITLE, term)), TITLE_BOOST),
-                    BooleanClause.Occur.SHOULD);
             query.add(new BoostQuery(new TermQuery(new Term(HEADING, term)), TITLE_BOOST), BooleanClause.Occur.SHOULD);
         }
         query.setMinimumNumberShouldMatch(1);
@@ -641,9 +660,10 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
                     if (!kinds.isEmpty() && !kinds.contains(kind(doc))) {
                         continue;
                     }
-                    String snippet = exactDocs.contains(hit.doc)
-                            ? window(doc.get(TEXT), headingStart(doc, exact))
-                            : window(doc.get(TEXT), wanted);
+                    // Exakte Überschrift oder nur Überschriften gesucht: Auszug an der passenden Überschrift.
+                    int heading = exactDocs.contains(hit.doc) ? headingStart(doc, exact)
+                            : headingsOnly ? headingStart(doc, wanted) : -1;
+                    String snippet = heading >= 0 ? window(doc.get(TEXT), heading) : window(doc.get(TEXT), wanted);
                     // Nur für ausgelieferte Treffer: je Wort und Feld ein Blick in die Postings dieses Dokuments.
                     Words words = words(searcher, hit.doc, terms);
                     pages.put(page, (ATTACHMENT_KIND.equals(doc.get(KIND))
@@ -791,6 +811,17 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
             throw new PageCacheException("Text nicht zerlegbar", e);
         }
         return String.join(" ", words);
+    }
+
+    /** Zeichenposition der ersten Überschrift des Dokuments mit einem der Suchwörter, sonst -1. */
+    private static int headingStart(Document doc, Set<String> terms) {
+        for (String stored : doc.getValues(HEADING_START)) {
+            int split = stored.lastIndexOf(SEPARATOR);
+            if (split > 0 && java.util.Arrays.stream(stored.substring(0, split).split(" ")).anyMatch(terms::contains)) {
+                return Integer.parseInt(stored.substring(split + 1));
+            }
+        }
+        return -1;
     }
 
     /** Zeichenposition der Überschrift {@code exact} (zerlegte Form) im Text des Dokuments, sonst -1. */

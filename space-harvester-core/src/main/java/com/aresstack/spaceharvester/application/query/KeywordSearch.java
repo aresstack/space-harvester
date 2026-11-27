@@ -696,8 +696,9 @@ public class KeywordSearch {
             }
             LocalCoverage.Coverage covered = cached ? coverage.coverage(source, query.spaces())
                     : LocalCoverage.Coverage.NONE;
-            if (covered.all()) {
-                // Lokal vollständig und aktuell: nur der lokale Index, keine Online-Suche (Angelo 27.11.2026).
+            if (covered.all() || query.headingsOnly()) {
+                // Lokal vollständig und aktuell: nur der lokale Index, keine Online-Suche (Angelo 27.11.2026). Nur
+                // Überschriften kennt allein der lokale Index; die Suche der Quelle träfe auch den Fließtext.
                 searchable.add(sourceId);
                 if (position == null) {
                     states.add(new SourceState(sourceId, SourceState.Status.LOCAL, null));
@@ -1137,6 +1138,14 @@ public class KeywordSearch {
 
     /** Der Volltextindex, mit Seitenmenge der Anfrage vor der Rangfolge gefiltert (ADR 0029), ohne wie bisher. */
     private List<PageTextIndex.Match> searchTexts(String text, Set<String> sourceIds, Query query, int wanted) {
+        if (query.headingsOnly()) {
+            // Nur Titel und Überschriften: eine Abfrage mit allen Grenzen; die Teilbaum-Grenze wie unten danach.
+            List<PageTextIndex.Match> found = texts.search(text, sourceIds, query.spaces(),
+                    query.boundary() != null ? null : query.pages(), query.kinds(), PageTextIndex.Fields.HEADINGS,
+                    wanted);
+            return query.boundary() == null ? found
+                    : found.stream().filter(match -> query.admits(match.sourceId(), match.pageId())).toList();
+        }
         if (query.boundary() != null) {
             // Teilbaum-Grenze: Die Seitenmenge kennt nicht alle Seiten der Grenze; der Index sucht in Quellen und
             // Spaces, und vor der Rangfolge bleibt nur, was die Anfrage zulässt.
@@ -1420,6 +1429,10 @@ public class KeywordSearch {
             // Nur mit der Suchmethode (K5a), aus demselben Grund; andere Anfragen machen den Cursor ungültig.
             canonical += "\u0000s";
         }
+        if (query.headingsOnly()) {
+            // Nur mit der Suchmethode „Nur Überschriften“, aus demselben Grund.
+            canonical += "\u0000h";
+        }
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest, 0, 12);
@@ -1621,10 +1634,20 @@ public class KeywordSearch {
      * @param kinds     nur Dokumente dieser Arten ({@link DocumentKind}: Seiten, PDF, Word, …), leer für alle. Der
      *                  Volltextindex entscheidet je Dokument nach Name und Medientyp; ein Fund der Quelle nach seinem
      *                  Titel.
+     * @param headingsOnly Suchmethode „Nur Überschriften durchsuchen“: der Volltextindex sucht nur in Seitentitel und
+     *                     Überschriften der Seiten, nicht im Fließtext und nicht in Anhängen
      */
     public record Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
                         Set<String> excludedSpaceKeys, PageSet pages, Set<DocumentKind> kinds,
-                        boolean glossarySynonyms, SearchBoundary boundary) {
+                        boolean glossarySynonyms, SearchBoundary boundary, boolean headingsOnly) {
+
+        /** Ohne Suchmethode „Nur Überschriften durchsuchen“. */
+        public Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
+                     Set<String> excludedSpaceKeys, PageSet pages, Set<DocumentKind> kinds,
+                     boolean glossarySynonyms, SearchBoundary boundary) {
+            this(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms, boundary,
+                    false);
+        }
 
         /** Ohne Teilbaum-Grenze ({@link SearchBoundary}). */
         public Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
@@ -1677,7 +1700,7 @@ public class KeywordSearch {
             // Eingrenzen auf genau diese Seiten (etwa die Kandidaten einer Runde): ohne Teilbaum-Grenze, die sonst
             // wieder erweitern würde.
             return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms,
-                    null);
+                    null, headingsOnly);
         }
 
         /**
@@ -1688,13 +1711,13 @@ public class KeywordSearch {
         public Query bounded(PageSet pages, SearchBoundary boundary) {
             return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys,
                     pages == null ? PageSet.EMPTY : pages, kinds, glossarySynonyms,
-                    java.util.Objects.requireNonNull(boundary, "boundary"));
+                    java.util.Objects.requireNonNull(boundary, "boundary"), headingsOnly);
         }
 
         /** Dieselbe Suche, nur Dokumente dieser Arten; leer hebt die Grenze auf. */
         public Query ofKinds(Set<DocumentKind> kinds) {
             return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms,
-                    boundary);
+                    boundary, headingsOnly);
         }
 
         /**
@@ -1702,13 +1725,23 @@ public class KeywordSearch {
          * Fachbegriffen des Glossars kommen auch ihre vorgeschlagenen Synonyme als Anfragen dazu.
          */
         public Query withGlossarySynonyms(boolean on) {
-            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, on, boundary);
+            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, on, boundary,
+                    headingsOnly);
+        }
+
+        /**
+         * Dieselbe Suche mit der Suchmethode „Nur Überschriften durchsuchen“: Seitentitel und Überschriften, kein
+         * Fließtext, keine Anhänge.
+         */
+        public Query withHeadingsOnly(boolean on) {
+            return new Query(text, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms,
+                    boundary, on);
         }
 
         /** Derselbe Umfang und dieselben Methoden mit anderem Wortlaut (Varianten der progressiven Suche). */
         public Query withText(String other) {
             return new Query(other, sourceId, sourceIds, spaceKeys, excludedSpaceKeys, pages, kinds, glossarySynonyms,
-                    boundary);
+                    boundary, headingsOnly);
         }
 
         /**

@@ -12,7 +12,7 @@ class ProgressiveSearchNeighborsProfileTest {
 
     private static ProgressiveSearchController.ProgressiveRequest request(Boolean neighbors) {
         return new ProgressiveSearchController.ProgressiveRequest("Nachtlauf", null, null, null, null, null, null,
-                null, null, null, null, null, null, null, neighbors, null, null);
+                null, null, null, null, null, null, null, neighbors, null, null, null);
     }
 
     @Test

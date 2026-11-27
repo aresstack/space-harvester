@@ -92,6 +92,30 @@ class LucenePageTextIndexTest {
     }
 
     @Test
+    void headingsOnlySearchesPageTitlesAndHeadingsButNeitherProseNorAttachments() {
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            String filler = "Füllwort ".repeat(60);
+            index.put(entry("wiki", "1", "DEV", "Betrieb", "Die Rufbereitschaft steht im Fließtext."));
+            String text = "Rufbereitschaft am Rand. " + filler + "\nRufbereitschaft regeln\nWer wann. " + filler;
+            index.put(new PageTextIndex.Entry(new PageKey("wiki", "2"), "DEV", "Handbuch", text, "s2", "", 0,
+                    java.util.List.of(new PageTextIndex.Heading("Rufbereitschaft regeln",
+                            text.indexOf("\nRufbereitschaft regeln") + 1))));
+            index.put(entry("wiki", "3", "DEV", "Rufbereitschaft", "Nichts weiter."));
+            index.put(entry("wiki", "4", "DEV", "Sonstiges", "Nichts."));
+            index.putAttachment(new PageTextIndex.AttachmentEntry(new PageKey("wiki", "4"), "DEV", "a1",
+                    "rufbereitschaft.txt", "Rufbereitschaft im Anhang", "a", "", "", 0, ""));
+
+            var matches = index.search("rufbereitschaft", Set.of("wiki"), SearchSpaces.all(), null, Set.of(),
+                    PageTextIndex.Fields.HEADINGS, 10);
+
+            assertThat(matches).extracting(PageTextIndex.Match::pageId).containsExactlyInAnyOrder("2", "3");
+            assertThat(matches).filteredOn(match -> match.pageId().equals("2")).singleElement()
+                    .extracting(PageTextIndex.Match::snippet).asString().contains("Rufbereitschaft regeln Wer wann")
+                    .doesNotContain("am Rand");
+        }
+    }
+
+    @Test
     void headingWordsWeighLikeTheTitle() {
         try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
             String filler = "Füllwort ".repeat(40);

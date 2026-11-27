@@ -187,6 +187,26 @@ public interface PageTextIndex {
         return matches.stream().filter(match -> kinds.contains(match.kind())).toList();
     }
 
+    /** In welchen Feldern eine Suche sucht. */
+    enum Fields {
+        /** Titel, Überschriften, Fließtext und Anhänge. */
+        ALL,
+        /** Suchmethode „Nur Überschriften durchsuchen“: Seitentitel und Überschriften der Seiten, ohne Anhänge. */
+        HEADINGS
+    }
+
+    /**
+     * Wie {@link #search(String, Set, SearchSpaces, PageSet, Set, int)}, mit Wahl der Felder. Ein Index ohne getrennte
+     * Überschriften kann {@link Fields#HEADINGS} nicht und wirft.
+     */
+    default List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, PageSet pages,
+                               Set<DocumentKind> kinds, Fields fields, int limit) {
+        if (fields == Fields.ALL) {
+            return search(text, sourceIds, spaces, pages, kinds, limit);
+        }
+        throw new UnsupportedOperationException("Dieser Index sucht nicht nur in Überschriften");
+    }
+
     /** Macht Änderungen dauerhaft. */
     void flush();
 
