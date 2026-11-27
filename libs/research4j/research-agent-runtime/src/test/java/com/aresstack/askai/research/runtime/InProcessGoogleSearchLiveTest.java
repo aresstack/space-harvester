@@ -1,6 +1,7 @@
 package com.aresstack.askai.research.runtime;
 
 import com.aresstack.askai.browser.playwright.PlaywrightBrowserRuntime;
+import com.aresstack.askai.browser.playwright.TestBrowserLauncher;
 import com.aresstack.askai.browser.search.SearchResultCandidate;
 import com.aresstack.askai.browser.search.UrlResolutionStatus;
 import com.aresstack.askai.research.runtime.acquire.WebAcquisitionText;
@@ -25,7 +26,7 @@ import static org.junit.Assume.assumeTrue;
 /**
  * askai #48 live check: the research runtime's shared search browser runs in THIS JVM, a real Google search
  * goes through Serp4J ({@code serp4j-playwright-google}) on it, and a second search reuses the same browser.
- * Opt-in only ({@code -Daskai.live.google=camoufox}); it never runs in CI.
+ * Opt-in only ({@code -Daskai.live.google=<channel>}, see {@link TestBrowserLauncher}); it never runs in CI.
  *
  * <p>askai #41 (lazy resolution): Google's {@code /goto} hits come back unchanged and UNRESOLVED, and only opening one
  * in the research browser resolves it, through the browser's own navigation.</p>
@@ -42,7 +43,9 @@ public class InProcessGoogleSearchLiveTest {
     public void realGoogleSearchRunsOnTheSharedSearchBrowserInThisJvm() throws Exception {
         String channel = System.getProperty("askai.live.google", "");
         assumeTrue("SKIPPED (opt-in live test): -Daskai.live.google=<channel>", !channel.isEmpty());
-        ResearchRuntimeShared shared = new ResearchRuntimeShared(channel);
+        TestBrowserLauncher launcher = new TestBrowserLauncher(channel,
+                System.getenv(TestBrowserLauncher.EXECUTABLE_ENV));
+        ResearchRuntimeShared shared = new ResearchRuntimeShared(launcher);
         List<SearchResultCandidate> unresolved = new ArrayList<SearchResultCandidate>();
         try {
             SearchStrategy strategy = GoogleSearchBrowserStrategy.create(shared.searchBrowser(), Locale.GERMANY);
@@ -72,7 +75,7 @@ public class InProcessGoogleSearchLiveTest {
         }
         // Only now, when a hit is opened, is its /goto link resolved: by the research browser's normal navigation.
         PlaywrightBrowserRuntime browser = PlaywrightBrowserRuntime.start(
-                new PlaywrightBrowserRuntime.Options(channel, true, false, null, null, false));
+                new PlaywrightBrowserRuntime.Options(launcher, true, false, null, null, false));
         try {
             String gotoUrl = unresolved.get(0).navigationUrl();
             String page = browser.call("web_open", Collections.<String, Object>singletonMap("url", gotoUrl));

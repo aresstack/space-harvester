@@ -95,8 +95,8 @@ public class HumanInputChallengeFixtureLiveTest {
     @Test
     public void consentIsClickedWithTheHumanPointerAndChallengeHandsOffToTheUser()
             throws Exception {
-        String channel = System.getenv().getOrDefault("ASKAI_TEST_BROWSER_CHANNEL", "chrome");
-        PlaywrightReadiness readiness = new PlaywrightCapabilityProbe().probe(channel);
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        PlaywrightReadiness readiness = launcher.readiness();
         assumeTrue("SKIPPED (environment-gated live test): " + readiness.render(),
                 readiness.isReady());
 
@@ -108,7 +108,7 @@ public class HumanInputChallengeFixtureLiveTest {
         server.start();
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
 
-        BrowserSession session = PlaywrightSessionFactory.create(channel, true, true,
+        BrowserSession session = PlaywrightSessionFactory.create(launcher, true, true,
                 base + "/find?q={query}", BrowserLimits.defaults(),
                 com.aresstack.askai.browser.search.LegacyBrowserSearchDefaults.create());
         try {

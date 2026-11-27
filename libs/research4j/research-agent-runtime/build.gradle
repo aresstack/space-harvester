@@ -37,6 +37,8 @@ dependencies {
     // The live reranker tests start the REAL local model runtime in-process (as the host does now).
     // The live Playwright tests start the REAL browser in-process (as the plugin does now).
     testImplementation project(':browser-playwright')
+    testImplementation testFixtures(project(":browser-playwright"))
+    testRuntimeOnly "com.aresstack:playwright4j:0.3.0"
     // The live model gates run the roles over the REAL model port (ollama4j) against a local Ollama, as the
     // host does; only its main classes are needed (askai-app's own tests depend on the plugin: test-only).
     testImplementation 'junit:junit:4.13.2'

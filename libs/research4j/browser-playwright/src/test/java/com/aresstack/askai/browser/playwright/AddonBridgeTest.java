@@ -261,7 +261,9 @@ public class AddonBridgeTest {
             }
             read.cancel();
         } finally {
-            Playwright4jDriver.deleteTree(extension);
+            try (java.util.stream.Stream<java.nio.file.Path> all = java.nio.file.Files.walk(extension)) {
+                all.sorted(java.util.Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+            }
         }
     }
 

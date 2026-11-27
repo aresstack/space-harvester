@@ -55,8 +55,8 @@ public class ChallengeVisibilityFixtureLiveTest {
 
     @Test
     public void onlyAChallengeOnTheFirstScreenParksAPage() throws Exception {
-        String channel = System.getenv().getOrDefault("ASKAI_TEST_BROWSER_CHANNEL", "chrome");
-        PlaywrightReadiness readiness = new PlaywrightCapabilityProbe().probe(channel);
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        PlaywrightReadiness readiness = launcher.readiness();
         assumeTrue("SKIPPED (environment-gated live test): " + readiness.render(), readiness.isReady());
 
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -71,7 +71,7 @@ public class ChallengeVisibilityFixtureLiveTest {
         server.start();
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
         try {
-            BrowserSession session = PlaywrightSessionFactory.create(channel, true, true,
+            BrowserSession session = PlaywrightSessionFactory.create(launcher, true, true,
                     base + "/find?q={query}", BrowserLimits.defaults(), LegacyBrowserSearchDefaults.create());
             try {
                 BrowserPageReadiness innoq = probe(session, base + "/innoq-footer-friendly-captcha");
@@ -140,7 +140,7 @@ public class ChallengeVisibilityFixtureLiveTest {
             values.put("captcha.challengeTexts", "captcha\none last step\nverify you are human");
             LegacyBrowserSearchSettings custom = LegacyBrowserSearchSettingsCodec.fromValues(values).settings;
             assertTrue(custom.captcha.challengeTexts.contains("captcha"));
-            BrowserSession customSession = PlaywrightSessionFactory.create(channel, true, true,
+            BrowserSession customSession = PlaywrightSessionFactory.create(launcher, true, true,
                     base + "/find?q={query}", BrowserLimits.defaults(), custom);
             try {
                 BrowserPageReadiness innoq = probe(customSession, base + "/innoq-footer-friendly-captcha");
@@ -162,10 +162,10 @@ public class ChallengeVisibilityFixtureLiveTest {
     public void theRealInnoqPageIsReadable() throws Exception {
         assumeTrue("SKIPPED: set ASKAI_LIVE_INNOQ=1 to probe the real INNOQ page",
                 "1".equals(System.getenv("ASKAI_LIVE_INNOQ")));
-        String channel = System.getenv().getOrDefault("ASKAI_TEST_BROWSER_CHANNEL", "chrome");
-        PlaywrightReadiness readiness = new PlaywrightCapabilityProbe().probe(channel);
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        PlaywrightReadiness readiness = launcher.readiness();
         assumeTrue("SKIPPED (environment-gated live test): " + readiness.render(), readiness.isReady());
-        BrowserSession session = PlaywrightSessionFactory.create(channel, true, false,
+        BrowserSession session = PlaywrightSessionFactory.create(launcher, true, false,
                 "https://www.bing.com/search?q={query}", BrowserLimits.defaults(), LegacyBrowserSearchDefaults.create());
         try {
             BrowserPageReadiness innoq = probe(session, INNOQ_URL);

@@ -26,10 +26,15 @@ und hängen von keinem der beiden Module ab.
 `:space-harvester-app` hängt davon ab; Core und Server kennen KeePass nicht und erhalten nur den aufgelösten Key.
 
 Die Websuche im Chat kommt aus Research4j (ADR 0046): `research4j-browser-tools` (die 14 Browser-Werkzeuge des Chats,
-aus dem Enterprise AI Client übernommen) und `research4j-browser-playwright` (Edge, Chrome oder Camoufox über
-Playwright4j). Nur `:space-harvester-app` hängt davon ab; Core und Server kennen keinen Browser. Der Playwright-Treiber
-(GraalVM 25) läuft nur im Kindprozess: Er liegt im Bootjar unter `playwright-driver/` und nie im Klassenpfad der App;
-`graalLineCheck` prüft, dass dort nur eine GraalJS-Linie steht.
+aus dem Enterprise AI Client übernommen) und `research4j-browser-playwright` (Recherche über Playwright). Research4j
+startet keinen Browser selbst, sondern holt ihn über seinen Port `BrowserLauncher`. Den Browser startet `:browser-runtime`,
+die Browser-Laufzeit des Space Harvester (eigenes Gradle-Projekt ohne Release): Erkennung des installierten Firefox,
+Chrome oder Edge, Camoufox (installiert? / installieren, nie beim Start), dauerhafte Profile, Firefox-Einstellungen,
+Prozesse, Aufräumen. Sie liefert die originalen Playwright-Objekte und hängt nicht an Research4j; den Adapter
+(`RuntimeBrowserLauncher`) hat `:space-harvester-app`. Core und Server kennen keinen Browser. Der Playwright-Treiber
+(GraalVM 25) läuft nur im Kindprozess: Die Laufzeit legt ihn in ihrer Konfiguration `driverProcess` fest, er liegt im
+Bootjar unter `playwright-driver/` und nie im Klassenpfad der App; `graalLineCheck` prüft, dass dort nur eine
+GraalJS-Linie steht. Der CI-Job `browser-runtime-firefox` nimmt die Laufzeit mit dem Standard-Firefox des Runners ab.
 
 Knowledge4j, Research4j und Writing4j liegen als unveränderte Kopien ihrer Repositorys unter `libs/` und werden als
 eigene Gradle-Projekte per Composite Build eingebunden, weil Maven Central keine neuen `com.aresstack`-Releases mehr annimmt

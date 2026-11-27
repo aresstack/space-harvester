@@ -44,12 +44,8 @@ public class PlaywrightChatEngineLiveTest {
 
     @Test
     public void theChatEngineDrivesARealBrowser() throws Exception {
-        String channel = System.getenv().getOrDefault("ASKAI_TEST_BROWSER_CHANNEL", "chrome");
-        String executable = System.getenv("ASKAI_TEST_BROWSER_EXECUTABLE");
-        if (executable != null && !executable.isEmpty()) {
-            BrowserExecutables.use(channel, executable);
-        }
-        String readiness = PlaywrightChatEngine.readiness(channel);
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        String readiness = launcher.readiness().render();
         assumeTrue("SKIPPED (environment-gated live test): " + readiness, readiness.startsWith("READY"));
 
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -63,7 +59,7 @@ public class PlaywrightChatEngineLiveTest {
         server.start();
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
         Path profile = Files.createTempDirectory("chat-engine-profile");
-        BrowserInstance instance = new PlaywrightChatEngine(channel, true, 60000L, 30000L).start(profile);
+        BrowserInstance instance = new PlaywrightChatEngine(launcher, true, 30000L).start(profile);
         try {
             BrowserConnection connection = instance.connect();
             String tab = connection.tabs().isEmpty() ? connection.createTab() : connection.tabs().get(0).contextId();

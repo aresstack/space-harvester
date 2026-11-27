@@ -75,12 +75,8 @@ public class PlaywrightLiveBrowserTest {
 
     @Test
     public void realBrowserRendersJavaScriptFollowsLinksAndShutsDownCleanly() throws Exception {
-        String channel = System.getenv().getOrDefault("ASKAI_TEST_BROWSER_CHANNEL", "chrome");
-        String executable = System.getenv("ASKAI_TEST_BROWSER_EXECUTABLE");
-        if (executable != null && !executable.isEmpty()) {
-            BrowserExecutables.use(channel, executable);
-        }
-        PlaywrightReadiness readiness = new PlaywrightCapabilityProbe().probe(channel);
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        PlaywrightReadiness readiness = launcher.readiness();
         assumeTrue("SKIPPED (environment-gated live test): " + readiness.render(), readiness.isReady());
 
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -105,7 +101,7 @@ public class PlaywrightLiveBrowserTest {
         searchServer.start();
         String searchBase = "http://127.0.0.1:" + searchServer.getAddress().getPort();
 
-        BrowserSession session = PlaywrightSessionFactory.create(channel, true, true,
+        BrowserSession session = PlaywrightSessionFactory.create(launcher, true, true,
                 searchBase + "/find?q={query}", BrowserLimits.defaults(),
                 com.aresstack.askai.browser.search.LegacyBrowserSearchDefaults.create());
         if (session instanceof PlaywrightBrowserSession) {
