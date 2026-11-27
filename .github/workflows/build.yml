@@ -2,8 +2,7 @@ name: Build
 
 on:
   push:
-    # Arbeitszweig der Buchfunktion: baut mit dem unveröffentlichten Writing4j per Composite Build (siehe unten).
-    branches: [main, develop, claude/project-thread-kcf5hj]
+    branches: [main, develop]
   pull_request:
 
 permissions:
@@ -21,44 +20,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Bewusst ohne Secrets: Tests laufen gegen Fake-Confluence und temporäre Verzeichnisse (#15).
-    # Arbeitszweig: Space Harvester liegt neben Writing4j (unveröffentlicht, vom aktuellen main), das per Composite Build
-    # eingebunden wird (settings.gradle, -Paresstack.libs); Knowledge4j und Research4j kommen von Maven Central.
-    defaults:
-      run:
-        working-directory: space-harvester
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: space-harvester
-      - uses: actions/checkout@v4
-        with:
-          repository: aresstack/writing4j
-          ref: main
-          path: writing4j
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew build --console=plain -Paresstack.libs=..
-      # Arbeitszweig: startbare Desktop-App zum Herunterladen als Artefakt des Laufs (kein Release, kein Tag); die
-      # Commits der Bibliotheken stehen in der Laufübersicht, damit klar ist, welcher Stand im JAR steckt.
-      - name: App-JAR des Arbeitszweigs bereitstellen
-        if: github.ref == 'refs/heads/claude/project-thread-kcf5hj'
-        run: |
-          mkdir -p build/arbeitszweig
-          cp space-harvester-app/build/libs/space-harvester-app-*-SNAPSHOT.jar build/arbeitszweig/space-harvester-app.jar
-          java -jar build/arbeitszweig/space-harvester-app.jar --version
-          {
-            echo "### Arbeitszweig-App"
-            echo "space-harvester $(git rev-parse --short HEAD), writing4j $(git -C ../writing4j rev-parse --short HEAD)"
-          } | tee build/arbeitszweig/STAND.txt >> "$GITHUB_STEP_SUMMARY"
-      - if: github.ref == 'refs/heads/claude/project-thread-kcf5hj'
-        uses: actions/upload-artifact@v4
-        with:
-          name: space-harvester-app-arbeitszweig-${{ github.sha }}
-          path: space-harvester/build/arbeitszweig/
-          if-no-files-found: error
+      - run: ./gradlew build --console=plain
       # Kopien in enterprise-ai-sources, comic-controls, enterprise-ai-keepass und enterprise-ai-browser gegen den festgehaltenen Upstream-Commit prüfen (siehe UPSTREAM.md)
       - run: enterprise-ai-sources/sync-from-upstream.sh verify
       - run: comic-controls/sync-from-upstream.sh verify
@@ -76,15 +45,15 @@ jobs:
         with:
           name: test-reports
           path: |
-            space-harvester/space-harvester-*/build/reports/tests/
-            space-harvester/space-harvester-*/build/test-results/
-            space-harvester/enterprise-ai-sources/build/reports/tests/
-            space-harvester/enterprise-ai-sources/build/test-results/
-            space-harvester/nlp-parser/build/reports/tests/
-            space-harvester/nlp-parser/build/test-results/
-            space-harvester/nlp-model-training/build/reports/tests/
-            space-harvester/nlp-model-training/build/test-results/
-            space-harvester/space-harvester-app/build/app-jar-check/screenshots/
-            space-harvester/parity-tests/build/test-results/
-            space-harvester/parity-tests/build/reports/parity/
+            space-harvester-*/build/reports/tests/
+            space-harvester-*/build/test-results/
+            enterprise-ai-sources/build/reports/tests/
+            enterprise-ai-sources/build/test-results/
+            nlp-parser/build/reports/tests/
+            nlp-parser/build/test-results/
+            nlp-model-training/build/reports/tests/
+            nlp-model-training/build/test-results/
+            space-harvester-app/build/app-jar-check/screenshots/
+            parity-tests/build/test-results/
+            parity-tests/build/reports/parity/
           if-no-files-found: ignore

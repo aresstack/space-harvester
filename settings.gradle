@@ -69,33 +69,21 @@ include 'space-harvester-app'
 include 'parity-tests'
 
 // Knowledge4j und Research4j kommen in der veröffentlichten Version von Maven Central (gradle/libs.versions.toml). Wer an
-// ihnen oder an Writing4j mitentwickelt, bindet die Nachbarverzeichnisse per Composite Build ein: -Paresstack.libs=..
-// (Kommandozeile) oder aresstack.libs=.. in der eigenen gradle.properties nennt den Ordner, in dem sie liegen; eingebunden
-// wird jede Bibliothek, deren Ordner dort liegt, die übrigen kommen von Maven Central.
+// ihnen mitentwickelt, bindet die Nachbarverzeichnisse per Composite Build ein: -Paresstack.libs=.. (Kommandozeile) oder
+// aresstack.libs=.. in der eigenen gradle.properties nennt den Ordner, in dem beide liegen.
 def aresstackLibs = providers.gradleProperty('aresstack.libs').getOrNull()
 if (aresstackLibs != null) {
     def libs = file(aresstackLibs)
-    if (new File(libs, 'knowledge4j').isDirectory()) {
-        includeBuild(new File(libs, 'knowledge4j')) {
-            dependencySubstitution {
-                ['knowledge-api', 'knowledge-model', 'knowledge-model-support', 'knowledge-file-support'].each { name ->
-                    substitute module("com.aresstack:knowledge4j-${name}") using project(":${name}")
-                }
+    includeBuild(new File(libs, 'knowledge4j')) {
+        dependencySubstitution {
+            ['knowledge-api', 'knowledge-model', 'knowledge-model-support', 'knowledge-file-support'].each { name ->
+                substitute module("com.aresstack:knowledge4j-${name}") using project(":${name}")
             }
         }
     }
-    if (new File(libs, 'research4j').isDirectory()) {
-        includeBuild(new File(libs, 'research4j')) {
-            dependencySubstitution {
-                substitute module('com.aresstack:research4j-research-core') using project(':research-core')
-            }
-        }
-    }
-    if (new File(libs, 'writing4j').isDirectory()) {
-        includeBuild(new File(libs, 'writing4j')) {
-            dependencySubstitution {
-                substitute module('com.aresstack:writing4j-core') using project(':writing-core')
-            }
+    includeBuild(new File(libs, 'research4j')) {
+        dependencySubstitution {
+            substitute module('com.aresstack:research4j-research-core') using project(':research-core')
         }
     }
 }
