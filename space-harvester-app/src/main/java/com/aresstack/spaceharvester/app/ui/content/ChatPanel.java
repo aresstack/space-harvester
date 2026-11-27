@@ -2401,7 +2401,7 @@ public final class ChatPanel extends JPanel {
     private final com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.QuoteTarget quoteTarget =
             new com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.QuoteTarget() {
                 @Override
-                public boolean accepts(javax.swing.text.JTextComponent field) {
+                public boolean accepts(java.awt.Component field) {
                     return field != editor && isShowing();
                 }
 

@@ -58,4 +58,26 @@ public final class GraphicReferences {
         match.appendTail(out);
         return out.toString();
     }
+
+    /** Ein Codeblock mit Zaun aus {@code ```} oder {@code ~~~}; der schließende Zaun ist mindestens so lang. */
+    private static final Pattern FENCE = Pattern.compile(
+            "(?m)^ {0,3}(`{3,}|~{3,})[^\\n]*\\n(.*?)\\n {0,3}\\1[`~]*[ \\t]*$", Pattern.DOTALL);
+
+    /**
+     * Ersetzt den Codeblock, dessen Inhalt {@code code} ist (etwa ein Mermaid- oder draw.io-Diagramm), durch den
+     * Verweis {@code embed}; Leerraum zählt dabei nicht. {@code null}, wenn kein Block passt.
+     */
+    public static String replaceBlock(String markdown, String code, String embed) {
+        if (markdown == null || code == null || code.isBlank()) {
+            return null;
+        }
+        String wanted = code.replaceAll("\\s+", "");
+        Matcher match = FENCE.matcher(markdown);
+        while (match.find()) {
+            if (match.group(2).replaceAll("\\s+", "").equals(wanted)) {
+                return markdown.substring(0, match.start()) + embed + markdown.substring(match.end());
+            }
+        }
+        return null;
+    }
 }

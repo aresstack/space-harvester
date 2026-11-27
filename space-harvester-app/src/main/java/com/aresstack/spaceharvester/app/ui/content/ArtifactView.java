@@ -17,6 +17,7 @@ import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.Insets;
@@ -65,6 +66,11 @@ final class ArtifactView extends JPanel {
     static final String EDIT = "Abschnitt bearbeiten (Markdown)";
     static final String SAVE = "Übernehmen (Strg+Enter)";
     static final String CANCEL = "Verwerfen (Esc)";
+    /** Rechtsklick auf eine Grafik (ADR 0045 §6): ein Element statt der ganzen Grafik an den Chat geben. */
+    static final String ELEMENT_QUOTE = "Element an Chat anhängen";
+    static final String WHOLE_GROUP = "Ganze Gruppe";
+    /** Rechtsklick auf ein Mermaid- oder draw.io-Diagramm: als SVG-Grafik übernehmen, danach bearbeitbar. */
+    static final String ADOPT = "Als Grafik bearbeiten";
 
     ArtifactView(ChatArtifactStore store, Path folder, String chatId, String artifactId) {
         this(store, folder, chatId, artifactId, text -> { });
@@ -99,6 +105,9 @@ final class ArtifactView extends JPanel {
         quoteOverlay.addActionListener(event -> acceptQuote());
         scroll.getViewport().addChangeListener(event -> hideQuoteOverlay());
         add(layers, BorderLayout.CENTER);
+        column.putClientProperty(com.aresstack.spaceharvester.app.ui.markdown.MermaidDiagramPanel.MENU,
+                (java.util.function.Function<com.aresstack.spaceharvester.app.ui.markdown.MermaidDiagramPanel,
+                        javax.swing.JPopupMenu>) this::diagramMenu);
         store.addListener(listener);
         ChatArtifact artifact = store.read(folder, chatId, artifactId);
         if (artifact != null) {
@@ -239,6 +248,170 @@ final class ArtifactView extends JPanel {
                 selection.anchor(), selection.selectedText())) {
             selection.clearHighlight();
         }
+    }
+
+    /**
+     * Das Rechtsklick-Menü einer Grafik im Artefakt: „An Chat anhängen“ für die ganze Grafik und je Element (Gruppen
+     * als Untermenü); ein Mermaid- oder draw.io-Diagramm eines Abschnitts lässt sich als Grafik übernehmen.
+     */
+    javax.swing.JPopupMenu diagramMenu(com.aresstack.spaceharvester.app.ui.markdown.MermaidDiagramPanel panel) {
+        ChatArtifact current = shown;
+        if (current == null || editing != null) {
+            return null;
+        }
+        String sectionId = sectionOf(panel);
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        ChatArtifact graphic = graphicOf(panel, current, sectionId);
+        if (graphic != null) {
+            String reference = reference(graphic, null);
+            javax.swing.JMenuItem whole = new javax.swing.JMenuItem(
+                    com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.QUOTE);
+            whole.addActionListener(event -> com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.quote(
+                    panel, "Grafik \u201E" + graphic.title() + "\u201C", reference));
+            menu.add(whole);
+            List<com.aresstack.spaceharvester.app.chat.artifact.SvgElements.Item> items =
+                    com.aresstack.spaceharvester.app.chat.artifact.SvgElements.list(graphic.current().svg());
+            if (!items.isEmpty()) {
+                javax.swing.JMenu elements = new javax.swing.JMenu(ELEMENT_QUOTE);
+                addElements(elements, items, 0, items.size(), panel, reference);
+                menu.add(elements);
+            }
+        } else if (current.kind() == ChatArtifact.Kind.DOCUMENT && sectionId != null
+                && panel.kind() != com.aresstack.spaceharvester.app.ui.markdown.MermaidDiagramPanel.Kind.SVG) {
+            javax.swing.JMenuItem adopt = new javax.swing.JMenuItem(ADOPT);
+            adopt.addActionListener(event -> adopt(panel, sectionId));
+            menu.add(adopt);
+        }
+        return menu.getComponentCount() == 0 ? null : menu;
+    }
+
+    /** Die Elemente {@code from} bis {@code to} einer Ebene; eine Gruppe mit Teilen wird ein Untermenü. */
+    private static void addElements(javax.swing.JMenu into,
+                                    List<com.aresstack.spaceharvester.app.chat.artifact.SvgElements.Item> items,
+                                    int from, int to, Component source, String reference) {
+        int i = from;
+        while (i < to) {
+            com.aresstack.spaceharvester.app.chat.artifact.SvgElements.Item item = items.get(i);
+            int end = i + 1;
+            while (end < to && items.get(end).depth() > item.depth()) {
+                end++;
+            }
+            String label = item.line().strip();
+            Runnable quote = () -> com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.quote(source, label,
+                    reference + ", Element " + item.id());
+            if (end > i + 1) {
+                javax.swing.JMenu group = new javax.swing.JMenu(label);
+                javax.swing.JMenuItem all = new javax.swing.JMenuItem(WHOLE_GROUP);
+                all.addActionListener(event -> quote.run());
+                group.add(all);
+                group.addSeparator();
+                addElements(group, items, i + 1, end, source, reference);
+                into.add(group);
+            } else {
+                javax.swing.JMenuItem one = new javax.swing.JMenuItem(label);
+                one.addActionListener(event -> quote.run());
+                into.add(one);
+            }
+            i = end;
+        }
+    }
+
+    /** Der Abschnitt, in dem {@code component} steht, sonst {@code null}. */
+    private String sectionOf(Component component) {
+        for (Map.Entry<String, JComponent> entry : blocks.entrySet()) {
+            if (SwingUtilities.isDescendingFrom(component, entry.getValue())) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
+    /** Die Grafik hinter einem gezeigten SVG: diese Grafik selbst oder eine im Abschnitt eingebundene. */
+    private ChatArtifact graphicOf(com.aresstack.spaceharvester.app.ui.markdown.MermaidDiagramPanel panel,
+                                   ChatArtifact current, String sectionId) {
+        if (panel.kind() != com.aresstack.spaceharvester.app.ui.markdown.MermaidDiagramPanel.Kind.SVG) {
+            return null;
+        }
+        if (current.kind() == ChatArtifact.Kind.GRAPHIC) {
+            return current;
+        }
+        if (sectionId == null) {
+            return null;
+        }
+        String shownSvg = panel.getDiagramCode().strip();
+        try {
+            for (String id : com.aresstack.spaceharvester.app.chat.artifact.GraphicReferences.ids(
+                    current.document().section(sectionId).markdown())) {
+                ChatArtifact graphic = store.read(folder, chatId, id);
+                if (graphic != null && graphic.kind() == ChatArtifact.Kind.GRAPHIC
+                        && graphic.current().svg().strip().equals(shownSvg)) {
+                    return graphic;
+                }
+            }
+        } catch (SectionDocument.SectionException gone) {
+            return null;
+        }
+        return null;
+    }
+
+    /**
+     * Übernimmt ein Mermaid- oder draw.io-Diagramm als eigene Grafik (Angelo 27.11.): das SVG, das die Anzeige zeichnet,
+     * wird eine Grafik mit Element-Kennungen, und im Abschnitt steht danach der Verweis statt des Quelltexts.
+     */
+    void adopt(com.aresstack.spaceharvester.app.ui.markdown.MermaidDiagramPanel panel, String sectionId) {
+        ChatArtifact seen = shown;
+        if (seen == null) {
+            return;
+        }
+        status.accept("Diagramm wird als Grafik übernommen …");
+        new javax.swing.SwingWorker<String, Void>() {
+            @Override
+            protected String doInBackground() {
+                return panel.svg();
+            }
+
+            @Override
+            protected void done() {
+                String svg;
+                try {
+                    svg = get();
+                } catch (Exception failed) {
+                    Throwable cause = failed.getCause() != null ? failed.getCause() : failed;
+                    status.accept("Das Diagramm ließ sich nicht als Grafik übernehmen: " + cause.getMessage());
+                    return;
+                }
+                status.accept(adoptSvg(seen, sectionId, panel.getDiagramCode(), svg));
+            }
+        }.execute();
+    }
+
+    /** Legt die Grafik an und setzt den Verweis an die Stelle des Codeblocks; liefert die Meldung für die Statuszeile. */
+    String adoptSvg(ChatArtifact seen, String sectionId, String code, String svg) {
+        SectionDocument.Section section;
+        try {
+            section = seen.document().section(sectionId);
+        } catch (SectionDocument.SectionException gone) {
+            return "Der Abschnitt ist nicht mehr da.";
+        }
+        if (com.aresstack.spaceharvester.app.chat.artifact.GraphicReferences.replaceBlock(section.markdown(), code,
+                "") == null) {
+            return "Das Diagramm steht nicht mehr im Abschnitt.";
+        }
+        String title = section.heading() == null || section.heading().isBlank() ? seen.title() : section.heading();
+        ChatArtifact graphic = store.createGraphic(folder, chatId, title, svg, ChatArtifact.Origin.USER);
+        if (graphic == null) {
+            return "Die Grafik konnte nicht angelegt werden.";
+        }
+        String embed = com.aresstack.spaceharvester.app.chat.artifact.GraphicReferences.reference(graphic);
+        ChatArtifactStore.WriteResult result = store.edit(folder, chatId, artifactId, seen.revision(),
+                ChatArtifact.Origin.USER, "Diagramm als Grafik " + graphic.id() + " übernommen",
+                document -> document.replaceSection(sectionId, com.aresstack.spaceharvester.app.chat.artifact
+                        .GraphicReferences.replaceBlock(document.section(sectionId).markdown(), code, embed)));
+        if (!result.success()) {
+            return "Grafik " + graphic.id() + " angelegt, aber der Abschnitt wurde inzwischen geändert: "
+                    + result.reason();
+        }
+        return "Diagramm ist jetzt Grafik " + graphic.id() + " und lässt sich bearbeiten.";
     }
 
     /** Der schwebende Knopf „Zitieren“ (für Tests). */
