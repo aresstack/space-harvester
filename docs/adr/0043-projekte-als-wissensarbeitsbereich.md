@@ -13,7 +13,7 @@
     Abschnitt 4
   - [ADR 0038](0038-indexbasierte-progressive-und-agentengestuetzte-suche.md): Suche
 - Ändert ADR 0034 in Abschnitt 1 (Einmaligkeit, Wurzel „nur Seite“). Alles andere aus ADR 0034 gilt weiter.
-- Ergänzt am 27.11.2026 um den Nachtrag „Chats und Artefakte im Projekt, Projekte mit Farbe“. Dieser Teil wird
+- Ergänzt am 27.11.2026 um den Nachtrag „Chats und Artefakte im Projekt, farbige Gruppen“. Dieser Teil wird
   vorgezogen und wartet nicht auf die Abnahme der Bibliotheken.
 
 ## Kontext
@@ -275,7 +275,7 @@ ergänzt die Abschnitte 6 und 7. Er ändert nichts an den Abschnitten 1 bis 5.
 Vektoren. Für das Material eines ganzen Projekts ist er nicht gebaut: Er vergleicht in jeder Runde alle Paare neu.
 Das Clustern über das Projektmaterial gehört zu Writing4j. `TopicClusterer` wird dafür weder umgebaut noch kopiert.
 
-## Nachtrag vom 27.11.2026: Chats und Artefakte im Projekt, Projekte mit Farbe
+## Nachtrag vom 27.11.2026: Chats und Artefakte im Projekt, farbige Gruppen
 
 Quelle: Angelos Nachricht vom 27.11.2026, 16:21 MEZ: „Ich möchte meinen Chats außerdem eine Farbe geben, so wie die
 Tabs in Firefox. Da kann ich ja auch Gruppen erstellen von Tabs. Und genauso möchte ich hier farbige Gruppen von Chats
@@ -290,32 +290,44 @@ kann auch einfach das Default-Projekt nutzen.“
 Der Nachtrag ergänzt die Abschnitte 1, 2, 3 und 8, ändert in Abschnitt 4.1, was „aktives Projekt“ heißt (F6), und
 ändert [ADR 0045](0045-schreibumgebung-im-chat.md) in Abschnitt 1.
 
-### F1. Eine farbige Gruppe von Chats ist ein Projekt
-- Es gibt nur einen Begriff „Projekt“. Die farbige Gruppe von Chats ist kein zweites Ding neben dem Projekt aus
-  Abschnitt 1, sondern dasselbe Projekt mit zwei weiteren Bestandteilen: **Chats** und **Artefakte**.
-- Ein Projekt hat neben ID und Namen eine **Farbe** aus einer festen Auswahl. Die Auswahl legt der UX-Manager fest.
-- Ein Projekt kann außerdem ein **Ziel** haben, das ein Klick auf seinen Namen öffnet (F6).
-- Die Farbe kennzeichnet überall, was zum Projekt gehört: den Chat in der Liste, den Kopf des geöffneten Chats und
-  die Reiter der Artefakte.
+### F1. Projekt und farbige Gruppe
+Angelo hat am 27.11.2026 um 16:32 MEZ klargestellt: „In dem Chat sehe ich ja immer nur die Chats, die zu dem Projekt
+gehören. Die anderen werden gar nicht angezeigt. Aber ich würde trotzdem noch ermöglichen, dass man sie farbig
+gruppieren kann innerhalb eines Projekts.“ Daraus folgen zwei Ebenen:
 
-### F2. Chats im Projekt
-- Ein Chat gehört zu genau einem Projekt, wie ein Tab zu einer Gruppe. Ein Chat ohne eigene Zuordnung gehört zum
-  Standardprojekt „AresStack“ (Abschnitt 3) und verhält sich wie heute. Alle vorhandenen Chats sind damit ohne
-  Umwandlung Chats des Standardprojekts.
-- Die Zugehörigkeit steht am Chat selbst (ein Feld mit der Projekt-ID). Sie geht mit dem Chat in den Papierkorb und
-  zurück. Fehlt das Feld oder verweist es auf ein Projekt, das es nicht mehr gibt, gehört der Chat zum
+- **Projekt:** Es gibt nur einen Begriff „Projekt“, den aus Abschnitt 1. Es bekommt zwei weitere Bestandteile,
+  **Chats** und **Artefakte**, und kann ein **Ziel** haben, das ein Klick auf seinen Namen öffnet (F6). Gewählt wird
+  es unten in der Ecke (F6). Ein Projekt hat keine Farbe; man erkennt es an seinem Namen in der Ecke.
+- **Gruppe:** Innerhalb eines Projekts lassen sich Chats zu farbigen Gruppen zusammenfassen, wie Tabs in einer
+  Tabgruppe. Eine Gruppe hat ID, Namen und eine **Farbe** aus einer festen Auswahl, die der UX-Manager festlegt. Sie
+  ordnet nur die Chat-Liste und hat keine weitere Wirkung: Artefakte, Favoriten und Aufträge gehören zum Projekt,
+  nie zur Gruppe.
+- Farbe bedeutet damit überall dasselbe, nämlich die Gruppe: am Chat in der Liste und im Kopf des geöffneten Chats.
+
+### F2. Chats im Projekt und in Gruppen
+- Ein Chat gehört zu genau einem Projekt. Ein Chat ohne eigene Zuordnung gehört zum Standardprojekt „AresStack“
+  (Abschnitt 3) und verhält sich wie heute. Alle vorhandenen Chats sind damit ohne Umwandlung Chats des
+  Standardprojekts.
+- Innerhalb seines Projekts gehört ein Chat zu höchstens einer Gruppe. Gruppen gibt es in jedem Projekt, auch im
   Standardprojekt.
+- Projekt und Gruppe stehen am Chat selbst (je ein Feld mit der ID). Sie gehen mit dem Chat in den Papierkorb und
+  zurück. Fehlt die Projekt-ID oder verweist sie auf ein Projekt, das es nicht mehr gibt, gehört der Chat zum
+  Standardprojekt. Eine unbekannte Gruppe heißt: ohne Gruppe.
+- Die Gruppen eines Projekts sind ein Bestandteil des Projekts mit eigener Datei in dessen Ordner (F4).
 - Der Bereich eines Chats (`ChatNode`, was links gewählt ist) bleibt davon unberührt. Ein Projekt fasst Chats aus
   verschiedenen Bereichen zusammen.
 - Bedienung:
-  - Am Chat: „Zu Projekt hinzufügen“ mit der Liste der Projekte und „Neues Projekt“, sowie „Aus Projekt
-    entfernen“. Entfernen legt den Chat zurück ins Standardprojekt.
-  - Die Chat-Liste zeigt zuerst die Chats des aktiven Projekts (F6), gegliedert wie heute in „In diesem Bereich“ und
-    „Übrige Chats“. Darunter stehen die anderen Projekte in ihrer Farbe. Jedes klappt zu seinen Chats auf und bietet
-    „Neuer Chat in diesem Projekt“. Jeder Chat steht in der Liste genau einmal. Ist das Standardprojekt aktiv und
-    gibt es kein weiteres Projekt, sieht die Liste aus wie heute.
+  - **Die Chat-Liste zeigt nur die Chats des aktiven Projekts.** Chats anderer Projekte erscheinen dort nicht; das
+    Projekt wechselt man nur unten in der Ecke.
+  - Oben stehen die Gruppen des Projekts in ihrer Farbe. Eine Gruppe klappt zu ihren Chats auf und bietet „Neuer
+    Chat in dieser Gruppe“. Darunter stehen die Chats ohne Gruppe, gegliedert wie heute in „In diesem Bereich“ und
+    „Übrige Chats“. Jeder Chat steht genau einmal in der Liste. Ohne Gruppen sieht die Liste aus wie heute.
+  - Am Chat: „Zu Gruppe hinzufügen“ mit der Liste der Gruppen und „Neue Gruppe“, „Aus Gruppe entfernen“ und „In
+    Projekt verschieben“ mit der Liste der Projekte. Verschieben in ein anderes Projekt nimmt den Chat aus seiner
+    Gruppe.
+  - An der Gruppe: „Umbenennen“, „Farbe ändern“, „Auflösen“. Beim Auflösen bleiben die Chats erhalten, ohne Gruppe.
   - Ein neuer Chat gehört zum aktiven Projekt und beginnt im gerade gewählten Bereich.
-  - Am Projekt: „Umbenennen“, „Farbe ändern“, „Löschen“.
+  - Am Projekt (in der Liste der Ecke): „Umbenennen“, „Ziel ändern“, „Löschen“.
 
 ### F3. Artefakte gehören dem Projekt
 - Ein Artefakt der Schreibumgebung (ADR 0045) hat genau einen Besitzer: im Standardprojekt den Chat, in jedem
@@ -331,15 +343,16 @@ Der Nachtrag ergänzt die Abschnitte 1, 2, 3 und 8, ändert in Abschnitt 4.1, wa
 ### F4. Ablage
 - Es gilt Abschnitt 3: je Projekt ein Ordner im Datenordner der App, darin je Bestandteil eine Datei mit
   Versionsfeld, atomar geschrieben, Quarantäne statt Überschreiben.
-- Vorgezogen wird nur, was die Chats brauchen: das Projekt mit ID, Name und Farbe, der Bestandteil „Artefakte“ und
-  das aktive Projekt. Das Standardprojekt „AresStack“ gibt es dabei von Anfang an, mit fester ID, festem Namen und
-  ohne Farbe. Die Umwandlung der Favoritenliste in die Favoriten von „AresStack“ (Paket P1) bleibt, wo sie ist, und
-  benutzt später dieselbe Projektablage.
+- Vorgezogen wird nur, was die Chats brauchen: das Projekt mit ID, Name und Ziel, die Bestandteile „Gruppen“ und
+  „Artefakte“ und das aktive Projekt. Das Standardprojekt „AresStack“ gibt es dabei von Anfang an, mit fester ID,
+  festem Namen und eigenem Ordner. Die Umwandlung der Favoritenliste in die Favoriten von „AresStack“ (Paket P1)
+  bleibt, wo sie ist, und benutzt später dieselbe Projektablage.
 
 ### F5. Löschen eines Projekts
 - Nur nach „Projekt wirklich löschen?“ Ja/Nein. Die Frage nennt, wie viele Chats und Artefakte betroffen sind.
-- Die Chats bleiben erhalten und gehören danach zum Standardprojekt. Die Artefakte des Projekts gehen mit dem
-  Projekt in den Papierkorb und lassen sich wie ein gelöschter Chat bis zum Neustart wiederherstellen.
+- Die Chats bleiben erhalten und gehören danach zum Standardprojekt, ohne Gruppe. Die Gruppen und die Artefakte des
+  Projekts gehen mit dem Projekt in den Papierkorb und lassen sich wie ein gelöschter Chat bis zum Neustart
+  wiederherstellen.
 - Das Standardprojekt lässt sich weder umbenennen noch löschen. War das gelöschte Projekt aktiv, wird das
   Standardprojekt aktiv.
 
@@ -347,22 +360,21 @@ Der Nachtrag ergänzt die Abschnitte 1, 2, 3 und 8, ändert in Abschnitt 4.1, wa
 - Es gibt für die ganze App genau ein **aktives Projekt**, über alle Perspektiven hinweg. Ohne Wahl ist es das
   Standardprojekt. Die Wahl gehört zum Bedienprofil und bleibt über einen Neustart erhalten.
 - **Ort der Wahl:** unten in der Ecke beim Schriftzug „AresStack“. Im Standardprojekt steht dort der Schriftzug wie
-  heute,
-  rechts daneben ein kleiner Pfeil nach oben. In jedem anderen Projekt stehen dort statt des Schriftzugs Name und
-  Farbe des Projekts. Der Pfeil öffnet nach oben die Liste der Projekte mit „Neues Projekt“.
+  heute, rechts daneben ein kleiner Pfeil nach oben. In jedem anderen Projekt steht dort statt des Schriftzugs der
+  Name des Projekts. Der Pfeil öffnet nach oben die Liste der Projekte mit „Neues Projekt“.
 - Der Schriftzug „AresStack“ ist damit der Name des Standardprojekts und steht nur dort. Die Jahreszahl des
   Copyright-Vermerks daneben ist immer das laufende Jahr nach dem Datum des Rechners, nie eine feste Zahl.
 - Wer keine Projekte anlegt, merkt davon nichts außer dem Pfeil.
 - **Was das aktive Projekt bestimmt:**
   - Neue Chats gehören zum aktiven Projekt, in jeder Perspektive.
-  - Die Chat-Liste zeigt seine Chats zuerst (F2).
+  - Die Chat-Liste zeigt nur seine Chats (F2).
   - Der Stern der Favoriten wirkt auf das aktive Projekt. Damit ändert sich Abschnitt 4.1 in einem Punkt: Aktiv ist
     nicht mehr das in der Favoritenansicht gewählte Projekt, sondern dieses eine, global gewählte.
 - **Ziel des Projekts** (Angelo, 27.11.2026, 16:29 MEZ: „Das bedeutet aber auch, dass man für jedes Projekt eine URL
   hinterlegen kann. […] Wenn er noch nicht vergeben ist, dann würde bei dem Klick ein Dialog öffnen. […] Er wählt aus
   lokale Datei oder Website.“):
   - Jedes Projekt kann ein Ziel haben: einen lokalen Ordner, eine lokale Datei oder eine Website. Art und Wert
-    stehen beide beim Projekt, neben Name und Farbe.
+    stehen beide beim Projekt, neben dem Namen.
   - Ein Klick auf den Namen in der Ecke öffnet das Ziel, der Pfeil daneben wechselt das Projekt. Ordner und Dateien
     öffnet das Programm, das der Rechner dafür vorsieht; eine Website öffnet der Browser.
   - Hat das Projekt noch kein Ziel, öffnet der Klick einen kleinen Dialog. Vorgewählt ist „Lokaler Ordner oder
@@ -372,14 +384,16 @@ Der Nachtrag ergänzt die Abschnitte 1, 2, 3 und 8, ändert in Abschnitt 4.1, wa
   - Das Standardprojekt „AresStack“ behält sein fest hinterlegtes Ziel; es lässt sich nicht ändern.
   - Das Ziel ist eine Angabe des Benutzers. Es steht nie in Logs, und nichts öffnet sich ohne Klick. In Code, Tests
     und Vorgaben stehen nur erfundene Ziele.
-- Öffnet der Benutzer einen Chat eines anderen Projekts, wird dessen Projekt aktiv. So zeigt die Ecke immer das
-  Projekt, in dem gerade gearbeitet wird, und Artefakte landen dort, wo die Ecke es sagt.
+- Beim Wechsel des Projekts wechselt die Chat-Liste mit. Der geöffnete Chat gehört immer zum aktiven Projekt; so
+  zeigt die Ecke immer das Projekt, in dem gerade gearbeitet wird, und Artefakte landen dort, wo die Ecke es sagt.
 - Der Wechsel wird den Ansichten gemeldet (ADR 0027), niemand fragt ab. Ein Wechsel startet nichts von selbst: keinen
   Abgleich, keinen KI-Lauf.
 
 ### F7. Umsetzung, vorgezogen
-- K1: Projektablage (ID, Name, Farbe) und Projekt-ID am Chat. Reine Logik mit Tests.
-- K2: Chat-Liste mit Projekten, Zuordnen und Entfernen, neuer Chat im Projekt, Farbe an Chat und Reitern (K1).
+- K1: Projektablage (ID, Name, Ziel), Gruppen je Projekt (ID, Name, Farbe), Projekt-ID und Gruppen-ID am Chat.
+  Reine Logik mit Tests.
+- K2: Chat-Liste nur mit den Chats des aktiven Projekts, Gruppen zum Aufklappen, Zuordnen und Entfernen, Verschieben
+  in ein anderes Projekt, Farbe der Gruppe an Liste und Chat-Kopf (K1).
 - K3: Besitzer eines Artefakts ist Chat oder Projekt, Umzug beim Beitritt (K1 und der Artefakt-Speicher aus
   ADR 0045). Dieses Paket gehört zum Bau der Schreibumgebung, damit nur eine Stelle den Artefakt-Speicher ändert.
 - K4: Aktives Projekt im Bedienprofil, die Wahl unten in der Ecke über alle Perspektiven und das Ziel des Projekts
