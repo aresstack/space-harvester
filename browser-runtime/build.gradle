@@ -1,0 +1,86 @@
+// Browser-Laufzeit (ADR 0046, Angelo 27.11.2026 18:46/18:53): Start und Lebenszyklus der Browser für die Websuche,
+// aus Research4j verschoben. Erkennung der installierten Browser, Startparameter, Profile, Firefox-Einstellungen,
+// Camoufox (installiert? / installieren, nie beim Start), Prozesse, Aufräumen und die Trennung des GraalVM-25-Stapels
+// von playwright4j. Liefert die originalen Playwright-Objekte, keine eigene Abstraktion darüber. Hängt nicht an
+// Research4j; den Adapter auf dessen Port hat die App. Eigenes Gradle-Projekt ohne Release (Maven Central gesperrt).
+plugins {
+    id 'java-library'
+}
+
+description = 'Browser-Laufzeit: Start, Profile und Lebenszyklus der Browser über Playwright (playwright4j).'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+configurations {
+    // Der Treiber-Prozess (playwright4j mit seinem GraalVM-25-Stapel). Er läuft nur im Kind-Prozess, nie im
+    // Klassenpfad des Hosts; der Host packt diese JARs in einen eigenen Ordner (siehe PlaywrightDriverJars).
+    driverProcess {
+        canBeConsumed = true
+        canBeResolved = false
+    }
+    driverProcessClasspath {
+        canBeConsumed = false
+        extendsFrom driverProcess
+    }
+}
+
+// Gruppen des GraalVM-25-Stapels von playwright4j, die aus dem Klassenpfad des Hosts herausbleiben.
+def driverProcessGraal = ['org.graalvm.polyglot', 'org.graalvm.sdk', 'org.graalvm.truffle', 'org.graalvm.js',
+                          'org.graalvm.regex', 'org.graalvm.shadowed', 'org.graalvm.tools']
+
+dependencies {
+    // Die originalen Playwright-Objekte gehören zur Schnittstelle (Playwright, Browser, BrowserContext). Der
+    // Node-Treiber von Microsoft bleibt draußen; playwright4j ersetzt ihn.
+    api(libs.playwright) {
+        exclude group: 'com.microsoft.playwright', module: 'driver'
+        exclude group: 'com.microsoft.playwright', module: 'driver-bundle'
+    }
+    // Driver-Ersatz von playwright4j im Host (startet den Kind-Prozess); sein GraalVM-Stapel nur in driverProcess.
+    implementation(libs.playwright4j) {
+        driverProcessGraal.each { group -> exclude group: group }
+    }
+    driverProcess libs.playwright4j
+    // Camoufox-Startprofil und Chrome-Einstellungen (JSON)
+    implementation libs.gson
+
+    testImplementation platform(libs.junit.bom)
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+def driverJars = configurations.driverProcessClasspath
+
+tasks.named('test') {
+    useJUnitPlatform {
+        excludeTags 'live'
+    }
+    inputs.files(driverJars)
+    doFirst {
+        systemProperty 'playwright4j.driver.classpath', driverJars.files.join(File.pathSeparator)
+    }
+}
+
+// Echte Browserstarts (Abnahme mit dem installierten Standard-Firefox, BFCache, Add-on), eigener CI-Job. Welcher
+// Browser, sagen BROWSER_RUNTIME_TEST_CHANNEL und BROWSER_RUNTIME_TEST_EXECUTABLE; ohne Browser werden sie übersprungen.
+tasks.register('liveTest', Test) {
+    group = 'verification'
+    description = 'Startet echte Browser über die Browser-Laufzeit.'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags 'live'
+    }
+    inputs.files(driverJars)
+    doFirst {
+        systemProperty 'playwright4j.driver.classpath', driverJars.files.join(File.pathSeparator)
+    }
+    outputs.upToDateWhen { false }
+}

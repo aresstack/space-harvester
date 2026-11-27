@@ -40,7 +40,7 @@ public final class BrowserSettingsPanel {
     /** Überschrift der Browserwahl. */
     public static final String ENGINE_HEADING = "Browser des Chats";
     static final String CHANNEL_HINT = "Edge und Chrome nutzen den installierten Browser mit Proxy und Zertifikaten "
-            + "des Hauses. Camoufox wird beim ersten Start heruntergeladen. Gilt ab dem nächsten Browser-Start.";
+            + "des Hauses. Camoufox muss installiert sein; der Start lädt nichts herunter. Gilt ab dem nächsten Browser-Start.";
 
     /** Der Browser des Chats (ADR 0046). */
     final JComboBox<String> channel = Comic.combo(value -> BrowserSettings.CHANNELS.getOrDefault(

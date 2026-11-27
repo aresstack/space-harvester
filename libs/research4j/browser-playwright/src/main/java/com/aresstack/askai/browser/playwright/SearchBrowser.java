@@ -1,6 +1,5 @@
 package com.aresstack.askai.browser.playwright;
 
-import com.aresstack.askai.browser.playwright.camoufox.CamoufoxLaunch;
 import com.aresstack.serp4j.core.error.SearchErrorCategory;
 import com.aresstack.serp4j.core.error.SearchProviderException;
 import com.aresstack.serp4j.core.model.SearchRequest;
@@ -14,17 +13,12 @@ import com.aresstack.askai.browser.search.engine.SearchEngineHosts;
 import com.microsoft.playwright.APIResponse;
 import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.BrowserContext;
-import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.Page;
-import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.PlaywrightException;
 import com.microsoft.playwright.Request;
 import com.microsoft.playwright.options.RequestOptions;
 import com.microsoft.playwright.options.WaitUntilState;
 
-import java.nio.file.Path;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -46,10 +40,10 @@ import java.util.concurrent.RejectedExecutionException;
  * {@link PlaywrightSearchProvider} with every search. Serp4J never starts or stops it.
  *
  * <ul>
- *   <li>Camoufox (default) runs with the same executable, fingerprint profile and preferences as the research
- *       browser, but is started with {@code launch()} instead of a persistent context: Playwright only returns
- *       a {@link Browser} object for a launched browser. One browser context is created after the start and
- *       lives as long as the browser, so cookies and consent answers survive between searches.</li>
+ *   <li>The host's {@link BrowserLauncher} starts it with a throw-away profile ({@link BrowserLauncher#ephemeral}):
+ *       Playwright only returns a {@link Browser} object for a launched browser. One browser context is created
+ *       after the start and lives as long as the browser, so cookies and consent answers survive between
+ *       searches.</li>
  *   <li>All Playwright calls run on one owner thread (Playwright objects are not thread-safe); searches are
  *       serialised. The browser starts on the first search.</li>
  *   <li>A disconnected browser is started again before the next search; a browser that dies during a search
@@ -72,30 +66,30 @@ public final class SearchBrowser implements AutoCloseable {
     /** The engine pace; spacing and pause come from the settings ({@link #setEngineSpacingMillis}, {@link #setEnginePause}). */
     private final SearchEngineThrottle throttle = new SearchEngineThrottle(0L, 0L, 0L, SearchEngineThrottle.SYSTEM);
 
-    private final String channel;
+    private final BrowserLauncher launcher;
     /** Read before every (re)start: a changed setting takes effect with the next search. */
     private final java.util.function.BooleanSupplier headless;
     private final ExecutorService owner;
     private volatile boolean closed;
     // Touched only on the owner thread.
-    private Playwright playwright;
+    private LaunchedBrowser launched;
     private Browser browser;
     private boolean browserHeadless;
     private int launches;
 
-    /** @param channel {@code camoufox} (default) or a Chromium channel such as {@code chrome} / {@code msedge} */
-    public SearchBrowser(String channel) {
-        this(channel, () -> true);
+    /** @param launcher the host's browser runtime, which decides the browser */
+    public SearchBrowser(BrowserLauncher launcher) {
+        this(launcher, () -> true);
     }
 
     /**
-     * @param channel  {@code camoufox} (default) or a Chromium channel such as {@code chrome} / {@code msedge}
+     * @param launcher the host's browser runtime, which decides the browser
      * @param headless whether the browser runs without a window; asked before every search, and a browser that
      *                 runs in the other mode is started again
      */
-    public SearchBrowser(String channel, java.util.function.BooleanSupplier headless) {
+    public SearchBrowser(BrowserLauncher launcher, java.util.function.BooleanSupplier headless) {
         this.headless = headless == null ? () -> true : headless;
-        this.channel = channel == null || channel.trim().isEmpty() ? CamoufoxProvisioning.CHANNEL : channel.trim();
+        this.launcher = Objects.requireNonNull(launcher, "launcher");
         this.owner = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "search-browser-owner");
             t.setDaemon(true);
@@ -478,10 +472,6 @@ public final class SearchBrowser implements AutoCloseable {
         }
     }
 
-    public String getChannel() {
-        return channel;
-    }
-
     private Browser ensureBrowser(PlaywrightSearchProvider provider) {
         return ensureBrowser(provider.getDescriptor().getId());
     }
@@ -493,27 +483,9 @@ public final class SearchBrowser implements AutoCloseable {
         }
         closeBrowserQuietly();
         try {
-            if (playwright == null) {
-                Map<String, String> env = new LinkedHashMap<String, String>();
-                env.put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
-                env.put("PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS", "1");
-                DriverClasspathJar.install();
-                playwright = Playwright.create(new Playwright.CreateOptions().setEnv(env));
-            }
-            boolean camoufox = CamoufoxProvisioning.CHANNEL.equals(channel);
-            if (camoufox) {
-                browser = launchCamoufox(playwright, wantHeadless);
-            } else if (BrowserExecutables.FIREFOX.equals(channel)) {
-                browser = playwright.firefox().launch(Playwright4jDriver.localFirefoxOptions(wantHeadless));
-            } else {
-                BrowserType.LaunchOptions chromium = new BrowserType.LaunchOptions().setChannel(channel)
-                        .setHeadless(wantHeadless);
-                String chosen = BrowserExecutables.configured(channel);
-                if (!chosen.isEmpty()) {
-                    chromium.setExecutablePath(java.nio.file.Paths.get(chosen));
-                }
-                browser = playwright.chromium().launch(chromium);
-            }
+            launched = launcher.ephemeral(wantHeadless, null);
+            browser = launched.browser();
+            boolean camoufox = launched.camoufox();
             browserHeadless = wantHeadless;
             // The one context of this browser with its one search tab: every search and every redirect hop runs
             // in this tab (one window, also when visible), cookies stay between searches.
@@ -523,39 +495,15 @@ public final class SearchBrowser implements AutoCloseable {
                     : new Browser.NewContextOptions().setAcceptDownloads(false));
             searchContext.newPage();
             launches++;
-            System.err.println("[search-browser] started " + channel + (wantHeadless ? " headless" : " visible")
+            System.err.println("[search-browser] started" + (wantHeadless ? " headless" : " visible")
                     + " (start " + launches + ")");
             return browser;
-        } catch (RuntimeException e) {
+        } catch (com.aresstack.askai.browser.BrowserException | RuntimeException e) {
             closeBrowserQuietly();
-            closePlaywrightQuietly();
             throw SearchProviderException.builder(providerId, SearchErrorCategory.UNAVAILABLE,
                             "search browser could not be started: " + e.getClass().getSimpleName())
                     .retryable(true).cause(e).build();
         }
-    }
-
-    private static Browser launchCamoufox(Playwright playwright, boolean headless) {
-        Path executable = CamoufoxProvisioning.ensureInstalled();
-        CamoufoxLaunch launch;
-        try {
-            launch = CamoufoxLaunch.builtIn(executable, CamoufoxProvisioning.browserRoot(), Locale.getDefault());
-        } catch (java.io.IOException e) {
-            throw new IllegalStateException("Camoufox launch profile unreadable", e);
-        }
-        Map<String, String> environment = new HashMap<String, String>(System.getenv());
-        environment.putAll(launch.environment());
-        Map<String, Object> prefs = new LinkedHashMap<String, Object>(launch.prefs());
-        BrowserType.LaunchOptions options = new BrowserType.LaunchOptions()
-                .setChannel(Playwright4jDriver.FIREFOX_BIDI_CHANNEL)
-                .setExecutablePath(executable)
-                .setHeadless(headless)
-                .setEnv(environment)
-                .setFirefoxUserPrefs(prefs);
-        if (!launch.args().isEmpty()) {
-            options.setArgs(launch.args());
-        }
-        return playwright.firefox().launch(options);
     }
 
     private SearchResponse onOwner(PlaywrightSearchProvider provider, Callable<SearchResponse> work) {
@@ -588,25 +536,11 @@ public final class SearchBrowser implements AutoCloseable {
     }
 
     private void closeBrowserQuietly() {
-        if (browser != null) {
-            try {
-                browser.close();
-            } catch (RuntimeException ignored) {
-                // already gone
-            }
-            browser = null;
+        if (launched != null) {
+            launched.close();
+            launched = null;
         }
-    }
-
-    private void closePlaywrightQuietly() {
-        if (playwright != null) {
-            try {
-                playwright.close();
-            } catch (RuntimeException ignored) {
-                // already gone
-            }
-            playwright = null;
-        }
+        browser = null;
     }
 
     @Override
@@ -616,10 +550,7 @@ public final class SearchBrowser implements AutoCloseable {
         }
         closed = true;
         try {
-            owner.submit(() -> {
-                closeBrowserQuietly();
-                closePlaywrightQuietly();
-            }).get();
+            owner.submit(this::closeBrowserQuietly).get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (ExecutionException | RejectedExecutionException ignored) {

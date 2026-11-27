@@ -88,7 +88,7 @@ final class WorkerBrowserLane {
         thread.start();
     }
 
-    /** Wait until the browser is up (the first Camoufox start may download it — unbounded on purpose). */
+    /** Wait until the browser is up (unbounded on purpose: the host's runtime bounds its own start). */
     void awaitStarted() throws BrowserException, InterruptedException {
         try {
             started.get();

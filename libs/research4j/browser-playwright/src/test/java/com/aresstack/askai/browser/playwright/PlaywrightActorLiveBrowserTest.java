@@ -66,11 +66,11 @@ public class PlaywrightActorLiveBrowserTest {
 
     @Test
     public void idleSidecarStillDispatchesRoutesBindingsAndPopups() throws Exception {
-        String channel = System.getenv().getOrDefault("ASKAI_TEST_BROWSER_CHANNEL", "chrome");
-        PlaywrightReadiness readiness = new PlaywrightCapabilityProbe().probe(channel);
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        PlaywrightReadiness readiness = launcher.readiness();
         assumeTrue("SKIPPED (environment-gated live test): " + readiness.render(), readiness.isReady());
         // This test covers the in-page overlay and its binding, i.e. Chrome/Edge WITHOUT the research extension
-        // (switched off or not loadable); the extension path is ChromeResearchExtensionLiveTest.
+        // (switched off or not loadable); loading the extension is the host runtime's job and tested there.
         System.setProperty(Playwright4jDriver.ADDON_PROPERTY, "false");
 
         final CountDownLatch bRequested = new CountDownLatch(1);
@@ -85,13 +85,13 @@ public class PlaywrightActorLiveBrowserTest {
         // (url -> true): the production freeze mechanism, minus the private-target policy.
         final com.aresstack.askai.browser.search.LegacyBrowserSearchSettings settings =
                 com.aresstack.askai.browser.search.LegacyBrowserSearchDefaults.create();
-        final String launchChannel = channel;
+        final BrowserLauncher launchLauncher = launcher;
         final AtomicReference<Playwright4jDriver> rawDriver =
                 new AtomicReference<Playwright4jDriver>();
         BrowserSessionActor actor = BrowserSessionActor.start(new Supplier<BrowserSession>() {
             public BrowserSession get() {
                 try {
-                    Playwright4jDriver driver = Playwright4jDriver.launch(launchChannel, true,
+                    Playwright4jDriver driver = Playwright4jDriver.launch(launchLauncher, true,
                             settings.navigation.navigationCommitTimeoutMillis, null,
                             new java.util.function.Predicate<String>() {
                                 public boolean test(String url) {
@@ -201,8 +201,8 @@ public class PlaywrightActorLiveBrowserTest {
      */
     @Test
     public void openReturnsAfterDomContentLoadedDespiteAForeverHangingSubresource() throws Exception {
-        String channel = System.getenv().getOrDefault("ASKAI_TEST_BROWSER_CHANNEL", "chrome");
-        PlaywrightReadiness readiness = new PlaywrightCapabilityProbe().probe(channel);
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        PlaywrightReadiness readiness = launcher.readiness();
         assumeTrue("SKIPPED (environment-gated live test): " + readiness.render(), readiness.isReady());
 
         final CountDownLatch releaseHangingResource = new CountDownLatch(1);
@@ -227,11 +227,11 @@ public class PlaywrightActorLiveBrowserTest {
 
         final com.aresstack.askai.browser.search.LegacyBrowserSearchSettings settings =
                 com.aresstack.askai.browser.search.LegacyBrowserSearchDefaults.create();
-        final String launchChannel = channel;
+        final BrowserLauncher launchLauncher = launcher;
         BrowserSessionActor actor = BrowserSessionActor.start(new Supplier<BrowserSession>() {
             public BrowserSession get() {
                 try {
-                    Playwright4jDriver driver = Playwright4jDriver.launch(launchChannel, true,
+                    Playwright4jDriver driver = Playwright4jDriver.launch(launchLauncher, true,
                             settings.navigation.navigationCommitTimeoutMillis, null, null,
                             settings.consent, settings.captcha);
                     return new PlaywrightBrowserSession(driver,

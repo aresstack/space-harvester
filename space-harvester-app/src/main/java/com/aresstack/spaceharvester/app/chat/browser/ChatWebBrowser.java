@@ -18,6 +18,9 @@ import com.aresstack.enterpriseai.proasteion.application.config.BrowserProfile;
 import com.aresstack.enterpriseai.proasteion.katagogion.McpToolContribution;
 import com.aresstack.askai.browser.playwright.PlaywrightChatEngine;
 import com.aresstack.spaceharvester.app.ui.AppTimeouts;
+import com.aresstack.spaceharvester.browser.runtime.BrowserChannel;
+import com.aresstack.spaceharvester.browser.runtime.BrowserRuntime;
+import com.aresstack.spaceharvester.browser.runtime.BrowserRuntimeConfig;
 import com.aresstack.spaceharvester.application.assets.DocumentText;
 
 import java.nio.file.Path;
@@ -31,7 +34,8 @@ import java.util.function.Supplier;
  * Der Browser der Chats für die Websuche, zusammengesetzt wie {@code AdapterAssembly.browsers} und die
  * Browser-Teile von {@code CompositionRoot} im Enterprise AI Client, seit ADR 0046 aus Research4j: die Werkzeuge aus
  * {@code browser-tools}, als Engine ein sichtbarer Browser über Playwright ({@link PlaywrightChatEngine}) mit eigenem
- * Profil je Chat unter {@code <Datenordner>/browser-profiles}. Welcher Browser (Edge als Vorgabe, Chrome, Camoufox),
+ * Profil je Chat unter {@code <Datenordner>/browser-profiles}. Den Browser startet die Browser-Laufzeit
+ * ({@code browser-runtime}) über den Adapter {@link RuntimeBrowserLauncher}. Welcher Browser (Edge als Vorgabe, Chrome, Camoufox),
  * steht unter Einstellungen › Browser; ist er nicht installiert, gibt es keine Websuche ({@link #start} liefert
  * {@code null}, {@link #unavailable} sagt warum). Jede Adresse prüft die Richtlinie des aktiven Profils (Extern oder Intern);
  * unbekannte Websites und verändernde Aktionen fragt der Chat nach. Nach jeder Antwort schließt der Browser, das
@@ -78,14 +82,11 @@ public final class ChatWebBrowser {
      */
     public static ChatWebBrowser start(Path dataDirectory, BrowserSettings settings) {
         String channel = settings.channel();
-        try {
-            PlaywrightDriverJars.prepare(dataDirectory);
-        } catch (java.io.IOException failed) {
-            unavailable = "Treiber der Websuche nicht entpackt: " + failed.getMessage();
-            LOG.log(System.Logger.Level.WARNING, unavailable);
-            return null;
-        }
-        String readiness = PlaywrightChatEngine.readiness(channel);
+        AppTimeouts timeouts = AppTimeouts.shared();
+        BrowserRuntime browserRuntime = new BrowserRuntime(BrowserRuntimeConfig.of(BrowserChannel.of(channel), settings.executable(channel),
+                dataDirectory, timeouts.get(AppTimeouts.Value.BROWSER_START)));
+        RuntimeBrowserLauncher launcher = new RuntimeBrowserLauncher(browserRuntime);
+        String readiness = launcher.readiness().render();
         if (!readiness.startsWith("READY")) {
             String name = BrowserSettings.CHANNELS.getOrDefault(channel, channel);
             unavailable = readiness.startsWith("BROWSER_NOT_INSTALLED") ? name + " ist hier nicht installiert"
@@ -94,10 +95,8 @@ public final class ChatWebBrowser {
             return null;
         }
         unavailable = "";
-        AppTimeouts timeouts = AppTimeouts.shared();
         DelegatingBrowserAccessGuard guard = new DelegatingBrowserAccessGuard();
-        ChatBrowserRuntime runtime = new ChatBrowserRuntime(new PlaywrightChatEngine(channel, false,
-                timeouts.get(AppTimeouts.Value.BROWSER_START).toMillis(),
+        ChatBrowserRuntime runtime = new ChatBrowserRuntime(new PlaywrightChatEngine(launcher, false,
                 timeouts.get(AppTimeouts.Value.BROWSER_NAVIGATION).toMillis()),
                 new BrowserProfileStore(dataDirectory.resolve(PROFILES_DIRECTORY)), guard);
         return new ChatWebBrowser(runtime, guard, settings);

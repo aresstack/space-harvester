@@ -58,6 +58,9 @@ include 'mainframe-languages'
 include 'proleap-parser'
 // Diagramm-Ansicht „Visuell“ im Command Deck: Mermaid-Renderer aus MainframeMate (GraalJS, Batik), nur für die Desktop-App
 include 'mermaid-renderer'
+// Browser-Laufzeit der Websuche (ADR 0046): Start, Profile und Lebenszyklus der Browser, aus Research4j verschoben;
+// eigenes Gradle-Projekt ohne Release.
+include 'browser-runtime'
 include 'space-harvester-app'
 
 // Vergleichstests gegen den Enterprise AI Client (ADR 0012, docs/PARITY.md, #193): neutrales Dokumentmodell für

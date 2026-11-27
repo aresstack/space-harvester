@@ -1,6 +1,6 @@
-// The Playwright browser backend of the research agent: the official Playwright Java API over playwright4j
-// (the Playwright Core JS driver runs on GraalJS in a child JVM — no Node.js), the Camoufox distribution/
-// launch code taken over from Argos, the single-owner BrowserSessionActor and the flat web_* tool set.
+// The Playwright browser backend of the research agent: the official Playwright Java API, the single-owner
+// BrowserSessionActor and the flat web_* tool set. Which browser runs and how it starts (driver, program file,
+// profiles, Camoufox, preferences) is the host's browser runtime behind the BrowserLauncher port.
 // Since the return to Java 21 this is a plain LIBRARY: the research plugin starts PlaywrightBrowserRuntime
 // in-process. No sidecar JVM, no Solon MCP server, no readiness line, no parent-death watchdog.
 //
@@ -8,6 +8,8 @@
 // the GraalVM 25 stack playwright4j needs never shares a classpath with the host's GraalJS 21.2 (mermaid-java,
 // PAC evaluation). The driver child JVM takes its classpath from the plugin classloader's jar URLs.
 apply plugin: 'java-library'
+// TestBrowserLauncher: the minimal test start of the live tests, shared with research-agent-runtime's tests.
+apply plugin: 'java-test-fixtures'
 
 dependencies {
     implementation project(':browser-api')
@@ -25,15 +27,20 @@ dependencies {
     }
     // askai #31: the search browser hands its Browser to Serp4J PlaywrightSearchProviders (ADR-020).
     api "com.aresstack:serp4j-playwright:${rootProject.serp4jVersion}"
-    implementation 'com.aresstack:playwright4j:0.3.0' // embeds the Core JS package itself (no driver-bundle)
-    // The Camoufox distribution/launch code (com.aresstack.askai.browser.playwright.camoufox) reads its manifest,
-    // font groups and fingerprint profile with Gson, the house JSON library (ADR 0001, section 3.1); Playwright
-    // needs Gson anyway, so the plugin lib/ carries no Jackson.
+    // The add-on bridge speaks JSON with Gson, the house JSON library (ADR 0001, section 3.1).
     implementation "com.google.code.gson:gson:${gsonVersion}"
     // PDF search hits: the browser's PDF viewer runs no page script, so the session reads the PDF itself
     // (PdfPageReader, PdfDocumentText).
     implementation "org.apache.pdfbox:pdfbox:${rootProject.pdfboxVersion}"
 
+    // The browser runtime belongs to the host (Space Harvester browser-runtime); here only the tests start a browser,
+    // through playwright4j's driver (it embeds the Core JS package itself, no driver-bundle).
+    testFixturesApi project(':browser-api')
+    testFixturesImplementation('com.microsoft.playwright:playwright:1.62.0') {
+        exclude group: 'com.microsoft.playwright', module: 'driver'
+        exclude group: 'com.microsoft.playwright', module: 'driver-bundle'
+    }
+    testRuntimeOnly 'com.aresstack:playwright4j:0.3.0'
     // The chat tools run end to end over this engine in the live test.
     testImplementation project(':browser-tools')
     testImplementation 'junit:junit:4.13.2'

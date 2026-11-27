@@ -4,16 +4,12 @@ import com.aresstack.askai.browser.BrowserException;
 import com.aresstack.askai.browser.BrowserLimits;
 import com.aresstack.askai.browser.UrlSafetyPolicy;
 import com.aresstack.askai.browser.domain.HostPortDomainKeyResolver;
-import com.aresstack.askai.browser.playwright.camoufox.CamoufoxLaunch;
 import com.aresstack.askai.browser.search.analysis.SearchLayoutRepairTools;
 import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.BrowserContext;
-import com.microsoft.playwright.BrowserType;
 import com.microsoft.playwright.Page;
-import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.PlaywrightException;
 
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,8 +19,8 @@ import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 
 /**
- * The productive {@link WorkerBrowserBackend}: one Playwright instance (one playwright4j driver child) and
- * one NON-persistent browser process, created on the lane's owner thread. Every worker user context is a
+ * The productive {@link WorkerBrowserBackend}: one browser process with a throw-away profile from the host's
+ * {@link BrowserLauncher} (its own Playwright instance and driver child), created on the lane's owner thread. Every worker user context is a
  * {@code browser.newContext()} — on the Camoufox/Firefox path Playwright speaks WebDriver BiDi and maps it to
  * {@code browser.createUserContext} (own cookie jar, local storage, cache partition); every tab is a
  * {@code context.newPage()}, i.e. {@code browsingContext.create} with that {@code userContext}. Each tab gets
@@ -37,8 +33,8 @@ import java.util.function.Predicate;
  * call at a time per Playwright instance. Parallel worker navigation therefore needs several Playwright
  * instances — each one is a worker browser (lane), each lane hosts several user contexts.</p>
  *
- * <p>Camoufox worker browsers load the AskAI Research add-on as well, with a bridge of their own that only carries
- * page reads (no HUD): the tabs' structured capture and SERP guard detection run in the add-on's isolated
+ * <p>Worker browsers load the AskAI Research add-on as well where the launcher can load it, with a bridge of their
+ * own that only carries page reads (no HUD): the tabs' structured capture and SERP guard detection run in the add-on's isolated
  * content-script world, as in the chat browser (docs/research-browser-addon.md).</p>
  */
 final class PlaywrightWorkerBrowserBackend implements WorkerBrowserBackend {
@@ -67,7 +63,8 @@ final class PlaywrightWorkerBrowserBackend implements WorkerBrowserBackend {
     }
 
     private final PlaywrightBrowserRuntime.Options options;
-    private final Playwright playwright;
+    /** The worker browser process from the host's launcher; closed with this backend. */
+    private final LaunchedBrowser launched;
     private final Browser browser;
     private final boolean camoufox;
     /**
@@ -77,121 +74,53 @@ final class PlaywrightWorkerBrowserBackend implements WorkerBrowserBackend {
      */
     private volatile boolean refuseSearchEngines = true;
     private final int timeoutMillis;
-    /** Camoufox with the add-on: the page-read bridge of this worker browser, else null. */
+    /** With the add-on: the page-read bridge of this worker browser, else null. */
     private final AddonBridge readBridge;
-    /** The temporary directory the add-on was written to (deleted on close), else null. */
-    private final Path addonDirectory;
     private final Map<String, UserContext> userContexts = new LinkedHashMap<String, UserContext>();
     private final Map<String, Tab> tabs = new LinkedHashMap<String, Tab>();
     private long nextId;
     private volatile boolean closed;
 
-    private PlaywrightWorkerBrowserBackend(PlaywrightBrowserRuntime.Options options, Playwright playwright,
-                                           Browser browser, boolean camoufox, AddonBridge readBridge,
-                                           Path addonDirectory) {
+    private PlaywrightWorkerBrowserBackend(PlaywrightBrowserRuntime.Options options, LaunchedBrowser launched,
+                                           AddonBridge readBridge) {
         this.readBridge = readBridge;
-        this.addonDirectory = addonDirectory;
         this.options = options;
-        this.playwright = playwright;
-        this.browser = browser;
-        this.camoufox = camoufox;
+        this.launched = launched;
+        this.browser = launched.browser();
+        this.camoufox = launched.camoufox();
         this.timeoutMillis = options.settings.navigation.navigationCommitTimeoutMillis;
     }
 
-    /**
-     * @param executableOverride dev/test only: a browser executable for the chrome/chromium channels (e.g. a
-     *                           bundled Chromium); null in production (installed Chrome/Edge or Camoufox)
-     */
-    static Factory factory(final PlaywrightBrowserRuntime.Options options, final Path executableOverride) {
+    static Factory factory(final PlaywrightBrowserRuntime.Options options) {
         return new Factory() {
             public WorkerBrowserBackend launch() throws BrowserException {
-                return PlaywrightWorkerBrowserBackend.launch(options, executableOverride);
+                return PlaywrightWorkerBrowserBackend.launch(options);
             }
         };
     }
 
-    static PlaywrightWorkerBrowserBackend launch(PlaywrightBrowserRuntime.Options options, Path executableOverride)
-            throws BrowserException {
-        String channel = PlaywrightSessionFactory.normalizeChannel(options.channel);
-        boolean camoufox = CamoufoxProvisioning.CHANNEL.equals(channel);
-        Playwright playwright = null;
-        AddonBridge bridge = null;
-        Path addonDirectory = null;
+    /** A worker browser from the host's launcher: a throw-away profile, the add-on for page reads when it loads. */
+    static PlaywrightWorkerBrowserBackend launch(PlaywrightBrowserRuntime.Options options) throws BrowserException {
+        final AddonBridge bridge = Playwright4jDriver.startAddonBridge("research add-on for a worker browser");
+        AddonPackager addon = bridge == null ? null : AddonPackager.research(bridge, false);
+        LaunchedBrowser launched;
         try {
-            Map<String, String> env = new LinkedHashMap<String, String>();
-            env.put("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1");
-            env.put("PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS", "1");
-            Path camoufoxExecutable = camoufox ? CamoufoxProvisioning.ensureInstalled() : null;
-            DriverClasspathJar.install();
-            playwright = Playwright.create(new Playwright.CreateOptions().setEnv(env));
-            Browser browser;
-            if (camoufox) {
-                CamoufoxLaunch launch = CamoufoxLaunch.builtIn(camoufoxExecutable, CamoufoxProvisioning.browserRoot(),
-                        java.util.Locale.getDefault());
-                if (!"false".equalsIgnoreCase(System.getProperty(Playwright4jDriver.ADDON_PROPERTY))) {
-                    try {
-                        bridge = AddonBridge.start();
-                        addonDirectory = java.nio.file.Files.createTempDirectory("askai-worker-addon");
-                        launch = launch.withAddon(ResearchAddon.install(addonDirectory, bridge.clientConfig()));
-                    } catch (java.io.IOException | RuntimeException addonFailed) {
-                        // The worker browser still starts; its tabs then read pages via page.evaluate.
-                        System.err.println("[browser-mcp] research add-on not prepared for a worker browser: "
-                                + firstLine(addonFailed));
-                        if (bridge != null) {
-                            bridge.close();
-                            bridge = null;
-                        }
-                    }
-                }
-                Map<String, String> environment = new java.util.HashMap<String, String>(System.getenv());
-                environment.putAll(launch.environment());
-                Map<String, Object> prefs = new LinkedHashMap<String, Object>(launch.prefs());
-                FirefoxSessionPrefs.apply(prefs); // no bfcache + no blocking "resend data" prompt
-                // Non-persistent: Playwright gives the process a throw-away profile and deletes it on close.
-                BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
-                        .setChannel(Playwright4jDriver.FIREFOX_BIDI_CHANNEL)
-                        .setExecutablePath(camoufoxExecutable)
-                        .setHeadless(options.headless)
-                        .setEnv(environment)
-                        .setFirefoxUserPrefs(prefs);
-                if (!launch.args().isEmpty()) {
-                    launchOptions.setArgs(launch.args());
-                }
-                browser = playwright.firefox().launch(launchOptions);
-            } else if (BrowserExecutables.FIREFOX.equals(channel)) {
-                // The local Firefox (chosen location, else autodetected), launched as the chat browser does.
-                browser = playwright.firefox().launch(Playwright4jDriver.localFirefoxOptions(options.headless));
-            } else {
-                BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions().setHeadless(options.headless);
-                if (executableOverride != null) {
-                    launchOptions.setExecutablePath(executableOverride);
-                } else {
-                    launchOptions.setChannel(channel);
-                    String chosen = BrowserExecutables.configured(channel);
-                    if (!chosen.isEmpty()) {
-                        launchOptions.setExecutablePath(java.nio.file.Paths.get(chosen));
-                    }
-                }
-                browser = playwright.chromium().launch(launchOptions);
-            }
-            return new PlaywrightWorkerBrowserBackend(options, playwright, browser, camoufox, bridge,
-                    addonDirectory);
-        } catch (RuntimeException | java.io.IOException failed) {
+            launched = options.launcher.ephemeral(options.headless, addon);
+        } catch (BrowserException | RuntimeException failed) {
             if (bridge != null) {
                 bridge.close();
             }
-            deleteQuietly(addonDirectory);
-            if (playwright != null) {
-                try {
-                    playwright.close();
-                } catch (RuntimeException ignored) {
-                }
-            }
-            String message = failed.getMessage() == null ? failed.toString() : failed.getMessage();
-            int newline = message.indexOf('\n');
-            throw new BrowserException("Worker browser start failed (channel=" + channel + "): "
-                    + (newline > 0 ? message.substring(0, newline) : message));
+            throw new BrowserException("Worker browser start failed: " + firstLine(failed));
         }
+        AddonBridge readBridge = bridge;
+        if (bridge != null && !launched.addonLoaded()) {
+            // The worker browser runs on; its tabs then read pages via page.evaluate.
+            System.err.println("[browser-mcp] research add-on not loaded in a worker browser: "
+                    + launched.addonFailure());
+            bridge.close();
+            readBridge = null;
+        }
+        return new PlaywrightWorkerBrowserBackend(options, launched, readBridge);
     }
 
     @Override
@@ -363,7 +292,7 @@ final class PlaywrightWorkerBrowserBackend implements WorkerBrowserBackend {
 
     @Override
     public boolean isConnected() {
-        return !closed && browser.isConnected();
+        return !closed && browser != null && browser.isConnected();
     }
 
     @Override
@@ -375,33 +304,9 @@ final class PlaywrightWorkerBrowserBackend implements WorkerBrowserBackend {
             closeUserContext(id);
         }
         closed = true;
-        try {
-            browser.close();
-        } catch (RuntimeException ignored) {
-        }
-        try {
-            playwright.close();
-        } catch (RuntimeException ignored) {
-        }
+        launched.close();
         if (readBridge != null) {
             readBridge.close();
-        }
-        deleteQuietly(addonDirectory);
-    }
-
-    /** Best effort: a directory still held by a dying browser stays in the temp folder. */
-    private static void deleteQuietly(Path directory) {
-        if (directory == null) {
-            return;
-        }
-        try (java.util.stream.Stream<Path> files = java.nio.file.Files.walk(directory)) {
-            files.sorted(java.util.Comparator.reverseOrder()).forEach(file -> {
-                try {
-                    java.nio.file.Files.deleteIfExists(file);
-                } catch (java.io.IOException ignored) {
-                }
-            });
-        } catch (java.io.IOException | RuntimeException ignored) {
         }
     }
 
@@ -413,14 +318,11 @@ final class PlaywrightWorkerBrowserBackend implements WorkerBrowserBackend {
         closed = true;
         // As the chat browser's emergency path: cut the Playwright connection off the owner thread, which
         // fails the stuck call and ends the driver child (and with it the browser).
-        final Playwright toCut = playwright;
+        final LaunchedBrowser toCut = launched;
         final AddonBridge bridgeToClose = readBridge;
         Thread cutter = new Thread(new Runnable() {
             public void run() {
-                try {
-                    toCut.close();
-                } catch (RuntimeException ignored) {
-                }
+                toCut.abandon();
                 if (bridgeToClose != null) {
                     bridgeToClose.close();
                 }
@@ -431,7 +333,7 @@ final class PlaywrightWorkerBrowserBackend implements WorkerBrowserBackend {
     }
 
     private void requireOpen() throws BrowserException {
-        if (closed || !browser.isConnected()) {
+        if (closed || browser == null || !browser.isConnected()) {
             throw new BrowserException(WorkerBrowserLane.LOST_MARKER + " — the worker browser is closed.");
         }
     }
