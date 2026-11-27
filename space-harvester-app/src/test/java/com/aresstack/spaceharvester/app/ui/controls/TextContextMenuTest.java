@@ -116,7 +116,7 @@ class TextContextMenuTest {
         JTextField[] own = new JTextField[1];
         TextContextMenu.QuoteTarget chat = new TextContextMenu.QuoteTarget() {
             @Override
-            public boolean accepts(javax.swing.text.JTextComponent field) {
+            public boolean accepts(java.awt.Component field) {
                 return field != own[0];
             }
 

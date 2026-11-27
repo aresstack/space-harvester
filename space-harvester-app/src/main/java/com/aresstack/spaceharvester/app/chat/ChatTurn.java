@@ -944,6 +944,21 @@ public final class ChatTurn {
                     finish(() -> listener.failed(TOOL_TEXT_FAILED));
                     return;
                 }
+                // Angelo 27.11.2026: Behauptet das Modell eine Änderung am Dokument, ohne ein Schreibwerkzeug
+                // aufgerufen zu haben, ist nichts geschehen; einmal je Turn daran erinnern, statt die Behauptung zu zeigen.
+                var tools = writing;
+                if (tools != null && !writingReminded && tools.claimsWithoutWriting(roundText)) {
+                    writingReminded = true;
+                    retract(roundStart, held, shownBefore);
+                    ChatTools.diagnosis.accept("Chat: Änderung behauptet ohne Schreibwerkzeug (Runde " + (round + 1)
+                            + ")");
+                    List<AiChat.Message> next = new ArrayList<>(messages);
+                    next.add(AiChat.Message.user(WRITING_REMINDER));
+                    Thread again = new Thread(() -> round(next, round + 1), "chat-turn-round");
+                    again.setDaemon(true);
+                    again.start();
+                    return;
+                }
                 String unshown;
                 String full;
                 synchronized (received) {
@@ -1041,6 +1056,14 @@ public final class ChatTurn {
 
     /** Ob der Turn das Modell schon einmal an die Werkzeugschnittstelle erinnert hat. */
     private volatile boolean channelReminded;
+    /** Ob der Turn das Modell schon einmal daran erinnert hat, dass ohne Schreibwerkzeug nichts geändert ist. */
+    private volatile boolean writingReminded;
+
+    /** Erinnerung, wenn das Modell eine Änderung am Dokument nur behauptet (ohne Aufruf eines Schreibwerkzeugs). */
+    static final String WRITING_REMINDER = "[Hinweis des Clients] Du hast in diesem Zug kein Schreibwerkzeug "
+            + "aufgerufen; am Dokument oder an der Grafik hat sich nichts geändert. Führe die gewünschte Änderung jetzt "
+            + "mit den Werkzeugen aus (etwa dokument_gliederung, abschnitt_lesen, abschnitt_ersetzen, text_ersetzen, "
+            + "grafik_elemente, grafik_element_ersetzen) und antworte erst danach kurz.";
 
     /**
      * Erinnerung, wenn das Modell einen Aufruf nur ankündigt („We will perform a silent tool call.“): Als Text wird
@@ -1857,8 +1880,12 @@ public final class ChatTurn {
             }
         }
         var tools = writing;
-        if (tools != null) {
-            all = (all == null || all.isBlank() ? "" : all + "\n\n") + tools.rules();
+        // Ohne Schreibumgebung kann das Modell kein Artefakt anlegen und soll das auch nicht behaupten (Angelo 27.11.).
+        // Die Perspektiven mit eigenen Werkzeugen (Command Deck) behalten ihren Systemhinweis unverändert.
+        if (tools != null || custom == null) {
+            all = (all == null || all.isBlank() ? "" : all + "\n\n")
+                    + (tools != null ? tools.rules()
+                    : com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools.WRITING_OFF);
         }
         return all;
     }

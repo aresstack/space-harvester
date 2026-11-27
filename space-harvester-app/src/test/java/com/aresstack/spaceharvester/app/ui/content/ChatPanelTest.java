@@ -650,6 +650,56 @@ class ChatPanelTest {
     }
 
     @Test
+    void theSwitchesComeBackAsTheyWereClickedLast() throws Exception {
+        // Angelo 27.11.2026: Schreiben und interne Suche bleiben über einen Neustart so, wie zuletzt geklickt.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        boolean[] on = new boolean[4];
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                ChatPanel first = new ChatPanel(context);
+                first.writing(true);
+                on[0] = new ChatPanel(context).writingOn();
+                clickAccessible(first, ChatPanel.WRITE_LABEL);
+                clickAccessible(first, ChatPanel.APP_SEARCH_LABEL);
+                ChatPanel restarted = new ChatPanel(context);
+                on[1] = restarted.writingOn();
+                on[2] = restarted.appSearchOn();
+                clickAccessible(restarted, ChatPanel.WRITE_LABEL);
+                on[3] = new ChatPanel(context).writingOn();
+            });
+        } finally {
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(ChatPanel.SWITCH_WRITE, (String) null);
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(ChatPanel.SWITCH_APP_SEARCH, (String) null);
+        }
+        assertThat(on).as("nur Klicks werden gemerkt").containsExactly(false, false, true, true);
+    }
+
+    /** Klickt den Knopf mit diesem zugänglichen Namen. */
+    private static void clickAccessible(java.awt.Container root, String name) {
+        javax.swing.AbstractButton button = accessible(root, name);
+        assertThat(button).as(name).isNotNull();
+        button.doClick();
+    }
+
+    private static javax.swing.AbstractButton accessible(java.awt.Component component, String name) {
+        if (component instanceof javax.swing.AbstractButton button
+                && name.equals(button.getAccessibleContext().getAccessibleName())) {
+            return button;
+        }
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                javax.swing.AbstractButton found = accessible(child, name);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    @Test
     void theInternalSearchSwitchTogglesAndIsOffAtFirst() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));

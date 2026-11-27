@@ -51,7 +51,8 @@ class DocumentChatToolsTest {
         assertThat(tools.definitions()).extracting(AiChat.Tool::name).containsExactlyInAnyOrder(
                 "dokumente_auflisten", "dokument_anlegen", "dokument_gliederung", "abschnitt_lesen",
                 "abschnitt_ersetzen", "text_ersetzen", "abschnitt_einfuegen", "abschnitt_loeschen",
-                "ueberschrift_aendern", "abschnitt_verschieben", "grafik_anlegen", "grafik_einbinden");
+                "ueberschrift_aendern", "abschnitt_verschieben", "grafik_anlegen", "grafik_elemente", "grafik_lesen",
+                "grafik_element_ersetzen", "grafik_ersetzen", "grafik_einbinden");
         assertThat(tools.definitions()).allSatisfy(tool -> assertThat(tool.parametersSchemaJson()).startsWith("{\"type\""));
     }
 
@@ -144,7 +145,7 @@ class DocumentChatToolsTest {
         };
         ChatToolset joined = tools.attach(base);
 
-        assertThat(joined.definitions()).hasSize(13);
+        assertThat(joined.definitions()).hasSize(17);
         assertThat(joined.run(new AiChat.ToolCall("1", "suche", "{}"))).isEqualTo("Treffer");
         assertThat(joined.run(new AiChat.ToolCall("2", "dokumente_auflisten", "{}"))).contains("noch keine");
         assertThat(joined.describe(new AiChat.ToolCall("3", "abschnitt_ersetzen", "{}")))
@@ -202,7 +203,8 @@ class DocumentChatToolsTest {
                 .contains("kein vollständiges SVG");
         assertThat(call("grafik_anlegen", "{\"titel\":\"Zaun\",\"svg\":\"Hier: " + SVG.replace("\"", "\\\"")
                 + " fertig\"}")).contains("G2");
-        assertThat(store.read(folder, chatId, "G2").current().svg()).isEqualTo(SVG);
+        assertThat(store.read(folder, chatId, "G2").current().svg()).isEqualTo(SvgElements.withIds(SVG))
+                .contains("id=\"e1\"");
 
         assertThat(withDrawing.run(new AiChat.ToolCall("2", "grafik_einbinden",
                 "{\"abschnitt\":\"a1\",\"grafik\":\"G1\"}"))).startsWith("Erledigt");
@@ -211,7 +213,8 @@ class DocumentChatToolsTest {
         assertThat(withDrawing.run(new AiChat.ToolCall("3", "grafik_einbinden",
                 "{\"abschnitt\":\"a1\",\"grafik\":\"G1\"}"))).contains("schon");
         assertThat(call("grafik_einbinden", "{\"abschnitt\":\"a1\",\"grafik\":\"G9\"}")).contains("G9");
-        assertThat(withDrawing.footer()).contains("Grafik: [Beetplan](artefakt:G1)").contains("````svg");
+        assertThat(withDrawing.footer()).as("nur Verweise, nie der Inhalt").contains("Grafik: [Beetplan](artefakt:G1)")
+                .doesNotContain("<svg");
 
         store.replaceSvg(folder, chatId, "G1", ChatArtifactStore.ANY, ChatArtifact.Origin.USER, "", "<svg>neu</svg>");
         assertThat(GraphicReferences.inline(store.read(folder, chatId, "D1").content(),
@@ -219,4 +222,33 @@ class DocumentChatToolsTest {
                 .as("Verweis, keine Kopie: die korrigierte Grafik steht von selbst im Dokument")
                 .contains("<svg>neu</svg>").doesNotContain("artefakt:G1");
     }
+
+    @Test
+    void anExistingGraphicIsChangedElementByElement() {
+        call("grafik_anlegen", "{\"titel\":\"Beetplan\",\"svg\":\"" + TWO.replace("\"", "\\\"") + "\"}");
+        assertThat(tools.rules()).contains("grafik_element_ersetzen").contains("Element e…");
+        assertThat(call("grafik_elemente", "{}")).as("einzige Grafik ohne Angabe")
+                .contains("e1 Rechteck").contains("e2 Text · „Bohnen“");
+        assertThat(call("grafik_lesen", "{\"grafik\":\"G1\",\"element\":\"e2\"}")).contains("Bohnen")
+                .doesNotContain("<rect");
+
+        assertThat(call("grafik_element_ersetzen", "{\"element\":\"e2\",\"svg\":\"<text x='2' y='9'>Erbsen</text>\"}"))
+                .contains("Element e2 ersetzt").contains("Stand 2");
+        String svg = store.read(folder, chatId, "G1").current().svg();
+        assertThat(svg).contains("Erbsen").doesNotContain("Bohnen").contains("fill=\"#8c8\"");
+        assertThat(SvgElements.element(svg, "e2")).as("Bezug bleibt gültig").contains("Erbsen");
+        assertThat(opened).contains("G1");
+
+        assertThat(call("grafik_element_ersetzen", "{\"element\":\"e9\",\"svg\":\"\"}")).contains("e9");
+        // Codex-Befund zu #1650: Änderungen gehen vom neuesten Stand aus, unter dem Schloss des Speichers.
+        store.changeSvg(folder, chatId, "G1", ChatArtifactStore.ANY, ChatArtifact.Origin.AI, "", svgText ->
+                SvgElements.replace(svgText, "e1", "<rect width='9' height='9'/>"));
+        assertThat(store.read(folder, chatId, "G1").current().svg()).contains("Erbsen").contains("width=\"9\"");
+        assertThat(call("grafik_ersetzen", "{\"svg\":\"kein svg\"}")).contains("kein vollständiges SVG");
+        assertThat(call("grafik_ersetzen", "{\"svg\":\"" + SVG.replace("\"", "\\\"") + "\"}")).contains("Stand 4");
+        assertThat(store.read(folder, chatId, "G1").current().svg()).doesNotContain("Erbsen");
+    }
+
+    private static final String TWO = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"20\">"
+            + "<rect width=\"40\" height=\"20\" fill=\"#8c8\"/><text x=\"2\" y=\"9\">Bohnen</text></svg>";
 }
