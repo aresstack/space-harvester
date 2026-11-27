@@ -80,6 +80,45 @@ class ChatArtifactStoreTest {
     }
 
     @Test
+    void theStandardProjectOwnsItsArtifactsAndOldOnesMoveOverOnce() throws Exception {
+        // ADR 0047: das Projekt besitzt immer, auch „AresStack“; ein neuer Chat sieht die Artefakte älterer Chats.
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        ChatRecord old = chat(chats);
+        ChatRecord other = ChatRecord.fresh(2_000).plus(ChatRecord.Message.user("Noch was", 2_000), 2_000);
+        chats.save(node, other);
+        // Ablage wie vor ADR 0047: jeder Chat des Standardprojekts besitzt seine Artefakte selbst.
+        ChatArtifactStore before = new ChatArtifactStore(chats);
+        ChatArtifact graphic = before.createGraphic(folder, old.id(), "Beet", "<svg/>", ChatArtifact.Origin.AI);
+        before.createDocument(folder, old.id(), "Gartenfibel", "# Gartenfibel\n\n"
+                + GraphicReferences.reference(graphic), ChatArtifact.Origin.AI);
+        before.rememberTabs(folder, old.id(), List.of("D1"));
+        before.createDocument(folder, other.id(), "Brief", "# Brief\n\nHallo.", ChatArtifact.Origin.AI);
+        chats.save(folder, old.plus(ChatRecord.Message.assistant("Fertig: [Gartenfibel](artefakt:D1)", false, 3_000),
+                3_000));
+
+        Path standard = home.resolve("projekte").resolve("standard").resolve("artefakte");
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.projects(id -> "standard".equals(id) ? standard : null);
+        assertThat(store.owner(folder, old.id())).isEqualTo(standard).isEqualTo(store.owner(folder, other.id()));
+
+        assertThat(store.adoptAll()).isEqualTo(3);
+        assertThat(store.adoptAll()).as("einmalig: danach liegt nichts mehr beim Chat").isZero();
+        ChatRecord fresh = ChatRecord.fresh(4_000);
+        assertThat(store.list(folder, fresh.id())).as("ein neuer Chat sieht alles").extracting(ChatArtifact::title)
+                .containsExactlyInAnyOrder("Beet", "Gartenfibel", "Brief");
+        ChatArtifact fibel = store.list(folder, fresh.id()).stream()
+                .filter(artifact -> artifact.title().equals("Gartenfibel")).findFirst().orElseThrow();
+        ChatArtifact beet = store.list(folder, fresh.id()).stream()
+                .filter(artifact -> artifact.title().equals("Beet")).findFirst().orElseThrow();
+        assertThat(GraphicReferences.ids(fibel.content())).as("der Verweis bleibt gültig").containsExactly(beet.id());
+        assertThat(store.openTabs(folder, old.id())).containsExactly(fibel.id());
+        assertThat(chats.load(folder, old.id()).messages().get(1).text())
+                .as("der Verlauf folgt den neuen Kennungen").contains("artefakt:" + fibel.id());
+        assertThat(ChatArtifactStore.listIn(chats.artifacts(folder, old.id()))).isEmpty();
+    }
+
+    @Test
     void documentsAreKeptWithAllRevisionsAndListedInCreationOrder() {
         ChatStore chats = chats();
         ChatRecord chat = chat(chats);
