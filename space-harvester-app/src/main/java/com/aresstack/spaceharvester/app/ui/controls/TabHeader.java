@@ -53,6 +53,8 @@ public final class TabHeader extends JPanel {
     private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
     private final JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
     private final JLabel status = statusBadge(" ", Comic.MUTED);
+    /** Was ein Klick auf den Stand tut, etwa „Veraltet“ neu berechnen; {@code null}: der Stand ist nur Anzeige. */
+    private Runnable statusAction;
     private CopyButton copy;
 
     public TabHeader(String heading) {
@@ -72,6 +74,14 @@ public final class TabHeader extends JPanel {
             right.add(part);
         }
         status.setVisible(false);
+        status.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (statusAction != null && status.isEnabled()) {
+                    statusAction.run();
+                }
+            }
+        });
         right.add(status);
         add(right);
     }
@@ -145,10 +155,33 @@ public final class TabHeader extends JPanel {
 
     /** Wie {@link #status(String, Color)}, mit einem Grund im Tooltip (etwa gelb „Ausgelassen“). */
     public void status(String text, Color tone, String tooltip) {
+        status(text, tone, tooltip, null);
+    }
+
+    /**
+     * Wie {@link #status(String, Color, String)}; mit {@code action} ist der Stand zugleich ein Knopf (Handcursor,
+     * Klick ruft {@code action}), etwa „Veraltet“, das die Analyse neu berechnet. {@code null} macht ihn zur Anzeige.
+     */
+    public void status(String text, Color tone, String tooltip, Runnable action) {
         status.setVisible(text != null);
         status.setText(text == null ? " " : text);
         status.setToolTipText(tooltip);
         tone(status, tone == null ? Comic.MUTED : tone);
+        statusAction = text == null ? null : action;
+        Cursors.set(status, java.awt.Cursor.getPredefinedCursor(statusAction == null ? java.awt.Cursor.DEFAULT_CURSOR
+                : java.awt.Cursor.HAND_CURSOR));
+    }
+
+    /** Für Tests: ob der Stand gerade ein Knopf ist. */
+    public boolean statusClickable() {
+        return statusAction != null;
+    }
+
+    /** Für Tests: klickt den Stand an, als hätte der Benutzer es getan. */
+    public void clickStatus() {
+        if (statusAction != null && status.isVisible() && status.isEnabled()) {
+            statusAction.run();
+        }
     }
 
     /** Für Tests: der Tooltip des Stands. */
