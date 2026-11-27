@@ -27,6 +27,8 @@ final class RecordingCollector {
     private final TestCase target;
     private final boolean maskPasswords;
     private boolean lastIsSecret;
+    /** Whether Playwright's current (last added) action was dropped because it came during a pause. */
+    private boolean lastDropped;
 
     RecordingCollector(TestCase target, boolean maskPasswords) {
         this.target = target;
@@ -38,13 +40,32 @@ final class RecordingCollector {
      * Answers the step that was added or changed, or null.
      */
     TestStep apply(JsonObject event, Predicate<TestStep> isPasswordField) {
+        return apply(event, true, isPasswordField);
+    }
+
+    /**
+     * As {@link #apply(JsonObject, Predicate)}; {@code recorded = false} for an event of a pause: it is not taken
+     * over, and a later merge into that action (typing on after the pause) becomes a new step instead of replacing
+     * the last recorded one.
+     */
+    TestStep apply(JsonObject event, boolean recorded, Predicate<TestStep> isPasswordField) {
         String kind = event.has("event") ? event.get("event").getAsString() : "";
         JsonObject data = event.has("data") && event.get("data").isJsonObject() ? event.getAsJsonObject("data") : null;
         if (data == null) {
             return null;
         }
+        if (!recorded) {
+            if ("actionAdded".equals(kind)) {
+                lastDropped = true;
+            }
+            return null;
+        }
+        if ("actionUpdated".equals(kind) && lastDropped) {
+            kind = "actionAdded"; // the action began during the pause: what follows it is a step of its own
+        }
         switch (kind) {
             case "actionAdded" -> {
+                lastDropped = false;
                 TestStep step = TestStep.of(data);
                 lastIsSecret = maskPasswords && "fill".equals(step.name()) && isPasswordField.test(step);
                 step = masked(step);

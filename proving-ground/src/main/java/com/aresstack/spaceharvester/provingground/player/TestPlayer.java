@@ -79,7 +79,7 @@ public final class TestPlayer {
                 } catch (RuntimeException | AssertionError failure) {
                     failed = true;
                     results.add(new StepResult(i, description, StepResult.Status.FAILED, millisSince(started),
-                            firstLine(failure)));
+                            redacted(firstLine(failure), options.variables())));
                     screenshot = photograph(pages.get(step.pageGuid()), options.screenshotOnFailure());
                 }
             }
@@ -298,6 +298,18 @@ public final class TestPlayer {
 
     private static long millisSince(long startedNanos) {
         return (System.nanoTime() - startedNanos) / 1_000_000L;
+    }
+
+    /** {@code text} with the value of every {@code secret.*} variable replaced by its reference. */
+    static String redacted(String text, Map<String, String> variables) {
+        String result = text;
+        for (Map.Entry<String, String> variable : variables.entrySet()) {
+            String value = variable.getValue();
+            if (variable.getKey().startsWith("secret.") && value != null && !value.isEmpty()) {
+                result = result.replace(value, "${" + variable.getKey() + "}");
+            }
+        }
+        return result;
     }
 
     /** Playwright's message up to its call log (expected and received value), as one line. */

@@ -71,11 +71,12 @@ Live-Test laufen lassen.
 
 Passwörter: Tippt der Benutzer in ein `input[type=password]`, speichert der Recorder `${secret.<Feld>}` statt des Textes.
 Die Wiedergabe löst die Variable aus `PlaybackOptions.variables` auf; Ergebnisse und Protokolle zeigen nur den Namen.
-Kann der Recorder das Feld nicht mehr prüfen, gilt es vorsichtshalber als Passwort.
+Kann der Recorder das Feld nicht mehr prüfen (Element oder Tab weg), gilt es vorsichtshalber als Passwort. Fehlermeldungen
+der Wiedergabe ersetzen den Wert jeder `secret.*`-Variable durch ihren Namen.
 
 Pause: Playwright schaltet einen einmal angemeldeten Recorder im Programm-Modus nicht wieder ein (ein zweites
 `enableRecorder` registriert die Meldungen doppelt). `Recorder.pause()/resume()` lässt Meldungen daher auf Java-Seite
-weg; die Werkzeugleiste in der Seite kann die Aufnahme zusätzlich selbst anhalten.
+weg (eine in der Pause begonnene Eingabe wird nach der Pause ein eigener Schritt und überschreibt keinen früheren); die Werkzeugleiste in der Seite kann die Aufnahme zusätzlich selbst anhalten.
 
 ## 4. Nachweise
 

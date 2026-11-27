@@ -72,4 +72,16 @@ class RecordingCollectorTest {
         assertEquals("password", RecordingCollector.fieldName("#pw"));
         assertEquals("password", RecordingCollector.fieldName(null));
     }
+
+    @Test
+    void typingBegunDuringAPauseNeverOverwritesAnEarlierStep() {
+        TestCase test = new TestCase("t");
+        RecordingCollector collector = new RecordingCollector(test, true);
+        collector.apply(event("actionAdded", fill("Name", "Angelo")), true, step -> false);
+        collector.apply(event("actionAdded", fill("Ort", "B")), false, step -> false);
+        collector.apply(event("actionUpdated", fill("Ort", "Bonn")), true, step -> false);
+        assertEquals(2, test.size());
+        assertEquals("Angelo", test.step(0).text());
+        assertEquals("Bonn", test.step(1).text());
+    }
 }

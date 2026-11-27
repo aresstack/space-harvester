@@ -33,7 +33,8 @@ public final class Recorder implements AutoCloseable {
     private final TestCase target;
     private final RecorderOptions options;
     private final RecordingCollector collector;
-    private final Queue<JsonObject> pending = new ConcurrentLinkedQueue<>();
+    /** Events with whether they came while recording ({@code true}) or while paused. */
+    private final Queue<Pending> pending = new ConcurrentLinkedQueue<>();
     private final AtomicBoolean paused = new AtomicBoolean();
     private final AtomicBoolean stopped = new AtomicBoolean();
     private final RecorderBridge bridge;
@@ -44,11 +45,9 @@ public final class Recorder implements AutoCloseable {
         this.target = target;
         this.options = options;
         this.collector = new RecordingCollector(target, options.maskPasswords());
-        this.bridge = RecorderBridge.attach(context, event -> {
-            if (!paused.get()) {
-                pending.add(event);
-            }
-        });
+        // Events of a pause still reach the collector (marked), so that Playwright's later merge of such an action
+        // never overwrites a step recorded before the pause.
+        this.bridge = RecorderBridge.attach(context, event -> pending.add(new Pending(event, !paused.get())));
     }
 
     /**
@@ -114,9 +113,9 @@ public final class Recorder implements AutoCloseable {
 
     /** Applies the events Playwright delivered so far to the test case. */
     public void processPending() {
-        JsonObject event;
+        Pending event;
         while ((event = pending.poll()) != null) {
-            TestStep step = collector.apply(event, this::isPasswordField);
+            TestStep step = collector.apply(event.event(), event.recorded(), this::isPasswordField);
             if (step != null) {
                 onStep.accept(step);
             }
@@ -153,7 +152,8 @@ public final class Recorder implements AutoCloseable {
         try {
             Page page = RecorderBridge.page(context, step.pageGuid());
             if (page == null) {
-                return false;
+                // The tab is gone: unknown, so treated as secret like a failed check.
+                return true;
             }
             Locator.EvaluateOptions evaluate = new Locator.EvaluateOptions();
             if (options.passwordCheckTimeout().toMillis() > 0) {
@@ -166,5 +166,8 @@ public final class Recorder implements AutoCloseable {
             // Unknown is treated as secret: better a variable too many than a password in the file.
             return true;
         }
+    }
+
+    private record Pending(JsonObject event, boolean recorded) {
     }
 }
