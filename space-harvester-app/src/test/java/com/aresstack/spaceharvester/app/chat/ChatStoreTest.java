@@ -111,4 +111,35 @@ class ChatStoreTest {
         assertThat(new ChatNode("_sammlung", null, null).directory(Path.of("r")).startsWith(Path.of("r/_sammlung")))
                 .isFalse();
     }
+
+    @Test
+    void theProjectOfAChatIsStoredGoesThroughTheTrashAndOlderChatsHaveNone() throws Exception {
+        ChatStore store = new ChatStore(() -> home.resolve("chats"));
+        ChatNode node = new ChatNode("wiki", "DEV", null);
+        ChatRecord chat = ChatRecord.fresh(1_000, "p1", "g1").plus(ChatRecord.Message.user("Frage", 1_000), 1_000);
+        store.save(node, chat);
+        assertThat(store.load(node, chat.id()).projectId()).isEqualTo("p1");
+        assertThat(store.load(node, chat.id()).groupId()).isEqualTo("g1");
+
+        Path folder = store.folder(node);
+        store.trash(folder, chat.id());
+        ChatRecord restored = store.restore(folder, chat.id());
+        assertThat(restored.projectId()).isEqualTo("p1");
+        assertThat(restored.groupId()).isEqualTo("g1");
+        assertThat(restored.inGroup(null).projectId()).isEqualTo("p1");
+        assertThat(restored.inProject("p2").groupId()).as("Verschieben nimmt aus der Gruppe").isNull();
+
+        ChatRecord removed = store.load(node, chat.id()).inProject(null);
+        assertThat(removed.modifiedAt()).as("Zuordnen ändert die Reihenfolge nicht").isEqualTo(1_000);
+        store.save(node, removed);
+        assertThat(store.load(node, chat.id()).projectId()).isNull();
+        assertThat(Files.readString(home.resolve("chats").resolve(folder).resolve(chat.id() + ".json")))
+                .doesNotContain("projectId").doesNotContain("groupId");
+
+        Path old = home.resolve("chats").resolve(folder).resolve("alt.json");
+        Files.writeString(old, "{\"id\":\"alt\",\"title\":\"alt\",\"createdAt\":1,\"modifiedAt\":1,"
+                + "\"messages\":[{\"role\":\"user\",\"text\":\"x\",\"cancelled\":false,\"at\":1}]}");
+        assertThat(store.load(node, "alt").projectId()).isNull();
+        assertThat(store.load(node, "alt").groupId()).isNull();
+    }
 }

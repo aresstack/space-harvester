@@ -93,6 +93,8 @@ class AreaSummaryTest {
     private Consumer<String> recorded = ignored -> {
     };
     private RuntimeException failure;
+    /** Läuft vor jeder Anfrage an das Modell, etwa um den vorläufigen Stand mitten im Lauf zu lesen. */
+    private Runnable beforeAnswer;
     private String answer = """
             {"zusammenfassung": "Der Bereich DEV beschreibt die Entwicklung.",
              "themen": [{"titel": "Einstieg", "text": "Wozu es DEV gibt.", "details": "Ausführlich.",
@@ -154,6 +156,9 @@ class AreaSummaryTest {
         public String complete(String given, String input) {
             if (failure != null) {
                 throw failure;
+            }
+            if (beforeAnswer != null) {
+                beforeAnswer.run();
             }
             instructions.add(given);
             inputs.add(input);
@@ -286,6 +291,41 @@ class AreaSummaryTest {
         }
         assertThat(inputs).noneMatch(input -> input.contains("\"nichtLesbar\":") && !input.contains(
                 "\"nichtLesbar\":0"));
+        assertThat(log.areaSummary(CALLER, SPACE)).isPresent();
+    }
+
+    /**
+     * Angelo: „Teilergebnisse sofort“. Nach jedem fertigen Teil liegt ein vorläufiger Stand mit den Themen der fertigen
+     * Teile vor, noch ohne Überblickstext; die Ablage am Ende nimmt ihn weg.
+     */
+    @Test
+    void finishedPartsAreReadableAsPartialOverviewWhileTheRunGoesOn() {
+        List<CatalogPage> pages = new ArrayList<>();
+        pages.add(new CatalogPage("1", null, true, "1", "1"));
+        page("1", null, "Startseite");
+        texts.put("1", "Inhalt von Seite 1");
+        released.add("1");
+        for (int i = 2; i <= 400; i++) {
+            String id = String.valueOf(i);
+            pages.add(new CatalogPage(id, "1", true, "1", "1"));
+            page(id, "1", "Thema " + id);
+            texts.put(id, "Inhalt von Seite " + id + ". " + "Erklärung ".repeat(20));
+            released.add(id);
+        }
+        stocks.put("wiki/DEV", new Stock(CONFIRMED, pages, Set.of(), List.of()));
+        List<Optional<UpdateSummary>> seen = new CopyOnWriteArrayList<>();
+        beforeAnswer = () -> seen.add(log.areaPartial(CALLER, SPACE));
+
+        log.summarizeArea(CALLER, SPACE, false);
+        runHeld();
+
+        assertThat(seen.getFirst()).as("vor dem ersten Teil gibt es nichts").isEmpty();
+        assertThat(seen).anySatisfy(partial -> assertThat(partial).hasValueSatisfying(summary -> {
+            assertThat(summary.isArea()).isTrue();
+            assertThat(summary.text()).isEmpty();
+            assertThat(summary.statements()).isNotEmpty();
+        }));
+        assertThat(log.areaPartial(CALLER, SPACE)).as("nach der Ablage kein vorläufiger Stand").isEmpty();
         assertThat(log.areaSummary(CALLER, SPACE)).isPresent();
     }
 

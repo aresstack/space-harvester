@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.app.research.BookEditions;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
@@ -63,6 +64,7 @@ final class AreaSummaryView extends JPanel {
     static final String NO_SUMMARY = "Noch kein Überblick über diesen Bereich.";
     static final String SUMMARIZING = "Überblick wird erstellt …";
     static final String LOADING = "Überblick wird gelesen …";
+    static final String PARTIAL = "Vorläufig: die Themen der schon fertigen Teile; am Ende werden sie zusammengeführt.";
     static final String EMPTY = "Dieser Bereich hat noch keine geladene Seite, die sich zusammenfassen lässt.";
     static final String NO_MODEL = "Für den Überblick ist kein Chat-Modell eingestellt. Unter Einstellungen › "
             + "Modelle wählen; danach entsteht er beim Öffnen von selbst.";
@@ -169,6 +171,11 @@ final class AreaSummaryView extends JPanel {
         /** Ob ein Chat-Modell eingestellt ist. */
         boolean available();
 
+        /** Der vorläufige Stand eines laufenden Überblicks (Themen der fertigen Teile), {@code null} ohne. */
+        default UpdateSummary partial(Target target) {
+            return null;
+        }
+
         /** Startet „Zusammenfassen“ für den Bereich; {@code interactive} für einen Klick. */
         JobStatus summarize(Target target, boolean interactive);
 
@@ -189,6 +196,11 @@ final class AreaSummaryView extends JPanel {
                 @Override
                 public boolean available() {
                     return workspace.areaSummariesAvailable();
+                }
+
+                @Override
+                public UpdateSummary partial(Target target) {
+                    return workspace.areaPartial(target.core()).orElse(null);
                 }
 
                 @Override
@@ -228,6 +240,20 @@ final class AreaSummaryView extends JPanel {
 
     private Target target;
     private UpdateSummary summary;
+    /**
+     * Die neueste Auflage des Buchs am gezeigten Ordner, {@code null} ohne (Architekt nach Angelo 27.11.2026: das Buch
+     * ist die erweiterte KI-Zusammenfassung des Ordners). Die Leseansicht zeigt sie statt des Überblicks.
+     */
+    private BookEditions.Edition edition;
+    private java.util.function.Function<String, BookEditions.Edition> books = folderId -> null;
+    /**
+     * Der vorläufige Stand, solange der Überblick entsteht: die Themen der schon fertigen Teile, sofort gezeigt statt
+     * hinter dem Schleier (Angelo: „Teilergebnisse sofort“); {@code null} ohne.
+     */
+    private UpdateSummary partial;
+    /** Abbrechen, solange der vorläufige Stand ohne Schleier zu sehen ist. */
+    private final com.aresstack.spaceharvester.app.ui.controls.EscCircle stopPartial =
+            new com.aresstack.spaceharvester.app.ui.controls.EscCircle(this::cancel, BusyOverlay.CANCEL);
     private boolean available = true;
     private boolean empty;
     /**
@@ -293,6 +319,8 @@ final class AreaSummaryView extends JPanel {
         busy.onCancel(this::cancel);
         if (mode == Mode.LISTEN) {
             podcast.follow(this::follow);
+            // Wovon der ganze Podcast nie erzählt, steht grau da (Angelo 27.11.2026).
+            podcast.cover(summaryReport::cover);
             podcast.cue(new PodcastControl.Cue() {
                 @Override
                 public boolean open(int topic) {
@@ -402,6 +430,8 @@ final class AreaSummaryView extends JPanel {
         generation++;
         target = next;
         summary = null;
+        edition = null;
+        partial = null;
         empty = next != null && next.empty();
         failure = null;
         loaded = false;
@@ -417,6 +447,7 @@ final class AreaSummaryView extends JPanel {
         if (empty) {
             loaded = true;
             render();
+            bookOfEmptyFolder(next);
             return;
         }
         Actions current = actions.get();
@@ -436,6 +467,26 @@ final class AreaSummaryView extends JPanel {
                 })));
             } catch (RuntimeException e) {
                 // Eine Quelle, die es nicht mehr gibt, meldet nichts; der Überblick liest ohne sie.
+            }
+        }
+        if (next.folder() != null) {
+            // Eine neue Auflage des Buchs am Ordner zeigt die Leseansicht sofort (Beobachter, kein Abfragen).
+            String folderId = next.folder().folderId();
+            try {
+                AutoCloseable books = BookEditions.onAdded(added -> SwingUtilities.invokeLater(() -> {
+                    if (target != null && target.folder() != null && folderId.equals(added)) {
+                        reload();
+                    }
+                }));
+                subscriptions.add(() -> {
+                    try {
+                        books.close();
+                    } catch (Exception ignored) {
+                        // nichts zu tun
+                    }
+                });
+            } catch (RuntimeException ignored) {
+                // ohne Meldung zeigt das nächste Öffnen die Auflage
             }
         }
         subscription = () -> subscriptions.forEach(Subscription::close);
@@ -468,22 +519,38 @@ final class AreaSummaryView extends JPanel {
     void reload() {
         Actions current = actions.get();
         Target of = target;
-        if (current == null || of == null || of.empty()) {
+        if (of != null && of.empty()) {
+            bookOfEmptyFolder(of);
+            return;
+        }
+        if (current == null || of == null) {
             return;
         }
         int mine = ++generation;
-        runner.run(() -> new Loaded(current.area(of), current.available()), found -> {
+        java.util.function.Function<String, BookEditions.Edition> bookOf = books;
+        boolean running = runningJob != null;
+        runner.run(() -> new Loaded(current.area(of), current.available(), running ? current.partial(of) : null,
+                mode == Mode.READ && of.folder() != null ? bookOf.apply(of.folder().folderId()) : null),
+                found -> {
             if (mine != generation || !Objects.equals(of, target)) {
                 return;
             }
             loaded = true;
             available = found.available();
-            boolean same = found.summary() != null && found.summary().equals(summary);
+            boolean same = found.summary() != null && found.summary().equals(summary)
+                    && Objects.equals(found.edition(), edition);
             summary = found.summary();
-            if (!same) {
-                if (mode == Mode.LISTEN) {
-                    podcast.summary(summary);
-                }
+            edition = found.edition();
+            UpdateSummary interim = runningJob == null ? null : found.partial();
+            boolean interimChanged = !Objects.equals(interim, partial);
+            if (interimChanged) {
+                partial = interim;
+                offer();
+            }
+            if (!same && mode == Mode.LISTEN) {
+                podcast.summary(summary);
+            }
+            if (!same || interimChanged) {
                 render();
             }
             autoSummarize();
@@ -495,7 +562,42 @@ final class AreaSummaryView extends JPanel {
         });
     }
 
-    private record Loaded(UpdateSummary summary, boolean available) {
+    /**
+     * Ein Ordner ohne Favoriten kann trotzdem ein Buch haben (die Auflage gehört zum Ordner, nicht zu seinen jetzigen
+     * Favoriten): dann zeigt die Leseansicht es; einen Überblick gibt es ohne Favoriten nicht.
+     */
+    private void bookOfEmptyFolder(Target of) {
+        if (mode != Mode.READ || of.folder() == null) {
+            return;
+        }
+        int mine = ++generation;
+        java.util.function.Function<String, BookEditions.Edition> bookOf = books;
+        String folderId = of.folder().folderId();
+        runner.run(() -> java.util.Optional.ofNullable(bookOf.apply(folderId)), found -> {
+            if (mine != generation || !Objects.equals(of, target) || found.isEmpty()) {
+                return;
+            }
+            edition = found.get();
+            offer();
+            render();
+        }, failure -> { });
+    }
+
+    private record Loaded(UpdateSummary summary, boolean available, UpdateSummary partial,
+                          BookEditions.Edition edition) {
+    }
+
+    /**
+     * Woher die Leseansicht das Buch eines Ordners nimmt: die neueste Auflage zur Ordner-ID, {@code null} ohne. Läuft im
+     * Hintergrund.
+     */
+    void books(java.util.function.Function<String, BookEditions.Edition> latest) {
+        books = Objects.requireNonNull(latest, "latest");
+    }
+
+    /** Die gezeigte Auflage des Buchs, {@code null} ohne. */
+    BookEditions.Edition edition() {
+        return edition;
     }
 
     private void becameVisible() {
@@ -555,7 +657,8 @@ final class AreaSummaryView extends JPanel {
     private boolean startsByItself() {
         // Den ersten sichtbaren Besuch merken, auch wenn schon ein Überblick da ist: Ändert sich danach der Ordner,
         // zeigt er nur „veraltet“ bzw. bietet den Klick an, statt von selbst zu starten.
-        return loaded && available && runningJob == null && target != null && target.automatic()
+        // Hat der Ordner ein Buch, zeigt die Leseansicht das Buch; der Überblick startet nur per Klick (Architekt).
+        return loaded && available && runningJob == null && target != null && target.automatic() && edition == null
                 && showing.getAsBoolean() && AUTO_CONSIDERED.add(target.identity()) && summary == null && !empty;
     }
 
@@ -658,11 +761,16 @@ final class AreaSummaryView extends JPanel {
         if (!status.state().terminal()) {
             // Teilfortschritt sofort: wie viele Teile schon gelesen sind, unter dem Ring.
             JobProgress progress = status.progress();
+            String before = busy.text();
             busy.setText(progress != null && progress.discovered() > 0
                     ? SUMMARIZING + " " + progress.processed() + "/" + progress.discovered() : SUMMARIZING);
+            if (partial != null && !before.equals(busy.text())) {
+                render();
+            }
             return;
         }
         runningJob = null;
+        partial = null;
         jobWatch.close();
         jobWatch = Subscription.NONE;
         String outcome = switch (status.state()) {
@@ -697,7 +805,8 @@ final class AreaSummaryView extends JPanel {
     /** Knopf „Zusammenfassen“, Einstieg und Ring nach dem Stand. */
     private void offer() {
         boolean possible = target != null && available && !empty && runningJob == null;
-        summarize.setVisible(mode == Mode.READ && target != null);
+        // Mit Buch zeigt die Leseansicht das Buch; „Zusammenfassen“ kommt mit dem Umschalter „Buch“ zurück.
+        summarize.setVisible(mode == Mode.READ && target != null && edition == null);
         summarize.setEnabled(possible);
         summarize.setToolTipText(summary == null ? SUMMARIZE_TIP : RESUMMARIZE_TIP);
         summarize.getAccessibleContext().setAccessibleName(summary == null ? SourceUpdatesView.SUMMARIZE
@@ -708,7 +817,8 @@ final class AreaSummaryView extends JPanel {
         } else if (!busy.isBusy() || busy.text().isEmpty()) {
             busy.setText(SUMMARIZING);
         }
-        busy.setBusy(working);
+        // Mit vorläufigem Stand kein Schleier: die fertigen Teile sind zu lesen, der Fortschritt steht darüber.
+        busy.setBusy(working && partial == null);
     }
 
     private void render() {
@@ -719,7 +829,19 @@ final class AreaSummaryView extends JPanel {
             SummaryReport.add(reportBody, Comic.wrapped(failure, Comic.RED, 13.5f));
             reportBody.add(Box.createVerticalStrut(8));
         }
-        if (summary != null) {
+        if (edition != null) {
+            renderBook(edition);
+        } else if (partial != null && runningJob != null) {
+            // Ohne Schleier bleibt der Abbruch erreichbar: der Kreis „Esc“ vor dem Fortschritt, wie im Ring.
+            JPanel head = new JPanel(new BorderLayout(8, 0));
+            head.setOpaque(false);
+            head.add(stopPartial, BorderLayout.WEST);
+            head.add(Comic.wrapped(busy.text().isEmpty() ? PARTIAL : busy.text() + " " + PARTIAL, Comic.BLUE, 13.5f),
+                    BorderLayout.CENTER);
+            SummaryReport.add(reportBody, head);
+            reportBody.add(Box.createVerticalStrut(8));
+            summaryReport.render(partial, () -> { });
+        } else if (summary != null) {
             summaryReport.render(summary, () -> {
                 summaryReport.markFollowed();
                 showPictures();
@@ -743,6 +865,57 @@ final class AreaSummaryView extends JPanel {
         }
         reportBody.revalidate();
         reportBody.repaint();
+    }
+
+    /** Das Buch mit derselben Markdown-Darstellung wie die Antworten im Chat, darüber Auflage und Zeit. */
+    private void renderBook(BookEditions.Edition shown) {
+        SummaryReport.add(reportBody, Comic.wrapped(bookMeta(shown), Comic.MUTED, 12.5f));
+        reportBody.add(Box.createVerticalStrut(8));
+        com.aresstack.spaceharvester.app.ui.markdown.MarkdownTheme theme =
+                com.aresstack.spaceharvester.app.ui.markdown.MarkdownTheme.forSurface(reportScroll.getViewport()
+                        .getBackground());
+        com.aresstack.spaceharvester.app.ui.markdown.MarkdownMessageView view =
+                new com.aresstack.spaceharvester.app.ui.markdown.MarkdownMessageView(theme,
+                        com.aresstack.spaceharvester.app.ui.markdown.DesktopLinkOpener.systemDefault(),
+                        com.aresstack.spaceharvester.app.ui.markdown.CachingMermaidImageRenderer.forChat());
+        view.setMarkdown(shown.book());
+        view.setName("book.text");
+        SummaryReport.add(reportBody, new WidthFitted(view));
+    }
+
+    /**
+     * Gibt der Markdown-Darstellung die Höhe für die Breite der Spalte (wie die Sprechblasen im Chat); die Spalte unten
+     * fragt nur die bevorzugte Größe, ohne Breite wäre ein umbrochener Absatz abgeschnitten.
+     */
+    private static final class WidthFitted extends JPanel {
+        private final com.aresstack.spaceharvester.app.ui.markdown.MarkdownMessageView view;
+
+        WidthFitted(com.aresstack.spaceharvester.app.ui.markdown.MarkdownMessageView view) {
+            super(new BorderLayout());
+            this.view = view;
+            setOpaque(false);
+            add(view, BorderLayout.CENTER);
+        }
+
+        @Override
+        public java.awt.Dimension getPreferredSize() {
+            int width = getWidth() > 0 ? getWidth() : getParent() != null ? getParent().getWidth() : 0;
+            if (width <= 0) {
+                return super.getPreferredSize();
+            }
+            return new java.awt.Dimension(width, view.preferredHeightForWidth(width));
+        }
+
+        @Override
+        public java.awt.Dimension getMaximumSize() {
+            return new java.awt.Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+        }
+    }
+
+    private String bookMeta(BookEditions.Edition shown) {
+        return "Buch, " + shown.number() + ". Auflage"
+                + (shown.createdAt() == null ? "" : " vom " + WHEN.format(shown.createdAt().atZone(zone)))
+                + ", aus " + shown.sources().size() + (shown.sources().size() == 1 ? " Seite" : " Seiten");
     }
 
     private void message(String text) {
@@ -845,11 +1018,14 @@ final class AreaSummaryView extends JPanel {
 
     /** Ob ein Überblick gezeigt wird, den man speichern kann. */
     boolean hasSummary() {
-        return summary != null;
+        return summary != null || edition != null;
     }
 
     /** Der Überblick als Text für die Zwischenablage. */
     String copyText() {
+        if (edition != null) {
+            return bookMeta(edition) + "\n\n" + edition.book();
+        }
         if (summary == null) {
             return "";
         }

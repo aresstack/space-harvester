@@ -270,6 +270,8 @@ public final class PageDetailPanel extends JPanel {
     private int pagePictureLoads;
     /** Die Stellen, von denen der Seiten-Podcast gerade erzählt; nach einem Neuaufbau des Lesetexts wieder gelb. */
     private List<int[]> pageSpans = List.of();
+    /** Wovon der ganze Seiten-Podcast erzählt; leer ohne Podcast. Der Rest des Texts ist grau (Angelo 27.11.2026). */
+    private Optional<List<int[]>> pageCoverage = Optional.empty();
 
     /** Wofür der Erklär-Podcast entsteht: eine Seite samt Unterseiten. */
     record PodcastPage(String sourceId, String pageId) {
@@ -278,8 +280,11 @@ public final class PageDetailPanel extends JPanel {
     private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay textBusy;
     private final JLabel acronymHint = Comic.muted(" ");
     private final JLabel acronymDetail = Comic.muted(" ");
-    private final ComposerButton recomputeReader = Comic.button("Analyse neu berechnen",
-            "Berechnet die Analysen dieser Seite neu und aktualisiert die Markierungen");
+    /**
+     * Für welche Fassungen die veralteten Analysen schon selbsttätig neu berechnet wurden (Quelle, Seite, Text-Hash):
+     * je geöffnetem Text einmal, damit ein Ergebnis, das veraltet bleibt, keine Schleife startet.
+     */
+    private final java.util.Set<String> autoRecomputed = new java.util.HashSet<>();
     private final Facts properties = new Facts();
     private final Facts technical = new Facts();
     private final JTextArea raw = Comic.code();
@@ -645,6 +650,10 @@ public final class PageDetailPanel extends JPanel {
             });
         }
         areaPodcast.podcastEvents(context.events()::publish);
+        // Hat ein Favoritenordner ein Buch, zeigt die Leseansicht dessen neueste Auflage (Architekt 27.11.2026).
+        areaView.books(folderId -> context.settings() == null || context.settings().storage() == null ? null
+                : com.aresstack.spaceharvester.app.research.BookEditions.latest(
+                        context.settings().storage().dataDirectory(), folderId).orElse(null));
         this.sourceProperties = new SourcePropertiesView(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context::settings);
         sourceProperties.secretState((current, entry) -> com.aresstack.spaceharvester.app.ui.SecretState.of(current,
@@ -685,7 +694,6 @@ public final class PageDetailPanel extends JPanel {
         readerPanel.setOpaque(false);
         acronymBar.setOpaque(false);
         acronymBar.add(acronymHint, BorderLayout.CENTER);
-        acronymBar.add(Comic.row(recomputeReader), BorderLayout.EAST);
         readerPanel.add(acronymBar, BorderLayout.NORTH);
         // Der Banner liegt als eigene Ebene über dem Lesetext und nimmt ihm keine Breite.
         readerPage = new NavigableDocumentPage(Comic.scroll(reader), reader, READER_PADDING_TOP);
@@ -702,6 +710,10 @@ public final class PageDetailPanel extends JPanel {
         pagePodcast.follow(spans -> {
             pageSpans = spans(spans);
             pagePictures.mark(pageSpans);
+        });
+        pagePodcast.cover(covered -> {
+            pageCoverage = covered.map(PageDetailPanel::spans);
+            pagePictures.cover(pageCoverage);
         });
         pagePodcast.cue(new PodcastControl.Cue() {
             @Override
@@ -975,12 +987,26 @@ public final class PageDetailPanel extends JPanel {
         browse.addActionListener(e -> browse());
         bookmark.addActionListener(e -> copyBookmark());
         star.addActionListener(e -> toggleFavorite());
+        // Rechtsklick auf den Stern: nur die Gruppen und „Neue Gruppe …“ (Angelo 27.11.2026).
+        star.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent e) {
+                starMenu(e);
+            }
+
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent e) {
+                starMenu(e);
+            }
+        });
         context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(this::updateStar));
         harvest.addActionListener(e -> harvestAssets());
         saveAsset.addActionListener(e -> saveAsset());
         previewAsset.addActionListener(e -> openAttachment());
         recompute.addActionListener(e -> recompute());
-        recomputeReader.addActionListener(e -> recompute());
+        // Der Stand „Veraltet“ (auch „Fehlgeschlagen“, „Nicht durchgeführt“) im Analysebereich ist zugleich der Knopf.
+        terms.onRecompute(this::recompute);
+        passages.onRecompute(this::recompute);
         readingPane.onLink(this::linkActivated);
         readingPane.onViewerLook(() -> Comic.viewerLook(context.settings() == null
                 ? com.aresstack.spaceharvester.app.settings.ViewerBackground.DEFAULT
@@ -1143,17 +1169,37 @@ public final class PageDetailPanel extends JPanel {
 
     /** Setzt den Favoriten der gezeigten Seite oder nimmt ihn zurück (Pfad aus der geladenen Position). */
     private void toggleFavorite() {
+        com.aresstack.spaceharvester.app.ui.Favorites.Favorite favorite = shownFavorite();
+        if (favorite != null) {
+            // Derselbe Weg wie der Stern im Baum (ADR 0034): Pfad aus der Position, Zielordner aus der Favoritenansicht.
+            context.favorites().toggle(favorite);
+        }
+    }
+
+    /** Der Favorit der gezeigten Seite mit ihrem Pfad, oder {@code null} ohne Seite oder Space. */
+    private com.aresstack.spaceharvester.app.ui.Favorites.Favorite shownFavorite() {
         if (page == null || sourceId == null || pageId == null) {
-            return;
+            return null;
         }
         String spaceKey = shownPosition != null && shownPosition.spaceKey() != null ? shownPosition.spaceKey()
                 : page.header().metadata().partitionKey();
         if (spaceKey == null) {
+            return null;
+        }
+        return com.aresstack.spaceharvester.app.ui.Favorites.Favorite.page(sourceId, spaceKey, pageId,
+                page.header().metadata().title(), shownPosition, sourceTitle(sourceId));
+    }
+
+    /** Rechtsklick auf den Stern: die Gruppen der Favoriten; die Wahl macht die Seite zum Favoriten darin. */
+    private void starMenu(java.awt.event.MouseEvent e) {
+        com.aresstack.spaceharvester.app.ui.Favorites.Favorite favorite = e.isPopupTrigger() ? shownFavorite() : null;
+        if (favorite == null) {
             return;
         }
-        // Derselbe Weg wie der Stern im Baum (ADR 0034): Pfad aus der Position, Zielordner aus der Favoritenansicht.
-        context.favorites().toggle(com.aresstack.spaceharvester.app.ui.Favorites.Favorite.page(sourceId, spaceKey,
-                pageId, page.header().metadata().title(), shownPosition, sourceTitle(sourceId)));
+        var favorites = context.favorites();
+        String current = favorites.groupOf(favorite.sourceId(), favorite.spaceKey(), favorite.pageId()).orElse(null);
+        com.aresstack.spaceharvester.app.ui.GroupMenu.popup(star, favorites, current,
+                id -> favorites.assign(favorite, id)).show(star, e.getX(), e.getY());
     }
 
     private String sourceTitle(String id) {
@@ -1167,9 +1213,9 @@ public final class PageDetailPanel extends JPanel {
                 ? shownPosition.spaceKey() : page.header().metadata().partitionKey();
         boolean favorite = spaceKey != null && context.favorites().contains(sourceId, spaceKey, pageId);
         star.setEnabled(shown && spaceKey != null);
-        star.setIcon(favorite ? com.aresstack.spaceharvester.app.ui.Glyph.STAR_FILLED
-                : com.aresstack.spaceharvester.app.ui.Glyph.STAR);
-        star.setToolTipText(favorite ? "Favorit entfernen" : "Als Favorit markieren");
+        star.setIcon(com.aresstack.spaceharvester.app.ui.GroupMenu.star(favorite, favorite
+                ? context.favorites().colorOf(sourceId, spaceKey, pageId).orElse(null) : null));
+        star.setToolTipText((favorite ? "Favorit entfernen" : "Als Favorit markieren") + " · Rechtsklick: Gruppe zuordnen");
         star.getAccessibleContext().setAccessibleName(favorite ? "Favorit entfernen" : "Als Favorit markieren");
     }
 
@@ -3493,10 +3539,10 @@ public final class PageDetailPanel extends JPanel {
         loadVerbs();
         acronymDetail.setText(" ");
         pagePictures.mark(List.of());
+        pagePictures.cover(Optional.empty());
         pagePictures.show(List.of());
         if (document == null) {
             reader.setText("");
-            recomputeReader.setVisible(false);
             return;
         }
         reader.setStyledDocument(document.document());
@@ -3506,26 +3552,58 @@ public final class PageDetailPanel extends JPanel {
             pageSpans = List.of();
         }
         pagePictures.mark(pageSpans);
+        pagePictures.cover(pageCoverage);
         loadPagePictures();
         readerPage.contentChanged();
         // Die Wolken der Leseansicht zählen wiederholte Überschriften im jetzt gezeigten Klartext.
         readingPane.setNavigation(readerPage.sky().navigation(), reader.getText());
         acronymHint.setText(document.hint(live));
-        recomputeReader.setVisible(recomputeOffered(document, live));
+        if (!live) {
+            recomputeStale(document);
+        }
     }
 
     /**
-     * Ob „Analyse neu berechnen“ unter Text erscheint: wenn Akronyme oder Absätze nicht zum angezeigten Text passen,
-     * denn auf diesen Knopf verweisen beide Hinweise.
+     * Die Analysen, die die Leseansicht braucht und die nicht zum angezeigten Text passen (Prozessor-IDs): Akronyme
+     * und Begriffe, wenn sie nicht aktuell sind, Absätze, wenn sie veraltet, fehlgeschlagen oder nicht vorhanden sind.
      */
-    private static boolean recomputeOffered(ReaderDocument document, boolean live) {
-        return document.text() != null && !live && recomputeOffered(document.acronyms().state(),
-                document.passages() == null ? null : document.passages().state());
+    static List<String> staleAnalyses(PageAcronyms.State acronyms, PageTerms.State terms, PagePassages.State passages) {
+        List<String> stale = new ArrayList<>();
+        if (acronyms != null && acronyms != PageAcronyms.State.CURRENT) {
+            stale.add(PageAcronyms.PROCESSOR);
+        }
+        if (terms != null && terms != PageTerms.State.CURRENT) {
+            stale.add(com.aresstack.spaceharvester.application.terms.TermPayload.PROCESSOR);
+        }
+        if (passages != null && passages != PagePassages.State.CURRENT) {
+            stale.add(com.aresstack.spaceharvester.application.passages.PassageProcessor.ID);
+        }
+        return stale;
     }
 
-    static boolean recomputeOffered(PageAcronyms.State acronyms, PagePassages.State passages) {
-        return acronyms != PageAcronyms.State.CURRENT
-                || passages == PagePassages.State.STALE || passages == PagePassages.State.FAILED;
+    /**
+     * Braucht der gezeigte Text eine veraltete Analyse, rechnet ein Auftrag sie von selbst neu (Angelo 27.11.2026):
+     * sichtbar und abbrechbar in der Auftragsliste, nur aus der gespeicherten Seite, ohne Netz und ohne Abgleich mit der
+     * Quelle. Je Fassung einmal; was danach noch veraltet ist (etwa Absätze, die das Embedding-Modell bräuchten),
+     * berechnet der Klick auf den Stand im Analysebereich.
+     */
+    private void recomputeStale(ReaderDocument document) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null || page.live() || document.text() == null || sourceId == null
+                || pageId == null) {
+            return;
+        }
+        List<String> stale = staleAnalyses(document.acronyms() == null ? null : document.acronyms().state(),
+                document.terms() == null ? null : document.terms().state(),
+                document.passages() == null ? null : document.passages().state());
+        if (stale.isEmpty() || !autoRecomputed.add(sourceId + '\n' + pageId + '\n'
+                + document.text().inputSha256())) {
+            return;
+        }
+        String source = sourceId;
+        String id = pageId;
+        recomputation(runtime, request, true,
+                state -> runtime.workspace().recomputeStaleLocally(source, id, stale, state));
     }
 
     private static java.util.Optional<ReaderDocument> localDocument(
@@ -6014,21 +6092,44 @@ public final class PageDetailPanel extends JPanel {
         }
         String source = sourceId;
         String id = pageId;
+        feedback.working("Analysen werden berechnet …");
+        recomputation(runtime, ++request, false,
+                state -> runtime.workspace().recomputeEnrichments(source, id, processor, state));
+    }
+
+    /**
+     * Der gemeinsame Ablauf von Klick und selbsttätiger Neuberechnung: {@code start} startet den Auftrag und kehrt
+     * mit seinem Lauf zurück ({@code null}: kein Auftrag, dann bleibt alles, wie es ist); danach zeigt die Seite die
+     * neuen Analysen. Selbsttätig zählt die Anfrage nicht weiter, damit sie das Laden der Seite nicht verwirft.
+     */
+    private void recomputation(AppRuntime runtime, int current, boolean automatic,
+                               java.util.function.Function<Consumer<com.aresstack.spaceharvester.application.jobs
+                                       .JobState>, Enrichments.Run> start) {
+        String source = sourceId;
+        String id = pageId;
         PageText text = shown == null ? null : shown.text();
         boolean live = page.live();
         Font font = reader.getFont();
-        int current = ++request;
-        feedback.working("Analysen werden berechnet …");
+        DeliveredPage before = page;
+        String working = automatic ? "Veraltete Analysen werden neu berechnet …" : "Analysen werden berechnet …";
         Background.run(() -> {
             // Abnahme #1078: Wartet der Auftrag hinter laufenden Folgeaufträgen, sagt die Statuszeile es.
-            Enrichments.Run run = runtime.workspace().recomputeEnrichments(source, id, processor, state ->
+            Enrichments.Run run = start.apply(state ->
                     javax.swing.SwingUtilities.invokeLater(() -> {
-                        if (current == request) {
+                        if (current == request && page == before) {
                             feedback.working(state == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED
-                                    ? "Wartet auf freien Platz …" : "Analysen werden berechnet …");
+                                    ? "Wartet auf freien Platz …" : working);
                         }
                     }));
-            DeliveredPage cached = runtime.workspace().page(source, id, false);
+            if (run == null) {
+                return null;
+            }
+            // Selbsttätig nur aus dem Bestand: keine Prüfung bei der Quelle.
+            DeliveredPage cached = automatic ? runtime.workspace().cachedPage(source, id).orElse(null)
+                    : runtime.workspace().page(source, id, false);
+            if (cached == null) {
+                return null;
+            }
             List<Enrichments.View> updated = runtime.workspace().enrichments(cached);
             ReaderDocument document = localDocument(runtime.workspace(), cached, font)
                     .orElseGet(() -> document(source, id, updated, text, font));
@@ -6036,26 +6137,31 @@ public final class PageDetailPanel extends JPanel {
             navigation(runtime, document, source, id);
             return new Recomputed(run, updated, document);
         }, result -> {
-            if (current != request) {
+            if (result == null || current != request || automatic && page != before) {
                 return;
             }
             Enrichments.Run run = result.run();
             views = result.views();
             analysisView.steps(views, this::stepResult);
             if (page != null) showProgramAnalysis(page.snapshot());
-            int caret = reader.getCaretPosition();
+            // Auswahl samt Anfang und Ende bleibt: die selbsttätige Neuberechnung kommt mitten im Lesen (Codex #1619).
+            int dot = reader.getCaret().getDot();
+            int mark = reader.getCaret().getMark();
             showReader(result.reader(), live);
-            reader.setCaretPosition(Math.min(caret, reader.getDocument().getLength()));
+            int length = reader.getDocument().getLength();
+            reader.setCaretPosition(Math.min(mark, length));
+            reader.moveCaretPosition(Math.min(dot, length));
             if (!run.supported()) {
                 feedback.info("Keine Analysen für dieses Format", null);
             } else if (run.failed() > 0) {
                 feedback.warning("Analysen teilweise fehlgeschlagen", run.computed() + " berechnet, " + run.failed()
                         + " fehlgeschlagen");
             } else {
-                feedback.success(run.computed() + " Analysen berechnet");
+                feedback.success(run.computed() + (automatic ? " veraltete Analysen neu berechnet"
+                        : " Analysen berechnet"));
             }
         }, error -> {
-            if (current != request) {
+            if (current != request || automatic && page != before) {
                 return;
             }
             if (error instanceof com.aresstack.spaceharvester.application.jobs.JobCancelledException) {
@@ -6121,7 +6227,6 @@ public final class PageDetailPanel extends JPanel {
         saveAsset.setEnabled(enabled);
         updatePreviewEnabled();
         recompute.setEnabled(enabled);
-        recomputeReader.setEnabled(enabled);
         recomputeProgram.setEnabled(enabled);
         recomputeBusiness.setEnabled(enabled);
         searchPrograms.setEnabled(enabled);
@@ -6171,7 +6276,8 @@ public final class PageDetailPanel extends JPanel {
 
     /**
      * Zur Seite „Lesezeichen kopieren“ und „Im Browser öffnen“, mit Podcast auch „Transkript speichern …“; auf der
-     * Quellenseite „Zusammenfassung speichern …“ und „Transkript speichern …“ (Angelo 22.11.2026). Je Eintrag so
+     * Quellenseite „Zusammenfassung speichern …“ und „Transkript speichern …“ (Angelo 22.11.2026). Wo das Transkript
+     * steht, stehen auch „Als WAV exportieren …“ und „Als Video exportieren …“ (Angelo 27.11.2026). Je Eintrag so
      * wählbar wie die Aktion gerade gilt.
      */
     javax.swing.JPopupMenu moreMenu() {
@@ -6190,6 +6296,7 @@ public final class PageDetailPanel extends JPanel {
         if (sourceMenuShown() && areaShown()) {
             menu.add(menuItem(SAVE_TRANSCRIPT, "Der gesprochene Text des Podcasts als Textdatei",
                     areaPodcast.podcast().hasTranscript(), () -> saveTranscript(areaPodcast.podcast())));
+            addPodcastExports(menu, areaPodcast.podcast());
             addPodcastSettings(menu);
             return menu;
         }
@@ -6197,6 +6304,7 @@ public final class PageDetailPanel extends JPanel {
             // Der Podcast steht in der Podcast-Ansicht, seine Einträge also auch.
             menu.add(menuItem(SAVE_TRANSCRIPT, "Der gesprochene Text des Podcasts als Textdatei",
                     sourceChanges.podcast().hasTranscript(), () -> saveTranscript(sourceChanges.podcast())));
+            addPodcastExports(menu, sourceChanges.podcast());
             menu.add(menuItem(RENEW_PODCAST, RENEW_PODCAST_TIP, sourceChanges.podcastRenewable(),
                     sourceChanges::renewPodcast));
             addPodcastSettings(menu);
@@ -6208,8 +6316,52 @@ public final class PageDetailPanel extends JPanel {
         if (PAGE.equals(pageCard) && pagePodcast.hasTranscript()) {
             menu.add(menuItem(SAVE_TRANSCRIPT, "Der gesprochene Text des Podcasts als Textdatei", true,
                     () -> saveTranscript(pagePodcast)));
+            addPodcastExports(menu, pagePodcast);
         }
         return menu;
+    }
+
+    static final String EXPORT_WAV = "Als WAV exportieren …";
+    static final String EXPORT_VIDEO = "Als Video exportieren …";
+    static final String EXPORT_WAITING = "Erst möglich, wenn alle Abschnitte des Podcasts vertont sind";
+
+    /**
+     * „Als WAV exportieren …“, „Als Video exportieren …“ (die Bilder als Diashow, zeitlich passend zum Ton) und darunter
+     * die „Video-Einstellungen“ (Angelo 27.11.2026). Wählbar, sobald jeder Abschnitt sein Audio hat.
+     */
+    private void addPodcastExports(javax.swing.JPopupMenu menu, PodcastControl<?> podcast) {
+        boolean ready = podcast.exportable() != null;
+        menu.add(menuItem(EXPORT_WAV, ready ? "Der Ton des Podcasts als eine WAV-Datei" : EXPORT_WAITING, ready,
+                () -> exportPodcast(podcast, com.aresstack.spaceharvester.app.podcast.PodcastExport.Format.WAV)));
+        menu.add(menuItem(EXPORT_VIDEO, ready ? "Der Podcast mit seinen Bildern als Video (MP4), zeitlich passend "
+                + "zum Ton" : EXPORT_WAITING, ready,
+                () -> exportPodcast(podcast, com.aresstack.spaceharvester.app.podcast.PodcastExport.Format.VIDEO)));
+        menu.add(PodcastVideoSettings.menu(this, text -> tabStatus(tabs.selected(), text)));
+    }
+
+    /**
+     * Fragt nach der Datei und startet den Export als Auftrag: er läuft auf der lokalen Spur, zeigt seinen Fortschritt
+     * in der Auftragsliste und lässt sich dort abbrechen.
+     */
+    private void exportPodcast(PodcastControl<?> control,
+                               com.aresstack.spaceharvester.app.podcast.PodcastExport.Format format) {
+        com.aresstack.spaceharvester.application.podcast.Podcast podcast = control.exportable();
+        com.aresstack.spaceharvester.app.runtime.AppRuntime runtime = context.runtime();
+        if (podcast == null || runtime == null) {
+            return;
+        }
+        String name = title.getText();
+        java.nio.file.Path target = saveTarget.apply("Podcast " + safeName(name) + "." + format.extension());
+        if (target == null) {
+            return;
+        }
+        com.aresstack.spaceharvester.app.podcast.PodcastVideo.Options options = PodcastVideoSettings.options();
+        java.nio.file.Path file = target.toAbsolutePath();
+        runtime.workspace().startPodcastExport(name, java.util.Map.of(
+                        com.aresstack.spaceharvester.app.podcast.PodcastExport.FILE_PARAMETER, file.toString(),
+                        com.aresstack.spaceharvester.app.podcast.PodcastExport.FORMAT_PARAMETER, format.name()),
+                com.aresstack.spaceharvester.app.podcast.PodcastExport.task(podcast, file, format, options));
+        tabStatus(tabs.selected(), format.label() + " wird exportiert, Fortschritt unter Aufträge: " + file);
     }
 
     /**
@@ -6421,6 +6573,16 @@ public final class PageDetailPanel extends JPanel {
                     pairs.add(span.start());
                     pairs.add(span.end());
                 }
+                return pairs;
+            }
+
+            @Override
+            public List<Integer> coverage(PodcastPage page, List<Integer> topics) {
+                List<Integer> pairs = new ArrayList<>();
+                workspace.pagePodcastCoverage(page.sourceId(), page.pageId()).orElse(List.of()).forEach(span -> {
+                    pairs.add(span.start());
+                    pairs.add(span.end());
+                });
                 return pairs;
             }
         };

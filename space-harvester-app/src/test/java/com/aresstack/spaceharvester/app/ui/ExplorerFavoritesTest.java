@@ -115,6 +115,18 @@ class ExplorerFavoritesTest {
             assertThat(marked[0].pageId()).isNull();
             explorer[0].favoritesButton().doClick();
             assertThat(explorer[0].onlyFavorites()).isFalse();
+            // Farbige Gruppe (Angelo 27.11.2026): im Rechtsklick-Menü „Gruppe zuordnen“, am Stern nur die Gruppen.
+            Explorer.SpaceItem item = new Explorer.SpaceItem("handbuch", space, space);
+            assertThat(labels(explorer[0].menu(item))).contains(GroupMenu.ASSIGN);
+            String group = context.favorites().createFolder("Wichtig", null,
+                    com.aresstack.spaceharvester.app.group.GroupColor.GRUEN);
+            assertThat(GroupMenu.labels(explorer[0].starMenu(item)))
+                    .containsExactly("Wichtig", "—", GroupMenu.NEW_GROUP);
+            explorer[0].assignGroup(item, group);
+            assertThat(context.favorites().colorOf("handbuch", space, null))
+                    .contains(com.aresstack.spaceharvester.app.group.GroupColor.GRUEN);
+            assertThat(context.favorites().favoritesIn(group, false)).singleElement()
+                    .extracting(Favorites.Favorite::spaceKey).isEqualTo(space);
         });
         assertThat(Files.isRegularFile(home.resolve("data").resolve(Favorites.FILE))).isTrue();
     }

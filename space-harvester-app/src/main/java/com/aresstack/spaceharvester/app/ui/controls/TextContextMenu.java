@@ -27,6 +27,9 @@ import javax.swing.text.JTextComponent;
  * verarbeitet hat, und nur, wenn dabei kein anderes Menü aufgegangen ist und niemand den Klick verbraucht hat.
  * Schreibgeschützte Felder bieten nur Kopieren und Alles markieren, Passwortfelder weder Ausschneiden noch Kopieren.
  * Die Editoren (RSyntaxTextArea) zeigen statt ihres eigenen englischen Menüs dieses, mit Rückgängig und Wiederholen.
+ *
+ * <p>Ist ein Chat da ({@link #setQuoteTarget}), bietet das Menü zu markiertem Text zusätzlich „An Chat anhängen“
+ * (Angelo 27.11.2026, wie bei ChatGPT): Der Ausschnitt erscheint als Zitat-Chip über der Chat-Eingabe.
  */
 public final class TextContextMenu {
 
@@ -37,10 +40,28 @@ public final class TextContextMenu {
     public static final String SELECT_ALL = "Alles markieren";
     public static final String UNDO = "Rückgängig";
     public static final String REDO = "Wiederholen";
+    public static final String QUOTE = "An Chat anhängen";
+
+    /** Wohin „An Chat anhängen“ markierten Text gibt (der Chat der App). */
+    public interface QuoteTarget {
+
+        /** Ob dieses Feld zitiert werden kann (nicht die Chat-Eingabe selbst, nur solange der Chat zu sehen ist). */
+        boolean accepts(JTextComponent field);
+
+        /** Hängt {@code text} als Zitat an die nächste Nachricht an. */
+        void quote(String text);
+    }
 
     private static AWTEventListener installed;
+    /** Schwach gehalten: Ein geschlossener Chat (in Tests viele) bleibt nicht wegen des Menüs im Speicher. */
+    private static java.lang.ref.WeakReference<QuoteTarget> quoteTarget = new java.lang.ref.WeakReference<>(null);
 
     private TextContextMenu() {
+    }
+
+    /** Meldet den Chat an, der markierten Text als Zitat annimmt; der zuletzt angemeldete gilt. */
+    public static synchronized void setQuoteTarget(QuoteTarget target) {
+        quoteTarget = new java.lang.ref.WeakReference<>(target);
     }
 
     /** Richtet das Menü für alle Textfelder der App ein; mehrfaches Aufrufen schadet nicht. */
@@ -115,6 +136,16 @@ public final class TextContextMenu {
         }
         if (writable) {
             menu.add(item(PASTE, KeyEvent.VK_V, shortcut, clipboardHasText(), field::paste));
+        }
+        QuoteTarget target = quoteTarget.get();
+        if (!secret && marked && target != null && target.accepts(field)) {
+            String selected = field.getSelectedText();
+            if (selected != null && !selected.isBlank()) {
+                menu.addSeparator();
+                JMenuItem quote = new JMenuItem(QUOTE, new QuoteIcon());
+                quote.addActionListener(e -> target.quote(selected));
+                menu.add(quote);
+            }
         }
         menu.addSeparator();
         menu.add(item(SELECT_ALL, KeyEvent.VK_A, shortcut, any, () -> {

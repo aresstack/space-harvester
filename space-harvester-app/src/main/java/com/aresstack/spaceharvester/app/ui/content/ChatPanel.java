@@ -328,6 +328,20 @@ public final class ChatPanel extends JPanel {
     private final JPanel chips = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
     private final List<Path> attachments = new ArrayList<>();
     /**
+     * Vorgemerkte Zitate (Angelo 27.11.2026, wie bei ChatGPT): markierte Ausschnitte aus Antworten, der Seitenansicht
+     * oder einem Viewer, je ein Chip mit Anführungszeichen und ✕; sie gehen mit der nächsten Frage hinaus.
+     */
+    private final List<String> quotes = new ArrayList<>();
+    /** Die Chips der Zitate; ein Chip-Vorschlag („Seite zusammenfassen“) sendet sie nicht mit, sie bleiben stehen. */
+    private final java.util.Map<String, JPanel> quoteChips = new java.util.LinkedHashMap<>();
+    /** Die nächste Frage kommt aus der Eingabe und trägt die Zitate (dann sind sie danach weg). */
+    private boolean sendingQuotes;
+    /** Das schwebende „Zitieren“ über einer Markierung in einer Antwort (wie im EAC). */
+    private final com.aresstack.spaceharvester.app.ui.controls.QuoteOverlayButton quoteOverlay =
+            new com.aresstack.spaceharvester.app.ui.controls.QuoteOverlayButton();
+    /** Die Markierung, zu der das Overlay gerade steht; {@code null} ohne. */
+    private com.aresstack.spaceharvester.app.ui.markdown.QuoteSelection quotedSelection;
+    /**
      * Bilder, die das Vision-Modell schon beim Anhängen liest (Angelo 27.11.2026: „sobald ich das Bild anfüge“), damit
      * die Frage nach dem Senden nicht erst darauf wartet. Nur auf dem EDT verändert.
      */
@@ -548,7 +562,13 @@ public final class ChatPanel extends JPanel {
                 transcriptLayers.doLayout(); // Bildlaufleiste kommt oder geht: der Knopf bleibt links daneben
             }
         });
+        transcriptLayers.add(quoteOverlay, JLayeredPane.POPUP_LAYER);
+        quoteOverlay.setVisible(false);
+        quoteOverlay.addActionListener(e -> acceptQuote());
+        // Rollt der Verlauf, stünde das Overlay neben der Markierung: es verschwindet (wie im EAC).
+        transcriptScroll.getViewport().addChangeListener(e -> hideQuoteOverlay());
         add(transcriptLayers, BorderLayout.CENTER);
+        com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.setQuoteTarget(quoteTarget);
 
         composer = buildComposer();
         // Angelo 24.11.2026: Über dem Eingabefeld stehen nur Aktionsknöpfe, Text und Anhänge. Die Wissenszeile samt
@@ -2231,21 +2251,61 @@ public final class ChatPanel extends JPanel {
         }
         attachments.add(file);
         startImageReading(file);
+        addChip(null, file.getFileName().toString(), file.toString(), "Anhang entfernen",
+                () -> {
+                    attachments.remove(file);
+                    earlyImages.remove(file);
+                });
+        attach.setToolTipText(ATTACH + " (" + attachments.size() + " vorgemerkt)");
+    }
+
+    /**
+     * Merkt einen markierten Ausschnitt als Zitat für die nächste Frage vor (Angelo 27.11.2026): ein Chip mit
+     * Anführungszeichen, dem Anfang des Ausschnitts und ✕, im Tooltip der ganze (gekürzt). Derselbe Ausschnitt nur
+     * einmal; die Eingabe bekommt den Fokus, damit gleich die Frage folgen kann.
+     */
+    void quote(String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        String passage = text.strip();
+        if (!quotes.contains(passage)) {
+            quotes.add(passage);
+            String line = passage.replaceAll("\\s+", " ");
+            quoteChips.put(passage, addChip(new com.aresstack.spaceharvester.app.ui.controls.QuoteIcon(),
+                    ellipsize(line, QUOTE_CHIP_CHARS),
+                    QUOTE + ": \u201E" + ellipsize(line, QUOTE_TOOLTIP_CHARS) + "\u201C", "Zitat entfernen", () -> {
+                        quotes.remove(passage);
+                        quoteChips.remove(passage);
+                    }));
+        }
+        editor.requestFocusInWindow();
+    }
+
+    static final String QUOTE = "Zitat";
+    private static final int QUOTE_CHIP_CHARS = 28;
+    private static final int QUOTE_TOOLTIP_CHARS = 240;
+
+    private static String ellipsize(String text, int max) {
+        return text.length() <= max ? text : text.substring(0, max - 1) + "…";
+    }
+
+    /** Ein Chip über dem Editor (Anhang oder Zitat): Symbol, Name, ✕; das ✕ nimmt ihn mit {@code removed} zurück. */
+    private JPanel addChip(javax.swing.Icon icon, String label, String tooltip, String removeTip, Runnable removed) {
         JPanel chip = new JPanel(new BorderLayout(4, 0));
         chip.setOpaque(true);
         chip.setBackground(Comic.SURFACE);
         chip.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Comic.LINE),
                 BorderFactory.createEmptyBorder(1, 6, 1, 2)));
-        JLabel name = new JLabel(file.getFileName().toString());
+        JLabel name = new JLabel(label, icon, JLabel.LEADING);
         name.setFont(Comic.regular(12f));
         name.setForeground(Comic.INK);
-        name.setToolTipText(file.toString());
-        ComposerButton remove = ComposerButton.iconButton(ComposerIcons.close(), "Anhang entfernen");
+        name.setToolTipText(tooltip);
+        ComposerButton remove = ComposerButton.iconButton(ComposerIcons.close(), removeTip);
         remove.addActionListener(e -> {
-            attachments.remove(file);
-            earlyImages.remove(file);
+            removed.run();
             chips.remove(chip);
-            chips.setVisible(!attachments.isEmpty());
+            chips.setVisible(!attachments.isEmpty() || !quotes.isEmpty());
             chips.revalidate();
             composer.repaint();
         });
@@ -2255,7 +2315,83 @@ public final class ChatPanel extends JPanel {
         chips.setVisible(true);
         chips.revalidate();
         composer.repaint();
-        attach.setToolTipText(ATTACH + " (" + attachments.size() + " vorgemerkt)");
+        return chip;
+    }
+
+    /** Der Chat nimmt markierten Text aus jedem Textfeld der App an, solange er zu sehen ist, außer aus der Eingabe. */
+    private final com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.QuoteTarget quoteTarget =
+            new com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.QuoteTarget() {
+                @Override
+                public boolean accepts(javax.swing.text.JTextComponent field) {
+                    return field != editor && isShowing();
+                }
+
+                @Override
+                public void quote(String text) {
+                    ChatPanel.this.quote(text);
+                }
+            };
+
+    /** Zeigt „Zitieren“ mittig über der Markierung (passt es oben nicht hin, darunter), wie im EAC. */
+    private void showQuoteOverlay(com.aresstack.spaceharvester.app.ui.markdown.QuoteSelection selection) {
+        if (selection == null || selection.anchor() == null || !selection.anchor().isShowing()) {
+            hideQuoteOverlay();
+            return;
+        }
+        quotedSelection = selection;
+        Dimension size = quoteOverlay.getPreferredSize();
+        java.awt.Rectangle area = SwingUtilities.convertRectangle(selection.anchor(), selection.bounds(),
+                transcriptLayers);
+        int x = area.x + area.width / 2 - size.width / 2;
+        x = Math.max(QUOTE_OVERLAY_GAP, Math.min(x, transcriptLayers.getWidth() - size.width - QUOTE_OVERLAY_GAP));
+        int y = area.y - size.height - QUOTE_OVERLAY_GAP;
+        if (y < QUOTE_OVERLAY_GAP) {
+            y = area.y + area.height + QUOTE_OVERLAY_GAP;
+        }
+        // Reicht die Markierung über die ganze Höhe, bleibt der Knopf trotzdem im sichtbaren Verlauf.
+        y = Math.max(QUOTE_OVERLAY_GAP, Math.min(y, transcriptLayers.getHeight() - size.height - QUOTE_OVERLAY_GAP));
+        quoteOverlay.setBounds(x, y, size.width, size.height);
+        quoteOverlay.setVisible(true);
+        transcriptLayers.repaint();
+    }
+
+    private static final int QUOTE_OVERLAY_GAP = 6;
+
+    private void hideQuoteOverlay() {
+        quotedSelection = null;
+        if (quoteOverlay.isVisible()) {
+            quoteOverlay.setVisible(false);
+            transcriptLayers.repaint();
+        }
+    }
+
+    /** „Zitieren“ geklickt: der Ausschnitt wird ein Zitat-Chip, die Markierung verschwindet. */
+    private void acceptQuote() {
+        com.aresstack.spaceharvester.app.ui.markdown.QuoteSelection selection = quotedSelection;
+        hideQuoteOverlay();
+        if (selection == null) {
+            return;
+        }
+        selection.clearHighlight();
+        quote(selection.selectedText());
+    }
+
+    /**
+     * Die Frage mit den vorgemerkten Zitaten davor, je Zitat ein Markdown-Zitatblock ({@code > }), so steht es auch
+     * in der eigenen Sprechblase und im Verlauf; ohne Zitate unverändert.
+     */
+    static String withQuotes(String text, List<String> passages) {
+        if (passages.isEmpty()) {
+            return text;
+        }
+        StringBuilder b = new StringBuilder();
+        for (String passage : passages) {
+            for (String line : passage.split("\\R", -1)) {
+                b.append(line.isBlank() ? ">" : "> " + line).append('\n');
+            }
+            b.append('\n');
+        }
+        return b.append(text).toString();
     }
 
     /** Ein Bild, das schon beim Anhängen gelesen wird: mit welchem Vision-Modell, und sein Text. */
@@ -2355,12 +2491,15 @@ public final class ChatPanel extends JPanel {
         if (readingAttachments) {
             return;
         }
-        String text = editor.getText().strip();
-        if (text.isEmpty() || !send.isEnabled()) {
+        String typed = editor.getText().strip();
+        if (typed.isEmpty() || !send.isEnabled()) {
             return;
         }
+        String text = withQuotes(typed, quotes);
+        sendingQuotes = true;
         if (attachments.isEmpty()) {
             sendAsked(text);
+            sendingQuotes = false; // nicht gesendet (kein Modell …): die Zitate bleiben für den nächsten Versuch
             return;
         }
         // Anhänge einmal lesen, nicht auf dem EDT: ein Bild liest das Vision-Modell, das dauert. Ihr Text zählt zum
@@ -2389,11 +2528,13 @@ public final class ChatPanel extends JPanel {
                 send.setToolTipText("Senden (Enter)");
                 updateSend();
                 if (!startedChat.equals(chat.id())) {
+                    sendingQuotes = false;
                     status.setText(CHAT_CHANGED_WHILE_READING);
                     return;
                 }
                 status.setText(" ");
                 sendAsked(asked);
+                sendingQuotes = false;
             });
         }, "chat-anhaenge");
         reading.setDaemon(true);
@@ -2543,9 +2684,16 @@ public final class ChatPanel extends JPanel {
         showChatName();
         editor.setText("");
         attachments.clear();
+        hideQuoteOverlay();
         earlyImages.clear();
         chips.removeAll();
-        chips.setVisible(false);
+        if (sendingQuotes) {
+            quotes.clear();
+            quoteChips.clear();
+        }
+        sendingQuotes = false;
+        quoteChips.values().forEach(chips::add);
+        chips.setVisible(!quotes.isEmpty());
         attach.setToolTipText(ATTACH);
         composer.revalidate();
         composer.repaint();
@@ -3309,6 +3457,17 @@ public final class ChatPanel extends JPanel {
         MarkdownTheme theme = MarkdownTheme.forSurface(transcriptScroll.getViewport().getBackground());
         MarkdownMessageView view = new MarkdownMessageView(theme, linkOpener, mermaid);
         view.setMarkdown(markdown);
+        view.setQuoteSelectionListener(new com.aresstack.spaceharvester.app.ui.markdown.QuoteSelectionListener() {
+            @Override
+            public void selectionMade(com.aresstack.spaceharvester.app.ui.markdown.QuoteSelection selection) {
+                showQuoteOverlay(selection);
+            }
+
+            @Override
+            public void selectionCleared() {
+                hideQuoteOverlay();
+            }
+        });
         AssistantMarkdownMessage bubble = new AssistantMarkdownMessage(view, theme.getMutedForeground());
         bubble.setTimestamp(at);
         // Read the current Markdown when an action is invoked, including a streamed response.
@@ -4375,6 +4534,14 @@ public final class ChatPanel extends JPanel {
 
     List<Path> attachments() {
         return List.copyOf(attachments);
+    }
+
+    List<String> quotes() {
+        return List.copyOf(quotes);
+    }
+
+    com.aresstack.spaceharvester.app.ui.controls.QuoteOverlayButton quoteOverlay() {
+        return quoteOverlay;
     }
 
     boolean loadVisible() {

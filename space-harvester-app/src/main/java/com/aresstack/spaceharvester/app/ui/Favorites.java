@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.group.GroupColor;
+import com.aresstack.spaceharvester.app.project.ProfileFiles;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
@@ -9,7 +11,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -122,13 +123,27 @@ public final class Favorites {
         String id();
     }
 
-    /** Ein Ordner mit Namen und Kindern (Unterordner und Favoriten) in ihrer Reihenfolge. */
-    public record Folder(String id, String name, List<Entry> children) implements Entry {
+    /**
+     * Ein Ordner mit Namen und Kindern (Unterordner und Favoriten) in ihrer Reihenfolge. Trägt er eine Farbe, ist er eine
+     * Gruppe (Angelo 27.11.2026, „erweiterte Favoriten“): Seine Favoriten erscheinen in Suche und Quellenbaum in dieser
+     * Farbe; {@code color} ist {@code null} für einen gewöhnlichen Ordner.
+     */
+    public record Folder(String id, String name, GroupColor color, List<Entry> children) implements Entry {
 
         public Folder {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(name, "name");
             children = List.copyOf(children);
+        }
+
+        /** Ein gewöhnlicher Ordner ohne Farbe. */
+        public Folder(String id, String name, List<Entry> children) {
+            this(id, name, null, children);
+        }
+
+        /** Ob der Ordner eine Gruppe ist (eine Farbe trägt). */
+        public boolean isGroup() {
+            return color != null;
         }
 
         /** Alle Favoriten dieses Ordners, mit {@code recursive} auch die aller Unterordner, in Baumreihenfolge. */
@@ -219,6 +234,26 @@ public final class Favorites {
                 : java.util.Optional.empty();
     }
 
+    /** Alle Gruppen (Ordner mit Farbe) auf jeder Ebene in Baumreihenfolge, ohne ihre Kinder auszuwerten. */
+    public synchronized List<Folder> groups() {
+        List<Folder> out = new ArrayList<>();
+        collectGroups(load(), out);
+        return List.copyOf(out);
+    }
+
+    /**
+     * Die Farbe des Knotens: die der nächsten Gruppe, in der sein Favorit liegt (ein farbloser Ordner in einer Gruppe
+     * erbt deren Farbe); leer, wenn der Knoten kein Favorit ist oder in keiner Gruppe liegt.
+     */
+    public synchronized java.util.Optional<GroupColor> colorOf(String sourceId, String spaceKey, String pageId) {
+        return java.util.Optional.ofNullable(colorOf(load(), null, sourceId, spaceKey, pageId));
+    }
+
+    /** Die ID der Gruppe, deren Farbe der Knoten trägt ({@link #colorOf}); leer ohne Gruppe. */
+    public synchronized java.util.Optional<String> groupOf(String sourceId, String spaceKey, String pageId) {
+        return java.util.Optional.ofNullable(groupOf(load(), null, sourceId, spaceKey, pageId));
+    }
+
     /** Ob {@code id} ein vorhandener Ordner ist. */
     public synchronized boolean isFolder(String id) {
         Node node = find(load(), id);
@@ -265,12 +300,53 @@ public final class Favorites {
         return set;
     }
 
+    /**
+     * „Gruppe zuordnen“: macht den Knoten zum Favoriten im Ordner {@code folderId} ({@code null} = oberste Ebene). Ist
+     * er schon Favorit, wandert er dorthin (ans Ende) und behält seinen gemerkten Pfad; sonst kommt er neu hinein.
+     * Abgelehnt wird ein unbekannter Ordner.
+     *
+     * @return ob sich etwas geändert hat
+     */
+    public boolean assign(Favorite favorite, String folderId) {
+        Objects.requireNonNull(favorite, "favorite");
+        synchronized (this) {
+            List<Node> nodes = load();
+            Node folder = folderId == null ? null : find(nodes, folderId);
+            if (folderId != null && (folder == null || !folder.isFolder())) {
+                return false;
+            }
+            List<Node> target = folder == null ? nodes : folder.children;
+            Node existing = findFavorite(nodes, favorite.sourceId(), favorite.spaceKey(), favorite.pageId());
+            if (existing != null) {
+                if (target.contains(existing)) {
+                    return false;
+                }
+                removeNode(nodes, existing.id);
+                target.add(existing);
+            } else {
+                target.add(Node.favorite(newId(), favorite));
+            }
+            save();
+        }
+        notifyListeners();
+        return true;
+    }
+
     /** Legt einen Ordner am Ende von {@code parentId} an ({@code null}/unbekannt = oberste Ebene); {@code null} bei leerem Namen. */
     public String createFolder(String name, String parentId) {
+        return createFolder(name, parentId, null);
+    }
+
+    /**
+     * Legt einen Ordner an wie {@link #createFolder(String, String)}, mit {@code color} als Gruppe ({@code null} =
+     * gewöhnlicher Ordner).
+     */
+    public String createFolder(String name, String parentId, GroupColor color) {
         if (name == null || name.isBlank()) {
             return null;
         }
         Node folder = Node.folder(newId(), name.trim());
+        folder.color = color;
         synchronized (this) {
             childrenOf(parentId).add(folder);
             save();
@@ -287,6 +363,20 @@ public final class Favorites {
                 return false;
             }
             node.name = name.trim();
+            save();
+        }
+        notifyListeners();
+        return true;
+    }
+
+    /** Färbt einen Ordner ein ({@code null} nimmt die Farbe weg, er wird ein gewöhnlicher Ordner). */
+    public boolean recolorFolder(String id, GroupColor color) {
+        synchronized (this) {
+            Node node = find(load(), id);
+            if (node == null || !node.isFolder() || node.color == color) {
+                return false;
+            }
+            node.color = color;
             save();
         }
         notifyListeners();
@@ -398,6 +488,51 @@ public final class Favorites {
         }
     }
 
+    private static void collectGroups(List<Node> nodes, List<Folder> out) {
+        for (Node node : nodes) {
+            if (node.isFolder()) {
+                if (node.color != null) {
+                    out.add((Folder) snapshot(node));
+                }
+                collectGroups(node.children, out);
+            }
+        }
+    }
+
+    /** Die Farbe der nächsten Gruppe über dem Favoriten; {@code inherited} ist die der Gruppe über {@code nodes}. */
+    private static GroupColor colorOf(List<Node> nodes, GroupColor inherited, String sourceId, String spaceKey,
+                                      String pageId) {
+        for (Node node : nodes) {
+            if (node.isFolder()) {
+                GroupColor found = colorOf(node.children, node.color != null ? node.color : inherited, sourceId,
+                        spaceKey, pageId);
+                if (found != null) {
+                    return found;
+                }
+            } else if (node.favorite.same(sourceId, spaceKey, pageId)) {
+                return inherited;
+            }
+        }
+        return null;
+    }
+
+    /** Die ID der nächsten Gruppe über dem Favoriten; {@code inherited} ist die der Gruppe über {@code nodes}. */
+    private static String groupOf(List<Node> nodes, String inherited, String sourceId, String spaceKey,
+                                  String pageId) {
+        for (Node node : nodes) {
+            if (node.isFolder()) {
+                String found = groupOf(node.children, node.color != null ? node.id : inherited, sourceId, spaceKey,
+                        pageId);
+                if (found != null) {
+                    return found;
+                }
+            } else if (node.favorite.same(sourceId, spaceKey, pageId)) {
+                return inherited;
+            }
+        }
+        return null;
+    }
+
     /** Die gewünschten Knoten in Baumreihenfolge, ohne die unter einem gewünschten Ordner (sie wandern mit ihm). */
     private static void collectTopmost(List<Node> nodes, Set<Node> requested, boolean underRequested,
                                        List<Node> out) {
@@ -472,7 +607,7 @@ public final class Favorites {
     }
 
     private static Entry snapshot(Node node) {
-        return node.isFolder() ? new Folder(node.id, node.name, snapshot(node.children))
+        return node.isFolder() ? new Folder(node.id, node.name, node.color, snapshot(node.children))
                 : new Bookmark(node.id, node.favorite);
     }
 
@@ -524,14 +659,12 @@ public final class Favorites {
 
     /** Benennt eine unlesbare Datei um ({@code favorites.json.defekt-<Zeit>}), damit kein Stern sie überschreibt. */
     private static void quarantine(Path path, Exception cause) {
-        Path target = path.resolveSibling(path.getFileName() + ".defekt-" + System.currentTimeMillis());
-        try {
-            Files.move(path, target);
+        Path target = ProfileFiles.quarantine(path);
+        if (target != null) {
             LOG.log(Level.WARNING, "Favoriten nicht lesbar (" + cause.getClass().getSimpleName()
                     + "), beiseitegelegt: " + target);
-        } catch (IOException | RuntimeException e) {
-            LOG.log(Level.WARNING, "Favoriten nicht lesbar und nicht beiseitezulegen: " + path + " ("
-                    + e.getClass().getSimpleName() + ")");
+        } else {
+            LOG.log(Level.WARNING, "Favoriten nicht lesbar und nicht beiseitezulegen: " + path);
         }
     }
 
@@ -560,6 +693,9 @@ public final class Favorites {
                 }
                 ids.add(id);
                 Node folder = Node.folder(id, name.trim());
+                String color = text(entry, "color");
+                // Eine unbekannte Farbe bleibt eine Gruppe (Grau), nie ein Fehler.
+                folder.color = color == null || color.isBlank() ? null : GroupColor.of(color);
                 folder.children.addAll(fromEntries(entry.path("children"), ids, seen));
                 nodes.add(folder);
             } else {
@@ -613,10 +749,7 @@ public final class Favorites {
         content.put("version", FORMAT_VERSION);
         content.put("entries", toEntries(load()));
         try {
-            Files.createDirectories(path.getParent());
-            Path temp = path.resolveSibling(path.getFileName() + ".part");
-            Files.writeString(temp, JSON.writeValueAsString(content), StandardCharsets.UTF_8);
-            Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            ProfileFiles.writeAtomic(path, JSON.writeValueAsString(content));
         } catch (IOException | RuntimeException e) {
             LOG.log(Level.WARNING, "Favoriten nicht gespeichert: " + path + " (" + e.getClass().getSimpleName() + ")");
         }
@@ -630,6 +763,9 @@ public final class Favorites {
             if (node.isFolder()) {
                 row.put("folder", true);
                 row.put("name", node.name);
+                if (node.color != null) {
+                    row.put("color", node.color.key());
+                }
                 row.put("children", toEntries(node.children));
             } else {
                 Favorite favorite = node.favorite;
@@ -649,6 +785,8 @@ public final class Favorites {
     private static final class Node {
         final String id;
         String name;
+        /** Die Farbe eines Ordners, der eine Gruppe ist; sonst {@code null}. */
+        GroupColor color;
         final Favorite favorite;
         final List<Node> children;
 

@@ -160,7 +160,7 @@ class ChatReadAloudTest {
     @Test
     void sentencesSnapToTheirBoundaries() {
         String text = "Erster Satz. Zweiter Satz!\nPunkt eins.\nPunkt zwei.";
-        List<int[]> sentences = ChatReadAloud.sentences(text, 2, text.indexOf("Punkt zwei") - 1);
+        List<int[]> sentences = ReadAloudMarker.sentences(text, 2, text.indexOf("Punkt zwei") - 1);
         assertThat(sentences).extracting(range -> text.substring(range[0], range[1]).strip())
                 .containsExactly("Erster Satz.", "Zweiter Satz!", "Punkt eins.");
     }

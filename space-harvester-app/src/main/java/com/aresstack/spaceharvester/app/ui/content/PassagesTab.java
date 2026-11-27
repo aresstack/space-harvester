@@ -51,6 +51,10 @@ final class PassagesTab extends JPanel {
     private String mode = " ";
     private Consumer<List<TermsTab.Span>> onJump = spans -> { };
     private Consumer<String> onStatus = text -> { };
+    /** Klick auf den Stand, wenn die Absätze nicht aktuell sind; {@code null}: der Stand ist nur Anzeige. */
+    private Runnable onRecompute;
+    /** Ob eine Seite gezeigt wird ({@link #show(PagePassages)} mit Ergebnis); ohne Seite ist der Stand kein Knopf. */
+    private boolean ofPage;
     private final List<String> titles = new ArrayList<>();
     private final List<Passage> shown = new ArrayList<>();
     private final List<JPanel> rows = new ArrayList<>();
@@ -77,6 +81,7 @@ final class PassagesTab extends JPanel {
 
     /** Zeigt das Core-Ergebnis; {@code null} heißt: keine Seite oder noch nicht geladen. */
     void show(PagePassages result) {
+        ofPage = result != null;
         if (result == null) {
             show(State.MISSING, List.of(), false);
             return;
@@ -106,6 +111,11 @@ final class PassagesTab extends JPanel {
         onStatus = Objects.requireNonNull(listener, "listener");
     }
 
+    /** {@code action} läuft beim Klick auf den Stand, solange die Absätze nicht aktuell sind („Veraltet“ …). */
+    void onRecompute(Runnable action) {
+        onRecompute = Objects.requireNonNull(action, "action");
+    }
+
     /** Die Absätze als Text für die Zwischenablage: Nummer, Themenzeile, Anriss. */
     String copyText() {
         StringBuilder text = new StringBuilder();
@@ -129,6 +139,7 @@ final class PassagesTab extends JPanel {
      */
     void show(State current, List<Passage> passages, boolean structural) {
         mode = current == State.CURRENT && structural ? STRUCTURAL : " ";
+        boolean clickable = ofPage && current != State.CURRENT && onRecompute != null;
         Color tone = switch (current) {
             case CURRENT -> Comic.GREEN;
             case STALE -> Comic.ORANGE;
@@ -140,7 +151,7 @@ final class PassagesTab extends JPanel {
             case STALE -> com.aresstack.spaceharvester.application.enrichment.PageAcronyms.State.STALE;
             case FAILED -> com.aresstack.spaceharvester.application.enrichment.PageAcronyms.State.FAILED;
             case MISSING -> com.aresstack.spaceharvester.application.enrichment.PageAcronyms.State.MISSING;
-        }), tone);
+        }), tone, clickable ? TermsTab.RECOMPUTE_TIP : null, clickable ? onRecompute : null);
         list.removeAll();
         titles.clear();
         shown.clear();
@@ -235,11 +246,12 @@ final class PassagesTab extends JPanel {
 
     static String hint(State state, int count) {
         return switch (state) {
-            case MISSING -> "Noch keine Absätze für diese Seite. Sie entstehen mit der Analyse beim nächsten Abgleich.";
-            case STALE -> "Die Absätze passen nicht mehr zum angezeigten Text; „Analyse neu berechnen“ unter Text "
+            case MISSING -> "Noch keine Absätze für diese Seite. Ein Klick auf „Nicht durchgeführt“ oben rechts "
+                    + "bildet sie.";
+            case STALE -> "Die Absätze passen nicht mehr zum angezeigten Text; ein Klick auf „Veraltet“ oben rechts "
                     + "bildet sie neu.";
-            case FAILED -> "Die letzte Segmentierung ist fehlgeschlagen; „Analyse neu berechnen“ unter Text startet "
-                    + "sie neu.";
+            case FAILED -> "Die letzte Segmentierung ist fehlgeschlagen; ein Klick auf „Fehlgeschlagen“ oben rechts "
+                    + "startet sie neu.";
             case CURRENT -> count == 0 ? "Auf dieser Seite wurde kein Themenwechsel erkannt." : " ";
         };
     }
@@ -252,6 +264,10 @@ final class PassagesTab extends JPanel {
 
     String stateLabel() {
         return head.statusText();
+    }
+
+    TabHeader header() {
+        return head;
     }
 
     String mode() {

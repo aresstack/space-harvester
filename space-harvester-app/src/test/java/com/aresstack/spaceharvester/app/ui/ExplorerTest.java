@@ -408,6 +408,51 @@ class ExplorerTest {
         });
     }
 
+    /** Statt eines Titels ein Link zur Seite (Angelo, 27.11.2026): dieselbe Adressauflösung wie die Suchleiste. */
+    @Test
+    void theTitleFilterTakesALinkToAPage() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("wartungsfenster.md"), "# Wartungsfenster\n\nText.\n");
+        Files.writeString(files.resolve("anderes.md"), "# Anderes\n");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        String pageId = context.runtime().workspace().findByTitle("handbuch", java.util.Set.of(), "Wartungsfenster",
+                10).pages().get(0).pageId();
+
+        Explorer[] explorer = new Explorer[1];
+        SwingUtilities.invokeAndWait(() -> {
+            explorer[0] = new Explorer(context);
+            // Beim Kopieren geratenes unsichtbares Zeichen vorn bleibt ohne Folgen.
+            explorer[0].filter().setText("\u200Bspace-harvester://handbuch/page/" + pageId);
+        });
+        for (int i = 0; i < 200; i++) {
+            int[] size = new int[1];
+            SwingUtilities.invokeAndWait(() -> size[0] = explorer[0].matches().getModel().getSize());
+            if (size[0] > 0) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(explorer[0].matches().getModel().getSize()).isEqualTo(1);
+            assertThat(explorer[0].matches().getModel().getElementAt(0).pageId()).isEqualTo(pageId);
+        });
+    }
+
     /**
      * Ordnerquellen: der Baum kommt aus der Quelle, nicht aus dem Bestand. Der Bestand kann hinterherhinken oder
      * mitten in einer Befüllung nur einen Teil der Seiten haben; dann fehlten Seiten im Baum.

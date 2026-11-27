@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchSort;
@@ -81,7 +82,7 @@ public final class Explorer {
     static final String FAVORITE = "Favorit";
     static final String UNFAVORITE = "Favorit entfernen";
     static final String ONLY_FAVORITES = "Nur Favoriten zeigen";
-    static final String STAR_TIP = "Favorit setzen oder entfernen";
+    static final String STAR_TIP = "Favorit setzen oder entfernen · Rechtsklick: Gruppe zuordnen";
     /** Am Zustandspunkt (Angelo, 16.11.2026): beim Darüberfahren Kreispfeile, der Klick holt den Knoten samt Teilbaum nach. */
     static final String REFRESH_TIP = "Klick: Änderungen aus der Quelle nachholen";
     static final String REFRESH = "Änderungen nachholen";
@@ -894,8 +895,8 @@ public final class Explorer {
         });
         bindEnter(matches, this::openMatch);
         debounce.setRepeats(false);
-        filter.setToolTipText("Seitentitel in den geladenen Knoten und im Bestand finden; dient nur der "
-                + "Navigation, gesucht wird im Bereich Suche.");
+        filter.setToolTipText("Seitentitel in den geladenen Knoten und im Bestand finden, oder einen Link "
+                + "zur Seite einfügen; dient nur der Navigation, gesucht wird im Bereich Suche.");
         filter.getDocument().addDocumentListener(new DocumentListener() {
             @Override
             public void insertUpdate(DocumentEvent e) {
@@ -2183,6 +2184,11 @@ public final class Explorer {
             return;
         }
         cards.show(deck, MATCHES);
+        AppRuntime runtime = context.runtime();
+        if (SearchView.isAddress(text)) {
+            filterToAddress(runtime, id, text);
+            return;
+        }
         String needle = text.toLowerCase(Locale.ROOT);
         Map<String, Match> found = new LinkedHashMap<>();
         Enumeration<?> all = top.breadthFirstEnumeration();
@@ -2194,7 +2200,6 @@ public final class Explorer {
             }
         }
         show(found, true);
-        AppRuntime runtime = context.runtime();
         PageSearchQuery query;
         try {
             query = PageSearchQuery.of(null, List.of(), List.of(), text, null, null, null, null, null,
@@ -2224,6 +2229,39 @@ public final class Explorer {
             if (id == filterRequest) {
                 show(found, true);
                 live(runtime, id, text, sources, found);
+            }
+        });
+    }
+
+    /**
+     * Statt eines Titels eine Seitenadresse (URL, Lesezeichen, Ressourcen-ID; Angelo, 27.11.2026): dieselbe
+     * Adressauflösung wie die Suchleiste ({@link SearchView#isAddress}, {@code Workspace.resolveAddress}); die Seite
+     * steht als Treffer da, auch wenn sie noch nicht im Bestand ist (die Quelle ruft sie gezielt ab).
+     */
+    private void filterToAddress(AppRuntime runtime, int id, String address) {
+        Map<String, Match> found = new LinkedHashMap<>();
+        show(found, true);
+        if (runtime == null) {
+            show(found, false);
+            return;
+        }
+        Background.run(() -> runtime.workspace().resolveAddress(address), resolution -> {
+            if (id != filterRequest) {
+                return;
+            }
+            for (PageAddresses.Match match : resolution.matches()) {
+                found.putIfAbsent(match.sourceId() + "/" + match.pageId(), new Match(match.sourceId(),
+                        match.spaceKey(), match.pageId(), match.title(), where(match.sourceId(), match.spaceKey())));
+            }
+            show(found, false);
+            if (found.isEmpty()) {
+                note.setText("Keine Seite zu dieser Adresse" + (resolution.unavailableSources().isEmpty() ? ""
+                        : " · nicht erreichbar: " + String.join(", ", resolution.unavailableSources())));
+            }
+        }, error -> {
+            if (id == filterRequest) {
+                show(found, false);
+                note.setText("Adresse nicht auflösbar: " + error.getMessage());
             }
         });
     }
@@ -2321,6 +2359,8 @@ public final class Explorer {
         /** Trägt die Farbe des Zeichens; {@link Glyph} malt in der Vordergrundfarbe seines Wirts. */
         private final JLabel badgeHost = new JLabel();
         private boolean favorite;
+        /** Die Farbe der Gruppe, in der der Knoten als Favorit liegt, oder {@code null}. */
+        private com.aresstack.spaceharvester.app.group.GroupColor group;
         private int row = -1;
         private int width;
 
@@ -2351,6 +2391,7 @@ public final class Explorer {
             columned = item instanceof KnowledgeNode;
             starred = item instanceof KnowledgeNode known && known.starrable();
             favorite = starred && isFavorite(item);
+            group = favorite ? groupColor(item) : null;
             badge = badge(item);
             this.row = row;
             hinted = value != null && value == hint;
@@ -2358,7 +2399,9 @@ public final class Explorer {
             // Die Spalten rechts liegen im rechten Rand des Labels: der Titel endet davor und wird nötigenfalls
             // mit „…“ gekürzt, statt die Symbole aus dem sichtbaren Bereich zu schieben.
             int columns = columned ? ACTION_WIDTH + BADGE_WIDTH : 0;
-            setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 0, columns));
+            // Ein Knoten in einer Gruppe rückt um den Farbstreifen ein (wie die Gruppenlinie in Firefox).
+            int stripe = group != null ? com.aresstack.spaceharvester.app.ui.controls.GroupStripe.WIDTH + 3 : 0;
+            setBorder(javax.swing.BorderFactory.createEmptyBorder(0, stripe, 0, columns));
             int visible = tree.getParent() == null ? 0 : tree.getParent().getWidth() - indent(depth) - 4;
             width = Math.max(visible, columns + MIN_TITLE_WIDTH);
             return this;
@@ -2392,10 +2435,18 @@ public final class Explorer {
                 // Favorit gefüllt in Tinte, sonst als gedämpfter Umriss, beim Darüberfahren in Tinte.
                 int sx = getWidth() - ACTION_WIDTH;
                 if (starred) {
-                    Glyph star = favorite ? Glyph.STAR_FILLED : Glyph.STAR;
+                    // In einer Gruppe trägt der Stern deren Farbe, dazu der Streifen links (Angelo 27.11.2026).
                     badgeHost.setForeground(favorite || row == hoverStarRow ? Comic.INK : Comic.MUTED);
+                    badgeHost.setBackground(getBackground());
+                    javax.swing.Icon star = GroupMenu.star(favorite, group);
                     star.paintIcon(badgeHost, g, sx + (ACTION_WIDTH - star.getIconWidth()) / 2,
                             (getHeight() - star.getIconHeight()) / 2);
+                }
+                if (group != null) {
+                    g.setColor(com.aresstack.spaceharvester.app.ui.controls.GroupColors.of(group)
+                            .on(tree.getBackground()));
+                    g.fillRect(0, 1, com.aresstack.spaceharvester.app.ui.controls.GroupStripe.WIDTH,
+                            getHeight() - 2);
                 }
                 // Das Bestandszeichen links vom Stern, in seiner Farbe (Haken grün, Wolke gedämpft, Pfeile blau …);
                 // unter der Maus stattdessen die Kreispfeile zum Nachholen (Angelo, 16.11.2026).
@@ -2578,31 +2629,46 @@ public final class Explorer {
      * Vorfahren aus {@code PageNavigation.position}, im Hintergrund); ein Space nur seine Quelle.
      */
     void toggleFavorite(Item item) {
-        Favorites store = context.favorites();
+        withFavorite(item, context.favorites()::toggle);
+    }
+
+    /**
+     * „Gruppe zuordnen“ (Angelo 27.11.2026): macht den Knoten zum Favoriten in der farbigen Gruppe {@code groupId}; aus
+     * einer anderen Gruppe wandert er heraus.
+     */
+    void assignGroup(Item item, String groupId) {
+        withFavorite(item, favorite -> context.favorites().assign(favorite, groupId));
+    }
+
+    /** Der Favorit des Knotens, für eine Seite mit ihrem Pfad ({@link GroupMenu#pageFavorite}). */
+    private void withFavorite(Item item, java.util.function.Consumer<Favorites.Favorite> then) {
         switch (item) {
-            case SourceItem source -> store.toggle(Favorites.Favorite.source(source.sourceId(),
+            case SourceItem source -> then.accept(Favorites.Favorite.source(source.sourceId(),
                     sourceTitle(source.sourceId())));
-            case SpaceItem space -> store.toggle(Favorites.Favorite.space(space.sourceId(), space.spaceKey(),
+            case SpaceItem space -> then.accept(Favorites.Favorite.space(space.sourceId(), space.spaceKey(),
                     space.name(), sourceTitle(space.sourceId())));
-            case PageItem page -> {
-                if (store.contains(page.sourceId(), page.spaceKey(), page.pageId())) {
-                    store.toggle(new Favorites.Favorite(page.sourceId(), page.spaceKey(), page.pageId(), page.title(),
-                            List.of(), List.of()));
-                    return;
-                }
-                AppRuntime runtime = context.runtime();
-                String source = sourceTitle(page.sourceId());
-                if (runtime == null) {
-                    store.toggle(favorite(null, source, page));
-                    return;
-                }
-                Background.run(() -> runtime.workspace().position(page.sourceId(), page.pageId()), position ->
-                        store.toggle(favorite(position, source, page)), error ->
-                        store.toggle(favorite(null, source, page)));
-            }
+            case PageItem page -> GroupMenu.pageFavorite(context, page.sourceId(), page.spaceKey(), page.pageId(),
+                    page.title(), then);
             default -> {
             }
         }
+    }
+
+    /** Die Gruppe, in der der Knoten als Favorit liegt, oder {@code null}. */
+    private String groupOf(Item item) {
+        return item instanceof KnowledgeNode node
+                ? context.favorites().groupOf(node.sourceId(), node.spaceKey(), node.pageId()).orElse(null) : null;
+    }
+
+    /** Die Farbe der Gruppe des Knotens, oder {@code null}. */
+    private com.aresstack.spaceharvester.app.group.GroupColor groupColor(Item item) {
+        return item instanceof KnowledgeNode node
+                ? context.favorites().colorOf(node.sourceId(), node.spaceKey(), node.pageId()).orElse(null) : null;
+    }
+
+    /** Rechtsklick auf den Stern: nur die Gruppen und „Neue Gruppe …“ (Angelo 27.11.2026). */
+    javax.swing.JPopupMenu starMenu(Item item) {
+        return GroupMenu.popup(tree, context.favorites(), groupOf(item), id -> assignGroup(item, id));
     }
 
     /** Ein Seiten-Favorit aus dem Pfad der Seite: Quelle › Space › Vorfahren, dazu die IDs der Vorfahren. */
@@ -2669,6 +2735,10 @@ public final class Explorer {
         if (path == null || !(path.getLastPathComponent() instanceof Node node)) {
             return;
         }
+        if (onStar(path, event.getPoint())) {
+            starMenu(node.item()).show(tree, event.getX(), event.getY());
+            return;
+        }
         if (!tree.isPathSelected(path)) {
             tree.setSelectionPath(path);
         }
@@ -2726,6 +2796,7 @@ public final class Explorer {
             star.setIcon(isFavorite(item) ? Glyph.STAR_FILLED : Glyph.STAR);
             star.addActionListener(e -> toggleFavorite(item));
             menu.add(star);
+            menu.add(GroupMenu.submenu(tree, context.favorites(), groupOf(item), id -> assignGroup(item, id)));
         }
         if (node.refreshable()) {
             javax.swing.JMenuItem refresh = new javax.swing.JMenuItem(REFRESH);

@@ -54,6 +54,18 @@ public final class WorkspacePageStock implements PageStock {
     }
 
     @Override
+    public String version(PageKey key) {
+        try {
+            return workspace.cachedPage(key.sourceId(), key.pageId())
+                    .map(page -> page.header() != null ? page.header().metadataHash()
+                            : page.snapshot() != null ? page.snapshot().metadataHash() : null)
+                    .orElse(null);
+        } catch (RuntimeException unknown) {
+            return null;
+        }
+    }
+
+    @Override
     public List<Child> children(PageKey key, String spaceKey) {
         List<Child> children = new ArrayList<>();
         Set<String> cursors = new HashSet<>();

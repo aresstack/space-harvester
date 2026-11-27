@@ -555,6 +555,8 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ChatKnowledge.MAX_HIT_CHARS` | `3_000` | fest | Invariante/Darstellung | im Code belassen: Vorschau einer Quelle in der Quellenliste der Oberfläche; an das Modell geht, was in die Anfrage passt (`ChatRoom`) |
 | `ChatPanel.MAX_NORMAL_EDITOR_HEIGHT` | `400` | fest | Invariante/Darstellung | im Code belassen |
 | `ChatPanel.PARALLEL_MAX` | `com.aresstack.spaceharvester.app.ui.ParallelChoice.CUSTOM_MAX` | fest | Parallelität | einstellbar |
+| `ChatPanel.QUOTE_CHIP_CHARS` | `28` | fest | Invariante/Darstellung | im Code belassen |
+| `ChatPanel.QUOTE_TOOLTIP_CHARS` | `240` | fest | Invariante/Darstellung | im Code belassen |
 | `ChatPanel.QUIET_ROUNDS_DEFAULT` | `3` | Vorgabe | Stillstand der Werkzeugrunden (askai `stagnationRounds`) | einstellbar (Menü am Dreieck des Chats) |
 | `ChatPanel.WEB_DELAY_MAX` | `10000` | fest | Timeout | einstellbar |
 | `ChatPanel.WEB_DELAY_SLIDER_MAX` | `2000` | fest | Timeout | einstellbar |
@@ -598,6 +600,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ParallelChoice.CUSTOM_MAX` | `9999` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `PassagesTab.PREVIEW_CHARS` | `140` | fest | Invariante/Darstellung | im Code belassen |
 | `PdfPages.MAX_PIXELS` | `40_000_000d` | fest | Speicher-/Ressourcenbudget | einstellbar |
+| `PodcastExport.MAX_WAV_DATA` | `0xFFFFFFFFL - 36` | fest | Externe Protokollgrenze | dokumentieren: WAV (RIFF) zählt Längen in 32 Bit, darüber meldet der Export „bitte als Video exportieren“ |
 | `PresentationPages.MAX_PIXELS` | `40_000_000d` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `ProgressiveText.STEP_CHARS` | `256 * 1024` | fest | Invariante/Darstellung | im Code belassen (begrenzt nur die Arbeit je EDT-Durchlauf, nie den Inhalt) |
 | `ReaderImageStore.MAX_PIXELS` | `40_000_000L` | fest | Speicher-/Ressourcenbudget | einstellbar |
