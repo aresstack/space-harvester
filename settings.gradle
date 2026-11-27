@@ -61,6 +61,8 @@ include 'mermaid-renderer'
 // Browser-Laufzeit der Websuche (ADR 0046): Start, Profile und Lebenszyklus der Browser, aus Research4j verschoben;
 // eigenes Gradle-Projekt ohne Release.
 include 'browser-runtime'
+// Proving Ground (#1153): Webtests mit dem originalen Playwright-Recorder aufzeichnen und abspielen, ohne Swing.
+include 'proving-ground'
 include 'space-harvester-app'
 
 // Vergleichstests gegen den Enterprise AI Client (ADR 0012, docs/PARITY.md, #193): neutrales Dokumentmodell für

@@ -166,6 +166,9 @@ public class SearchController {
             @Parameter(description = "Nur mit text: Suchmethode „Synonyme der Fachbegriffe einbeziehen“ (K5a), zu "
                     + "bestätigten Fachbegriffen des Glossars auch ihre vorgeschlagenen Synonyme; Standard aus")
             @RequestParam(defaultValue = "false") boolean glossarySynonyms,
+            @Parameter(description = "Nur mit text: Suchmethode „Nur Überschriften durchsuchen“, nur Seitentitel und "
+                    + "Überschriften im lokalen Index, kein Fließtext, keine Anhänge, keine Online-Suche; Standard aus")
+            @RequestParam(defaultValue = "false") boolean headingsOnly,
             @Parameter(description = "Wörter im Titel, höchstens " + PageSearchQuery.MAX_TITLE_TERMS + " Wörter und "
                     + PageSearchQuery.MAX_TITLE_LENGTH + " Zeichen", example = "Architektur Übersicht")
             @RequestParam(required = false) String title,
@@ -194,13 +197,13 @@ public class SearchController {
             if (title != null || pageId != null || parentPageId != null || version != null || modifiedFrom != null
                     || modifiedBefore != null || sort != null || q != null) {
                 throw new InvalidQueryException("text gibt es nur mit sourceId, sourceIds, spaceKey, excludeSpaceKey, "
-                        + "glossarySynonyms, cursor und limit");
+                        + "glossarySynonyms, headingsOnly, cursor und limit");
             }
             KeywordSearch.Query query = new KeywordSearch.Query(text, sourceId,
                     Set.copyOf(sourceIds == null ? List.of() : sourceIds),
                     Set.copyOf(spaceKey == null ? List.of() : spaceKey),
                     Set.copyOf(excludeSpaceKey == null ? List.of() : excludeSpaceKey))
-                    .withGlossarySynonyms(glossarySynonyms);
+                    .withGlossarySynonyms(glossarySynonyms).withHeadingsOnly(headingsOnly);
             return KeywordResponse.of(keywords.searchesTheCache(), keywords.search(caller, query, cursor, limit));
         }
         if (excludeSpaceKey != null && !excludeSpaceKey.isEmpty()) {
@@ -208,6 +211,9 @@ public class SearchController {
         }
         if (glossarySynonyms) {
             throw new InvalidQueryException("glossarySynonyms gibt es nur mit text");
+        }
+        if (headingsOnly) {
+            throw new InvalidQueryException("headingsOnly gibt es nur mit text");
         }
         if (sort == null) {
             sort = "title";

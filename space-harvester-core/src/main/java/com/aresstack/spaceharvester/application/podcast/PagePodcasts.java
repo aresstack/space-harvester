@@ -328,26 +328,7 @@ public final class PagePodcasts {
 
         /** Der Text mit seinen Überschriften ({@code #} bis {@code ######}) als Abschnitte. */
         PageText text() {
-            List<PageText.Section> sections = new ArrayList<>();
-            java.util.regex.Matcher heading = java.util.regex.Pattern.compile("(?m)^(#{1,6})[ \\t]+(.+?)[ \\t#]*$")
-                    .matcher(markdown);
-            List<int[]> found = new ArrayList<>();
-            List<String> titles = new ArrayList<>();
-            while (heading.find()) {
-                found.add(new int[]{heading.start(), heading.group(1).length()});
-                titles.add(heading.group(2).strip());
-            }
-            for (int i = 0; i < found.size(); i++) {
-                int end = markdown.length();
-                for (int next = i + 1; next < found.size(); next++) {
-                    if (found.get(next)[1] <= found.get(i)[1]) {
-                        end = found.get(next)[0];
-                        break;
-                    }
-                }
-                sections.add(new PageText.Section(titles.get(i), found.get(i)[1], found.get(i)[0], end));
-            }
-            return new PageText("book-markdown/v1", markdown, sections);
+            return new PageText("book-markdown/v1", markdown, PageText.markdownSections(markdown));
         }
 
         Page page() {

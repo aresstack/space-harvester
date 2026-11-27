@@ -95,7 +95,8 @@ public class ProgressiveSearchController {
         }
         KeywordSearch.Query query = new KeywordSearch.Query(request.q(), request.sourceId(), set(request.sourceIds()),
                 set(request.spaceKeys()), set(request.excludeSpaceKeys()))
-                .withGlossarySynonyms(Boolean.TRUE.equals(request.glossarySynonyms()));
+                .withGlossarySynonyms(Boolean.TRUE.equals(request.glossarySynonyms()))
+                .withHeadingsOnly(Boolean.TRUE.equals(request.headingsOnly()));
         SearchProfile profile = profile(request, searches.defaults(), searches.limits().maxTimeBudget());
         ProgressiveSearches.Tracked tracked = searches.start(caller, query, profile);
         boolean wait = Boolean.TRUE.equals(request.waitForResult())
@@ -248,6 +249,9 @@ public class ProgressiveSearchController {
             @Schema(nullable = true, description = "Suchmethode „Synonyme der Fachbegriffe einbeziehen“ (K5a): zu "
                     + "bestätigten Fachbegriffen des Glossars auch ihre vorgeschlagenen Synonyme; Standard aus")
             Boolean glossarySynonyms,
+            @Schema(nullable = true, description = "Suchmethode „Nur Überschriften durchsuchen“: nur Seitentitel und "
+                    + "Überschriften im lokalen Index, kein Fließtext, keine Anhänge, keine Online-Suche; Standard aus")
+            Boolean headingsOnly,
             @JsonProperty("wait") @Schema(name = "wait", nullable = true) Boolean waitForResult) {
     }
 
