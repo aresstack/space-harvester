@@ -160,6 +160,8 @@ public final class PageDetailPanel extends JPanel {
     /** Welche Karte Seite oder Hinweis zeigt, solange nicht der Reiter „Export“ gewählt ist. */
     private String pageCard = EMPTY;
     private final ExportPanel export;
+    /** Die Artefakte des Chats in der Export-Ansicht; {@code null}, solange keine eingesetzt sind. */
+    private ArtifactTabs artifactTabs;
     private final ChatPanel chat;
     private final StandingTab standing;
     /**
@@ -1220,6 +1222,9 @@ public final class PageDetailPanel extends JPanel {
         } else if (SOURCE_CARD.equals(pageCard) || wide && pageId == null) {
             more.setEnabled(false);
         }
+        if (artifactTabs != null && !artifactTabs.artifacts().isEmpty()) {
+            more.setEnabled(true); // die Artefakte des Chats stehen in jedem Fall im Menü
+        }
         heading.revalidate();
         heading.repaint();
         String page = pageCard;
@@ -1706,6 +1711,24 @@ public final class PageDetailPanel extends JPanel {
 
     public KnowledgeGraphTab graph() {
         return graphView;
+    }
+
+    /**
+     * Setzt die Export-Ansicht mit den Artefakt-Reitern ein (ADR 0045, Abschnitt 5): Sie umschließt den Export und
+     * steht an seiner Stelle; ein geöffnetes Artefakt holt den Reiter „Export“ nach vorn. Im Menü
+     * „Weitere Aktionen“ stehen danach alle Artefakte des Chats.
+     */
+    void artifactTabs(ArtifactTabs artifactTabs) {
+        this.artifactTabs = artifactTabs;
+        deck.remove(export);
+        deck.add(artifactTabs.component(), EXPORT_CARD);
+        artifactTabs.reveal(this::showExport);
+        showDeck();
+    }
+
+    /** Die Karte des Reiters „Export“: mit Artefakt-Reitern deren Fläche, sonst der Export selbst. */
+    JComponent exportCard() {
+        return artifactTabs == null ? export : artifactTabs.component();
     }
 
     /** Zeigt den Reiter „Export“, etwa aus „Inhalte öffnen“ eines Auftrags. */
@@ -6175,6 +6198,36 @@ public final class PageDetailPanel extends JPanel {
      * wählbar wie die Aktion gerade gilt.
      */
     javax.swing.JPopupMenu moreMenu() {
+        javax.swing.JPopupMenu menu = pageMenu();
+        addArtifacts(menu);
+        return menu;
+    }
+
+    /**
+     * Unter einer Linie alle Artefakte des Chats (Angelo 27.11.2026): Ein Klick öffnet den Reiter in der
+     * Export-Ansicht wieder, auch nachdem er geschlossen wurde.
+     */
+    private void addArtifacts(javax.swing.JPopupMenu menu) {
+        List<com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact> artifacts =
+                artifactTabs == null ? List.of() : artifactTabs.artifacts();
+        if (artifacts.isEmpty()) {
+            return;
+        }
+        if (menu.getComponentCount() > 0) {
+            menu.addSeparator();
+        }
+        for (com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact artifact : artifacts) {
+            String kind = artifact.kind() == com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact.Kind.GRAPHIC
+                    ? ARTIFACT_GRAPHIC : ARTIFACT_DOCUMENT;
+            menu.add(menuItem(kind + artifact.title(), ARTIFACT_TIP, true, () -> artifactTabs.open(artifact.id())));
+        }
+    }
+
+    static final String ARTIFACT_DOCUMENT = "Dokument: ";
+    static final String ARTIFACT_GRAPHIC = "Grafik: ";
+    static final String ARTIFACT_TIP = "Öffnet das Artefakt dieses Chats als Reiter in der Export-Ansicht";
+
+    private javax.swing.JPopupMenu pageMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
         if (standingShown()) {
             // Nur für den Fehlerfall und deshalb hier versteckt (Angelo 24.11.2026).

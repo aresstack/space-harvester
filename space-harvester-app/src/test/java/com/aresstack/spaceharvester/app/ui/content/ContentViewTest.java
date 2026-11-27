@@ -163,6 +163,38 @@ class ContentViewTest {
     }
 
     @Test
+    void theArtifactsOfTheChatStandInTheMoreMenuAndOpenInTheExportView() throws Exception {
+        // Angelo 27.11.2026: Schreiben ist eine Art Export; geschlossene Artefakte holt das Menü „Weitere Aktionen“.
+        var chats = new com.aresstack.spaceharvester.app.chat.ChatStore(() -> home.resolve("artefakt-chats"));
+        var node = new com.aresstack.spaceharvester.app.chat.ChatNode("wiki", null, null);
+        var chat = com.aresstack.spaceharvester.app.chat.ChatRecord.fresh(1)
+                .plus(com.aresstack.spaceharvester.app.chat.ChatRecord.Message.user("Schreib", 1), 1);
+        chats.save(node, chat);
+        var store = new com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore(chats);
+        store.createDocument(chats.folder(node), chat.id(), "Gartenfibel", "## Boden\n\nHumus.",
+                com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact.Origin.AI);
+        PageDetailPanel detail = view.detail();
+        ArtifactTabs tabs = onEdt(() -> {
+            ArtifactTabs artifactTabs = new ArtifactTabs(store, detail.export());
+            detail.artifactTabs(artifactTabs);
+            artifactTabs.chat(chats.folder(node), chat.id());
+            detail.tabs().select("Leseansicht");
+            return artifactTabs;
+        });
+        assertThat(onEdt(() -> detail.moreButton().isEnabled())).isTrue();
+        javax.swing.JMenuItem item = onEdt(() -> java.util.Arrays.stream(detail.moreMenu().getComponents())
+                .filter(javax.swing.JMenuItem.class::isInstance).map(javax.swing.JMenuItem.class::cast)
+                .filter(entry -> entry.getText().equals(PageDetailPanel.ARTIFACT_DOCUMENT + "Gartenfibel"))
+                .findFirst().orElseThrow());
+        onEdt(() -> {
+            item.doClick();
+            return null;
+        });
+        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Export");
+        assertThat(onEdt(tabs::focus)).isEqualTo("D1");
+    }
+
+    @Test
     void aPageLoadsRightAwayEvenWithoutLocalCopyAndNamesWhereItLies() throws Exception {
         String space = space("handbuch");
         onEdt(() -> {
@@ -371,12 +403,12 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
         // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
         // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
-        assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
+        assertThat(onEdt(() -> detail.exportCard().isVisible())).isFalse();
         onEdt(() -> {
             detail.tabs().select("Export");
             return null;
         });
-        assertThat(onEdt(() -> detail.export().isVisible())).isTrue();
+        assertThat(onEdt(() -> detail.exportCard().isVisible())).isTrue();
         onEdt(() -> {
             view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
@@ -450,7 +482,7 @@ class ContentViewTest {
             view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
         });
-        assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
+        assertThat(onEdt(() -> detail.exportCard().isVisible())).isFalse();
         // Eine Seite links: „Analysen“ zeigt wieder die Analysen der Seite.
         onEdt(() -> {
             view.selection(new ExportPanel.Selection.Node("handbuch", "DH", "p1", "Seite"));
@@ -481,7 +513,7 @@ class ContentViewTest {
             detail.tabs().select("Leseansicht");
             return null;
         });
-        assertThat(onEdt(() -> detail.export().isVisible())).isFalse();
+        assertThat(onEdt(() -> detail.exportCard().isVisible())).isFalse();
         assertThat(onEdt(() -> view.tabBar())).isSameAs(detail.tabIcons());
         // Die Schnellaktionen des Chats stehen in seiner Seitenleiste, nicht mehr unten in der Werkzeugleiste.
         // Unten steht in der Leseansicht höchstens der Platz für „Transkript kopieren“ des Podcasts.

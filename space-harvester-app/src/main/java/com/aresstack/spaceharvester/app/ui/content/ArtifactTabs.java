@@ -24,10 +24,10 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
- * Die Artefakte des offenen Chats als schließbare Reiter in der Mitte (ADR 0045, Abschnitt 5); der Chat bleibt rechts.
- * Über der Arbeitsfläche steht eine Reiterzeile, sobald ein Artefakt offen ist. Ein gewählter Reiter zeigt sein
- * Artefakt statt der Seite; wählt der Benutzer links etwas Neues, kommt die Seite zurück und die Reiter bleiben stehen.
- * Welche Reiter offen waren, merkt sich der Chat ({@link ChatArtifactStore#openTabs}).
+ * Die Artefakte des offenen Chats als schließbare Reiter in der Export-Ansicht (ADR 0045, Abschnitt 5; Angelo
+ * 27.11.2026: „Schreiben ist eine Art Export“). Die Reiterzeile erscheint erst, wenn ein Artefakt offen ist; in den
+ * anderen Ansichten gibt es sie nicht. Ohne gewählten Reiter zeigt die Fläche den Export der Auswahl links; wählt der
+ * Benutzer links etwas Neues, kommt er zurück und die Reiter bleiben stehen. Welche Reiter offen waren, merkt sich der Chat ({@link ChatArtifactStore#openTabs}).
  */
 final class ArtifactTabs implements ChatPanel.ArtifactHost {
 
@@ -57,6 +57,8 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     private final JPanel center = new JPanel(cards);
     private final JPanel artifactSlot = new JPanel(new BorderLayout());
     private final Map<String, Tab> tabs = new LinkedHashMap<>();
+    /** Zeigt die Export-Ansicht, wenn ein Artefakt geöffnet wird (etwa weil die KI daran schreibt). */
+    private Runnable reveal = () -> { };
     private ButtonGroup group = new ButtonGroup();
     private final Consumer<ChatArtifactStore.Event> titles = this::retitle;
     private Path folder;
@@ -142,6 +144,17 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         }
         remember();
         select(id);
+        reveal.run();
+    }
+
+    /** Was beim Öffnen eines Artefakts die Export-Ansicht nach vorn holt. */
+    void reveal(Runnable reveal) {
+        this.reveal = reveal == null ? () -> { } : reveal;
+    }
+
+    /** Alle Artefakte des offenen Chats (für das Menü „Weitere Aktionen“), auch die ohne offenen Reiter. */
+    List<ChatArtifact> artifacts() {
+        return folder == null || chatId == null ? List.of() : store.list(folder, chatId);
     }
 
     @Override
