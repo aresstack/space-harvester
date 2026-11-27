@@ -166,7 +166,8 @@ public final class SvgElements {
 
     // ------------------------------------------------------------------ Innen
 
-    private static void assignIds(Document document) {
+    /** Gibt jedem sichtbaren Element ohne Kennung eine neue, nach der höchsten vorhandenen. */
+    public static void assignIds(Document document) {
         int next = 1;
         NodeList all = document.getElementsByTagName("*");
         for (int i = 0; i < all.getLength(); i++) {
@@ -256,6 +257,19 @@ public final class SvgElements {
         return null;
     }
 
+    /** Ob {@code element} ein sichtbares Element ist, das eine Kennung bekommt (Rechteck, Text, Gruppe …). */
+    public static boolean isShape(Element element) {
+        return SHAPES.contains(local(element));
+    }
+
+    /** Die sichtbaren Elemente mit Kennung in Dokumentreihenfolge (Gruppe vor ihren Teilen). */
+    public static List<Element> shapes(Document document) {
+        List<Element> all = new ArrayList<>();
+        visible(document.getDocumentElement(), all);
+        all.removeIf(element -> element.getAttribute("id").isEmpty());
+        return all;
+    }
+
     private static String local(Element element) {
         String name = element.getLocalName() == null ? element.getTagName() : element.getLocalName();
         int colon = name.indexOf(':');
@@ -286,7 +300,50 @@ public final class SvgElements {
         }
     }
 
-    private static String write(Node node) {
+    /** Das Dokument oder Element als Text ohne XML-Deklaration; {@code null}, wenn es nicht geht. */
+    /**
+     * Schreibt ein SVG ohne die Vorgabe-Attribute, die ein SVG-DOM (Batik) von sich aus meldet ({@code zoomAndPan},
+     * {@code version} …): gespeichert wird nur, was wirklich im Dokument steht.
+     */
+    public static String writeSpecified(Document document) {
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setNamespaceAware(true);
+            Document copy = factory.newDocumentBuilder().newDocument();
+            Element root = document.getDocumentElement();
+            copy.appendChild(copy.importNode(root, true));
+            dropDefaults(root, copy.getDocumentElement());
+            return write(copy);
+        } catch (Exception e) {
+            LOG.log(System.Logger.Level.WARNING, "SVG nicht geschrieben: " + e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    private static void dropDefaults(Element source, Element target) {
+        var attributes = source.getAttributes();
+        for (int i = 0; i < attributes.getLength(); i++) {
+            var attribute = (org.w3c.dom.Attr) attributes.item(i);
+            if (!attribute.getSpecified()) {
+                if (attribute.getNamespaceURI() != null) {
+                    target.removeAttributeNS(attribute.getNamespaceURI(), attribute.getLocalName());
+                } else {
+                    target.removeAttribute(attribute.getName());
+                }
+            }
+        }
+        Node from = source.getFirstChild();
+        Node to = target.getFirstChild();
+        while (from != null && to != null) {
+            if (from instanceof Element a && to instanceof Element b) {
+                dropDefaults(a, b);
+            }
+            from = from.getNextSibling();
+            to = to.getNextSibling();
+        }
+    }
+
+    public static String write(Node node) {
         try {
             TransformerFactory factory = TransformerFactory.newInstance();
             factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
