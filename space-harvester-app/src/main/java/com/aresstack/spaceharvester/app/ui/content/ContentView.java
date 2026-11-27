@@ -113,7 +113,9 @@ public final class ContentView implements View {
         body.setOpaque(false);
         root.add(body, BorderLayout.CENTER);
         // Artefakte des Chats als Reiter über der Arbeitsfläche (ADR 0045, Abschnitt 5); der Chat bleibt rechts.
-        artifactTabs = new ArtifactTabs(detail.chat().artifactStore(), detail);
+        artifactTabs = new ArtifactTabs(detail.chat().artifactStore(), detail,
+                () -> context.settings() == null ? null : context.settings().outputDirectory(),
+                text -> statusInfo.show(com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(text)));
         body.add(artifactTabs.component(), BorderLayout.CENTER);
         detail.chat().artifactHost(artifactTabs);
         context.onChange(ignored -> renderCrumbs());
