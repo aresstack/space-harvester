@@ -879,7 +879,7 @@ class ChatPanelTest {
                 new ChatPanel.AttachmentImageReading("gemma4:12b", (bytes, type, instruction) -> {
                     instructions.add(instruction);
                     return "Sprint-Ziele: Login fertig";
-                }));
+                }), Runnable::run);
 
         String asked = ChatPanel.withAttachments("Was steht da?", List.of(png), 10_000,
                 new ChatPanel.AttachmentImageReading("gemma4:12b", (bytes, type, instruction) -> {

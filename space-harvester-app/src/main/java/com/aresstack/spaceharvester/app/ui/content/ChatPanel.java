@@ -2171,11 +2171,36 @@ public final class ChatPanel extends JPanel {
             return;
         }
         earlyImages.put(file, new EarlyImage(model, readImageEarly(file, new AttachmentImageReading(model,
-                runtime.workspace()::describeAttachmentImage))));
+                runtime.workspace()::describeAttachmentImage), imageReaders())));
     }
 
-    /** Liest {@code file} auf einem eigenen Thread; die Grenze des Vision-Modells ({@code ai.parallel}) gilt dort. */
-    static java.util.concurrent.CompletableFuture<String> readImageEarly(Path file, AttachmentImageReading images) {
+    /**
+     * Die Threads der Vorab-Lesung, höchstens „Parallele Dateien“ zugleich wie beim Senden: Ein Bild wird ganz geladen,
+     * bevor es auf das Vision-Modell wartet, also dürfen nicht beliebig viele gleichzeitig im Speicher liegen. Ändert
+     * sich die Einstellung, gilt sie für die nächsten Bilder; angefangene laufen zu Ende.
+     */
+    private java.util.concurrent.ExecutorService imageReaders() {
+        int limit = Math.max(1, parallel("files", FILES_DEFAULT));
+        if (imageReaders == null || imageReadersLimit != limit) {
+            if (imageReaders != null) {
+                imageReaders.shutdown();
+            }
+            imageReaders = java.util.concurrent.Executors.newFixedThreadPool(limit, work -> {
+                Thread thread = new Thread(work, "chat-bild");
+                thread.setDaemon(true);
+                return thread;
+            });
+            imageReadersLimit = limit;
+        }
+        return imageReaders;
+    }
+
+    private java.util.concurrent.ExecutorService imageReaders;
+    private int imageReadersLimit;
+
+    /** Liest {@code file} auf {@code readers}; die Grenze des Vision-Modells ({@code ai.parallel}) gilt dort. */
+    static java.util.concurrent.CompletableFuture<String> readImageEarly(Path file, AttachmentImageReading images,
+                                                                        java.util.concurrent.Executor readers) {
         return java.util.concurrent.CompletableFuture.supplyAsync(() -> {
             try {
                 return com.aresstack.spaceharvester.app.chat.AttachmentImages.read(file, null, images.model(),
@@ -2183,11 +2208,7 @@ public final class ChatPanel extends JPanel {
             } catch (java.io.IOException unreadable) {
                 throw new java.util.concurrent.CompletionException(unreadable);
             }
-        }, work -> {
-            Thread thread = new Thread(work, "chat-bild");
-            thread.setDaemon(true);
-            thread.start();
-        });
+        }, readers);
     }
 
     /** Die schon gestarteten Bildlesungen für {@code images}; eine mit einem anderen Vision-Modell zählt nicht. */
