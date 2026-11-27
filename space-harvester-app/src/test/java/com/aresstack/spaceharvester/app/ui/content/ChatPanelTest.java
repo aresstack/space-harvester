@@ -393,6 +393,43 @@ class ChatPanelTest {
     }
 
     @Test
+    void theWritingToolsOfATurnOnlyFollowTheMiddleWhileItShowsTheirChat() throws Exception {
+        // Codex zu #1610: Wechselt der Benutzer den Chat, darf ein laufender Zug nicht den Fokus des neuen Chats nehmen.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        boolean[] state = new boolean[4];
+        SwingUtilities.invokeAndWait(() -> {
+            ChatPanel panel = new ChatPanel(context);
+            Path[] folder = new Path[1];
+            String[] chat = new String[1];
+            ChatPanel.ArtifactHost host = new ChatPanel.ArtifactHost() {
+                @Override
+                public void chat(Path shown, String chatId) {
+                    folder[0] = shown;
+                    chat[0] = chatId;
+                }
+
+                @Override
+                public void open(String artifactId) {
+                }
+
+                @Override
+                public String focus() {
+                    return "D1";
+                }
+            };
+            panel.artifactHost(host);
+            state[0] = panel.showsArtifactsOf(host, folder[0], chat[0]);
+            state[1] = panel.showsArtifactsOf(host, folder[0], "anderer-chat");
+            state[2] = panel.showsArtifactsOf(ChatPanel.ArtifactHost.NONE, folder[0], chat[0]);
+            panel.artifactHost(null);
+            state[3] = panel.showsArtifactsOf(host, folder[0], chat[0]);
+        });
+        assertThat(state).containsExactly(true, false, false, false);
+    }
+
+    @Test
     void theMenuAtTheTriangleOffersTheParallelLimitsAndTheRoundsWithoutAnythingNewWithTheChoicesOfTheJobs()
             throws Exception {
         // Angelo 24.11.2026: nicht in den Einstellungen, sondern im Dreieck-Menü, mit dem Code der Aufträge; dazu seit

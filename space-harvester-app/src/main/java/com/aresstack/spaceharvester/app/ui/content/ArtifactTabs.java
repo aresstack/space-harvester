@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact;
 import com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.controls.ClosableTab;
+import com.aresstack.spaceharvester.app.ui.controls.WrapLayout;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
@@ -36,7 +37,8 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
 
     private final ChatArtifactStore store;
     private final JPanel root = new JPanel(new BorderLayout());
-    private final JPanel strip = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 4));
+    // Umbrechend mit mitwachsender Höhe, damit bei vielen oder langen Reitern keiner abgeschnitten wird.
+    private final JPanel strip = new JPanel(new WrapLayout(FlowLayout.LEFT, 4, 4));
     private final CardLayout cards = new CardLayout();
     private final JPanel center = new JPanel(cards);
     private final JPanel artifactSlot = new JPanel(new BorderLayout());

@@ -122,8 +122,12 @@ final class ArtifactView extends JPanel {
         } else if (artifact.document().sections().isEmpty()) {
             column.add(block("*Das Dokument ist noch leer.*", theme, false));
         } else {
+            // Linkdefinitionen gelten im ganzen Dokument; jeder Abschnitt wird für sich gezeichnet und bekommt sie mit.
+            List<String> definitions = artifact.document().referenceDefinitions();
+            String references = definitions.isEmpty() ? "" : "\n\n" + String.join("\n", definitions) + "\n";
             for (SectionDocument.Section section : artifact.document().sections()) {
-                JComponent block = block(section.markdown(), theme, highlighted.contains(section.id()));
+                JComponent block = block(section.markdown() + references, theme,
+                        highlighted.contains(section.id()));
                 block.setName(section.id());
                 blocks.put(section.id(), block);
                 column.add(block);

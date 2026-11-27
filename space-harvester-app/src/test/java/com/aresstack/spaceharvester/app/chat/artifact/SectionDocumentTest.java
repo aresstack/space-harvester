@@ -124,4 +124,21 @@ class SectionDocumentTest {
         SectionDocument first = empty.insertAfter("", 1, "# Titel", "Erster Satz.").document();
         assertThat(first.markdown()).isEqualTo("# Titel\n\nErster Satz.\n");
     }
+
+    @Test
+    void aShorterFenceInsideALongerOneDoesNotCloseIt() {
+        SectionDocument document = SectionDocument.parse(
+                "# Anleitung\n\n````markdown\n```\n# kein Abschnitt\n```\n````\n\n## Ende\n\nFertig.");
+
+        assertThat(document.sections()).extracting(SectionDocument.Section::heading)
+                .containsExactly("Anleitung", "Ende");
+    }
+
+    @Test
+    void linkDefinitionsOfAllSectionsAreCollectedOutsideCodeBlocks() {
+        SectionDocument document = SectionDocument.parse("# Bohnen\n\nSiehe [Fibel][f].\n\n## Quellen\n\n"
+                + "[f]: https://example.org/fibel\n\n```\n[x]: https://example.org/kein\n```");
+
+        assertThat(document.referenceDefinitions()).containsExactly("[f]: https://example.org/fibel");
+    }
 }

@@ -295,10 +295,13 @@ public final class ChatPanel extends JPanel {
     /** Die Artefakte der Chats (ADR 0045); derselbe Speicher für Ansicht und Werkzeuge. */
     private final com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore artifacts;
     /** Wo die Artefakte erscheinen (die Mitte); ohne Arbeitsfläche geschieht nichts. */
-    private ArtifactHost artifactHost = ArtifactHost.NONE;
-    /** Für welchen Chat die Mitte zuletzt Artefakte zeigt (Ordner und Kennung). */
-    private Path artifactFolder;
-    private String artifactChat;
+    private volatile ArtifactHost artifactHost = ArtifactHost.NONE;
+    /**
+     * Für welchen Chat die Mitte zuletzt Artefakte zeigt (Ordner und Kennung); die Schreibwerkzeuge eines laufenden
+     * Zugs lesen das aus ihrem Faden.
+     */
+    private volatile Path artifactFolder;
+    private volatile String artifactChat;
     private MermaidImageRenderer mermaid;
     /** Die Auftragskennungen des zuletzt hier gestarteten Downloads, bis der Auftrag endet. */
     private final Set<String> watchedJobs = new HashSet<>();
@@ -1788,6 +1791,12 @@ public final class ChatPanel extends JPanel {
         return artifacts;
     }
 
+    /** Ob {@code host} noch die Mitte ist und den Chat {@code chatId} im Ordner {@code folder} zeigt. */
+    boolean showsArtifactsOf(ArtifactHost host, Path folder, String chatId) {
+        return host == artifactHost && java.util.Objects.equals(artifactFolder, folder)
+                && java.util.Objects.equals(artifactChat, chatId);
+    }
+
     /** Meldet der Mitte einen Wechsel des offenen Chats (neuer, geladener oder erstmals gespeicherter Chat). */
     private void announceArtifactChat() {
         if (artifacts == null) {
@@ -2635,9 +2644,16 @@ public final class ChatPanel extends JPanel {
         }
         // Schreibumgebung (Composer-Schalter „Schreiben“, ADR 0045): die Schreibwerkzeuge auf den Artefakten des Chats.
         if (writeOn) {
+            // Fokus und Öffnen gelten nur, solange die Mitte noch den Chat dieses Zugs zeigt (Chatwechsel im Lauf).
             ArtifactHost host = artifactHost;
+            String turnChat = target.id();
             turn.writing(new com.aresstack.spaceharvester.app.chat.artifact.DocumentChatTools(artifacts, targetNode,
-                    target.id(), host::focus, changed -> SwingUtilities.invokeLater(() -> host.open(changed.id()))));
+                    turnChat, () -> showsArtifactsOf(host, targetNode, turnChat) ? host.focus() : null,
+                    changed -> SwingUtilities.invokeLater(() -> {
+                        if (showsArtifactsOf(host, targetNode, turnChat)) {
+                            host.open(changed.id());
+                        }
+                    })));
         }
         listener.turn = turn;
         send.setText(STOP);

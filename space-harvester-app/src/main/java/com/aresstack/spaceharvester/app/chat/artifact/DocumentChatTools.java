@@ -1,7 +1,9 @@
 package com.aresstack.spaceharvester.app.chat.artifact;
 
 import com.aresstack.spaceharvester.ai.AiChat;
+import com.aresstack.spaceharvester.app.chat.ChatRoom;
 import com.aresstack.spaceharvester.app.chat.ChatToolset;
+import com.aresstack.spaceharvester.app.runtime.ModelBudget;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -94,8 +96,9 @@ public final class DocumentChatTools {
                                 + "\"Markdown, etwa die Überschriften der Gliederung\"}", List.of("titel")),
                 tool(OUTLINE, "Zeigt die Gliederung eines Dokuments: je Abschnitt Kennung, Überschrift und "
                         + "Wortzahl.", DOC, List.of()),
-                tool(READ, "Liest einen Abschnitt (Überschrift und Text).", DOC + "," + SECTION,
-                        List.of("abschnitt")),
+                tool(READ, "Liest einen Abschnitt (Überschrift und Text), so viel, wie in die Anfrage passt; "
+                        + "lange Abschnitte mit versatz weiterlesen.", DOC + "," + SECTION
+                        + ",\"versatz\":{\"type\":\"integer\",\"minimum\":0}", List.of("abschnitt")),
                 tool(REPLACE, "Ersetzt den Text eines Abschnitts; die Überschrift bleibt. Unterüberschriften im "
                         + "Text werden eigene neue Abschnitte.", DOC + "," + SECTION
                         + ",\"text\":{\"type\":\"string\",\"description\":\"neuer Text in Markdown, ohne die "
@@ -173,7 +176,8 @@ public final class DocumentChatTools {
                 case LIST -> list();
                 case CREATE -> create(arguments);
                 case OUTLINE -> withDocument(arguments, DocumentChatTools::outline);
-                case READ -> withDocument(arguments, document -> read(document, text(arguments, "abschnitt")));
+                case READ -> withDocument(arguments, document -> read(document, text(arguments, "abschnitt"),
+                        Math.max(0, arguments.path("versatz").asInt(0))));
                 case REPLACE -> edit(arguments, "Text ersetzt", doc ->
                         doc.replaceText(text(arguments, "abschnitt"), text(arguments, "text")));
                 case REPLACE_TEXT -> edit(arguments, "Textstelle ersetzt", doc -> doc.replaceLiteral(
@@ -300,10 +304,29 @@ public final class DocumentChatTools {
                 + " jetzt Stand " + result.revision() + ".";
     }
 
-    private static String read(SectionDocument document, String id) {
+    /**
+     * Ein Abschnitt, so viel davon, wie in die laufende Anfrage passt ({@link ChatRoom}); den Rest holt das Modell mit
+     * {@code versatz}, wie beim Lesen einer Seite ({@code ChatTools.read}).
+     */
+    static String read(SectionDocument document, String id, int offset) {
         SectionDocument.Section section = document.section(id);
-        return "Abschnitt " + section.id() + (section.level() == 0 ? " (Einleitung)" : ", Ebene " + section.level())
-                + ":\n" + section.markdown().strip();
+        String text = section.markdown().strip();
+        int room = ChatRoom.chars();
+        if (room == 0) {
+            return ChatRoom.FULL;
+        }
+        int from = Math.min(offset, text.length());
+        int to = ModelBudget.fit(text, from, room);
+        StringBuilder b = new StringBuilder("Abschnitt ").append(section.id())
+                .append(section.level() == 0 ? " (Einleitung)" : ", Ebene " + section.level());
+        if (from > 0 || to < text.length()) {
+            b.append(", Zeichen ").append(from).append(" bis ").append(to).append(" von ").append(text.length());
+        }
+        b.append(":\n").append(text, from, to);
+        if (to < text.length()) {
+            b.append("\n\n(Fortsetzung mit ").append(READ).append(", versatz ").append(to).append(')');
+        }
+        return b.toString();
     }
 
     // ------------------------------------------------------------------ Hilfen

@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.chat.artifact;
 import com.aresstack.spaceharvester.ai.AiChat;
 import com.aresstack.spaceharvester.app.chat.ChatNode;
 import com.aresstack.spaceharvester.app.chat.ChatRecord;
+import com.aresstack.spaceharvester.app.chat.ChatRoom;
 import com.aresstack.spaceharvester.app.chat.ChatStore;
 import com.aresstack.spaceharvester.app.chat.ChatToolset;
 import org.junit.jupiter.api.BeforeEach;
@@ -148,5 +149,19 @@ class DocumentChatToolsTest {
         assertThat(joined.run(new AiChat.ToolCall("2", "dokumente_auflisten", "{}"))).contains("noch keine");
         assertThat(joined.describe(new AiChat.ToolCall("3", "abschnitt_ersetzen", "{}")))
                 .isEqualTo("Abschnitt wird überarbeitet");
+    }
+
+    @Test
+    void aLongSectionIsReadInPiecesThatFitTheRequest() {
+        call("dokument_anlegen", "{\"titel\":\"Fibel\",\"text\":\"## Boden\\n\\n"
+                + "Humus ".repeat(200).strip() + "\"}");
+
+        String first = ChatRoom.within(400, () -> call("abschnitt_lesen", "{\"abschnitt\":\"a1\"}"));
+        assertThat(first).contains("Zeichen 0 bis").contains("versatz");
+        int offset = Integer.parseInt(first.replaceAll("(?s).*versatz (\\d+)\\).*", "$1"));
+        String rest = call("abschnitt_lesen", "{\"abschnitt\":\"a1\",\"versatz\":" + offset + "}");
+        assertThat(rest).doesNotContain("Fortsetzung").endsWith("Humus");
+        assertThat(ChatRoom.within(0, () -> call("abschnitt_lesen", "{\"abschnitt\":\"a1\"}")))
+                .endsWith(ChatRoom.FULL);
     }
 }
