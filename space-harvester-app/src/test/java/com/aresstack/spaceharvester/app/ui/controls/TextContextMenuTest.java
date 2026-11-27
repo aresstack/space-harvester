@@ -110,6 +110,48 @@ class TextContextMenuTest {
                 javax.swing.MenuSelectionManager.defaultManager().getSelectedPath()).isEmpty());
     }
 
+    @Test
+    void markedTextCanBeQuotedIntoTheChat() throws Exception {
+        List<String> quoted = new ArrayList<>();
+        JTextField[] own = new JTextField[1];
+        TextContextMenu.QuoteTarget chat = new TextContextMenu.QuoteTarget() {
+            @Override
+            public boolean accepts(javax.swing.text.JTextComponent field) {
+                return field != own[0];
+            }
+
+            @Override
+            public void quote(String text) {
+                quoted.add(text);
+            }
+        };
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                TextContextMenu.setQuoteTarget(chat);
+                JTextArea page = new JTextArea("Der Nachtlauf startet um 22 Uhr.");
+                page.setEditable(false);
+                page.select(4, 13);
+                JPopupMenu menu = TextContextMenu.menu(page);
+                assertThat(labels(menu)).containsExactly(TextContextMenu.COPY, TextContextMenu.QUOTE,
+                        TextContextMenu.SELECT_ALL);
+                item(menu, TextContextMenu.QUOTE).doClick();
+                assertThat(quoted).containsExactly("Nachtlauf");
+
+                // Ohne Markierung, im Passwortfeld und in der Chat-Eingabe selbst gibt es kein Zitieren.
+                page.select(0, 0);
+                assertThat(labels(TextContextMenu.menu(page))).doesNotContain(TextContextMenu.QUOTE);
+                JPasswordField secret = new JPasswordField("erfunden");
+                secret.selectAll();
+                assertThat(labels(TextContextMenu.menu(secret))).doesNotContain(TextContextMenu.QUOTE);
+                own[0] = new JTextField("meine Frage");
+                own[0].selectAll();
+                assertThat(labels(TextContextMenu.menu(own[0]))).doesNotContain(TextContextMenu.QUOTE);
+            });
+        } finally {
+            SwingUtilities.invokeAndWait(() -> TextContextMenu.setQuoteTarget(null));
+        }
+    }
+
     private static List<String> labels(JPopupMenu menu) {
         List<String> labels = new ArrayList<>();
         for (Component child : menu.getComponents()) {

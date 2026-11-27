@@ -818,6 +818,29 @@ class ChatPanelTest {
 
     /** Bildanhang (Angelo 27.11.2026): Das Vision-Modell liest das Bild, sein Text steht unter „--- Anhang: …“. */
     @Test
+    void quotesGoAheadOfTheQuestionAsMarkdownQuotes() {
+        assertThat(ChatPanel.withQuotes("Warum?", List.of())).isEqualTo("Warum?");
+        assertThat(ChatPanel.withQuotes("Was heißt das?", List.of("Der Nachtlauf\n\nbricht ab", "Team 10")))
+                .isEqualTo("> Der Nachtlauf\n>\n> bricht ab\n\n> Team 10\n\nWas heißt das?");
+    }
+
+    @Test
+    void markedPassagesAreCollectedAsQuoteChips() throws Exception {
+        List<String> seen = new ArrayList<>();
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            ChatPanel panel = new ChatPanel(context);
+            panel.quote("  Der Nachtlauf bricht ab  ");
+            panel.quote("Team 10 ist zuständig");
+            panel.quote("Der Nachtlauf bricht ab"); // derselbe Ausschnitt nur einmal
+            seen.addAll(panel.quotes());
+        });
+        assertThat(seen).containsExactly("Der Nachtlauf bricht ab", "Team 10 ist zuständig");
+    }
+
+    @Test
     void imageAttachmentsAreReadByTheVisionModel() throws Exception {
         Path png = home.resolve("tafel.png");
         javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB),
