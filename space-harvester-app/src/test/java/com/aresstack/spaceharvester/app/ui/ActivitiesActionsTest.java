@@ -588,10 +588,23 @@ class ActivitiesActionsTest {
         JobStatus follower = new JobStatus("follower", JobType.BACKGROUND, "wiki", "OPS", "local", JobState.QUEUED,
                 new JobProgress(0, 0, 0, 0), null, false, Instant.EPOCH, null, null, null, null,
                 Map.of(com.aresstack.spaceharvester.application.jobs.Jobs.AFTER, "awaited"), false, false, null);
+        JobStatus anchor = finished("anchor", JobType.VIDEO_TRANSCRIPT, new JobProgress(1, 1, 1, 0), false, Map.of(),
+                end);
+        JobStatus successor = new JobStatus("successor", JobType.TRANSCRIPT_CORRECTION, "wiki", "OPS", "local",
+                JobState.QUEUED, new JobProgress(0, 0, 0, 0), null, false, Instant.EPOCH, null, null, null, null,
+                Map.of(com.aresstack.spaceharvester.application.jobs.Jobs.AWAITS, "anchor"), false, false, null);
         JobStatus running = job(JobType.UPDATE_SUMMARY, JobState.RUNNING, false);
 
         assertThat(ActivitiesView.expendable(List.of(clean, failed, incomplete, skipped, export, selected, awaited,
-                follower, running), "selected")).extracting(JobStatus::id).containsExactly("clean");
+                follower, anchor, successor, running), "selected")).extracting(JobStatus::id).containsExactly("clean");
+
+        // Eine gewählte Gruppenzeile hält alle ihre Teile.
+        JobStatus member = finished("member", JobType.BACKGROUND, new JobProgress(1, 1, 1, 0), false,
+                Map.of(com.aresstack.spaceharvester.application.background.BackgroundJobs.GROUP, "g1"), end);
+        assertThat(ActivitiesView.expendable(List.of(clean, member), ActivitiesView.GROUP_PREFIX + "g1"))
+                .extracting(JobStatus::id).containsExactly("clean");
+        assertThat(ActivitiesView.expendable(List.of(clean, member), null)).extracting(JobStatus::id)
+                .containsExactly("clean", "member");
         assertThat(AppTimeouts.Value.FINISHED_JOBS.defaultValue()).as("Vorgabe 5 Minuten").isEqualTo(300);
         assertThat(AppTimeouts.Value.FINISHED_JOBS.accepts(0)).as("0 schaltet ab").isTrue();
     }

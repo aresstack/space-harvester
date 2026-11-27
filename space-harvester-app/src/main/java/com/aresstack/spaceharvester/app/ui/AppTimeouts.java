@@ -107,8 +107,22 @@ public final class AppTimeouts {
         return numbers.values();
     }
 
-    /** Speichert die Fristen; eine Vorgabe wird nicht gemerkt. */
+    /** Speichert die Fristen; eine Vorgabe wird nicht gemerkt. Wer zuhört ({@link #onSave}), erfährt es. */
     public void save(Map<Value, Long> values) {
         numbers.save(values);
+        SAVED.forEach(Runnable::run);
+    }
+
+    private static final java.util.List<Runnable> SAVED = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * Meldet jedes Speichern der Fristen, etwa damit die Auftragsliste ihr Aufräumen sofort nach der neuen Frist stellt
+     * statt erst bei der nächsten Meldung des Core.
+     *
+     * @return beendet das Zuhören
+     */
+    public static AutoCloseable onSave(Runnable listener) {
+        SAVED.add(java.util.Objects.requireNonNull(listener, "listener"));
+        return () -> SAVED.remove(listener);
     }
 }
