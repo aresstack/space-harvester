@@ -27,6 +27,7 @@ import com.aresstack.spaceharvester.app.project.Project;
 import com.aresstack.spaceharvester.app.project.ProjectStore;
 import com.aresstack.spaceharvester.app.ui.controls.ColorDot;
 import com.aresstack.spaceharvester.app.ui.controls.GroupColors;
+import com.aresstack.spaceharvester.app.ui.controls.FlatIconButton;
 import com.aresstack.spaceharvester.app.ui.controls.GroupStripe;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.speech.Dictation;
@@ -3962,6 +3963,11 @@ public final class ChatPanel extends JPanel {
      * Gruppen sieht die Liste aus wie bisher.
      */
     private void showChatsMenu() {
+        // Steht der offene Chat in einer zugeklappten Gruppe, klappt sie auf, damit sein Haken zu sehen ist (UX-Strang).
+        ChatGroup current = groupOfChat();
+        if (current != null) {
+            expandedGroups.add(current.id());
+        }
         JPopupMenu menu = new JPopupMenu();
         chatsMenu = menu;
         for (Component item : chatMenuItems()) {
@@ -4002,21 +4008,22 @@ public final class ChatPanel extends JPanel {
         ChatListing listing = ChatListing.of(all, project, knownProjectIds(), projects.groups(project));
         for (java.util.Map.Entry<ChatGroup, List<ChatStore.Entry>> group : listing.grouped().entrySet()) {
             boolean open = expandedGroups.contains(group.getKey().id());
-            items.add(new GroupRow(group.getKey(), group.getValue().size(), open));
+            items.add(new GroupRow(group.getKey(), group.getValue().size(), open, () -> {
+                if (chatsMenu != null) {
+                    chatsMenu.setVisible(false);
+                }
+                if (turn != null) {
+                    detachTurn();
+                }
+                open(freshChat(group.getKey().id()), here);
+                editor.requestFocusInWindow();
+            }));
             if (open) {
-                JMenuItem start = new JMenuItem(NEW_CHAT_IN_GROUP);
-                start.setBorder(new GroupStripe(GroupColors.of(group.getKey().color()), 10));
-                start.addActionListener(e -> {
-                    if (turn != null) {
-                        detachTurn();
-                    }
-                    open(freshChat(group.getKey().id()), here);
-                    editor.requestFocusInWindow();
-                });
-                items.add(start);
                 for (ChatStore.Entry entry : group.getValue()) {
                     JMenuItem item = chatItem(entry, deletedIds.contains(entry.record().id()));
-                    item.setBorder(new GroupStripe(GroupColors.of(group.getKey().color()), 10));
+                    item.setBorder(BorderFactory.createCompoundBorder(
+                            new GroupStripe(GroupColors.of(group.getKey().color()), STRIPE_INDENT, CHAT_INSET),
+                            plainInsets(item)));
                     items.add(item);
                 }
             }
@@ -4033,39 +4040,101 @@ public final class ChatPanel extends JPanel {
             items.add(none);
             return items;
         }
+        boolean grouped = !listing.grouped().isEmpty();
+        java.util.function.Function<ChatStore.Entry, JMenuItem> loose = entry -> {
+            JMenuItem item = chatItem(entry, deletedIds.contains(entry.record().id()));
+            if (grouped) {
+                // Eine Fluchtlinie mit den Chats der Gruppen darüber (UX-Strang).
+                item.setBorder(BorderFactory.createCompoundBorder(
+                        BorderFactory.createEmptyBorder(0, CHAT_INSET, 0, 0), plainInsets(item)));
+            }
+            return item;
+        };
         items.add(menuHeading(CHATS_HERE));
         if (local.isEmpty()) {
             JMenuItem none = new JMenuItem(NO_CHATS_HERE);
             none.setEnabled(false);
             items.add(none);
         }
-        local.forEach(entry -> items.add(chatItem(entry, deletedIds.contains(entry.record().id()))));
+        local.forEach(entry -> items.add(loose.apply(entry)));
         if (!others.isEmpty()) {
             items.add(new JPopupMenu.Separator());
             items.add(menuHeading(CHATS_ELSEWHERE));
-            others.forEach(entry -> items.add(chatItem(entry, deletedIds.contains(entry.record().id()))));
+            others.forEach(entry -> items.add(loose.apply(entry)));
         }
         return items;
     }
 
+    /** Abstand des Gruppenstreifens vom linken Rand: unter der Mitte des Farbpunkts der Gruppenzeile (UX-Strang). */
+    private static final int STRIPE_INDENT = GroupRow.dotCenter() - GroupStripe.WIDTH / 2;
+    /** Linker Einzug aller Chat-Titel, sobald Gruppen da sind: eine Fluchtlinie mit und ohne Gruppe. */
+    private static final int CHAT_INSET = GroupRow.dotCenter() + 14;
+
     /**
-     * Die Zeile einer Gruppe in der Liste (UX-Strang): Pfeil, gefüllter Punkt, Name und Zahl der Chats. Linksklick klappt
-     * auf und zu, ohne die Liste zu schließen; Rechtsklick öffnet Umbenennen, Farbe und Auflösen.
+     * Die Zeile einer Gruppe in der Liste (UX-Strang): Pfeil, gefüllter Punkt, Name halbfett, Zahl der Chats normal und
+     * gedämpft, rechts ein Plus für einen neuen Chat in der Gruppe (sichtbar beim Darüberfahren und aufgeklappt).
+     * Linksklick klappt auf und zu, ohne die Liste zu schließen; Rechtsklick öffnet Umbenennen, Farbe und Auflösen.
      */
     final class GroupRow extends JMenuItem {
 
         private final ChatGroup group;
+        private final boolean open;
+        private final JLabel count;
+        private final FlatIconButton start;
+        private boolean overStart;
 
-        GroupRow(ChatGroup group, int chats, boolean open) {
-            super(group.name() + "  (" + chats + ")", new GroupRowIcon(open, GroupColors.of(group.color())));
+        GroupRow(ChatGroup group, int chats, boolean open, Runnable newChat) {
+            super(group.name(), new GroupRowIcon(open, GroupColors.of(group.color())));
             this.group = group;
+            this.open = open;
+            float size = getFont().getSize2D();
+            setFont(Comic.semiBold(size));
+            setLayout(null);
+            count = new JLabel("(" + chats + ")");
+            count.setFont(Comic.regular(size));
+            count.setForeground(Comic.MUTED);
+            add(count);
+            start = new FlatIconButton(Glyph.PLUS, NEW_CHAT_IN_GROUP);
+            start.addActionListener(e -> newChat.run());
+            start.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    overStart = true;
+                    showStart();
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    overStart = false;
+                    showStart();
+                }
+            });
+            add(start);
+            getModel().addChangeListener(e -> showStart());
+            showStart();
             setToolTipText(open ? "Zuklappen; Rechtsklick: Umbenennen, Farbe, Auflösen"
                     : "Aufklappen; Rechtsklick: Umbenennen, Farbe, Auflösen");
             getAccessibleContext().setAccessibleName("Gruppe " + group.name());
         }
 
+        /** Waagerechte Mitte des Farbpunkts, gemessen vom linken Rand der Zeile. */
+        static int dotCenter() {
+            JMenuItem probe = new JMenuItem();
+            java.awt.Insets insets = probe.getInsets();
+            return insets.left + Glyph.EXPAND.getIconWidth() + 4 + ColorDot.SIZE / 2;
+        }
+
+        private void showStart() {
+            start.setVisible(open || overStart || getModel().isArmed());
+        }
+
         ChatGroup group() {
             return group;
+        }
+
+        /** Der Knopf „Neuer Chat in dieser Gruppe“; für Tests. */
+        FlatIconButton newChatButton() {
+            return start;
         }
 
         /** Klappt auf oder zu und baut die Liste neu auf. */
@@ -4074,6 +4143,24 @@ public final class ChatPanel extends JPanel {
                 expandedGroups.add(group.id());
             }
             rebuildChatsMenu();
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            Dimension size = super.getPreferredSize();
+            return new Dimension(size.width + 6 + count.getPreferredSize().width + 12 + FlatIconButton.SIZE,
+                    Math.max(size.height, FlatIconButton.SIZE));
+        }
+
+        @Override
+        public void doLayout() {
+            java.awt.Insets insets = getInsets();
+            int textWidth = getFontMetrics(getFont()).stringWidth(getText());
+            int x = insets.left + getIcon().getIconWidth() + getIconTextGap() + textWidth + 6;
+            Dimension countSize = count.getPreferredSize();
+            count.setBounds(x, (getHeight() - countSize.height) / 2, countSize.width, countSize.height);
+            start.setBounds(getWidth() - insets.right - FlatIconButton.SIZE - 4,
+                    (getHeight() - FlatIconButton.SIZE) / 2, FlatIconButton.SIZE, FlatIconButton.SIZE);
         }
 
         @Override
@@ -4158,6 +4245,7 @@ public final class ChatPanel extends JPanel {
         boolean current = !deleted && record.id().equals(chat.id());
         String label = (current ? "✓ " : "    ") + com.aresstack.spaceharvester.app.chat.ChatExport.displayTitle(record);
         JMenuItem item = new JMenuItem(deleted ? "<html><s>" + escapeHtml(label) + "</s></html>" : label);
+        item.setFont(Comic.regular(item.getFont().getSize2D()));
         String area = lastArea(record);
         item.setToolTipText(deleted ? DELETED_TIP : Texts.count(record.messages().size(), "Nachricht", "Nachrichten")
                 + (area == null ? "" : " · zuletzt: " + areaName(area)));
@@ -4171,6 +4259,12 @@ public final class ChatPanel extends JPanel {
             }
         });
         return item;
+    }
+
+    /** Leerer Rand mit den Abständen des Standardrands: gleiche Zeilenhöhe, ohne dessen Kantenlinien eingerückt zu malen. */
+    private static javax.swing.border.Border plainInsets(JMenuItem item) {
+        java.awt.Insets insets = item.getInsets();
+        return BorderFactory.createEmptyBorder(insets.top, insets.left, insets.bottom, insets.right);
     }
 
     private static String escapeHtml(String text) {

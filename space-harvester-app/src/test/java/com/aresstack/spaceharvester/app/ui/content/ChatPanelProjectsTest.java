@@ -85,14 +85,18 @@ class ChatPanelProjectsTest {
             panel[0] = new ChatPanel(context);
             panel[0].selection(new Selection.Node("handbuch", space, null, "Handbuch"));
             assertThat(panel[0].chat().id()).as("zuletzt geänderter Chat des aktiven Projekts").isEqualTo(grouped.id());
-            assertThat(menuTexts(panel[0])).containsExactly("Entwurf  (1)", "—", ChatPanel.CHATS_HERE,
+            assertThat(menuTexts(panel[0])).containsExactly("Entwurf", "—", ChatPanel.CHATS_HERE,
                     "    Termine");
             ChatPanel.GroupRow row = (ChatPanel.GroupRow) panel[0].chatMenuItems().get(0);
+            assertThat(row.newChatButton().isVisible()).as("Plus erst beim Darüberfahren oder aufgeklappt").isFalse();
             row.toggle();
-            assertThat(menuTexts(panel[0])).containsExactly("Entwurf  (1)", ChatPanel.NEW_CHAT_IN_GROUP,
-                    "✓ Kartons zählen", "—", ChatPanel.CHATS_HERE, "    Termine");
+            assertThat(menuTexts(panel[0])).containsExactly("Entwurf", "✓ Kartons zählen", "—",
+                    ChatPanel.CHATS_HERE, "    Termine");
+            ChatPanel.GroupRow opened = (ChatPanel.GroupRow) panel[0].chatMenuItems().get(0);
+            assertThat(opened.newChatButton().isVisible()).isTrue();
+            assertThat(opened.newChatButton().getToolTipText()).isEqualTo(ChatPanel.NEW_CHAT_IN_GROUP);
 
-            ((JMenuItem) panel[0].chatMenuItems().get(1)).doClick();
+            opened.newChatButton().doClick();
             assertThat(panel[0].chat().isEmpty()).isTrue();
             assertThat(panel[0].chat().projectId()).isEqualTo(umzug.id());
             assertThat(panel[0].chat().groupId()).as("neuer Chat in dieser Gruppe").isEqualTo(entwurf.id());
