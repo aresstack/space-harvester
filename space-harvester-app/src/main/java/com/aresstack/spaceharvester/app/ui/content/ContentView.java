@@ -137,7 +137,7 @@ public final class ContentView implements View {
         body.add(middleDeck, BorderLayout.CENTER);
         middleDeck.add(detail, PAGE_MIDDLE);
         java.util.function.Supplier<java.nio.file.Path> output =
-                () -> context.settings() == null ? null : context.settings().outputDirectory();
+                context::exportDirectory;
         java.util.function.Consumer<String> status =
                 text -> statusInfo.show(com.aresstack.spaceharvester.app.ui.controls.StatusNote.plain(text));
         // Unter „Export“ nur noch Exporte (Entwurf UX 27.11.2026); derselbe Baustein ohne Chat.

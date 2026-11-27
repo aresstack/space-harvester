@@ -538,6 +538,25 @@ public final class PagePodcasts {
         production.parallel(texts, pictures);
     }
 
+    /**
+     * Löscht einen Erklär-Podcast ({@link #key} einer Seite oder {@link #bookKey} eines Buchs; ADR 0047: lokales
+     * Artefakt, nur dieses eine). Seite, KI-Freigabe und andere Ergebnisse bleiben; Beobachter erfahren es über
+     * {@link #subscribe}, danach entsteht nichts von selbst neu.
+     *
+     * @return ob ein Podcast abgelegt war
+     * @throws IllegalStateException während der Podcast entsteht ({@link #deletable})
+     */
+    public boolean delete(String key) {
+        Objects.requireNonNull(key, "key");
+        remembered.remove(key);
+        return UpdatePodcasts.delete(jobs, production.store(), production, starting, key);
+    }
+
+    /** Ob {@link #delete} jetzt geht: kein Auftrag dieses Podcasts, der noch nicht geendet hat. */
+    public boolean deletable(String key) {
+        return !UpdatePodcasts.unfinished(jobs, Objects.requireNonNull(key, "key"));
+    }
+
     /** Meldet jede abgelegte Stufe dieses Podcasts. */
     public Subscription subscribe(String key, Runnable listener) {
         return production.subscribe(key, listener);

@@ -26,15 +26,19 @@ import java.util.stream.Stream;
 
 /**
  * Die Wahl des aktiven Projekts unten in der Ecke (ADR 0043, Nachtrag F6): Der Pfeil öffnet nach oben die Liste der
- * Projekte (das aktive mit Haken) und „Neues Projekt …“; am aktiven Projekt stehen „Umbenennen …“, „Ziel ändern …“ und
- * „Projekt löschen …“. Ein Klick auf den Namen öffnet das Ziel; ohne Ziel oder wenn es nicht erreichbar ist, öffnet
- * sich der Dialog für das Ziel. Nichts öffnet sich ohne Klick; das Ziel steht nie im Log.
+ * Projekte (das aktive mit Haken), „Neues Projekt …“ und gleich darunter „Projekteinstellungen …“ für das aktive
+ * Projekt (Ziel, „Alles hier speichern“ mit Unterordner; Angelo, 27.11.2026; beim Standardprojekt „AresStack“ gesperrt,
+ * es nutzt immer den Ausgabeordner der Einstellungen); am aktiven Projekt stehen außerdem „Umbenennen …“ und „Projekt
+ * löschen …“. Ein Klick auf den Namen öffnet das Ziel; ohne Ziel oder wenn es nicht erreichbar ist, öffnen sich die
+ * Projekteinstellungen. Nichts öffnet sich ohne Klick; das Ziel steht nie im Log.
  */
 final class ProjectChooser {
 
     static final String NEW = "Neues Projekt …";
     static final String RENAME = "Umbenennen …";
-    static final String TARGET = "Ziel ändern …";
+    static final String SETTINGS = "Projekteinstellungen …";
+    static final String DEFAULT_SETTINGS_TIP = Project.DEFAULT_NAME
+            + " speichert immer im Ausgabeordner unter Einstellungen › Allgemein";
     static final String DELETE = "Projekt löschen …";
     static final String UNREACHABLE = "Ziel des Projekts nicht erreichbar";
     static final String DELETED_TIP = "Gelöscht, bis zum Neustart wiederherstellbar: Klick holt es zurück";
@@ -46,8 +50,8 @@ final class ProjectChooser {
     BiPredicate<String, String> confirm;
     /** Fragt einen Namen ab ({@code null} = abgebrochen); Tests antworten selbst. */
     java.util.function.BiFunction<String, String, String> askName;
-    /** Fragt ein Ziel ab ({@code null} = abgebrochen); Tests antworten selbst. */
-    java.util.function.BiFunction<Project, ProjectTarget, ProjectTarget> askTarget;
+    /** Fragt die Projekteinstellungen ab: das geänderte Projekt, {@code null} = abgebrochen; Tests antworten selbst. */
+    java.util.function.UnaryOperator<Project> askSettings;
     /** Öffnet eine Website; wirft, wenn das System keinen Browser öffnen kann. */
     WebsiteOpener browse = url -> {
         if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
@@ -84,7 +88,7 @@ final class ProjectChooser {
         this.status = status;
         confirm = (title, question) -> Dialogs.confirm(parent, title, question);
         askName = (title, current) -> Dialogs.askText(parent, title, "Name des Projekts", current);
-        askTarget = (project, current) -> ProjectTargetDialog.ask(parent, project.name(), current);
+        askSettings = project -> ProjectTargetDialog.ask(parent, project);
     }
 
     /** Die Liste nach oben über dem Pfeil. */
@@ -123,14 +127,18 @@ final class ProjectChooser {
         JMenuItem create = new JMenuItem(NEW);
         create.addActionListener(e -> create());
         items.add(create);
+        JMenuItem settings = new JMenuItem(SETTINGS);
+        settings.addActionListener(e -> configure(active));
+        settings.setEnabled(!active.isDefault());
+        if (active.isDefault()) {
+            settings.setToolTipText(DEFAULT_SETTINGS_TIP);
+        }
+        items.add(settings);
         if (!active.isDefault()) {
             items.add(new JPopupMenu.Separator());
             JMenuItem rename = new JMenuItem(RENAME);
             rename.addActionListener(e -> rename(active));
             items.add(rename);
-            JMenuItem target = new JMenuItem(TARGET);
-            target.addActionListener(e -> changeTarget(active));
-            items.add(target);
             JMenuItem delete = new JMenuItem(DELETE);
             delete.addActionListener(e -> delete(active));
             items.add(delete);
@@ -157,18 +165,22 @@ final class ProjectChooser {
         }
     }
 
-    void changeTarget(Project project) {
-        ProjectTarget target = askTarget.apply(project, project.target());
-        if (target != null) {
-            projects.retarget(project.id(), target);
+    /** „Projekteinstellungen …“: Ziel und Speicherort des Projekts; beim Standardprojekt nichts. */
+    void configure(Project project) {
+        if (project.isDefault()) {
+            return;
+        }
+        Project changed = askSettings.apply(project);
+        if (changed != null) {
+            projects.configure(project.id(), changed.target(), changed.output());
         }
     }
 
-    /** Klick auf den Namen: das Ziel öffnen; ohne Ziel oder wenn es nicht erreichbar ist, den Dialog. */
+    /** Klick auf den Namen: das Ziel öffnen; ohne Ziel oder wenn es nicht erreichbar ist, die Projekteinstellungen. */
     void open(Project project) {
         ProjectTarget target = project.target();
         if (target == null) {
-            changeTarget(project);
+            configure(project);
             return;
         }
         try {
@@ -183,7 +195,7 @@ final class ProjectChooser {
             openPath.open(path);
         } catch (IOException | InvalidPathException | UnsupportedOperationException e) {
             status.accept(new StatusMessageEvent(UNREACHABLE, 8000, Severity.ERROR));
-            changeTarget(project);
+            configure(project);
         }
     }
 
