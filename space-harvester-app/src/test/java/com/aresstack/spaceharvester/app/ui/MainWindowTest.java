@@ -983,8 +983,10 @@ class MainWindowTest {
     }
 
     /**
-     * #515: Ein Suchfeld für das ganze Fenster steht mittig zwischen den Icon-Gruppen der Kopfzeile, ohne sie bei
-     * 960, 1280 oder 1920 px zu überdecken; Enter aus jedem Bereich zeigt die Trefferansicht. Wird es eng (800 px oder
+     * #515: Ein Suchfeld für das ganze Fenster steht in der Kopfzeile, seit 27.11.2026 (Angelo) rechtsbündig direkt vor
+     * der Gruppe rechts und höchstens {@link SearchBarLayout#MAX_WIDTH} breit, ohne die Icon-Gruppen bei
+     * 960, 1280 oder 1920 px zu überdecken; die Reiter der Mitte stehen mittig über dem mittleren Fenster, mit offener
+     * Seitenleiste rechts an dessen linkem Rand; Enter aus jedem Bereich zeigt die Trefferansicht. Wird es eng (800 px oder
      * breitere Schriften), kürzt die Kopfzeile den Titel, nie das Suchfeld und nie die Knöpfe.
      */
     @Test
@@ -1018,7 +1020,39 @@ class MainWindowTest {
                         .isLessThanOrEqualTo(west.getWidth());
                 assertThat(icons.getWidth()).as("Knöpfe ungekürzt bei %d", width)
                         .isEqualTo(icons.getPreferredSize().width);
+                assertThat(field.x + field.width).as("rechtsbündig vor der Gruppe rechts bei %d", width)
+                        .isGreaterThanOrEqualTo(east.getX() - 12);
             }
+            // Die Reiter der Mitte: zugeklappt mittig über dem mittleren Fenster, mit offener Seitenleiste an dessen
+            // linkem Rand (am linken Teiler).
+            surface.setSize(1920, 600);
+            java.awt.Component reading = find(surface, AbstractButton.class).stream()
+                    .filter(button -> "Leseansicht".equals(button.getAccessibleContext().getAccessibleName()))
+                    .findFirst().orElseThrow();
+            java.awt.Component export = find(surface, AbstractButton.class).stream()
+                    .filter(button -> "Export".equals(button.getAccessibleContext().getAccessibleName()))
+                    .findFirst().orElseThrow();
+            java.awt.Container middle = window.deck().getParent();
+            while (middle.getParent() != null && !(middle.getParent() instanceof javax.swing.JSplitPane)) {
+                middle = middle.getParent();
+            }
+            window.chatOpen(false);
+            layout(surface);
+            layout(surface);
+            int left = SwingUtilities.convertPoint(reading.getParent(), reading.getLocation(), surface).x;
+            int right = SwingUtilities.convertPoint(export.getParent(), export.getLocation(), surface).x
+                    + export.getWidth();
+            int stageLeft = SwingUtilities.convertPoint(middle, 0, 0, surface).x;
+            assertThat((left + right) / 2).as("mittig über der Mitte")
+                    .isCloseTo(stageLeft + middle.getWidth() / 2, org.assertj.core.data.Offset.offset(3));
+            window.chatOpen(true);
+            layout(surface);
+            layout(surface);
+            left = SwingUtilities.convertPoint(reading.getParent(), reading.getLocation(), surface).x;
+            stageLeft = SwingUtilities.convertPoint(middle, 0, 0, surface).x;
+            assertThat(left).as("am linken Rand der Mitte").isCloseTo(stageLeft,
+                    org.assertj.core.data.Offset.offset(3));
+            window.chatOpen(false);
             window.show(AppContext.Section.SETTINGS);
             javax.swing.JTextField field = (javax.swing.JTextField) ((java.awt.BorderLayout) bar.getLayout())
                     .getLayoutComponent(java.awt.BorderLayout.CENTER);

@@ -182,6 +182,46 @@ public final class MainWindow implements AppContext.Navigator {
         }
     };
 
+    /**
+     * Wo die Reiter der Mitte in der Kopfzeile enden sollen (Angelo 27.11.2026): mittig über dem mittleren Fenster;
+     * mit offener Seitenleiste rechts an dessen linkem Rand, also am linken Teiler, und sie wandern mit ihm. Negativ,
+     * solange es nichts auszurichten gibt (andere Perspektive, Seitenleiste groß, noch kein Layout).
+     */
+    private int tabsAnchor() {
+        if (harvesterNavigation == null || harvesterNavigation.getParent() != navigationSlot
+                || stage.getWidth() <= 0 || !stage.isVisible()
+                || javax.swing.SwingUtilities.getRoot(stage) != javax.swing.SwingUtilities.getRoot(top)) {
+            return -1;
+        }
+        int left = javax.swing.SwingUtilities.convertPoint(stage, 0, 0, top).x;
+        // Gemessen wird von Knopf zu Knopf, ohne die Abstände der Gruppe davor und dahinter.
+        int width = harvesterNavigation.getPreferredSize().width;
+        int[] span = {Integer.MAX_VALUE, Integer.MIN_VALUE};
+        buttonSpan(harvesterNavigation, harvesterNavigation, span);
+        if (span[0] > span[1]) {
+            return -1;
+        }
+        int tabs = span[1] - span[0];
+        int start = chatOpen ? left : left + (stage.getWidth() - tabs) / 2;
+        return start + tabs + Math.max(0, width - span[1]);
+    }
+
+    /** Linke und rechte Kante der sichtbaren Knöpfe unter {@code parent}, in den Koordinaten von {@code root}. */
+    private static void buttonSpan(java.awt.Container root, java.awt.Container parent, int[] span) {
+        for (Component child : parent.getComponents()) {
+            if (!child.isVisible() || child.getWidth() <= 0) {
+                continue;
+            }
+            if (child instanceof javax.swing.AbstractButton) {
+                int x = javax.swing.SwingUtilities.convertPoint(parent, child.getX(), 0, root).x;
+                span[0] = Math.min(span[0], x);
+                span[1] = Math.max(span[1], x + child.getWidth());
+            } else if (child instanceof java.awt.Container nested) {
+                buttonSpan(root, nested, span);
+            }
+        }
+    }
+
     /** Was der Doppelklick auf die Fensterleiste gerade tut. */
     static String windowBarTooltip(boolean maximized) {
         return maximized ? RESTORE_TOOLTIP : MAXIMIZE_TOOLTIP;
@@ -562,7 +602,20 @@ public final class MainWindow implements AppContext.Navigator {
                 BorderFactory.createEmptyBorder(8, 16, 8, 10)));
         top.add(west, BorderLayout.WEST);
         top.add(east, BorderLayout.EAST);
-        // Ein Suchfeld für das ganze Fenster, mittig zwischen den Icon-Gruppen (#515).
+        // Die Reiter der Mitte stehen über dem mittleren Fenster (Angelo 27.11.2026) und wandern mit seinen Teilern.
+        ((HeaderLayout) top.getLayout()).anchor(this::tabsAnchor);
+        stage.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent event) {
+                top.revalidate();
+            }
+
+            @Override
+            public void componentMoved(java.awt.event.ComponentEvent event) {
+                top.revalidate();
+            }
+        });
+        // Ein Suchfeld für das ganze Fenster, rechtsbündig vor der Gruppe rechts (#515, Angelo 27.11.2026).
         searchSlot = SearchBarLayout.wrap(searchView.searchBar());
         top.add(searchSlot, BorderLayout.CENTER);
         ComicWindowDragger.install(top);
