@@ -168,6 +168,29 @@ public record SectionDocument(List<Section> sections, long nextId) {
         return split;
     }
 
+    /**
+     * Ersetzt einen Abschnitt durch das Markdown, das der Benutzer bearbeitet hat (ADR 0045, Abschnitt 5): Beginnt es
+     * mit einer Überschrift, gelten deren Text und Ebene; weitere Überschriften werden neue Abschnitte danach. Ohne
+     * Überschrift am Anfang bleibt die alte.
+     */
+    public Change replaceSection(String id, String markdown) {
+        int index = index(id);
+        Section old = sections.get(index);
+        String body = markdown == null ? "" : markdown;
+        String stripped = body.stripLeading();
+        int end = stripped.indexOf('\n');
+        Matcher first = HEADING.matcher(end < 0 ? stripped : stripped.substring(0, end));
+        Section head = old;
+        if (first.matches()) {
+            // Auch die Einleitung darf eine Überschrift bekommen; dann ist sie ein gewöhnlicher Abschnitt.
+            head = new Section(old.id(), first.group(1).length(), singleLine(first.group(2)), "");
+            body = end < 0 ? "" : stripped.substring(end + 1);
+        }
+        List<Section> list = new ArrayList<>(sections);
+        list.set(index, head);
+        return new SectionDocument(list, nextId).split(body, index, head);
+    }
+
     /** Ersetzt eine wörtliche Textstelle im Text eines Abschnitts; sie muss genau einmal vorkommen. */
     public Change replaceLiteral(String id, String search, String replacement) {
         int index = index(id);

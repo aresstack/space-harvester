@@ -171,4 +171,18 @@ class SectionDocumentTest {
         assertThat(change.document().section("a2").heading()).isEqualTo("Second");
         assertThat(change.document().section("a1").text()).isEqualTo("Revised text.");
     }
+
+    @Test
+    void theUserReplacesASectionWithHeadingAndText() {
+        SectionDocument document = SectionDocument.parse(TEXT);
+
+        SectionDocument.Change change = document.replaceSection("a5", "### Säen\n\nAb Ende Mai.\n\n### Abstand\n\nZehn.");
+
+        assertThat(change.touched()).containsExactly("a5", "a6");
+        assertThat(change.document().section("a5").heading()).isEqualTo("Säen");
+        assertThat(change.document().section("a5").level()).isEqualTo(3);
+        assertThat(change.document().section("a5").text()).isEqualTo("Ab Ende Mai.");
+        assertThat(document.replaceSection("a5", "Nur Text.").document().section("a5").heading())
+                .as("ohne Überschrift bleibt die alte").isEqualTo("Aussaat");
+    }
 }

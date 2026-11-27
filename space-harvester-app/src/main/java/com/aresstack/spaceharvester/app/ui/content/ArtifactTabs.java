@@ -177,7 +177,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         ClosableTab pill = new ClosableTab(artifact.kind() == ChatArtifact.Kind.GRAPHIC ? ComposerIcons.picture()
                 : ComposerIcons.document(), artifact.title(), artifact.title(), CLOSE, () -> close(artifact.id()));
         pill.addActionListener(event -> select(artifact.id()));
-        Tab tab = new Tab(pill, new ArtifactView(store, folder, chatId, artifact.id()));
+        Tab tab = new Tab(pill, new ArtifactView(store, folder, chatId, artifact.id(), status));
         tabs.put(artifact.id(), tab);
         group.add(pill);
         pills.add(pill);
