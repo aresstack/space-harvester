@@ -270,6 +270,8 @@ public final class PageDetailPanel extends JPanel {
     private int pagePictureLoads;
     /** Die Stellen, von denen der Seiten-Podcast gerade erzählt; nach einem Neuaufbau des Lesetexts wieder gelb. */
     private List<int[]> pageSpans = List.of();
+    /** Wovon der ganze Seiten-Podcast erzählt; leer ohne Podcast. Der Rest des Texts ist grau (Angelo 27.11.2026). */
+    private Optional<List<int[]>> pageCoverage = Optional.empty();
 
     /** Wofür der Erklär-Podcast entsteht: eine Seite samt Unterseiten. */
     record PodcastPage(String sourceId, String pageId) {
@@ -278,8 +280,11 @@ public final class PageDetailPanel extends JPanel {
     private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay textBusy;
     private final JLabel acronymHint = Comic.muted(" ");
     private final JLabel acronymDetail = Comic.muted(" ");
-    private final ComposerButton recomputeReader = Comic.button("Analyse neu berechnen",
-            "Berechnet die Analysen dieser Seite neu und aktualisiert die Markierungen");
+    /**
+     * Für welche Fassungen die veralteten Analysen schon selbsttätig neu berechnet wurden (Quelle, Seite, Text-Hash):
+     * je geöffnetem Text einmal, damit ein Ergebnis, das veraltet bleibt, keine Schleife startet.
+     */
+    private final java.util.Set<String> autoRecomputed = new java.util.HashSet<>();
     private final Facts properties = new Facts();
     private final Facts technical = new Facts();
     private final JTextArea raw = Comic.code();
@@ -689,7 +694,6 @@ public final class PageDetailPanel extends JPanel {
         readerPanel.setOpaque(false);
         acronymBar.setOpaque(false);
         acronymBar.add(acronymHint, BorderLayout.CENTER);
-        acronymBar.add(Comic.row(recomputeReader), BorderLayout.EAST);
         readerPanel.add(acronymBar, BorderLayout.NORTH);
         // Der Banner liegt als eigene Ebene über dem Lesetext und nimmt ihm keine Breite.
         readerPage = new NavigableDocumentPage(Comic.scroll(reader), reader, READER_PADDING_TOP);
@@ -706,6 +710,10 @@ public final class PageDetailPanel extends JPanel {
         pagePodcast.follow(spans -> {
             pageSpans = spans(spans);
             pagePictures.mark(pageSpans);
+        });
+        pagePodcast.cover(covered -> {
+            pageCoverage = covered.map(PageDetailPanel::spans);
+            pagePictures.cover(pageCoverage);
         });
         pagePodcast.cue(new PodcastControl.Cue() {
             @Override
@@ -996,7 +1004,9 @@ public final class PageDetailPanel extends JPanel {
         saveAsset.addActionListener(e -> saveAsset());
         previewAsset.addActionListener(e -> openAttachment());
         recompute.addActionListener(e -> recompute());
-        recomputeReader.addActionListener(e -> recompute());
+        // Der Stand „Veraltet“ (auch „Fehlgeschlagen“, „Nicht durchgeführt“) im Analysebereich ist zugleich der Knopf.
+        terms.onRecompute(this::recompute);
+        passages.onRecompute(this::recompute);
         readingPane.onLink(this::linkActivated);
         readingPane.onViewerLook(() -> Comic.viewerLook(context.settings() == null
                 ? com.aresstack.spaceharvester.app.settings.ViewerBackground.DEFAULT
@@ -3529,10 +3539,10 @@ public final class PageDetailPanel extends JPanel {
         loadVerbs();
         acronymDetail.setText(" ");
         pagePictures.mark(List.of());
+        pagePictures.cover(Optional.empty());
         pagePictures.show(List.of());
         if (document == null) {
             reader.setText("");
-            recomputeReader.setVisible(false);
             return;
         }
         reader.setStyledDocument(document.document());
@@ -3542,26 +3552,58 @@ public final class PageDetailPanel extends JPanel {
             pageSpans = List.of();
         }
         pagePictures.mark(pageSpans);
+        pagePictures.cover(pageCoverage);
         loadPagePictures();
         readerPage.contentChanged();
         // Die Wolken der Leseansicht zählen wiederholte Überschriften im jetzt gezeigten Klartext.
         readingPane.setNavigation(readerPage.sky().navigation(), reader.getText());
         acronymHint.setText(document.hint(live));
-        recomputeReader.setVisible(recomputeOffered(document, live));
+        if (!live) {
+            recomputeStale(document);
+        }
     }
 
     /**
-     * Ob „Analyse neu berechnen“ unter Text erscheint: wenn Akronyme oder Absätze nicht zum angezeigten Text passen,
-     * denn auf diesen Knopf verweisen beide Hinweise.
+     * Die Analysen, die die Leseansicht braucht und die nicht zum angezeigten Text passen (Prozessor-IDs): Akronyme
+     * und Begriffe, wenn sie nicht aktuell sind, Absätze, wenn sie veraltet, fehlgeschlagen oder nicht vorhanden sind.
      */
-    private static boolean recomputeOffered(ReaderDocument document, boolean live) {
-        return document.text() != null && !live && recomputeOffered(document.acronyms().state(),
-                document.passages() == null ? null : document.passages().state());
+    static List<String> staleAnalyses(PageAcronyms.State acronyms, PageTerms.State terms, PagePassages.State passages) {
+        List<String> stale = new ArrayList<>();
+        if (acronyms != null && acronyms != PageAcronyms.State.CURRENT) {
+            stale.add(PageAcronyms.PROCESSOR);
+        }
+        if (terms != null && terms != PageTerms.State.CURRENT) {
+            stale.add(com.aresstack.spaceharvester.application.terms.TermPayload.PROCESSOR);
+        }
+        if (passages != null && passages != PagePassages.State.CURRENT) {
+            stale.add(com.aresstack.spaceharvester.application.passages.PassageProcessor.ID);
+        }
+        return stale;
     }
 
-    static boolean recomputeOffered(PageAcronyms.State acronyms, PagePassages.State passages) {
-        return acronyms != PageAcronyms.State.CURRENT
-                || passages == PagePassages.State.STALE || passages == PagePassages.State.FAILED;
+    /**
+     * Braucht der gezeigte Text eine veraltete Analyse, rechnet ein Auftrag sie von selbst neu (Angelo 27.11.2026):
+     * sichtbar und abbrechbar in der Auftragsliste, nur aus der gespeicherten Seite, ohne Netz und ohne Abgleich mit der
+     * Quelle. Je Fassung einmal; was danach noch veraltet ist (etwa Absätze, die das Embedding-Modell bräuchten),
+     * berechnet der Klick auf den Stand im Analysebereich.
+     */
+    private void recomputeStale(ReaderDocument document) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null || page.live() || document.text() == null || sourceId == null
+                || pageId == null) {
+            return;
+        }
+        List<String> stale = staleAnalyses(document.acronyms() == null ? null : document.acronyms().state(),
+                document.terms() == null ? null : document.terms().state(),
+                document.passages() == null ? null : document.passages().state());
+        if (stale.isEmpty() || !autoRecomputed.add(sourceId + '\n' + pageId + '\n'
+                + document.text().inputSha256())) {
+            return;
+        }
+        String source = sourceId;
+        String id = pageId;
+        recomputation(runtime, request, true,
+                state -> runtime.workspace().recomputeStaleLocally(source, id, stale, state));
     }
 
     private static java.util.Optional<ReaderDocument> localDocument(
@@ -6050,21 +6092,44 @@ public final class PageDetailPanel extends JPanel {
         }
         String source = sourceId;
         String id = pageId;
+        feedback.working("Analysen werden berechnet …");
+        recomputation(runtime, ++request, false,
+                state -> runtime.workspace().recomputeEnrichments(source, id, processor, state));
+    }
+
+    /**
+     * Der gemeinsame Ablauf von Klick und selbsttätiger Neuberechnung: {@code start} startet den Auftrag und kehrt
+     * mit seinem Lauf zurück ({@code null}: kein Auftrag, dann bleibt alles, wie es ist); danach zeigt die Seite die
+     * neuen Analysen. Selbsttätig zählt die Anfrage nicht weiter, damit sie das Laden der Seite nicht verwirft.
+     */
+    private void recomputation(AppRuntime runtime, int current, boolean automatic,
+                               java.util.function.Function<Consumer<com.aresstack.spaceharvester.application.jobs
+                                       .JobState>, Enrichments.Run> start) {
+        String source = sourceId;
+        String id = pageId;
         PageText text = shown == null ? null : shown.text();
         boolean live = page.live();
         Font font = reader.getFont();
-        int current = ++request;
-        feedback.working("Analysen werden berechnet …");
+        DeliveredPage before = page;
+        String working = automatic ? "Veraltete Analysen werden neu berechnet …" : "Analysen werden berechnet …";
         Background.run(() -> {
             // Abnahme #1078: Wartet der Auftrag hinter laufenden Folgeaufträgen, sagt die Statuszeile es.
-            Enrichments.Run run = runtime.workspace().recomputeEnrichments(source, id, processor, state ->
+            Enrichments.Run run = start.apply(state ->
                     javax.swing.SwingUtilities.invokeLater(() -> {
-                        if (current == request) {
+                        if (current == request && page == before) {
                             feedback.working(state == com.aresstack.spaceharvester.application.jobs.JobState.QUEUED
-                                    ? "Wartet auf freien Platz …" : "Analysen werden berechnet …");
+                                    ? "Wartet auf freien Platz …" : working);
                         }
                     }));
-            DeliveredPage cached = runtime.workspace().page(source, id, false);
+            if (run == null) {
+                return null;
+            }
+            // Selbsttätig nur aus dem Bestand: keine Prüfung bei der Quelle.
+            DeliveredPage cached = automatic ? runtime.workspace().cachedPage(source, id).orElse(null)
+                    : runtime.workspace().page(source, id, false);
+            if (cached == null) {
+                return null;
+            }
             List<Enrichments.View> updated = runtime.workspace().enrichments(cached);
             ReaderDocument document = localDocument(runtime.workspace(), cached, font)
                     .orElseGet(() -> document(source, id, updated, text, font));
@@ -6072,26 +6137,31 @@ public final class PageDetailPanel extends JPanel {
             navigation(runtime, document, source, id);
             return new Recomputed(run, updated, document);
         }, result -> {
-            if (current != request) {
+            if (result == null || current != request || automatic && page != before) {
                 return;
             }
             Enrichments.Run run = result.run();
             views = result.views();
             analysisView.steps(views, this::stepResult);
             if (page != null) showProgramAnalysis(page.snapshot());
-            int caret = reader.getCaretPosition();
+            // Auswahl samt Anfang und Ende bleibt: die selbsttätige Neuberechnung kommt mitten im Lesen (Codex #1619).
+            int dot = reader.getCaret().getDot();
+            int mark = reader.getCaret().getMark();
             showReader(result.reader(), live);
-            reader.setCaretPosition(Math.min(caret, reader.getDocument().getLength()));
+            int length = reader.getDocument().getLength();
+            reader.setCaretPosition(Math.min(mark, length));
+            reader.moveCaretPosition(Math.min(dot, length));
             if (!run.supported()) {
                 feedback.info("Keine Analysen für dieses Format", null);
             } else if (run.failed() > 0) {
                 feedback.warning("Analysen teilweise fehlgeschlagen", run.computed() + " berechnet, " + run.failed()
                         + " fehlgeschlagen");
             } else {
-                feedback.success(run.computed() + " Analysen berechnet");
+                feedback.success(run.computed() + (automatic ? " veraltete Analysen neu berechnet"
+                        : " Analysen berechnet"));
             }
         }, error -> {
-            if (current != request) {
+            if (current != request || automatic && page != before) {
                 return;
             }
             if (error instanceof com.aresstack.spaceharvester.application.jobs.JobCancelledException) {
@@ -6157,7 +6227,6 @@ public final class PageDetailPanel extends JPanel {
         saveAsset.setEnabled(enabled);
         updatePreviewEnabled();
         recompute.setEnabled(enabled);
-        recomputeReader.setEnabled(enabled);
         recomputeProgram.setEnabled(enabled);
         recomputeBusiness.setEnabled(enabled);
         searchPrograms.setEnabled(enabled);
@@ -6457,6 +6526,16 @@ public final class PageDetailPanel extends JPanel {
                     pairs.add(span.start());
                     pairs.add(span.end());
                 }
+                return pairs;
+            }
+
+            @Override
+            public List<Integer> coverage(PodcastPage page, List<Integer> topics) {
+                List<Integer> pairs = new ArrayList<>();
+                workspace.pagePodcastCoverage(page.sourceId(), page.pageId()).orElse(List.of()).forEach(span -> {
+                    pairs.add(span.start());
+                    pairs.add(span.end());
+                });
                 return pairs;
             }
         };

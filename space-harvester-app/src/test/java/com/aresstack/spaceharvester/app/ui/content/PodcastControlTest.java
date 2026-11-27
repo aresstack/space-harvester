@@ -379,6 +379,28 @@ class PodcastControlTest {
         assertTrue(tracks.stream().allMatch(com.aresstack.spaceharvester.app.speech.PodcastPlayer.Track::startsTopic));
     }
 
+    @Test
+    void theCoverageCollectsWhatAllTopicsTellAndGoesAwayWithThePodcast() throws Exception {
+        // Angelo 27.11.2026: was der ganze Podcast nie erzählt, soll grau dastehen
+        source.starts = 1;
+        source.parts = List.of(new Podcast.Part(0, 0, "Einstieg", "Einstieg", null),
+                new Podcast.Part(2, 0, "Archiv", "Was neu ist", null),
+                new Podcast.Part(2, 1, "Archiv", "Warum", null));
+        source.focus = java.util.Map.of(0, List.of(UpdatePodcasts.OVERVIEW), 1, List.of(5), 2, List.of(3, 4));
+        List<Optional<List<Integer>>> covered = new ArrayList<>();
+        onEdt(() -> {
+            control = control();
+            control.cover(covered::add);
+
+            control.summary(summary("Das Projekt Nordlicht hat ein neues Archiv."));
+            // Thema 1 hat keinen Abschnitt im Podcast: seine Stelle zählt nicht als erzählt
+            assertEquals(List.of(Optional.of(List.of(UpdatePodcasts.OVERVIEW, 3, 4))), covered);
+
+            control.summary(null);
+            assertEquals(Optional.empty(), covered.get(covered.size() - 1));
+        });
+    }
+
     private PodcastControl<UpdateSummary> control() {
         PodcastControl<UpdateSummary> created = new PodcastControl<>(() -> source, new SourceUpdatesViewTest.SyncRunner());
         created.events(events::add);
@@ -417,6 +439,12 @@ class PodcastControlTest {
         int renews;
         List<Podcast.Part> parts = List.of();
         String transcript;
+        java.util.Map<Integer, List<Integer>> focus = java.util.Map.of();
+
+        @Override
+        public List<Integer> focus(UpdateSummary summary, int topic) {
+            return focus.getOrDefault(topic, List.of());
+        }
 
         @Override
         public Optional<String> transcript(UpdateSummary summary) {
