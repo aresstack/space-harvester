@@ -108,6 +108,11 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     private static final String HEADING_START = "headingStart";
     /** Gespeichertes Kennzeichen: der Eintrag führt die Überschriften (Einträge von vorher werden nachgeschrieben). */
     private static final String HEADINGS_INDEXED = "headingsIndexed";
+    /**
+     * Stand der Überschriftenerkennung im Eintrag. Erkennt eine neue Fassung mehr Überschriften (etwa die Gliederung von
+     * Großrechner-Quelltext), wird jeder ältere Eintrag beim nächsten Indizieren einmal nachgeschrieben.
+     */
+    static final String HEADINGS_GENERATION = "2";
     /** Gewicht eines Worts in Titel, Dateiname oder Überschrift gegenüber dem Fließtext. */
     private static final float TITLE_BOOST = 2f;
     private static final String SECTION = "section";
@@ -243,7 +248,7 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
                 doc.add(new StoredField(HEADING_START, exact + SEPARATOR + heading.start()));
             }
         }
-        doc.add(new StoredField(HEADINGS_INDEXED, Boolean.TRUE.toString()));
+        doc.add(new StoredField(HEADINGS_INDEXED, HEADINGS_GENERATION));
         doc.add(new StoredField(HAS_TEXT, Boolean.toString(
                 !terms(text.substring(Math.min(text.length(), entry.metadataPrefixChars()))).isEmpty())));
         doc.add(new StoredField(INPUT_SHA256, entry.inputSha256()));
@@ -479,7 +484,7 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     public boolean headingsKnown(PageKey key) {
         Objects.requireNonNull(key, "key");
         requireOpen();
-        return stored(id(key), HEADINGS_INDEXED).isPresent();
+        return stored(id(key), HEADINGS_INDEXED).filter(HEADINGS_GENERATION::equals).isPresent();
     }
 
     @Override

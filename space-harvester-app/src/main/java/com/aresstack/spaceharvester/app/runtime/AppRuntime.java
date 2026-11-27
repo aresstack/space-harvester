@@ -313,6 +313,8 @@ public final class AppRuntime implements AutoCloseable {
         if (!ndvSources.isEmpty()) {
             builder.enrichmentProcessor(new com.aresstack.spaceharvester.app.runtime.program.NaturalProgramEnrichment(ndvSources));
         }
+        // Seitenstruktur: Gliederung von FTP-/NDV-Quelltext als Überschriften für Suche und Gliederung.
+        builder.textProjector(new com.aresstack.spaceharvester.app.runtime.program.ProgramOutlineTextProjector());
         builder.accessPolicy(policy);
         // #499: MaltParser nur auf Knopfdruck; das Modell lädt erst der erste Klick, ohne Modell startet die App normal.
         MaltStatementAnalyzer.pinned(MaltStatementAnalyzer.defaultDirectory(storage.dataDirectory()))
