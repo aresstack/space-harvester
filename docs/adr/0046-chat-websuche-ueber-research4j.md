@@ -1,9 +1,11 @@
 # ADR 0046: Die Websuche im Chat läuft über Research4j
 
 - Status: **Angenommen** (27.11.2026).
-- Quelle: Angelos Entscheidung vom 27.11.2026, dem Architekten vom Koordinator und vom Bau-Strang weitergegeben: Die
-  Websuche im Chat zieht vom kopierten Firefox-Modul des Enterprise AI Client auf Research4j um. Der Wortlaut lag
-  beim Schreiben dieses ADR nicht vor; die Abschnitte 2 bis 5 sind Entscheidungen des Architekten.
+- Quelle: Angelos Nachrichten vom 27.11.2026, 16:53 und 16:54 MEZ: „Hatten wir überhaupt die Umstellung von der
+  Websuche auf Playwright4j zu Ende gemacht? […] Eigentlich sollte Research4j doch die Browsersuche kapseln dafür.
+  Aber ich glaube, davon haben wir uns entfernt, oder? Weil wir hatten das ja aus Ask AI extrahieren wollen.“ Die
+  Entscheidung für den Umzug fiel danach auf einer Karte in einem anderen Strang; deren Wortlaut lag beim Schreiben
+  nicht vor. Die Abschnitte 2 bis 5 sind Entscheidungen des Architekten.
 - Bezüge:
   - [ADR 0027](0027-beobachter-statt-abfragen.md): kein Polling
   - [ADR 0033](0033-wissen-des-chats-per-verweis-und-werkzeug.md): Wissen des Chats per Verweis und Werkzeug
@@ -58,10 +60,11 @@ beide Wege laufen nie zugleich im selben Chat.
 ### 4. GraalJS 21.3 bleibt, der Browser-Stapel wird getrennt
 - GraalJS in Space Harvester wird nicht angehoben. Drei der vier Nutzer sind fremde Bibliotheken, und an einem hängt
   der Proxy am Dienstrechner. Was läuft, wird nicht ohne Fehler angefasst.
-- Der Browser-Stapel mit GraalVM 25 kommt nie in den Klassenpfad der App. Zuerst ist zu prüfen, ob die GraalVM-Teile
-  nur im Klassenpfad des Kind-Prozesses stehen müssen, in dem der Playwright-Treiber läuft. Dann genügen ein eigener
-  Ordner und eine eigene Gradle-Konfiguration. Nur wenn das nicht geht, lädt Space Harvester den Browser-Stapel über
-  einen eigenen Classloader hinter einer Schnittstelle.
+- Der Browser-Stapel mit GraalVM 25 kommt nie in den Klassenpfad der App. Die GraalVM-Teile stehen nur im
+  Klassenpfad des Kind-Prozesses, in dem der Playwright-Treiber läuft: eigene Gradle-Konfiguration, eigener Ordner,
+  und der Klassenpfad des Kind-Prozesses wird playwright4j vorgegeben. Ein eigener Classloader ist dafür nicht nötig.
+  Nach der Prüfung des Bau-Strangs vom 27.11.2026 nimmt playwright4j 0.3.0 diesen Klassenpfad über eine
+  Systemeigenschaft an, und sein Teil auf der Seite der App benutzt keine GraalVM-Klassen.
 - Ein Test im Build stellt sicher, dass im Klassenpfad der App nur eine GraalJS-Linie steht.
 
 ### 5. Browser: Edge als Vorgabe, einstellbar
@@ -99,7 +102,6 @@ R1 ist von den anderen Schritten unabhängig. S1 und S2 brauchen R3.
 
 ## Offen
 
-- Ob playwright4j den Klassenpfad des Kind-Prozesses von außen annimmt (Abschnitt 4), ist zu prüfen.
 - Das Ergebnis der Captcha-Messung (Abschnitt 5).
 - Ob Ask AI denselben Werkzeugsatz aus Research4j übernimmt, entscheidet Angelo getrennt; Ask AI wird durch dieses
   ADR nicht geändert.
