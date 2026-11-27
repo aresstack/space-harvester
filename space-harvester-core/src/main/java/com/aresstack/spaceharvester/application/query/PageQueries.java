@@ -496,7 +496,7 @@ public class PageQueries {
         if (url == null || url.isBlank() || url.length() > PageBookmark.maxAddressLength(url)) {
             throw new InvalidQueryException("url fehlt oder ist zu lang");
         }
-        String address = url.trim();
+        String address = PageAddresses.normalize(url);
         Optional<PageBookmark> bookmark;
         try {
             bookmark = PageBookmark.parse(address);

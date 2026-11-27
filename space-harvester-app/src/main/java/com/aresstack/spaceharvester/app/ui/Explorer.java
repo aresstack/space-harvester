@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.knowledge.AnalyzerChoice;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.knowledge.StatementAnalysisJobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchSort;
@@ -894,8 +895,8 @@ public final class Explorer {
         });
         bindEnter(matches, this::openMatch);
         debounce.setRepeats(false);
-        filter.setToolTipText("Seitentitel in den geladenen Knoten und im Bestand finden; dient nur der "
-                + "Navigation, gesucht wird im Bereich Suche.");
+        filter.setToolTipText("Seitentitel in den geladenen Knoten und im Bestand finden, oder einen Link "
+                + "zur Seite einfügen; dient nur der Navigation, gesucht wird im Bereich Suche.");
         filter.getDocument().addDocumentListener(new DocumentListener() {
             @Override
             public void insertUpdate(DocumentEvent e) {
@@ -2183,6 +2184,11 @@ public final class Explorer {
             return;
         }
         cards.show(deck, MATCHES);
+        AppRuntime runtime = context.runtime();
+        if (SearchView.isAddress(text)) {
+            filterToAddress(runtime, id, text);
+            return;
+        }
         String needle = text.toLowerCase(Locale.ROOT);
         Map<String, Match> found = new LinkedHashMap<>();
         Enumeration<?> all = top.breadthFirstEnumeration();
@@ -2194,7 +2200,6 @@ public final class Explorer {
             }
         }
         show(found, true);
-        AppRuntime runtime = context.runtime();
         PageSearchQuery query;
         try {
             query = PageSearchQuery.of(null, List.of(), List.of(), text, null, null, null, null, null,
@@ -2224,6 +2229,39 @@ public final class Explorer {
             if (id == filterRequest) {
                 show(found, true);
                 live(runtime, id, text, sources, found);
+            }
+        });
+    }
+
+    /**
+     * Statt eines Titels eine Seitenadresse (URL, Lesezeichen, Ressourcen-ID; Angelo, 27.11.2026): dieselbe
+     * Adressauflösung wie die Suchleiste ({@link SearchView#isAddress}, {@code Workspace.resolveAddress}); die Seite
+     * steht als Treffer da, auch wenn sie noch nicht im Bestand ist (die Quelle ruft sie gezielt ab).
+     */
+    private void filterToAddress(AppRuntime runtime, int id, String address) {
+        Map<String, Match> found = new LinkedHashMap<>();
+        show(found, true);
+        if (runtime == null) {
+            show(found, false);
+            return;
+        }
+        Background.run(() -> runtime.workspace().resolveAddress(address), resolution -> {
+            if (id != filterRequest) {
+                return;
+            }
+            for (PageAddresses.Match match : resolution.matches()) {
+                found.putIfAbsent(match.sourceId() + "/" + match.pageId(), new Match(match.sourceId(),
+                        match.spaceKey(), match.pageId(), match.title(), where(match.sourceId(), match.spaceKey())));
+            }
+            show(found, false);
+            if (found.isEmpty()) {
+                note.setText("Keine Seite zu dieser Adresse" + (resolution.unavailableSources().isEmpty() ? ""
+                        : " · nicht erreichbar: " + String.join(", ", resolution.unavailableSources())));
+            }
+        }, error -> {
+            if (id == filterRequest) {
+                show(found, false);
+                note.setText("Adresse nicht auflösbar: " + error.getMessage());
             }
         });
     }

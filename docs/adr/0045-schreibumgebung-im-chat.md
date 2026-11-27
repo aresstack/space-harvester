@@ -31,6 +31,10 @@ die Bildgenerierung (`DiagramComposer`, Zeilen „Bildgenerierung – Plan“ un
 
 ### 1. Artefakte gehören zum Chat
 
+> Geändert am 27.11.2026 durch [ADR 0043](0043-projekte-als-wissensarbeitsbereich.md), Nachtrag „Chats und Artefakte
+> im Projekt“, Abschnitt F3: Gehört der Chat zu einem Projekt, ist das Projekt der Besitzer der Artefakte, und alle
+> Chats des Projekts arbeiten darauf. Ohne Projekt gilt dieser Abschnitt unverändert.
+
 Ein Chat kann beliebig viele Artefakte haben. Es gibt zwei Arten: **Dokument** (Markdown) und **Grafik** (SVG). Jedes
 Artefakt hat eine feste Kennung, einen Titel und eine Folge von Revisionen. Jede Änderung, ob von der KI oder vom
 Benutzer, ist eine neue Revision; nichts wird überschrieben, „Rückgängig“ geht Revision für Revision zurück.
@@ -186,5 +190,3 @@ des Repositorys.
 - Formatvorlagen: welche Teile einer Word-Vorlage sich mit der vorhandenen Bibliothek verlässlich übernehmen lassen
   (Kopf- und Fußzeilen mit Bildern, Abschnittswechsel), ist vor dem Bau zu prüfen.
 - Leinwand: welche vorhandene Java-Bibliothek die Bearbeitung von SVG-Elementen trägt.
-- Mit ADR 0043 gehören Artefakte künftig zum Projekt; die Ablage am Chat ist so zu schneiden, dass sie dorthin
-  umziehen kann.

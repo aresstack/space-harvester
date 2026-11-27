@@ -851,7 +851,7 @@ public final class SearchView implements View {
             // Bereich = links gewählt, auch für „Nur Fachbegriffe“; die Liste beginnt dann oben.
             searchTechnicalTerms();
         } else if (searchedText != null && searchedText.equals(query.getText().trim())) {
-            if (ADDRESS.matcher(searchedText).matches()) {
+            if (isAddress(searchedText)) {
                 search();
             } else {
                 filterTo(selection);
@@ -1969,6 +1969,16 @@ public final class SearchView implements View {
             "(?i)(https?|space-harvester|confluence)://\\S+|(confluence|files):[^\\s:/][^\\s]*/\\S+");
 
     /**
+     * Ob {@code text} eine Adresse ist, die direkt geöffnet wird ({@link #ADDRESS}), auch wenn beim Kopieren
+     * unsichtbare Zeichen oder Unicode-Bindestriche hineingeraten sind ({@link PageAddresses#normalize}). Auch der
+     * Titelfilter im Explorer nutzt das.
+     */
+    static boolean isAddress(String text) {
+        String value = PageAddresses.normalize(text);
+        return value != null && ADDRESS.matcher(value).matches();
+    }
+
+    /**
      * Öffnet eine Adresse über die Adressauflösung des Core ({@code Harvester.addresses().resolve}, #178): eine Seite
      * direkt unter Inhalte, mehrere (dieselbe Adresse in mehreren Quellen) als Treffer zur Wahl.
      */
@@ -2047,7 +2057,7 @@ public final class SearchView implements View {
             feedback.warning("Suchtext fehlt", "Ein oder mehrere Schlagwörter eingeben.");
             return;
         }
-        if (ADDRESS.matcher(text).matches()) {
+        if (isAddress(text)) {
             remember(text, scopes);
             open(runtime, text);
             return;
