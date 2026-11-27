@@ -50,4 +50,39 @@ final class HeaderLayout extends BorderLayout {
             center.setBounds(center.getX() + grow, center.getY(), center.getWidth() - grow, center.getHeight());
         }
     }
+
+    /**
+     * Hält {@code child} links in seiner Wunschbreite, auch wenn die linke Gruppe für den Anker wächst: Der Titel samt
+     * Dreieck bleibt beisammen. Wird es eng, bekommt er nur die vorhandene Breite und kürzt sich wie bisher.
+     */
+    static javax.swing.JPanel leading(javax.swing.JComponent child) {
+        javax.swing.JPanel holder = new javax.swing.JPanel(new java.awt.LayoutManager() {
+            @Override
+            public void layoutContainer(Container parent) {
+                child.setBounds(0, 0, Math.min(child.getPreferredSize().width, parent.getWidth()),
+                        parent.getHeight());
+            }
+
+            @Override
+            public java.awt.Dimension preferredLayoutSize(Container parent) {
+                return child.getPreferredSize();
+            }
+
+            @Override
+            public java.awt.Dimension minimumLayoutSize(Container parent) {
+                return child.getMinimumSize();
+            }
+
+            @Override
+            public void addLayoutComponent(String name, Component comp) {
+            }
+
+            @Override
+            public void removeLayoutComponent(Component comp) {
+            }
+        });
+        holder.setOpaque(false);
+        holder.add(child);
+        return holder;
+    }
 }

@@ -587,7 +587,7 @@ public final class MainWindow implements AppContext.Navigator {
         switcher.onSidebarToggle(this::toggleDrawer);
         com.aresstack.spaceharvester.app.ui.controls.ClickBurst.install(switcher.logo(), 5,
                 java.time.Duration.ofMillis(700), avenger::reveal);
-        west.add(switcher, BorderLayout.CENTER);
+        west.add(HeaderLayout.leading(switcher), BorderLayout.CENTER);
         navigationSlot.setOpaque(false);
         west.add(navigationSlot, BorderLayout.EAST);
         JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
