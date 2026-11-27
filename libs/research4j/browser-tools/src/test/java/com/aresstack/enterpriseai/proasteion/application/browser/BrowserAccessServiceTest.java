@@ -16,6 +16,7 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -136,5 +137,27 @@ public class BrowserAccessServiceTest {
         service.admit(internalChat, "https://other.example/");
         assertEquals(1, asked.size());
         assertEquals(java.util.Collections.singletonList("intern:other.example"), allowed);
+    }
+
+    @Test
+    public void refusesOnlyWhatTheBlockListRefusesAndNeverAsks() {
+        BrowserAccessService service = service(config(false, "example.org", "blocked.example, *.blocked.example"),
+                ApprovalDecision.Outcome.APPROVED);
+        assertTrue(service.refuses(chat, "https://blocked.example/a"));
+        assertTrue("a subdomain rule of the block list", service.refuses(chat, "https://www.blocked.example/a"));
+        assertTrue("no host, nothing to admit", service.refuses(chat, "not a url"));
+        assertFalse(service.refuses(chat, "https://example.org/a"));
+        assertFalse("an unknown site is asked about only when it is opened",
+                service.refuses(chat, "https://unknown.example/a"));
+        assertTrue(asked.isEmpty());
+    }
+
+    @Test
+    public void theDelegatingGuardRefusesEverythingUntilThePolicyIsLoaded() {
+        DelegatingBrowserAccessGuard guard = new DelegatingBrowserAccessGuard();
+        assertTrue(guard.refuses(chat, "https://example.org/"));
+        guard.delegateTo(service(config(true, null, "blocked.example"), ApprovalDecision.Outcome.REJECTED));
+        assertFalse(guard.refuses(chat, "https://example.org/"));
+        assertTrue(guard.refuses(chat, "https://blocked.example/"));
     }
 }

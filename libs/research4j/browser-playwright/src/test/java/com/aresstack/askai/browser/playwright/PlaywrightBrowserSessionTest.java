@@ -1174,4 +1174,33 @@ public class PlaywrightBrowserSessionTest {
         assertTrue(filter.test("https://example.org/page"));
         assertTrue("in-page data resources have no network target", filter.test("data:text/plain,x"));
     }
+
+    @Test
+    public void theChatSearchLeavesOutEnginesAndHitsTheBrowserPolicyRefuses() throws Exception {
+        PlaywrightBrowserSession session = session(new FakeDriver(), UrlSafetyPolicy.allowingPrivateNetworks(),
+                BrowserLimits.defaults(), null);
+        java.util.function.Predicate<String> blockList = url -> url.contains("bing.com")
+                || url.contains("refused.example");
+        List<String> both = java.util.Arrays.asList("bing", "duckduckgo");
+
+        assertEquals(java.util.Collections.singletonList("duckduckgo"),
+                PlaywrightChatConnection.admittedEngines(session, both, blockList));
+        assertEquals("nothing refused: the call stays as it was", both,
+                PlaywrightChatConnection.admittedEngines(session, both, url -> false));
+        try {
+            PlaywrightChatConnection.admittedEngines(session, java.util.Collections.singletonList("bing"), blockList);
+            fail("every engine refused: nothing is searched");
+        } catch (com.aresstack.enterpriseai.browser.api.BrowserException expected) {
+            assertEquals(com.aresstack.enterpriseai.browser.api.BrowserException.Kind.BLOCKED, expected.kind());
+        }
+
+        WebSearchResult result = new WebSearchResult(java.util.Arrays.asList(
+                new com.aresstack.askai.browser.WebSearchItem("r1", "Kept", "https://kept.example/a", "a"),
+                new com.aresstack.askai.browser.WebSearchItem("r2", "Refused", "https://www.refused.example/b", "b")),
+                java.util.Collections.singletonList("html.duckduckgo.com"));
+        WebSearchResult shown = PlaywrightChatConnection.withoutRefusedHits(result, blockList);
+        assertEquals(1, shown.getItems().size());
+        assertEquals("https://kept.example/a", shown.getItems().get(0).getUrl());
+        assertEquals(result.getProviderHosts(), shown.getProviderHosts());
+    }
 }
