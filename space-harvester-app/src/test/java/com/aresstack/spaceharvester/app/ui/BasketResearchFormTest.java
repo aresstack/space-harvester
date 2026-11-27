@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.knowledge4j.scope.Fence;
+import com.aresstack.spaceharvester.app.research.BookFields;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -26,6 +27,18 @@ class BasketResearchFormTest {
     }
 
     @Test
+    void dieLaengeKommtAlsZahlMitEinheitZurueckUndZaehltIntern() {
+        BasketResearchForm form = BasketResearchForm.book().prefill(
+                com.aresstack.spaceharvester.app.research.BookNotes.of(Fence.of("M"), 2000).withLength(5, "PAGES"));
+
+        assertThat(form.length.amount()).isEqualTo(5);
+        assertThat(form.length.unit()).isEqualTo(com.aresstack.spaceharvester.app.ui.controls.LengthField.Unit.PAGES);
+        assertThat(form.length.wordsPerPage()).as("die Umrechnung dieses Buchs").isEqualTo(400);
+        assertThat(form.targetWords()).isEqualTo(2000);
+        assertThat(new BasketResearchForm().targetWords()).as("Korb füllen kennt keine Länge").isZero();
+    }
+
+    @Test
     void ohneAuftragStartetNichts() {
         BasketResearchForm form = new BasketResearchForm();
         form.excluded.setText("Vereinsfeste");
@@ -36,14 +49,17 @@ class BasketResearchFormTest {
     @Test
     void derAuftragWaechstMitDemFensterUndErweitertZeigtDieFelder() {
         BasketResearchForm form = BasketResearchForm.book();
+        assertThat(form.targets().keySet()).containsExactly(BookFields.Field.MISSION, BookFields.Field.QUESTIONS,
+                BookFields.Field.EDGE, BookFields.Field.INCLUDED, BookFields.Field.EXCLUDED);
+        assertThat(new BasketResearchForm().targets()).doesNotContainKey(BookFields.Field.QUESTIONS);
         javax.swing.JComponent body = form.body("Streuobst");
-        body.setSize(800, 600);
+        body.setSize(800, 900);
         layout(body);
-        int closed = form.mission.getParent().getParent().getHeight();
-        assertThat(closed).isGreaterThan(300);
+        java.awt.Component mission = form.mission.getParent().getParent();
+        assertThat(mission.getHeight()).isGreaterThan(mission.getMinimumSize().height);
 
         button(body, "Erweitert").doClick();
-        body.setSize(800, 900);
+        body.setSize(800, 1300);
         layout(body);
 
         java.awt.Component edge = form.edge.getParent().getParent();

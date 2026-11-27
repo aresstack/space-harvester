@@ -78,15 +78,33 @@ final class BookFlow {
         return data == null ? Optional.empty() : BookNotes.load(data, folderId);
     }
 
-    /** Merkt den Weidezaun am Ordner; die Wahl des Lesers bleibt. Scheitert das, läuft der Auftrag trotzdem. */
-    static void rememberFence(AppContext context, String folderId, Fence fence, int targetWords) {
+    /**
+     * Merkt Weidezaun, Stichpunkte und Fragen des Formulars am Ordner; die Wahl des Lesers bleibt. Scheitert das, läuft
+     * der Auftrag trotzdem.
+     */
+    static void rememberFence(AppContext context, String folderId, Fence fence, int targetWords,
+                              BasketResearchForm form) {
         Path data = dataDirectory(context);
         if (data == null) {
             return;
         }
         BookNotes notes = BookNotes.load(data, folderId).map(old -> old.withFence(fence, targetWords))
                 .orElseGet(() -> BookNotes.of(fence, targetWords));
-        save(data, folderId, notes);
+        BookNotes updated = notes.withIdeas(form.ideas(), form.isBook() ? form.questions() : notes.questions());
+        save(data, folderId, form.isBook() ? updated.withLength(form.length.amount(), form.length.unit().name()) : updated);
+    }
+
+    /** Was der KI-Knopf des Formulars braucht; leer ohne KI-Dienst oder Chat-Modell (dann sagt der Knopf das). */
+    static BasketResearchForm.AiAccess aiAccess(AppContext context) {
+        var runtime = context.runtime();
+        var ai = context.settings() == null ? null : context.settings().ai();
+        String model = ai == null ? null : ai.chatModel();
+        var chat = runtime == null ? null : runtime.workspace().aiChat();
+        if (chat == null || model == null || model.isBlank()) {
+            return null;
+        }
+        return new BasketResearchForm.AiAccess(chat, model, capacity(context),
+                runtime.workspace().glossary().orElse(null));
     }
 
     /** Ob „Begriffe wählen …“ für den Ordner eine fertige Vorbereitung hat. */
@@ -103,14 +121,14 @@ final class BookFlow {
         if (chat.isEmpty()) {
             return;
         }
-        BasketResearchForm form = BasketResearchForm.book();
+        BasketResearchForm form = BasketResearchForm.book().withAi(aiAccess(context));
         Optional<BookNotes> notes = notes(folderId);
-        notes.ifPresent(found -> form.prefill(found.fence(), found.targetWords()));
+        notes.ifPresent(form::prefill);
         Optional<Fence> fence = form.ask(parent, name);
         if (fence.isEmpty()) {
             return;
         }
-        rememberFence(context, folderId, fence.get(), form.targetWords());
+        rememberFence(context, folderId, fence.get(), form.targetWords(), form);
         var workspace = context.runtime().workspace();
         var ai = context.settings().ai();
         int contextTokens = ai.contextTokens() == null ? 0 : ai.contextTokens();
@@ -120,7 +138,8 @@ final class BookFlow {
                 contextTokens > 0 ? EvidenceBundleJudge.Options.defaults().withContextTokens(contextTokens) : null,
                 null);
         BookJob.Session session = BookJob.session(chat.get(), new WorkspacePageStock(workspace, null),
-                new FavoritesBasket(favorites, folderId, context::sourceTitle), folderId, name, fence.get(), settings);
+                new FavoritesBasket(favorites, folderId, context::sourceTitle), folderId, name, fence.get(),
+                form.questions(), settings);
         sessions.put(folderId, session);
         workspace.startBook(name, BookJob.prepare(session, done -> SwingUtilities.invokeLater(() -> prepared(done))));
     }

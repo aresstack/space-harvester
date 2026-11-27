@@ -385,6 +385,10 @@ public final class CommandDeck {
         } else if (sent == DeckArea.NDV) {
             extra = new com.aresstack.spaceharvester.app.chat.NdvChatTools(ndv.selected(), ndv::selected);
             rules = com.aresstack.spaceharvester.app.chat.NdvChatTools.rules();
+        } else if (sent == DeckArea.EAKTE) {
+            com.aresstack.spaceharvester.application.extraction.DocumentRef document = eakte.shownDocument();
+            extra = new com.aresstack.spaceharvester.app.chat.DeadlineChatTools(
+                    () -> stillShown.getAsBoolean() ? document : null, eakte.analyses());
         } else if (sent == DeckArea.FILES) {
             String folder = files.browser().location().orElse(null);
             extra = new com.aresstack.spaceharvester.app.chat.FilesChatTools(files.browser().source(), folder,
@@ -454,7 +458,8 @@ public final class CommandDeck {
             case FILES -> java.util.List.of(action("Ordner zusammenfassen",
                             "Fasse zusammen, was in diesem Ordner liegt und worum es in den Dateien geht."),
                     action("Auswahl zusammenfassen", "Fasse die ausgewählte Datei zusammen."));
-            case EAKTE -> java.util.List.of(action("Ansicht erklären", "Erkläre mir, was ich gerade sehe."));
+            case EAKTE -> java.util.List.of(action("Ansicht erklären", "Erkläre mir, was ich gerade sehe."),
+                    action("Fristen auswerten", "Werte die Fristen des offenen Dokuments aus."));
         });
     }
 

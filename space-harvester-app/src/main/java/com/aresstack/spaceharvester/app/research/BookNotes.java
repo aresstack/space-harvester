@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.research;
 
 import com.aresstack.knowledge4j.scope.Fence;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
@@ -22,12 +23,23 @@ import java.util.Optional;
  * Mal das Sieb. Eine Datei je Ordner im Datenordner der App ({@code app/books/<Ordner>.json}); geschrieben wird nur,
  * wenn der Benutzer „Korb füllen“ oder „Buch schreiben“ startet.
  *
+ * Dazu Idee und Stichpunkte des Lesers und seine Fragen an das Buch (Pflichtfragen neben dem Weidezaun). Die
+ * Stichpunkte sind Inhalt des Lesers: sie bleiben in dieser Datei und gehen nie in ein Protokoll.
+ *
  * @param targetWords gewünschte Länge in Wörtern; 0 = nach den Belegen
+ * @param ideas       Idee und Stichpunkte, aus denen die KI auf Klick die Felder füllt
+ * @param questions   Fragen an das Buch, eine je Eintrag
+ * @param lengthAmount die Länge, wie der Leser sie eingab (0 = wie {@code targetWords} in Wörtern)
+ * @param lengthUnit   ihre Einheit als Name der Auswahl im Dialog; leer = Wörter
  */
 public record BookNotes(String mission, String edge, List<String> included, List<String> excluded, int targetWords,
-                        Map<String, List<String>> chosen, List<String> unchosen, List<String> excludedFields) {
+                        Map<String, List<String>> chosen, List<String> unchosen, List<String> excludedFields,
+                        String ideas, List<String> questions, int lengthAmount,
+                        String lengthUnit) {
 
-    private static final ObjectMapper JSON = JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build();
+    /** Fehlende Zahlen in älteren Dateien (z. B. ohne {@code lengthAmount}) gelten als 0 statt als unlesbar. */
+    private static final ObjectMapper JSON = JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT)
+            .disable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES).build();
     static final String FOLDER = "books";
 
     public BookNotes {
@@ -39,6 +51,16 @@ public record BookNotes(String mission, String edge, List<String> included, List
         chosen = chosen == null ? Map.of() : Map.copyOf(chosen);
         unchosen = unchosen == null ? List.of() : List.copyOf(unchosen);
         excludedFields = excludedFields == null ? List.of() : List.copyOf(excludedFields);
+        ideas = ideas == null ? "" : ideas;
+        questions = questions == null ? List.of() : List.copyOf(questions);
+        lengthAmount = Math.max(0, lengthAmount);
+        lengthUnit = lengthUnit == null ? "" : lengthUnit;
+    }
+
+    /** Ohne Stichpunkte und Fragen (Notizen von vor dem 27.11.2026). */
+    public BookNotes(String mission, String edge, List<String> included, List<String> excluded, int targetWords,
+                     Map<String, List<String>> chosen, List<String> unchosen, List<String> excludedFields) {
+        this(mission, edge, included, excluded, targetWords, chosen, unchosen, excludedFields, null, null, 0, null);
     }
 
     /** Ohne Wahl des Lesers, nur der Weidezaun. */
@@ -53,13 +75,26 @@ public record BookNotes(String mission, String edge, List<String> included, List
 
     /** Derselbe Weidezaun mit einer neuen Wahl des Lesers. */
     public BookNotes withChoice(Map<String, List<String>> chosen, List<String> unchosen, List<String> excludedFields) {
-        return new BookNotes(mission, edge, included, excluded, targetWords, chosen, unchosen, excludedFields);
+        return new BookNotes(mission, edge, included, excluded, targetWords, chosen, unchosen, excludedFields, ideas,
+                questions, lengthAmount, lengthUnit);
     }
 
     /** Ein neuer Weidezaun; die Wahl des Lesers bleibt. */
     public BookNotes withFence(Fence fence, int targetWords) {
         return new BookNotes(fence.getMission(), fence.getEdge(), fence.getIncluded(), fence.getExcluded(), targetWords,
-                chosen, unchosen, excludedFields);
+                chosen, unchosen, excludedFields, ideas, questions, lengthAmount, lengthUnit);
+    }
+
+    /** Die Länge, wie der Leser sie eingab (Zahl und Einheit); alles andere bleibt. */
+    public BookNotes withLength(int amount, String unit) {
+        return new BookNotes(mission, edge, included, excluded, targetWords, chosen, unchosen, excludedFields, ideas,
+                questions, amount, unit);
+    }
+
+    /** Neue Stichpunkte und Fragen; Weidezaun und Wahl des Lesers bleiben. */
+    public BookNotes withIdeas(String ideas, List<String> questions) {
+        return new BookNotes(mission, edge, included, excluded, targetWords, chosen, unchosen, excludedFields, ideas,
+                questions, lengthAmount, lengthUnit);
     }
 
     /** Die Notizen des Ordners; leer, wenn es keine gibt oder die Datei nicht lesbar ist. */
