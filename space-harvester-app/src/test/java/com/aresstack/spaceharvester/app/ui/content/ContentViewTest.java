@@ -80,7 +80,7 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         onEdt(() -> {
             view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
-            detail.tabs().select("Analysen");
+            detail.analysesShown(true);
             return null;
         });
         Thread.sleep(2000);
@@ -129,14 +129,14 @@ class ContentViewTest {
 
         onEdt(() -> {
             view.folder(top, "Betrieb");
-            detail.tabs().select("Analysen");
+            detail.analysesShown(true);
             return null;
         });
 
         assertThat(onEdt(() -> detail.folderSubfolders().isSelected())).isTrue();
         assertThat(onEdt(() -> detail.folderSubfolders().isEnabled())).isTrue();
         // Unter „Analysen“ trägt die Leiste die Unterreiter des Stands (Angelo 24.11.2026), die Checkbox rechts daneben.
-        assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.standingFoot());
+        assertThat(onEdt(() -> detail.analysesFoot().getComponent(0))).isSameAs(detail.standingFoot());
         assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.standingFoot())))
                 .isTrue();
         assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.standing().tabs().button("Aussagen"),
@@ -165,14 +165,13 @@ class ContentViewTest {
             view.selection(new ExportPanel.Selection.Node("handbuch", null, null, "handbuch"));
             return null;
         });
-        assertThat(onEdt(() -> detail.footTools().getComponent(0))).isSameAs(detail.standingFoot());
+        assertThat(onEdt(() -> detail.analysesFoot().getComponent(0))).isSameAs(detail.standingFoot());
         // Rechts in der Ecke steht dann nur die ?-Hilfe des Reiters, nicht die Checkbox des Ordners.
         assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.standingFoot())))
                 .isFalse();
-        // Für den Fehlerfall, versteckt hinter dem Dreieck: die Kennzahlen des Knotens neu aufbauen.
-        assertThat(onEdt(() -> detail.moreButton().isEnabled())).isTrue();
-        assertThat(onEdt(() -> allMenuEntries(detail)))
-                .containsExactly(PageDetailPanel.REBUILD_COUNTS, "—", PageDetailPanel.NEW_EXPORT);
+        // Für den Fehlerfall, versteckt hinter dem Dreieck der Seitenleiste: die Kennzahlen des Knotens neu aufbauen.
+        assertThat(onEdt(() -> detail.analysesMenu().stream().map(javax.swing.JMenuItem::getText).toList()))
+                .containsExactly(PageDetailPanel.REBUILD_COUNTS);
     }
 
     @Test
@@ -397,7 +396,7 @@ class ContentViewTest {
         PageDetailPanel detail = view.detail();
         // #499: Hauptreiter und darunter die zweite Reiterzeile „Analysen“; kein bisheriger Reiter fehlt.
         assertThat(onEdt(() -> detail.tabs().names()))
-                .containsExactly("Leseansicht", "Podcast-Ansicht", "Anhänge", "Analysen", "Info", "Export");
+                .containsExactly("Leseansicht", "Podcast-Ansicht", "Anhänge", "Info", "Export");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
                 .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph", "Beziehungen");
         // „Info“ hat die Eigenschaften als ersten Unterreiter (Angelo, 19.11.2026); „Beziehungen“ steht unter
@@ -418,7 +417,7 @@ class ContentViewTest {
                 tips.add(button.getToolTipText());
             }
             return tips;
-        })).containsExactly("Leseansicht", "Podcast-Ansicht", "Anhänge", "Analysen", "Info", "Export");
+        })).containsExactly("Leseansicht", "Podcast-Ansicht", "Anhänge", "Info", "Export");
         assertThat(onEdt(() -> detail.tabs().getComponentCount())).as("nur noch der Inhalt").isEqualTo(1);
         // „Export“ zeigt seine Karte auch ohne gezeigte Seite (Angelo, 13.11.2026): Stand und Ausgabe hängen an der
         // Auswahl links, nicht an der Seite; zurück auf „Leseansicht“ steht wieder der Hinweis.
@@ -452,9 +451,10 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.sourceProperties().showsAll())).isFalse();
         assertThat(onEdt(view::crumbs)).isEqualTo("handbuch");
         // Der Stand (ADR 0032) hat kein eigenes Symbol: „Analysen“ zeigt ihn, solange links keine Seite gewählt ist
-        // (Quelle, Space, Wissensquellen-Kopf), mit Hilfe als ?-Knopf oben rechts (Angelo 17.11.2026).
+        // (Quelle, Space, Wissensquellen-Kopf). Seit 27.11.2026 in der Seitenleiste rechts; die Mitte bleibt, wie sie ist.
         onEdt(() -> {
-            detail.tabs().select("Analysen");
+            detail.tabs().select("Leseansicht");
+            detail.analysesShown(true);
             return null;
         });
         assertThat(onEdt(() -> detail.showsStanding())).isTrue();
@@ -472,20 +472,20 @@ class ContentViewTest {
                 .isEqualTo("Zuerst lesen");
         assertThat(onEdt(() -> detail.overviewTerms().showsSelection())).isTrue();
         assertThat(onEdt(() -> detail.overviewTerms().title())).isEqualTo("Begriffe in handbuch");
-        assertThat(onEdt(() -> detail.selectedTab())).isEqualTo(PageDetailPanel.OVERVIEW_TERMS);
+        assertThat(onEdt(() -> detail.analysesTab())).isEqualTo(PageDetailPanel.OVERVIEW_TERMS);
         onEdt(() -> {
             detail.standing().tabs().select("Aussagen");
             return null;
         });
-        assertThat(onEdt(() -> detail.selectedTab())).isEqualTo("Stand");
+        assertThat(onEdt(() -> detail.analysesTab())).isEqualTo("Stand");
         // Die ?-Hilfe steht unten rechts in der Leiste der Reiter, nicht mehr oben (Angelo 27.11.2026).
-        assertThat(onEdt(() -> shownHelp(detail.footTools()))).isEqualTo(1);
+        assertThat(onEdt(() -> shownHelp(detail.analysesFoot()))).isEqualTo(1);
         // Fachglossar: seine Werkzeuge oben rechts, der Papierkorb des Stands nicht; Stand in der Statuszeile getrennt.
         onEdt(() -> {
             detail.standing().tabs().select("Fachglossar");
             return null;
         });
-        assertThat(onEdt(() -> detail.selectedTab())).isEqualTo(PageDetailPanel.OVERVIEW_GLOSSARY);
+        assertThat(onEdt(() -> detail.analysesTab())).isEqualTo(PageDetailPanel.OVERVIEW_GLOSSARY);
         assertThat(onEdt(() -> detail.overviewGlossary().addButton().isVisible())).isTrue();
         assertThat(onEdt(() -> detail.standing().deleteAnalysesButton().isVisible())).isFalse();
         onEdt(() -> {
@@ -517,7 +517,7 @@ class ContentViewTest {
         });
         assertThat(onEdt(() -> detail.showsStanding())).isFalse();
         assertThat(onEdt(() -> detail.standing().isVisible())).isFalse();
-        assertThat(onEdt(() -> detail.selectedTab())).isEqualTo("Absätze");
+        assertThat(onEdt(() -> detail.analysesTab())).isEqualTo("Absätze");
         // Der Wissensquellen-Kopf: wieder der Stand.
         onEdt(() -> {
             view.selection(ExportPanel.Selection.ALL);
@@ -526,7 +526,7 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.showsStanding())).isTrue();
         // Ohne Seite (BG2b): die Beziehungen der Auswahl als Reiter „Beziehungen“ beim Stand unter „Analysen“.
         onEdt(() -> {
-            detail.tabs().select("Analysen");
+            detail.analysesShown(true);
             detail.standing().tabs().select("Beziehungen");
             return null;
         });
@@ -716,7 +716,7 @@ class ContentViewTest {
     }
 
     private static javax.swing.Icon[] barIcons(PageDetailPanel detail) {
-        return java.util.stream.Stream.of("Leseansicht", "Podcast-Ansicht", "Anhänge", "Analysen", "Info", "Export").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
+        return java.util.stream.Stream.of("Leseansicht", "Podcast-Ansicht", "Anhänge", "Info", "Export").map(name -> detail.tabs().button(name).getIcon()).toArray(javax.swing.Icon[]::new);
     }
 
     @Test
@@ -851,11 +851,11 @@ class ContentViewTest {
         await(() -> detail.shownPage() != null);
         assertThat(onEdt(() -> detail.references().hint())).as("Unterreiter verdeckt").isBlank();
         onEdt(() -> {
-            detail.tabs().select("Analysen");
+            detail.analysesShown(true);
             return null;
         });
         assertThat(onEdt(() -> detail.references().hint())).isNotBlank();
-        assertThat(onEdt(detail::selectedTab)).isEqualTo("Verweise");
+        assertThat(onEdt(detail::analysesTab)).isEqualTo("Verweise");
 
         // Haupt- und Unterreiter bleiben beim Laden der nächsten Seite; der sichtbare Unterreiter lädt nach.
         onEdt(() -> {
@@ -864,17 +864,17 @@ class ContentViewTest {
         });
         await(() -> detail.shownPage() != null && pages.get(1).equals(detail.shownPage().header().metadata().pageId()));
         await(() -> !detail.references().hint().isBlank());
-        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Analysen");
+        assertThat(onEdt(() -> detail.analysesShown())).isTrue();
         assertThat(onEdt(() -> detail.analysisTabs().selected())).isEqualTo("Verweise");
 
-        // Ein Unterreiter über seinen Namen wählt auch den Hauptreiter „Analysen“.
+        // Ein Reiter der Analysen über seinen Namen zeigt die Analysen in der Seitenleiste; die Mitte bleibt.
         onEdt(() -> {
             detail.selectTab("Podcast-Ansicht");
             detail.selectTab("Absätze");
             return null;
         });
-        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Analysen");
-        assertThat(onEdt(detail::selectedTab)).isEqualTo("Absätze");
+        assertThat(onEdt(() -> detail.tabs().selected())).isEqualTo("Podcast-Ansicht");
+        assertThat(onEdt(detail::analysesTab)).isEqualTo("Absätze");
     }
 
     @Test

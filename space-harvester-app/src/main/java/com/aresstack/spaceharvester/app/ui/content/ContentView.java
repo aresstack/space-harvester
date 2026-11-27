@@ -399,6 +399,16 @@ public final class ContentView implements View {
 
     private ChatSidebar chatSidebar;
 
+    /** Die Analysen als Seitenleiste rechts; das Hauptfenster stellt sie zwischen Chat und Aufträge. */
+    public AnalysesSidebar analysesSidebar() {
+        if (analysesSidebar == null) {
+            analysesSidebar = new AnalysesSidebar(detail);
+        }
+        return analysesSidebar;
+    }
+
+    private AnalysesSidebar analysesSidebar;
+
     /** Ob die Reiter ihre Auswahl zeigen: nur, solange die Mitte die Seitenansicht zeigt ({@link PillTabs#showSelection}). */
     public void tabsActive(boolean active) {
         detail.tabs().showSelection(active);
