@@ -81,6 +81,11 @@ public final class Explorer {
     private static final String TREE = "tree";
     private static final String MATCHES = "matches";
     private static final String FAVORITES = "favorites";
+    private static final String ARTIFACTS = "artifacts";
+    /** Die Hälften der Wippe im Kopf (ADR 0047 §5, Angelo 27.11.2026). */
+    static final String SOURCES_TAB = "Wissensquellen";
+    static final String ARTIFACTS_TAB = "Artefakte";
+    static final String ARTIFACTS_TIP = "Die Dokumente, Grafiken und Bücher des aktiven Projekts";
     static final String FAVORITE = "Favorit";
     static final String UNFAVORITE = "Favorit entfernen";
     static final String ONLY_FAVORITES = "Nur Favoriten zeigen";
@@ -542,6 +547,15 @@ public final class Explorer {
     private final com.aresstack.spaceharvester.app.ui.controls.SideHead head =
             new com.aresstack.spaceharvester.app.ui.controls.SideHead("Wissensquellen", filter);
     private final JLabel heading = head.heading();
+    /**
+     * Die Wippe „Wissensquellen | Artefakte“ ist zugleich die Überschrift der Leiste, wie „Aufträge | Hintergrund“ in
+     * den Aufträgen (Angelo 27.11.2026). Unter „Artefakte“ steht statt des Baums die Liste der globalen Artefakte.
+     */
+    final com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle view =
+            new com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle();
+    private final ArtifactList artifacts;
+    /** Ob beim Drücken auf „Wissensquellen“ diese Hälfte schon gewählt war: dann wählt der Klick alles, wie bisher. */
+    private boolean sourcesBeforePress;
     /** Rechts neben der Überschrift, tut dasselbe wie der Klick auf sie: zeigt, dass man hier wählen kann. */
     private final IconButton selectAll = new IconButton(Glyph.SELECT_ALL, ALL_TIP);
     /** Rechts von „Alles auswählen“: das Bestandszeichen über alle Quellen, in der Spalte der Zeilen. */
@@ -733,6 +747,7 @@ public final class Explorer {
     public Explorer(AppContext context) {
         this.context = context;
         this.favorites = new FavoritesView(context, this::selectedItem, sourceId -> reveal(sourceId, null));
+        this.artifacts = new ArtifactList(context);
         this.states = new TreeStates(context, this::statesChanged);
         states.onSpaceChanged(this::spaceStructureChanged);
         tree.setRootVisible(false);
@@ -938,6 +953,7 @@ public final class Explorer {
         deck.add(treeScroll, TREE);
         deck.add(matchScroll, MATCHES);
         deck.add(favorites.component(), FAVORITES);
+        deck.add(artifacts.component(), ARTIFACTS);
         context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(this::favoritesChanged));
         root.setOpaque(false);
         // Kopf wie in der Quellenverwaltung: Comic-Überschrift, darunter das Filterfeld.
@@ -995,6 +1011,34 @@ public final class Explorer {
         };
         heading.addMouseListener(chooseAll);
         title.addMouseListener(chooseAll);
+        // Die Wippe steht an Stelle der Überschrift; ein Klick auf das schon gewählte „Wissensquellen“ wählt wie
+        // bisher die Überschrift alle Wissensquellen.
+        view.segment(SOURCES_TAB).segment(ARTIFACTS_TAB);
+        view.button(SOURCES_TAB).setToolTipText(ALL_TIP);
+        view.button(ARTIFACTS_TAB).setToolTipText(ARTIFACTS_TIP);
+        view.button(SOURCES_TAB).addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent event) {
+                sourcesBeforePress = SOURCES_TAB.equals(view.selected());
+            }
+        });
+        view.button(SOURCES_TAB).addActionListener(e -> {
+            if (sourcesBeforePress) {
+                selectAll();
+            }
+            sourcesBeforePress = false;
+        });
+        view.onSelect(tab -> showArtifacts(ARTIFACTS_TAB.equals(tab)));
+        JPanel toggleRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+        toggleRow.setOpaque(false);
+        toggleRow.add(view);
+        title.remove(heading);
+        title.add(toggleRow, BorderLayout.CENTER);
+        artifacts.onNote(text -> {
+            if (artifactsShown()) {
+                note.setText(text);
+            }
+        });
         head.addMouseListener(chooseAll);
         root.add(head, BorderLayout.NORTH);
         root.add(deck, BorderLayout.CENTER);
@@ -1043,6 +1087,7 @@ public final class Explorer {
         if (target == null) {
             return;
         }
+        showArtifacts(false);
         cards.show(deck, TREE);
         // Fehler bis 23.11.2026: Beim Zuklappen wanderte die Auswahl auf den zugeklappten Vorfahren; der
         // Auswahl-Listener (nur der Umfang war stumm) zeigte dessen Ansicht in der Mitte, die meldete keine Seite mehr,
@@ -1192,7 +1237,7 @@ public final class Explorer {
     }
 
     private void paintHead() {
-        head.setOpaque(global);
+        head.setOpaque(global && !artifactsShown());
         head.setBackground(Comic.YELLOW);
         heading.setForeground(global ? Comic.INK : Comic.MUTED);
         head.repaint();
@@ -2202,6 +2247,10 @@ public final class Explorer {
     private void runFilter() {
         String text = filter.getText().trim();
         int id = ++filterRequest;
+        if (artifactsShown()) {
+            artifacts.filter(text);
+            return;
+        }
         if (text.isEmpty()) {
             cards.show(deck, onlyFavorites ? FAVORITES : TREE);
             note.setText(" ");
@@ -2750,6 +2799,54 @@ public final class Explorer {
         return where(sourceId, null);
     }
 
+    /**
+     * Wechselt zwischen dem Baum der Wissensquellen und der Liste der Artefakte (ADR 0047 §5). Unter „Artefakte“ gelten
+     * Filterfeld und Fußleiste der Liste; die Knöpfe des Baums sind dann ausgeblendet.
+     */
+    void showArtifacts(boolean shown) {
+        if (shown != ARTIFACTS_TAB.equals(view.selected())) {
+            view.select(shown ? ARTIFACTS_TAB : SOURCES_TAB);
+            return;
+        }
+        for (JComponent part : new JComponent[] {selectAll, allBadge, collapseAll, showCurrent, favoritesOnly}) {
+            part.setVisible(!shown);
+        }
+        favorites.newFolderButton().setVisible(!shown && onlyFavorites);
+        head.setOpaque(!shown && global);
+        head.repaint();
+        if (shown) {
+            note.setText(" ");
+            cards.show(deck, ARTIFACTS);
+            artifacts.reload();
+            artifacts.filter(filter.getText().trim());
+        } else {
+            note.setText(" ");
+            runFilter();
+            if (filter.getText().trim().isEmpty()) {
+                showOnlyFavorites(onlyFavorites);
+            }
+        }
+    }
+
+    /** Ob links gerade die Artefakte stehen. */
+    boolean artifactsShown() {
+        return ARTIFACTS_TAB.equals(view.selected());
+    }
+
+    /**
+     * Verbindet die Liste der Artefakte mit dem Speicher des Chats (derselbe, damit jede Änderung ankommt) und mit dem,
+     * was ein Klick öffnet: das Artefakt in der Mitte.
+     */
+    public void artifacts(com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore store,
+                          Consumer<String> open) {
+        artifacts.connect(store, open);
+    }
+
+    /** Für Tests: die Liste der Artefakte. */
+    ArtifactList artifactList() {
+        return artifacts;
+    }
+
     /** Umschalter unten rechts: nur die Favoriten als Liste (Stern gefüllt) oder der ganze Baum (Umriss). */
     void showOnlyFavorites(boolean only) {
         onlyFavorites = only;
@@ -2770,7 +2867,7 @@ public final class Explorer {
 
     private void favoritesChanged() {
         boolean empty = favorites.reload();
-        if (onlyFavorites && filter.getText().trim().isEmpty()) {
+        if (onlyFavorites && filter.getText().trim().isEmpty() && !artifactsShown()) {
             note.setText(empty ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
         }
         tree.repaint();

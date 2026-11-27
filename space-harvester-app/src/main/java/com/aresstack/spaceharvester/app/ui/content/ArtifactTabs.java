@@ -36,10 +36,10 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
     static final String CLOSE = "Reiter schließen (auch Mittelklick auf den Reiter)";
     static final String UNDO = "Letzte Änderung rückgängig machen";
     static final String DELETE = "Artefakt löschen (bis zum nächsten Start im ▾-Menü wiederherstellbar)";
-    static final String DELETE_TITLE = "Artefakt löschen";
-    /** Die Rückfrage vor dem Löschen; „wirklich“ Ja/Nein wie beim Chat. */
+    static final String DELETE_TITLE = com.aresstack.spaceharvester.app.ui.Texts.ARTIFACT_DELETE_TITLE;
+
     static String deleteQuestion(String title) {
-        return "„" + title + "“ wirklich löschen? Alle Chats des Projekts sehen es dann nicht mehr.";
+        return com.aresstack.spaceharvester.app.ui.Texts.artifactDeleteQuestion(title);
     }
     static final String EXPORT_AS = "Exportieren als %s (Ablage im Ausgabeordner)";
     static final String CLOSE_EXPORT = "Reiter schließen; der Auftrag läuft weiter (auch Mittelklick)";

@@ -328,6 +328,11 @@ public final class MainWindow implements AppContext.Navigator {
         explorer.onSelection(content::selection);
         // Ein Favoriten-Ordner wählt die Sammlung über die eine Auflösung Ordner → Wurzeln (ADR 0034).
         explorer.onFolder(content::folder);
+        // Die Liste „Artefakte“ links (ADR 0047 §5): derselbe Speicher wie der Chat; ein Klick öffnet in der Mitte.
+        explorer.artifacts(content.artifactStore(), id -> {
+            show(AppContext.Section.CONTENT);
+            content.openArtifact(id);
+        });
         searchView.onSubmit(() -> show(AppContext.Section.SEARCH));
         // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
         content.onPosition(position -> {
