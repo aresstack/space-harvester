@@ -192,8 +192,10 @@ public final class ChatTurn {
     private final Workspace workspace;
     /** Zeichnet Schaubilder für {@value ModelChatTools#DIAGRAM}; {@code null}: kein solches Werkzeug. */
     private volatile ModelChatTools.Diagrams diagrams;
-    /** Was unter der Antwort stehen soll (Schaubilder), in der Reihenfolge der Werkzeugaufrufe. */
-    private final List<String> appendix = java.util.Collections.synchronizedList(new ArrayList<>());
+    /** Was unter der Antwort stehen soll (Schaubilder), je Aufruf; ausgegeben in der Reihenfolge der Aufrufe. */
+    private final Map<String, String> appendix = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Die Kennungen aller Werkzeugaufrufe dieses Turns in der Reihenfolge, in der das Modell sie verlangt hat. */
+    private final List<String> callOrder = new java.util.concurrent.CopyOnWriteArrayList<>();
     private ChangeLogReader changeLog;
     private final AiChat port;
     private final String model;
@@ -995,6 +997,7 @@ public final class ChatTurn {
 
     /** Führt die Aufrufe auf eigenem Thread aus: nie auf dem Strom-Thread des Adapters und nie auf dem EDT. */
     private void startTools(List<AiChat.Message> messages, String text, List<AiChat.ToolCall> calls, int round) {
+        calls.forEach(call -> callOrder.add(call.id()));
         Thread worker = new Thread(() -> runTools(messages, text, calls, round), "chat-turn-tools");
         worker.setDaemon(true);
         worker.start();
@@ -1494,15 +1497,18 @@ public final class ChatTurn {
 
     /** Die Werkzeuge {@code base} samt denen der Spezialmodelle ({@link ModelChatTools}). */
     private ChatToolset withModelTools(ChatToolset base) {
-        return ModelChatTools.with(base, diagrams, appendix::add);
+        return ModelChatTools.with(base, diagrams, appendix::put);
     }
 
     private String drainAppendix() {
-        synchronized (appendix) {
-            String all = String.join("", appendix);
-            appendix.clear();
-            return all;
+        StringBuilder all = new StringBuilder();
+        for (String id : callOrder) {
+            String block = appendix.remove(id);
+            if (block != null) {
+                all.append(block);
+            }
         }
+        return all.toString();
     }
 
     /** Die Werkzeuge {@code base} samt den Browser-Werkzeugen, wenn die Websuche an ist. */
