@@ -113,7 +113,7 @@ public final class PageDetailPanel extends JPanel {
     private static final String PROPERTIES = "Eigenschaften";
     private static final String ATTACHMENTS = "Anhänge";
     private static final String REFERENCES = "Verweise";
-    private static final String TERMS = "Begriffe";
+    private static final String TERMS = "Statistik";
     private static final String PASSAGES = "Absätze";
     private static final String IMAGES = "Bilder";
     private static final String IMAGES_WORD = "Bilder";
