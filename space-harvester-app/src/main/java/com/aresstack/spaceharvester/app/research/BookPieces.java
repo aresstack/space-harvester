@@ -42,6 +42,16 @@ final class BookPieces implements Pieces {
             return Pieces.parallel(capacity).run(stage, items, title, work);
         }
         Objects.requireNonNull(work, "work");
-        return under.run(items, index -> title.apply(items.get(index)), (item, child) -> work.apply(item), parent);
+        return under.run(items, index -> title.apply(items.get(index)), (item, child) -> {
+            // Ein abgebrochener Unterauftrag liefert nichts mehr: wie bei „Zusammenfassen“ endet damit die Stufe.
+            child.checkpoint();
+            R result = work.apply(item);
+            child.checkpoint();
+            if (child != parent) {
+                // Der Unterauftrag zählt sein Stück; der Oberauftrag zählt weiter über die Schritte von Writing4j.
+                child.processed(1);
+            }
+            return result;
+        }, parent);
     }
 }
