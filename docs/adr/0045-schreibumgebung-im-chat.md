@@ -99,6 +99,11 @@ Ist er aus, bleiben die Artefakte sichtbar, bearbeitbar und exportierbar; die KI
 
 ### 5. Ort: Schreibansicht im Reiter „Export“, Chat rechts
 
+> Geändert am 27.11.2026 durch [ADR 0047](0047-artefakte-des-projekts.md), Abschnitt 5: Die globalen Artefakte
+> stehen nicht mehr unter „Export“, sondern links unter „Wissensquellen | Artefakte“, und öffnen sich von dort in der
+> Mitte. Was hier über Artefakt-Reiter und die Liste der Artefakte im Menü „Weitere Aktionen zur Seite“ steht, gilt
+> nur noch, bis dieser Umzug gebaut ist. Alles zu Export-Reitern und zur unteren Leiste bleibt.
+
 > Geändert am 27.11.2026 nach drei Nachrichten von Angelo. Vorher öffnete sich ein Artefakt als Reiter über der ganzen
 > Mitte, in jeder Ansicht.
 >

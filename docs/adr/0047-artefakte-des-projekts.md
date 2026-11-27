@@ -1,7 +1,8 @@
 # ADR 0047: Lokale und globale Artefakte
 
-- Status: **Angenommen** (27.11.2026) nach Angelos Entscheidung von 21:26 MEZ. Offen ist nur Abschnitt 5 (Ordnung
-  vieler globaler Artefakte). Was nicht sein Wortlaut ist, steht in Abschnitt 6 als Entscheidung des Architekten.
+- Status: **Angenommen** (27.11.2026) nach Angelos Entscheidungen von 21:26 und 21:30 MEZ. Offen ist nur, wie viele
+  globale Artefakte geordnet werden (Abschnitt 5). Was nicht sein Wortlaut ist, steht in Abschnitt 6 als Entscheidung
+  des Architekten.
 - Quellen:
   - Angelos Nachricht vom 27.11.2026, 20:55 MEZ: „Ich würde sagen, dass wir Bücher auch als so ein Artefakt behandeln
     sollten und dann unter der Exportansicht anzeigen sollten.“
@@ -30,6 +31,14 @@
     die globalen Artefakte werden auch [versioniert], das hatte ich auch gesagt. Nur die lokalen Artefakte werden
     nicht [versioniert]. Weil es wäre scheiße, wenn wir ein Buch schreiben und haben eine neue Version und können
     aber nicht die alte Version sehen, für die wir mega viel Arbeit investiert haben.“
+  - **Maßgeblich für den Ort der globalen Artefakte:** Angelos Nachricht vom 27.11.2026, 21:30 MEZ: „Wir könnten doch
+    auch Folgendes machen, dass wir globale Artefakte einen ganz anderen Platz geben. Dass wir die nämlich gar nicht
+    unter den Exporten verorten, sondern dass wir sagen, wir schalten links um zwischen Wissensquellen und
+    Artefakten. Wir haben ja schon diesen schwarzen Toggle-Button, den haben wir zum Beispiel bei den Aufträgen schon
+    verwendet, Aufträge und Hintergrund. Denselben Button könnten wir jetzt auch wieder bei Wissensquellen verwenden.
+    Machen wir Wissensquellen und Artefakte und dann kann man die Ansicht umschalten und kriegt unten die Liste mit
+    Artefakten, also mit den globalen Artefakten natürlich nur. Und dann hat man genug Platz, diese Artefakte auch
+    irgendwie sauber zu sortieren.“
 - Bezüge:
   - [ADR 0027](0027-beobachter-statt-abfragen.md): kein Polling
   - [ADR 0034](0034-favoriten-ordner-als-sammlungen.md), Abschnitt 7: Überblick eines Ordners
@@ -98,11 +107,16 @@ Alles, was die App oder die KI erzeugt und ablegt, ist ein **Artefakt**. Es gibt
 - Das Buch ist ein Artefakt je Ordner und Projekt. Jede Auflage ist eine benannte Version darin und bleibt erhalten.
   „Neue Auflage erzeugen“ legt eine neue Version an; die bisherige bleibt zu sehen (ADR 0044, Nachtrag N3).
 
-### 5. Offen: Ordnung vieler globaler Artefakte
-- Globale Artefakte stehen wie heute im Menü „Weitere Aktionen zur Seite“ (ADR 0045, Abschnitt 5), jetzt aus dem
-  Projekt und an jeder Seite gleich, neueste zuerst.
-- Wie sie geordnet werden, wenn es viele sind, ist nicht entschieden. Angelo ist am 27.11.2026 gefragt: farbige
-  Gruppen wie bei den Chats, eigene Ordner oder nur Suche. Bis dahin wird dafür nichts gebaut.
+### 5. Ort der globalen Artefakte: links, „Wissensquellen | Artefakte“
+- Die globalen Artefakte stehen nicht unter „Export“. Im Kopf der linken Seitenleiste steht dieselbe Wippe wie bei
+  „Aufträge | Hintergrund“ (`SegmentedToggle`), hier mit den Hälften **„Wissensquellen“** und **„Artefakte“**.
+- Unter „Wissensquellen“ zeigt die Seitenleiste den Baum wie heute. Unter „Artefakte“ zeigt sie die Liste der
+  globalen Artefakte des aktiven Projekts, und nur diese. Lokale Artefakte stehen dort nie.
+- Die Liste nutzt Kopf und Fuß der Seitenleiste wie der Baum (`SideHead` mit Filterfeld, `SideFoot`). Es entsteht
+  kein neues Steuerelement.
+- Sortiert wird zunächst nach der letzten Änderung, neueste zuerst; das Filterfeld filtert nach dem Titel.
+- **Offen:** wie die Liste geordnet wird, wenn es viele Artefakte sind. Angelo ist am 27.11.2026 gefragt: farbige
+  Gruppen wie bei den Chats, eigene Ordner oder nur Suche. Bis zu seiner Antwort bleibt es bei „neueste zuerst“.
 - Verworfen, nicht bauen: eine Liste aller Artefakte des Projekts samt der lokalen (Angelo, 21:19 MEZ), und globale
   Artefakte an Knoten des Baums (Angelo, 21:22 MEZ).
 
@@ -116,6 +130,12 @@ Alles, was die App oder die KI erzeugt und ablegt, ist ein **Artefakt**. Es gibt
 4. Wo an der Seite die lokalen Artefakte „als Artefakte zu sehen“ sind, ist noch nicht festgelegt. Bis dahin bleiben
    Leseansicht und Podcast-Ansicht ihr Ort, wie heute.
 5. „Rigoros“ (21:04 MEZ) heißt überschreiben. Veraltetes wird nicht von selbst gelöscht.
+6. Ein Klick auf ein Artefakt in der Liste links öffnet es in der Mitte, so wie ein Klick im Baum eine Seite öffnet.
+   Die Schreibansicht (ADR 0045) bleibt dieselbe, sie steht dann in der Mitte statt im Reiter „Export“ einer Seite.
+   Unter „Export“ stehen danach nur noch Exporte. Angelo am 27.11.2026 um 21:31 MEZ so genannt.
+7. Legt die KI im Chat ein Artefakt an oder ändert sie eines, während links „Wissensquellen“ gewählt ist, bleibt es
+   bis zum Entwurf des UX-Strangs beim heutigen Verhalten (ADR 0045, Abschnitt 5). Es wird nicht von selbst
+   umgeschaltet.
 
 Zurückgenommen: Der Architekt hatte „keine Versionierung“ von 21:04 MEZ zunächst auch auf das Buch bezogen („Neue
 Auflage überschreibt“). Das war falsch und ist nie gebaut worden.
@@ -137,7 +157,10 @@ Jeder Schritt ein kleiner PR auf develop. Den Speicher der Artefakte ändert nur
 
 1. Besitzer ist immer das Projekt, Umzug der vorhandenen Artefakte, Löschen am Artefakt.
 2. Buch als Artefakt des Projekts mit Auflagen als Versionen (ADR 0044, Nachtrag N7; baut auf Schritt 1).
-3. Ordnung der globalen Artefakte nach Angelos Antwort zu Abschnitt 5.
+3. Wippe „Wissensquellen | Artefakte“ links mit der Liste der globalen Artefakte, Öffnen in der Mitte.
+4. Globale Artefakte aus „Export“ und aus dem Menü „Weitere Aktionen zur Seite“ herausnehmen, nach dem Entwurf des
+   UX-Strangs für den Übergang (Abschnitt 6, Punkt 7).
+5. Ordnung der Liste nach Angelos Antwort zu Abschnitt 5.
 
 ## Der einmalige Umzug (Schritt 1, Stand des Baus vom 27.11.2026)
 
