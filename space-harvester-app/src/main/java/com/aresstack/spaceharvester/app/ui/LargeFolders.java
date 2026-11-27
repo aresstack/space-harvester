@@ -37,8 +37,8 @@ import javax.swing.SwingUtilities;
  *
  * <p>Genannt werden die engsten Unterordner über der Grenze: einer, in dem kein Unterordner selbst über der Grenze liegt.
  * So fällt nur heraus, was wirklich groß ist. Versteckte Ordner, Punkt-Ordner, Ausschlussmuster der Quelle und schon
- * ausgeschlossene Ordner zählen nicht mit, weil der Abgleich sie ohnehin nicht liest. Einzelne große Dateien liest der
- * Abgleich nicht ganz (Grenze „Große Dateien ganz laden bis“), sie brauchen keinen Ausschluss.
+ * ausgeschlossene Ordner zählen nicht mit, weil der Abgleich sie ohnehin nicht liest. Es ist nur eine Warnung (Angelo
+ * 27.11.2026: keine Größenbegrenzung): Ohne Kreuz liest der Abgleich alles.
  */
 final class LargeFolders {
 

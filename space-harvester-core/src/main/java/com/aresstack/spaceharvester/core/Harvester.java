@@ -778,12 +778,10 @@ public final class Harvester implements AutoCloseable {
                     }, clock);
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
             LucenePageSearchIndex index = new LucenePageSearchIndex(cache, builder.searchTimeout);
-            // Lokale Ordner: dieselbe Grenze großer Dateien wie für den Textauszug anderer Quellen.
-            long localOriginalLimit = builder.maxTextFileBytes;
             this.snapshots = builder.localOriginalReferences
                     ? new SourceSnapshots(catalog, new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
                             new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(structuredDocuments),
-                            LocalFilesTextProjector::readable, () -> localOriginalLimit))
+                            LocalFilesTextProjector::readable))
                     : new SourceSnapshots(catalog);
             // Größere Dateien nimmt der Cache nicht an: gar nicht erst herunterladen, nur die Kopfdaten ablegen.
             long maxPageBytes = builder.maxPageBytes;

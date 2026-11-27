@@ -28,26 +28,11 @@ public final class DirectDocumentExtractions {
      * Keep the original digest separate from the digest of any derived snapshot.
      */
     public Optional<Original> extract(HarvestSource source, PageMetadata expected, Predicate<String> wanted) {
-        return extract(source, expected, wanted, 0);
-    }
-
-    /**
-     * Wie {@link #extract(HarvestSource, PageMetadata, Predicate)}, dazu die Grenze großer Dateien des Aufrufers
-     * ({@code cache.max-text-file-size}): Eine größere Datei wird weder gehasht noch gelesen, sie bleibt mit
-     * {@link StatusReason#TOO_LARGE} nur mit ihren Kopfdaten stehen, wie große Dateien anderer Quellen
-     * ({@code LargeFiles}). Ohne diese Grenze las der Abgleich eines lokalen Ordners jede Datei jeder Größe zweimal
-     * ganz (Prüfsumme) und extrahierte sie vollständig, nacheinander (Angelo 27.11.2026: 40-GB-Ordner im
-     * Schneckentempo).
-     *
-     * @param maxBytes größte Datei, die gelesen wird; {@code <= 0} ohne weitere Grenze
-     */
-    public Optional<Original> extract(HarvestSource source, PageMetadata expected, Predicate<String> wanted,
-                                      long maxBytes) {
         try (Pending pending = new Pending()) {
             Optional<Read> read = source.readOriginalInPlace(expected.pageId(), wanted, 0,
                     (original, actual, mediaType) -> {
                         requireSameRevision(source, expected, actual);
-                        long limit = smallest(documents.limits().maxFileBytes(), maxBytes);
+                        long limit = documents.limits().maxFileBytes();
                         if (limit > 0 && Files.size(original) > limit) {
                             return new Read(actual, mediaType, null,
                                     Outcome.of(ExtractionStatus.EXCLUDED, StatusReason.TOO_LARGE));
@@ -72,14 +57,6 @@ public final class DirectDocumentExtractions {
             return Optional.of(new Original(verified.metadata(), verified.mediaType(), verified.sha256(),
                     stored.document().outcome(), Optional.of(stored.key()), documents.originalPreview(stored)));
         }
-    }
-
-    /** Die kleinere zweier Grenzen; {@code <= 0} heißt jeweils keine Grenze. */
-    private static long smallest(long first, long second) {
-        if (first <= 0) {
-            return Math.max(0, second);
-        }
-        return second <= 0 ? first : Math.min(first, second);
     }
 
     public record Original(PageMetadata metadata, String mediaType, String originalSha256, Outcome outcome,
