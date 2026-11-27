@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Objects;
@@ -172,6 +173,17 @@ public final class BookJob {
      */
     public static JobTask write(Session session, CornerstoneSurvey.Chosen chosen, Path output, String fileName,
                                 Consumer<Path> written) {
+        return write(session, chosen, null, output, fileName, written);
+    }
+
+    /**
+     * Wie {@link #write(Session, CornerstoneSurvey.Chosen, Path, String, Consumer)}; mit {@code data} kommt das Buch
+     * zusätzlich als neue Auflage an den Ordner ({@link BookEditions}), damit die App es zeigt.
+     *
+     * @param data der Datenordner der App, {@code null}: keine Auflage
+     */
+    public static JobTask write(Session session, CornerstoneSurvey.Chosen chosen, Path data, Path output,
+                                String fileName, Consumer<Path> written) {
         Objects.requireNonNull(session.prepared, "prepared");
         return JobTask.blocking(context -> {
             context.rootTitle(session.folderName);
@@ -193,8 +205,16 @@ public final class BookJob {
                 session.release();
             }
             context.written(result.getSections().size());
-            Path book = save(output, fileName, ".md", result.book());
-            save(output, fileName + " – Missionsbericht", ".txt", result.report(ZoneId.systemDefault()));
+            String bookText = result.book();
+            String report = result.report(ZoneId.systemDefault());
+            if (data != null) {
+                BookEditions.Edition edition = BookEditions.add(data, session.folderId, Instant.now(), bookText,
+                        report, session.reader.sources());
+                LOG.log(System.Logger.Level.INFO, "Buch: Auflage {0} am Ordner abgelegt, {1} Seiten",
+                        edition.number(), edition.sources().size());
+            }
+            Path book = save(output, fileName, ".md", bookText);
+            save(output, fileName + " – Missionsbericht", ".txt", report);
             long open = result.getQuestionLines().stream()
                     .filter(line -> line.getState() != BookRun.QuestionLine.State.BEANTWORTET).count();
             LOG.log(System.Logger.Level.INFO, "Buch geschrieben: {0} Abschnitte, {1} Fragen, {2} nicht beantwortet, "

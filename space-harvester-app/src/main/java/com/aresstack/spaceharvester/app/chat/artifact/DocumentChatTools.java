@@ -1,0 +1,417 @@
+package com.aresstack.spaceharvester.app.chat.artifact;
+
+import com.aresstack.spaceharvester.ai.AiChat;
+import com.aresstack.spaceharvester.app.chat.ChatRoom;
+import com.aresstack.spaceharvester.app.chat.ChatToolset;
+import com.aresstack.spaceharvester.app.runtime.ModelBudget;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+/**
+ * Die Schreibwerkzeuge des Chats (ADR 0045, Abschnitt 3), angeboten nur bei eingeschaltetem Schalter „Schreiben“. Das
+ * Modell bekommt ein Dokument nie als Ganzes, sondern liest und ändert es Abschnitt für Abschnitt; ein Werkzeug, das
+ * ein vorhandenes Dokument ganz ersetzt, gibt es nicht. Jede Antwort ist eine kurze Bestätigung mit dem neuen Stand,
+ * jede Fehlermeldung sagt, was zu tun ist.
+ */
+public final class DocumentChatTools {
+
+    public static final String LIST = "dokumente_auflisten";
+    public static final String CREATE = "dokument_anlegen";
+    public static final String OUTLINE = "dokument_gliederung";
+    public static final String READ = "abschnitt_lesen";
+    public static final String REPLACE = "abschnitt_ersetzen";
+    public static final String REPLACE_TEXT = "text_ersetzen";
+    public static final String INSERT = "abschnitt_einfuegen";
+    public static final String DELETE = "abschnitt_loeschen";
+    public static final String RENAME = "ueberschrift_aendern";
+    public static final String MOVE = "abschnitt_verschieben";
+    private static final Set<String> NAMES = Set.of(LIST, CREATE, OUTLINE, READ, REPLACE, REPLACE_TEXT, INSERT,
+            DELETE, RENAME, MOVE);
+
+    /** Das Schema eines Links auf ein Artefakt in der Chat-Antwort; ein Klick öffnet den Reiter. */
+    public static final String LINK_SCHEME = "artefakt:";
+
+    static final String RULES = """
+            Schreibumgebung ist eingeschaltet. Längere Texte, die der Benutzer als Dokument haben möchte, schreibst du \
+            nicht in die Antwort, sondern mit den Werkzeugen in ein Dokument des Chats; der Benutzer sieht es in der \
+            Mitte und kann es nach Markdown, Word oder PDF exportieren.
+            Regeln:
+            - Neues Dokument: dokument_anlegen mit Titel und, wenn du schon weißt was, einer Gliederung aus Überschriften \
+            (Markdown mit #, ##). Danach jeden Abschnitt einzeln mit abschnitt_ersetzen füllen, ein Aufruf je Abschnitt.
+            - Vorhandenes Dokument ändern: erst dokument_gliederung, dann nur den gemeinten Abschnitt lesen und ändern. \
+            Für ein Wort, eine Zahl oder einen Satz text_ersetzen mit der wörtlichen Stelle. Unbeteiligte Abschnitte \
+            nie anfassen.
+            - Abschnittskennungen (a1, a2, …) und Dokumentkennungen (D1, …) stammen aus den Werkzeugen; nie raten.
+            - abschnitt_ersetzen ersetzt nur den Text unter der Überschrift; die Überschrift ändert ueberschrift_aendern.
+            - Antworte am Ende kurz, was du im Dokument getan hast; wiederhole das Dokument nicht in der Antwort.""";
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final String DOC = "\"dokument\":{\"type\":\"string\",\"description\":\"Kennung des Dokuments, "
+            + "etwa D1; leer lassen, wenn der Benutzer gerade eines geöffnet hat\"}";
+    private static final String SECTION = "\"abschnitt\":{\"type\":\"string\",\"description\":\"Kennung des "
+            + "Abschnitts aus dokument_gliederung, etwa a3\"}";
+
+    private final ChatArtifactStore store;
+    private final Path folder;
+    private final String chatId;
+    private final Supplier<String> focus;
+    private final Consumer<ChatArtifact> changed;
+    /** Was dieser Turn angelegt oder geändert hat, in der Reihenfolge der ersten Änderung. */
+    private final Map<String, String> touched = new LinkedHashMap<>();
+
+    /**
+     * @param focus   die Kennung des Artefakts, das der Benutzer gerade offen hat, oder {@code null}
+     * @param changed bekommt jedes angelegte oder geänderte Artefakt (die Ansicht öffnet seinen Reiter)
+     */
+    public DocumentChatTools(ChatArtifactStore store, Path folder, String chatId, Supplier<String> focus,
+                             Consumer<ChatArtifact> changed) {
+        this.store = store;
+        this.folder = folder;
+        this.chatId = chatId;
+        this.focus = focus == null ? () -> null : focus;
+        this.changed = changed == null ? artifact -> { } : changed;
+    }
+
+    public static boolean handles(String name) {
+        return NAMES.contains(name);
+    }
+
+    public List<AiChat.Tool> definitions() {
+        return List.of(
+                tool(LIST, "Listet die Dokumente dieses Chats mit Kennung, Titel und Umfang.", "{}", List.of()),
+                tool(CREATE, "Legt ein neues Dokument an. Optional mit erstem Text, am besten nur der Gliederung "
+                        + "aus Überschriften; die Abschnitte danach einzeln füllen.",
+                        "\"titel\":{\"type\":\"string\"},\"text\":{\"type\":\"string\",\"description\":"
+                                + "\"Markdown, etwa die Überschriften der Gliederung\"}", List.of("titel")),
+                tool(OUTLINE, "Zeigt die Gliederung eines Dokuments: je Abschnitt Kennung, Überschrift und "
+                        + "Wortzahl.", DOC, List.of()),
+                tool(READ, "Liest einen Abschnitt (Überschrift und Text), so viel, wie in die Anfrage passt; "
+                        + "lange Abschnitte mit versatz weiterlesen.", DOC + "," + SECTION
+                        + ",\"versatz\":{\"type\":\"integer\",\"minimum\":0}", List.of("abschnitt")),
+                tool(REPLACE, "Ersetzt den Text eines Abschnitts; die Überschrift bleibt. Unterüberschriften im "
+                        + "Text werden eigene neue Abschnitte.", DOC + "," + SECTION
+                        + ",\"text\":{\"type\":\"string\",\"description\":\"neuer Text in Markdown, ohne die "
+                        + "Überschrift des Abschnitts\"}", List.of("abschnitt", "text")),
+                tool(REPLACE_TEXT, "Ersetzt eine wörtliche Textstelle in einem Abschnitt, für ein Wort, eine Zahl "
+                        + "oder einen Satz. Die Stelle muss genau einmal vorkommen.", DOC + "," + SECTION
+                        + ",\"suchen\":{\"type\":\"string\",\"description\":\"die Stelle wörtlich wie in "
+                        + "abschnitt_lesen\"},\"ersetzen\":{\"type\":\"string\"}",
+                        List.of("abschnitt", "suchen", "ersetzen")),
+                tool(INSERT, "Fügt einen neuen Abschnitt nach einem vorhandenen ein; ohne 'nach' an den Anfang.",
+                        DOC + ",\"nach\":{\"type\":\"string\",\"description\":\"Kennung des Abschnitts davor\"},"
+                                + "\"ueberschrift\":{\"type\":\"string\"},\"ebene\":{\"type\":\"integer\","
+                                + "\"description\":\"1 bis 6, wie die Zahl der # (ohne Angabe wie davor)\"},"
+                                + "\"text\":{\"type\":\"string\"}", List.of("ueberschrift")),
+                tool(DELETE, "Löscht einen Abschnitt.", DOC + "," + SECTION, List.of("abschnitt")),
+                tool(RENAME, "Ändert nur die Überschrift eines Abschnitts, wahlweise auch die Ebene.",
+                        DOC + "," + SECTION + ",\"ueberschrift\":{\"type\":\"string\"},"
+                                + "\"ebene\":{\"type\":\"integer\"}", List.of("abschnitt", "ueberschrift")),
+                tool(MOVE, "Setzt einen Abschnitt hinter einen anderen; ohne 'nach' an den Anfang.",
+                        DOC + "," + SECTION + ",\"nach\":{\"type\":\"string\"}", List.of("abschnitt")));
+    }
+
+    private static AiChat.Tool tool(String name, String description, String properties, List<String> required) {
+        String props = properties.equals("{}") ? "" : properties;
+        String requiredJson = required.isEmpty() ? "" : ",\"required\":[\"" + String.join("\",\"", required) + "\"]";
+        return new AiChat.Tool(name, description,
+                "{\"type\":\"object\",\"properties\":{" + props + "}" + requiredJson + "}");
+    }
+
+    /** Kurz für die Statuszeile, ohne Argumente des Modells. */
+    public static String describe(String name) {
+        return switch (name) {
+            case LIST -> "Dokumente werden aufgelistet";
+            case CREATE -> "Dokument wird angelegt";
+            case OUTLINE -> "Gliederung wird gelesen";
+            case READ -> "Abschnitt wird gelesen";
+            case REPLACE, REPLACE_TEXT -> "Abschnitt wird überarbeitet";
+            case INSERT -> "Abschnitt wird eingefügt";
+            case DELETE -> "Abschnitt wird gelöscht";
+            case RENAME -> "Überschrift wird geändert";
+            case MOVE -> "Abschnitt wird verschoben";
+            default -> "Werkzeug";
+        };
+    }
+
+    /**
+     * Die Regeln für die Systemnachricht samt der Gliederung des gerade geöffneten Dokuments (ADR 0033: Was der
+     * Benutzer sieht, sieht der Bot).
+     */
+    public String rules() {
+        StringBuilder out = new StringBuilder(RULES);
+        List<ChatArtifact> artifacts = store.list(folder, chatId);
+        if (!artifacts.isEmpty()) {
+            out.append("\n\nDokumente dieses Chats:\n").append(listing(artifacts));
+        }
+        ChatArtifact open = focused();
+        if (open != null && open.kind() == ChatArtifact.Kind.DOCUMENT) {
+            out.append("\n\nDer Benutzer hat gerade ").append(open.id()).append(" „").append(open.title())
+                    .append("“ geöffnet. Gliederung:\n").append(outline(open));
+        }
+        return out.toString();
+    }
+
+    /** Führt einen Aufruf aus; immer Text für das Modell, nie eine Ausnahme. */
+    public String run(AiChat.ToolCall call) {
+        JsonNode arguments;
+        try {
+            String raw = call.argumentsJson();
+            arguments = JSON.readTree(raw == null || raw.isBlank() ? "{}" : raw);
+        } catch (JacksonException e) {
+            return "Die Argumente sind kein gültiges JSON.";
+        }
+        try {
+            return switch (call.name()) {
+                case LIST -> list();
+                case CREATE -> create(arguments);
+                case OUTLINE -> withDocument(arguments, DocumentChatTools::outline);
+                case READ -> withDocument(arguments, document -> read(document, text(arguments, "abschnitt"),
+                        Math.max(0, arguments.path("versatz").asInt(0))));
+                case REPLACE -> edit(arguments, "Text ersetzt", doc ->
+                        doc.replaceText(text(arguments, "abschnitt"), text(arguments, "text")));
+                case REPLACE_TEXT -> edit(arguments, "Textstelle ersetzt", doc -> doc.replaceLiteral(
+                        text(arguments, "abschnitt"), raw(arguments, "suchen"), raw(arguments, "ersetzen")));
+                case INSERT -> edit(arguments, "Abschnitt eingefügt", doc -> doc.insertAfter(
+                        text(arguments, "nach"), arguments.path("ebene").asInt(0), text(arguments, "ueberschrift"),
+                        text(arguments, "text")));
+                case DELETE -> edit(arguments, "Abschnitt gelöscht", doc -> doc.delete(text(arguments, "abschnitt")));
+                case RENAME -> edit(arguments, "Überschrift geändert", doc -> doc.rename(
+                        text(arguments, "abschnitt"), text(arguments, "ueberschrift"),
+                        arguments.path("ebene").asInt(0)));
+                case MOVE -> edit(arguments, "Abschnitt verschoben", doc -> doc.move(
+                        text(arguments, "abschnitt"), text(arguments, "nach")));
+                default -> "Unbekanntes Werkzeug.";
+            };
+        } catch (SectionDocument.SectionException invalid) {
+            return "Fehler: " + invalid.getMessage();
+        } catch (RuntimeException failed) {
+            return "Fehler: Das Werkzeug ist gescheitert (" + failed.getClass().getSimpleName() + ").";
+        }
+    }
+
+    /**
+     * Die Zeilen unter der Antwort: je angelegtem oder geändertem Artefakt sein Titel als Link, ein Klick öffnet den
+     * Reiter (ADR 0045, Abschnitt 5); leer, wenn dieser Turn nichts geschrieben hat.
+     */
+    public String footer() {
+        synchronized (touched) {
+            if (touched.isEmpty()) {
+                return "";
+            }
+            StringBuilder out = new StringBuilder("\n\n");
+            touched.forEach((id, title) -> out.append("Dokument: [").append(title.replace("]", ")"))
+                    .append("](").append(LINK_SCHEME).append(id).append(")  \n"));
+            return out.toString().stripTrailing() + "\n";
+        }
+    }
+
+    /** {@code base} samt den Schreibwerkzeugen. */
+    public ChatToolset attach(ChatToolset base) {
+        return new ChatToolset() {
+            @Override
+            public List<AiChat.Tool> definitions() {
+                List<AiChat.Tool> all = new ArrayList<>(base.definitions());
+                all.addAll(DocumentChatTools.this.definitions());
+                return all;
+            }
+
+            @Override
+            public String run(AiChat.ToolCall call) {
+                return handles(call.name()) ? DocumentChatTools.this.run(call) : base.run(call);
+            }
+
+            @Override
+            public String describe(AiChat.ToolCall call) {
+                return handles(call.name()) ? DocumentChatTools.describe(call.name()) : base.describe(call);
+            }
+
+            @Override
+            public String viewContext() {
+                return base.viewContext();
+            }
+
+            @Override
+            public String viewIdentity() {
+                return base.viewIdentity();
+            }
+
+            @Override
+            public void modelSelected(String model) {
+                base.modelSelected(model);
+            }
+
+            @Override
+            public void cancel() {
+                base.cancel();
+            }
+        };
+    }
+
+    // ------------------------------------------------------------------ Werkzeuge
+
+    private String list() {
+        List<ChatArtifact> artifacts = store.list(folder, chatId);
+        return artifacts.isEmpty() ? "Dieser Chat hat noch keine Dokumente. Mit dokument_anlegen beginnen."
+                : listing(artifacts);
+    }
+
+    private String create(JsonNode arguments) {
+        String title = text(arguments, "titel");
+        if (title.isEmpty()) {
+            return "Fehler: 'titel' fehlt.";
+        }
+        ChatArtifact created = store.createDocument(folder, chatId, title, raw(arguments, "text"),
+                ChatArtifact.Origin.AI);
+        if (created == null) {
+            return "Fehler: Das Dokument konnte nicht gespeichert werden (kein Datenordner).";
+        }
+        report(created);
+        List<SectionDocument.Section> sections = created.document().sections();
+        return "Dokument " + created.id() + " „" + created.title() + "“ angelegt" + (sections.isEmpty()
+                ? ", noch leer. Weiter mit abschnitt_einfuegen ohne 'nach'."
+                : " mit " + sections.size() + " Abschnitten. Gliederung:\n" + outline(created.document())
+                + "\nJetzt die Abschnitte einzeln mit abschnitt_ersetzen füllen.");
+    }
+
+    private String withDocument(JsonNode arguments, Function<SectionDocument, String> reading) {
+        ChatArtifact artifact = document(arguments);
+        return artifact.id() + " „" + artifact.title() + "“, Stand " + artifact.revision() + ":\n"
+                + reading.apply(artifact.document());
+    }
+
+    private String edit(JsonNode arguments, String note,
+                        Function<SectionDocument, SectionDocument.Change> operation) {
+        ChatArtifact artifact = document(arguments);
+        ChatArtifactStore.WriteResult result = store.edit(folder, chatId, artifact.id(), ChatArtifactStore.ANY,
+                ChatArtifact.Origin.AI, note, operation);
+        if (!result.success()) {
+            return "Fehler: " + result.reason();
+        }
+        report(result.artifact());
+        String ids = String.join(", ", result.changed());
+        return "Erledigt: " + note + (ids.isEmpty() ? "" : " (" + ids + ")") + ", " + result.artifact().id()
+                + " jetzt Stand " + result.revision() + ".";
+    }
+
+    /**
+     * Ein Abschnitt, so viel davon, wie in die laufende Anfrage passt ({@link ChatRoom}); den Rest holt das Modell mit
+     * {@code versatz}, wie beim Lesen einer Seite ({@code ChatTools.read}).
+     */
+    static String read(SectionDocument document, String id, int offset) {
+        SectionDocument.Section section = document.section(id);
+        String text = section.markdown().strip();
+        int room = ChatRoom.chars();
+        if (room == 0) {
+            return ChatRoom.FULL;
+        }
+        int from = Math.min(offset, text.length());
+        int to = ModelBudget.fit(text, from, room);
+        StringBuilder b = new StringBuilder("Abschnitt ").append(section.id())
+                .append(section.level() == 0 ? " (Einleitung)" : ", Ebene " + section.level());
+        if (from > 0 || to < text.length()) {
+            b.append(", Zeichen ").append(from).append(" bis ").append(to).append(" von ").append(text.length());
+        }
+        b.append(":\n").append(text, from, to);
+        if (to < text.length()) {
+            b.append("\n\n(Fortsetzung mit ").append(READ).append(", versatz ").append(to).append(')');
+        }
+        return b.toString();
+    }
+
+    // ------------------------------------------------------------------ Hilfen
+
+    private ChatArtifact document(JsonNode arguments) {
+        String id = text(arguments, "dokument");
+        if (id.isEmpty()) {
+            ChatArtifact open = focused();
+            if (open != null && open.kind() == ChatArtifact.Kind.DOCUMENT) {
+                return open;
+            }
+            List<ChatArtifact> documents = store.list(folder, chatId).stream()
+                    .filter(artifact -> artifact.kind() == ChatArtifact.Kind.DOCUMENT).toList();
+            if (documents.size() == 1) {
+                return documents.get(0);
+            }
+            throw new SectionDocument.SectionException(documents.isEmpty()
+                    ? "Dieser Chat hat noch kein Dokument. Mit dokument_anlegen beginnen."
+                    : "'dokument' fehlt. Vorhandene Dokumente:\n" + listing(documents));
+        }
+        ChatArtifact artifact = store.read(folder, chatId, id);
+        if (artifact == null) {
+            throw new SectionDocument.SectionException("Dokument '" + id + "' gibt es in diesem Chat nicht. "
+                    + "Mit dokumente_auflisten nachsehen.");
+        }
+        if (artifact.kind() != ChatArtifact.Kind.DOCUMENT) {
+            throw new SectionDocument.SectionException(artifact.id() + " ist eine Grafik, kein Dokument.");
+        }
+        return artifact;
+    }
+
+    private ChatArtifact focused() {
+        String id = focus.get();
+        return id == null || id.isBlank() ? null : store.read(folder, chatId, id);
+    }
+
+    private void report(ChatArtifact artifact) {
+        synchronized (touched) {
+            touched.put(artifact.id(), artifact.title());
+        }
+        changed.accept(artifact);
+    }
+
+    static String listing(List<ChatArtifact> artifacts) {
+        StringBuilder out = new StringBuilder();
+        for (ChatArtifact artifact : artifacts) {
+            out.append(artifact.id()).append(' ')
+                    .append(artifact.kind() == ChatArtifact.Kind.DOCUMENT ? "Dokument" : "Grafik")
+                    .append(" „").append(artifact.title()).append("“");
+            if (artifact.kind() == ChatArtifact.Kind.DOCUMENT) {
+                out.append(" (").append(artifact.document().sections().size()).append(" Abschnitte, ")
+                        .append(artifact.document().words()).append(" Wörter)");
+            }
+            out.append('\n');
+        }
+        return out.toString().stripTrailing();
+    }
+
+    static String outline(ChatArtifact artifact) {
+        return outline(artifact.document());
+    }
+
+    static String outline(SectionDocument document) {
+        if (document.sections().isEmpty()) {
+            return "(leer; mit abschnitt_einfuegen ohne 'nach' beginnen)";
+        }
+        StringBuilder out = new StringBuilder();
+        for (SectionDocument.Section section : document.sections()) {
+            out.append(section.id()).append(' ');
+            if (section.level() == 0) {
+                out.append("[Einleitung]");
+            } else {
+                out.append("#".repeat(section.level())).append(' ').append(section.heading());
+            }
+            out.append(" (").append(section.words()).append(" Wörter)\n");
+        }
+        return out.toString().stripTrailing();
+    }
+
+    private static String text(JsonNode arguments, String field) {
+        return raw(arguments, field).strip();
+    }
+
+    private static String raw(JsonNode arguments, String field) {
+        JsonNode value = arguments.path(field);
+        return value.isMissingNode() || value.isNull() ? "" : value.asString("");
+    }
+}

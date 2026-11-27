@@ -124,4 +124,51 @@ class SectionDocumentTest {
         SectionDocument first = empty.insertAfter("", 1, "# Titel", "Erster Satz.").document();
         assertThat(first.markdown()).isEqualTo("# Titel\n\nErster Satz.\n");
     }
+
+    @Test
+    void aShorterFenceInsideALongerOneDoesNotCloseIt() {
+        SectionDocument document = SectionDocument.parse(
+                "# Anleitung\n\n````markdown\n```\n# kein Abschnitt\n```\n````\n\n## Ende\n\nFertig.");
+
+        assertThat(document.sections()).extracting(SectionDocument.Section::heading)
+                .containsExactly("Anleitung", "Ende");
+    }
+
+    @Test
+    void linkDefinitionsOfAllSectionsAreCollectedOutsideCodeBlocks() {
+        SectionDocument document = SectionDocument.parse("# Bohnen\n\nSiehe [Fibel][f].\n\n## Quellen\n\n"
+                + "[f]: https://example.org/fibel\n\n```\n[x]: https://example.org/kein\n```");
+
+        assertThat(document.referenceDefinitions()).containsExactly("[f]: https://example.org/fibel");
+    }
+
+    @Test
+    void aHashThatBelongsToTheHeadingStaysAndAClosingSequenceGoes() {
+        SectionDocument document = SectionDocument.parse("# C#\n\nText.\n\n## Rost ##\n\nMehr.");
+
+        assertThat(document.sections()).extracting(SectionDocument.Section::heading).containsExactly("C#", "Rost");
+        assertThat(document.markdown()).startsWith("# C#\n");
+    }
+
+    @Test
+    void indentationAndInnerWhitespaceSurviveParsingAndExport() {
+        String markdown = "## Code\n\n    alpha\n    beta\n\n## Gedicht\n\nZeile eins  \nZeile zwei\n";
+        SectionDocument document = SectionDocument.parse(markdown);
+
+        assertThat(document.section("a1").text()).isEqualTo("    alpha\n    beta");
+        assertThat(document.section("a2").text()).isEqualTo("Zeile eins  \nZeile zwei");
+        assertThat(document.markdown()).isEqualTo(markdown);
+    }
+
+    @Test
+    void aLiteralReplacementWithAHeadingAddsASection() {
+        SectionDocument document = SectionDocument.parse("# Brief\n\nOriginal text.");
+
+        SectionDocument.Change change = document.replaceLiteral("a1", "Original text.",
+                "Revised text.\n\n## Second\n\nNew section.");
+
+        assertThat(change.touched()).containsExactly("a1", "a2");
+        assertThat(change.document().section("a2").heading()).isEqualTo("Second");
+        assertThat(change.document().section("a1").text()).isEqualTo("Revised text.");
+    }
 }
