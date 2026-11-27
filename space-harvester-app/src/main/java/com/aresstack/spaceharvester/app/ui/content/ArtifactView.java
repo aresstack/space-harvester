@@ -71,6 +71,10 @@ final class ArtifactView extends JPanel {
     static final String WHOLE_GROUP = "Ganze Gruppe";
     /** Rechtsklick auf ein Mermaid- oder draw.io-Diagramm: als SVG-Grafik übernehmen, danach bearbeitbar. */
     static final String ADOPT = "Als Grafik bearbeiten";
+    /** Stift an einer Grafik: die Zeichenfläche öffnen (ADR 0045 §6). */
+    static final String DRAW = "Selbst zeichnen";
+    /** Die offene Zeichenfläche, sonst {@code null}. */
+    private GraphicCanvas drawing;
 
     ArtifactView(ChatArtifactStore store, Path folder, String chatId, String artifactId) {
         this(store, folder, chatId, artifactId, text -> { });
@@ -155,6 +159,10 @@ final class ArtifactView extends JPanel {
             return;
         }
         Runnable update = () -> {
+            if (drawing != null) {
+                drawing.external(event.artifact());
+                return;
+            }
             if (!event.changed().isEmpty() || highlighted.isEmpty()) {
                 highlighted = event.changed();
             }
@@ -178,8 +186,9 @@ final class ArtifactView extends JPanel {
         blocks.clear();
         MarkdownTheme theme = MarkdownTheme.forSurface(Comic.SURFACE);
         if (artifact.kind() == ChatArtifact.Kind.GRAPHIC) {
-            column.add(referenced(block("````svg\n" + artifact.current().svg().strip() + "\n````", theme, false),
-                    reference(artifact, null)));
+            JComponent block = block("````svg\n" + artifact.current().svg().strip() + "\n````", theme, false);
+            ((Section) block).pen(com.aresstack.spaceharvester.app.ui.Glyph.PENCIL, DRAW, this::draw);
+            column.add(referenced(block, reference(artifact, null)));
         } else if (artifact.document().sections().isEmpty()) {
             column.add(block("*Das Dokument ist noch leer.*", theme, false));
         } else {
@@ -189,7 +198,8 @@ final class ArtifactView extends JPanel {
             for (SectionDocument.Section section : artifact.document().sections()) {
                 JComponent block = block(com.aresstack.spaceharvester.app.chat.artifact.GraphicReferences.inline(
                         section.markdown(), this::svgOf, true) + references, theme, highlighted.contains(section.id()));
-                ((Section) block).pen(() -> edit(section.id()));
+                ((Section) block).pen(com.aresstack.spaceharvester.app.ui.Glyph.PENCIL, EDIT,
+                        () -> edit(section.id()));
                 referenced(block, reference(artifact, section.id()));
                 block.setName(section.id());
                 blocks.put(section.id(), block);
@@ -500,6 +510,56 @@ final class ArtifactView extends JPanel {
         editor.requestFocusInWindow();
     }
 
+    /**
+     * Öffnet die Zeichenfläche dieser Grafik (Stift an der Grafik): sie füllt die Ansicht; jede Änderung ist sofort eine
+     * Revision. Fertig (Esc) zeigt die Grafik wieder als Bild.
+     */
+    void draw() {
+        ChatArtifact graphic = store.read(folder, chatId, artifactId);
+        if (graphic == null || graphic.kind() != ChatArtifact.Kind.GRAPHIC || drawing != null) {
+            return;
+        }
+        editing = artifactId;
+        drawing = new GraphicCanvas(store, folder, chatId, graphic, this::closeDrawing, status) {
+            @Override
+            public Dimension getPreferredSize() {
+                Insets insets = column.getInsets();
+                int height = scroll.getViewport().getExtentSize().height - insets.top - insets.bottom;
+                return new Dimension(super.getPreferredSize().width, Math.max(height, super.getMinimumSize().height));
+            }
+
+            @Override
+            public Dimension getMaximumSize() {
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
+        drawing.setAlignmentX(LEFT_ALIGNMENT);
+        column.removeAll();
+        blocks.clear();
+        column.add(drawing);
+        column.revalidate();
+        column.repaint();
+    }
+
+    /** Schließt die Zeichenfläche und zeigt den neuesten Stand. */
+    void closeDrawing() {
+        if (drawing == null) {
+            return;
+        }
+        drawing = null;
+        editing = null;
+        pending = null;
+        ChatArtifact latest = store.read(folder, chatId, artifactId);
+        if (latest != null) {
+            render(latest);
+        }
+    }
+
+    /** Für Tests: die offene Zeichenfläche, sonst {@code null}. */
+    GraphicCanvas drawing() {
+        return drawing;
+    }
+
     /** Für Tests: der offene Editor eines Abschnitts, sonst {@code null}. */
     javax.swing.JTextArea editor() {
         return editor;
@@ -564,10 +624,9 @@ final class ArtifactView extends JPanel {
             add(view, BorderLayout.CENTER);
         }
 
-        void pen(Runnable edit) {
+        void pen(com.aresstack.spaceharvester.app.ui.Glyph glyph, String tooltip, Runnable edit) {
             com.aresstack.spaceharvester.app.ui.controls.FlatIconButton button =
-                    new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(
-                            com.aresstack.spaceharvester.app.ui.Glyph.PENCIL, EDIT);
+                    new com.aresstack.spaceharvester.app.ui.controls.FlatIconButton(glyph, tooltip);
             button.addActionListener(event -> edit.run());
             JPanel holder = new JPanel(new BorderLayout());
             holder.setOpaque(false);

@@ -561,6 +561,8 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ChatPanel.QUOTE_CHIP_CHARS` | `28` | fest | Invariante/Darstellung | im Code belassen |
 | `ChatPanel.QUOTE_TOOLTIP_CHARS` | `240` | fest | Invariante/Darstellung | im Code belassen |
 | `SvgElements.LABEL_CHARS` | `60` | fest | Invariante/Darstellung | im Code belassen |
+| `GraphicCanvas.LINE_WIDTH` | `2` | Vorgabe | Strichstärke neuer Linien auf der Zeichenfläche | im Code belassen (je Element änderbar) |
+| `GraphicCanvas.HANDLE` | `8` | fest | Invariante/Darstellung (Größengriff in Pixeln) | im Code belassen |
 | `ChatPanel.QUIET_ROUNDS_DEFAULT` | `3` | Vorgabe | Stillstand der Werkzeugrunden (askai `stagnationRounds`) | einstellbar (Menü am Dreieck des Chats) |
 | `ChatPanel.WEB_DELAY_MAX` | `10000` | fest | Timeout | einstellbar |
 | `ChatPanel.WEB_DELAY_SLIDER_MAX` | `2000` | fest | Timeout | einstellbar |

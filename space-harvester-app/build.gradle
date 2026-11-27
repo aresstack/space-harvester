@@ -91,6 +91,8 @@ dependencies {
     implementation libs.flexmark.ext.autolink
     implementation libs.flexmark.ext.gfm.strikethrough
     implementation libs.mermaid.java
+    // Zeichenfläche der Grafik-Artefakte (ADR 0045 §6): JSVGCanvas, selbst im SVG malen
+    implementation libs.batik.swing
     implementation libs.jsoup
     // Eingebautes trust-bundle 'windows': JVM-Truststore plus Windows Root/CA wie im Enterprise AI Client
     implementation libs.win.trust.java

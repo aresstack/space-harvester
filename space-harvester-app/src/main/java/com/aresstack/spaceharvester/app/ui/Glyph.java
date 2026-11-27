@@ -65,7 +65,21 @@ public enum Glyph implements Icon {
      */
     PROGRAM_SEARCH,
     /** „Als Wissensquelle hinzufügen“: ein Datenbankzylinder, unten rechts ein Plus. */
-    SOURCE_ADD;
+    SOURCE_ADD,
+    /** Zeichenfläche (ADR 0045 §6): Auswählen (Mauspfeil). */
+    POINTER,
+    /** Zeichenfläche: Rechteck zeichnen. */
+    RECTANGLE,
+    /** Zeichenfläche: Ellipse zeichnen. */
+    ELLIPSE,
+    /** Zeichenfläche: Linie zeichnen. */
+    LINE,
+    /** Zeichenfläche: Text setzen (ein großes T). */
+    TEXT,
+    /** Zeichenfläche: Füllfarbe (gefülltes Quadrat). */
+    FILL,
+    /** Zeichenfläche: Linienfarbe (Quadrat mit dickem Rand). */
+    STROKE;
 
     private static final int SIZE = 16;
     /** Das Favoriten-Gelb des EAC ({@code ResearchUiPalette.FAVORITE_YELLOW}). */
@@ -101,6 +115,31 @@ public enum Glyph implements Icon {
                     body.closePath();
                     g.draw(body);
                     g.draw(new Line2D.Double(9.4, 4.2, 11.8, 6.6));
+                }
+                case POINTER -> {
+                    Path2D arrow = new Path2D.Double();
+                    arrow.moveTo(4, 2);
+                    arrow.lineTo(4, 13);
+                    arrow.lineTo(7, 10.2);
+                    arrow.lineTo(9.2, 14.2);
+                    arrow.lineTo(11, 13.2);
+                    arrow.lineTo(8.8, 9.4);
+                    arrow.lineTo(12.6, 9.2);
+                    arrow.closePath();
+                    g.draw(arrow);
+                }
+                case RECTANGLE -> g.draw(new Rectangle2D.Double(2.5, 4, 11, 8));
+                case ELLIPSE -> g.draw(new Ellipse2D.Double(2, 3.5, 12, 9));
+                case LINE -> g.draw(new Line2D.Double(3, 13, 13, 3));
+                case TEXT -> {
+                    g.draw(new Line2D.Double(3.5, 3, 12.5, 3));
+                    g.draw(new Line2D.Double(8, 3, 8, 13.5));
+                    g.draw(new Line2D.Double(6, 13.5, 10, 13.5));
+                }
+                case FILL -> g.fill(new RoundRectangle2D.Double(3, 3, 10, 10, 2, 2));
+                case STROKE -> {
+                    g.setStroke(new BasicStroke(2.6f));
+                    g.draw(new Rectangle2D.Double(3.5, 3.5, 9, 9));
                 }
                 case TRASH -> {
                     g.draw(new Line2D.Double(2.5, 4, 13.5, 4));
