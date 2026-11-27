@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.knowledge4j.scope.Fence;
+import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.app.research.AiChatModel;
 import com.aresstack.spaceharvester.app.research.BookJob;
 import com.aresstack.spaceharvester.app.research.BookNotes;
@@ -60,10 +61,15 @@ final class BookFlow {
         return Optional.of(new AiChatModel(chat, model, null, ai.contextTokens() == null ? 0 : ai.contextTokens()));
     }
 
-    /** Kapazität des Chat-Modells laut KI-Einstellungen (Parallelität); bei einer GPU 1, beim Clouddienst mehr. */
+    /**
+     * Kapazität des Chat-Modells laut KI-Einstellungen (Parallelität); bei einer GPU 1, beim Clouddienst mehr. Ohne
+     * Eintrag gilt derselbe Standard wie im Core ({@link AiServiceSettings#DEFAULT_PARALLEL}); vorher lief die
+     * Buchfunktion dann mit einem Aufruf zugleich, während der KI-Dienst mehr annahm (Angelo 27.11.: „Quellen
+     * beschreiben“ nicht parallel).
+     */
     static int capacity(AppContext context) {
         var ai = context.settings() == null ? null : context.settings().ai();
-        return ai == null || ai.parallel() == null ? 1 : Math.max(1, ai.parallel());
+        return ai == null || ai.parallel() == null ? AiServiceSettings.DEFAULT_PARALLEL : Math.max(1, ai.parallel());
     }
 
     /** Die Notizen des Ordners (Weidezaun, Länge, Wahl des Lesers); leer ohne Datenordner oder Notizen. */
@@ -116,7 +122,7 @@ final class BookFlow {
         BookJob.Session session = BookJob.session(chat.get(), new WorkspacePageStock(workspace, null),
                 new FavoritesBasket(favorites, folderId, context::sourceTitle), folderId, name, fence.get(), settings);
         sessions.put(folderId, session);
-        workspace.startBook(BookJob.prepare(session, done -> SwingUtilities.invokeLater(() -> prepared(done))));
+        workspace.startBook(name, BookJob.prepare(session, done -> SwingUtilities.invokeLater(() -> prepared(done))));
     }
 
     /** Nach dem Vorbereiten: fragt nur, wenn das Sieb unsicher war oder nichts sicher drin sah. */
@@ -162,7 +168,7 @@ final class BookFlow {
         Path output = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings
                 .defaultOutputDirectory() : context.settings().outputDirectory();
         CornerstoneSurvey.Chosen chosen = view.chosen(session.prepared().basketHints());
-        context.runtime().workspace().startBook(BookJob.write(session, chosen, output,
+        context.runtime().workspace().startBook(session.folderName(), BookJob.write(session, chosen, output,
                 PageDetailPanel.safeName(session.folderName()),
                 book -> SwingUtilities.invokeLater(() -> written(session, book))));
     }

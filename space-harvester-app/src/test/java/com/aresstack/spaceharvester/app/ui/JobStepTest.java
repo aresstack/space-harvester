@@ -49,6 +49,17 @@ class JobStepTest {
         assertThat(ActivitiesView.space(whole)).isEmpty();
     }
 
+    /** Angelo 27.11.2026: Bei „Buch schreiben“ standen Quelle „*“ und Space „–“; jetzt Favoriten und der Ordner. */
+    @Test
+    void theBookFunctionShowsFavoritesAndItsFolder() {
+        JobStatus book = new JobStatus("j5", JobType.BOOK, com.aresstack.spaceharvester.application.jobs.Jobs.ALL_SOURCES,
+                null, "local", JobState.RUNNING, new JobProgress(88, 3, 0, 0), null, false, Instant.EPOCH, null, null,
+                null, null, com.aresstack.spaceharvester.application.jobs.JobArea.with(java.util.Map.of(),
+                "Ordner „Streuobst“"), false, false, null);
+        assertThat(ActivitiesView.source(book)).isEqualTo("Favoriten");
+        assertThat(ActivitiesView.space(book)).isEqualTo("Ordner „Streuobst“");
+    }
+
     /** Der Balken trägt die Zahlen in der Mitte, Zustand und Zeit im Tooltip (statt eigener Spalten). */
     @Test
     void theBarCarriesCountsStateAndCreationTime() {

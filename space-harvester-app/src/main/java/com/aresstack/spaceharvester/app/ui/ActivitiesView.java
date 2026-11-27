@@ -1108,7 +1108,7 @@ public final class ActivitiesView implements View {
         boolean waiting = waitingForSignIn(status.id());
         facts.add("Zustand", waiting ? SIGN_IN : Texts.state(status),
                         waiting ? Comic.ORANGE : Comic.tone(Texts.tone(status)))
-                .add(backgroundGroup(status) ? "Quellen" : "Quelle", status.sourceId())
+                .add(backgroundGroup(status) ? "Quellen" : "Quelle", sourceName(status))
                 .add(com.aresstack.spaceharvester.application.jobs.JobArea.of(status) == null ? "Space" : "Bereich",
                         area(status).isEmpty() ? null : area(status))
                 .add("Startseite", startPage(status))
@@ -1328,7 +1328,19 @@ public final class ActivitiesView implements View {
         if (backgroundGroup(status)) {
             return Texts.type(status);
         }
-        return status.sourceId() == null ? "" : status.sourceId();
+        return status.sourceId() == null ? "" : sourceName(status);
+    }
+
+    /**
+     * Die Quelle in Worten: „*“ (alle Quellen) heißt bei der Buchfunktion „Favoriten“, ihr Ordner steht unter
+     * „Bereich“ (Angelo 27.11.2026: Quelle „*“, Space „–“ sagte nichts); sonst die Kennung der Quelle.
+     */
+    static String sourceName(JobStatus status) {
+        String id = status.sourceId();
+        if (!com.aresstack.spaceharvester.application.jobs.Jobs.ALL_SOURCES.equals(id)) {
+            return id;
+        }
+        return status.type() == JobType.BOOK || status.type() == JobType.RESEARCH ? "Favoriten" : "alle Quellen";
     }
 
     /** Spalte „Space“: der Space und, wenn der Auftrag nur einen Teil betrifft, seine Startseite; sonst leer. */
