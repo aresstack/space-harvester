@@ -469,20 +469,28 @@ class ActivitiesActionsTest {
         assertThat(head.getPreferredSize().width).isEqualTo(190 + ActivitiesView.HeadLayout.GAP + 600);
     }
 
-    /** Unten stehen Auf- und Zuklappen links, „Alle anhalten“ und „Alle abbrechen“ mittig im eigenen Platz. */
+    /**
+     * Unten stehen Auf- und Zuklappen links, „Alle anhalten“ und „Alle abbrechen“ mittig im eigenen Platz und die
+     * Hilfe rechts in der Ecke.
+     */
     @Test
     void theToolsPutFoldingLeftAndTheGlobalActionsInTheMiddle() {
         JPanel west = fixed(60);
         JPanel center = fixed(260);
-        JPanel tools = new JPanel(new ActivitiesView.ToolsLayout(west, center));
+        JPanel east = fixed(24);
+        JPanel tools = new JPanel(new ActivitiesView.ToolsLayout(west, center, east));
         tools.add(west);
         tools.add(center);
+        tools.add(east);
         layout(tools, 900);
         assertThat(west.getBounds()).isEqualTo(new Rectangle(0, 0, 60, 28));
         assertThat(center.getBounds()).isEqualTo(new Rectangle(320, 0, 260, 28));
+        assertThat(east.getBounds()).as("die Hilfe steht rechts in der Ecke").isEqualTo(new Rectangle(876, 0, 24, 28));
         layout(tools, 340);
         assertThat(center.getX()).as("eng: neben der linken Gruppe, nicht darüber")
                 .isEqualTo(60 + ActivitiesView.ToolsLayout.GAP);
+        assertThat(east.getWidth()).as("eng: die Hilfe weicht, die Aktionen bleiben ganz").isZero();
+        assertThat(center.getWidth()).isEqualTo(260);
     }
 
     private static void layout(JPanel head, int width) {
