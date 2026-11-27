@@ -202,7 +202,9 @@ public final class DeckChatTools implements ChatToolset {
             return ChatRoom.FULL;
         }
         int start = Math.max(0, Math.min(from, text.length()));
-        int end = (int) Math.min(text.length(), (long) start + room);
+        if (start < text.length() && Character.isLowSurrogate(text.charAt(start))) start--;
+        // Nach Zeicheneinheiten, nicht nach Zeichen: als Text gelesene Binärdaten kosten je Zeichen mehrere Tokens.
+        int end = com.aresstack.spaceharvester.app.runtime.ModelBudget.fit(text, start, room);
         StringBuilder b = new StringBuilder(name).append(" (Zeichen ").append(start).append('–').append(end)
                 .append(" von ").append(text.length()).append("):\n").append(text, start, end);
         if (end < text.length()) {

@@ -62,10 +62,58 @@ public record ModelBudget(int contextTokens, int answerTokens) {
         return known(context, answer);
     }
 
-    /** Vorsichtige Schätzung der Tokens eines Anfrageteils, siehe {@link #CHARACTERS_PER_TOKEN}. */
+    /**
+     * Vorsichtige Schätzung der Tokens eines Anfrageteils, siehe {@link #CHARACTERS_PER_TOKEN}: die Länge in
+     * {@link #units Zeicheneinheiten} geteilt durch diesen Wert, mindestens die Wort-und-Zeichen-Zählung.
+     */
     public static int tokens(String text) {
-        int byLength = (text.length() + CHARACTERS_PER_TOKEN - 1) / CHARACTERS_PER_TOKEN;
-        return Math.max(WORDS.count(text), byLength);
+        long units = units(text, 0, text.length());
+        long byLength = (units + CHARACTERS_PER_TOKEN - 1) / CHARACTERS_PER_TOKEN;
+        return (int) Math.max(WORDS.count(text), Math.min(Integer.MAX_VALUE, byLength));
+    }
+
+    /**
+     * Länge eines Textausschnitts in Zeicheneinheiten, der Währung aller Zeichenbudgets des Chats
+     * ({@code ChatRoom}): Druckbares ASCII samt Zeilenumbruch und Tabulator zählt eins (übliche Tokenizer fassen
+     * davon mehrere zu einem Token zusammen); jedes andere Zeichen – Umlaute, Steuerzeichen, als Text gelesene
+     * Binärdaten – zählt so viele Token, wie es UTF-8-Bytes hat (der ungünstigste Fall eines Byte-Tokenizers), also
+     * {@link #CHARACTERS_PER_TOKEN} Einheiten je Byte. Ohne diese Gewichtung passte Binärsalat nach Zeichen in die
+     * Anfrage und sprengte sie in Tokens.
+     */
+    public static long units(CharSequence text, int from, int to) {
+        long units = 0;
+        for (int i = from; i < to; ) {
+            int codePoint = Character.codePointAt(text, i);
+            units += units(codePoint);
+            i += Character.charCount(codePoint);
+        }
+        return units;
+    }
+
+    /**
+     * Das Ende des längsten Ausschnitts ab {@code from}, der höchstens {@code units} Zeicheneinheiten lang ist; nie
+     * mitten in einem Ersatzpaar.
+     */
+    public static int fit(CharSequence text, int from, long units) {
+        long used = 0;
+        int i = Math.max(0, from);
+        while (i < text.length()) {
+            int codePoint = Character.codePointAt(text, i);
+            used += units(codePoint);
+            if (used > units) {
+                break;
+            }
+            i += Character.charCount(codePoint);
+        }
+        return i;
+    }
+
+    private static int units(int codePoint) {
+        if (codePoint >= 0x20 && codePoint < 0x7F || codePoint == '\n' || codePoint == '\r' || codePoint == '\t') {
+            return 1;
+        }
+        int bytes = codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
+        return bytes * CHARACTERS_PER_TOKEN;
     }
 
     /** Tokens, die nach festem Teil (Systemanweisung, Rahmen) und Antwortreserve für den Inhalt frei sind. */
