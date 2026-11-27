@@ -48,6 +48,12 @@ class ArtifactTabsTest {
             assertThat(tabs[0].selectedView().highlighted()).containsExactly("a2");
             assertThat(tabs[0].selectedView().artifact().revision()).isEqualTo(2);
 
+            SwingUtilities.invokeAndWait(() -> tabs[0].undo());
+            assertThat(store.read(folder, chat.id(), "D1").document().section("a2").text())
+                    .as("Rückgängig holt den alten Stand als neue Revision").isEqualTo("Humus.");
+            assertThat(store.read(folder, chat.id(), "D1").revision()).isEqualTo(3);
+            assertThat(tabs[0].selectedView().highlighted()).containsExactly("a2");
+
             SwingUtilities.invokeAndWait(() -> tabs[0].showPage());
             assertThat(tabs[0].focus()).as("links gewählt: die Seite kommt zurück").isNull();
             assertThat(tabs[0].openIds()).as("Reiter bleiben stehen").containsExactly("D1");
