@@ -27,6 +27,9 @@ public final class Texts {
     public static final String NEW_EDITION = "Neue Auflage erzeugen";
     public static final String NEW_EDITION_TIP = "Schreibt das Buch mit den gemerkten Angaben neu; die bisherige "
             + "Auflage bleibt lesbar";
+    /** „Buch öffnen“: das Buch des Ordners als Artefakt des aktiven Projekts. */
+    public static final String OPEN_BOOK = "Buch öffnen";
+    public static final String OPEN_BOOK_TIP = "Öffnet das Buch dieses Ordners; ältere Auflagen sind dort auswählbar";
     /** Hinweis an einem Buch, dessen Seiten sich seit der Auflage geändert haben. */
     public static final String BOOK_STALE = "Seiten des Buchs haben sich seither geändert";
 
