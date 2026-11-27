@@ -399,7 +399,7 @@ class ContentViewTest {
         assertThat(onEdt(() -> detail.tabs().names()))
                 .containsExactly("Leseansicht", "Podcast-Ansicht", "Anhänge", "Analysen", "Info", "Export");
         assertThat(onEdt(() -> detail.analysisTabs().names()))
-                .containsExactly("Absätze", "Begriffe", "Verweise", "Bilder", "Aussagen", "Graph", "Beziehungen");
+                .containsExactly("Absätze", "Statistik", "Verweise", "Bilder", "Aussagen", "Graph", "Beziehungen");
         // „Info“ hat die Eigenschaften als ersten Unterreiter (Angelo, 19.11.2026); „Beziehungen“ steht unter
         // „Analysen“ (Angelo, 20.11.2026).
         assertThat(onEdt(() -> detail.advancedTabs().names())).containsExactly("Eigenschaften",
@@ -461,9 +461,9 @@ class ContentViewTest {
         // EINE Reiterzeile (AT 17.11.2026): „Begriffe“ vorn wie auf der Seite, dahinter die Reiter des Stands.
         assertThat(onEdt(() -> detail.standing().isVisible())).isTrue();
         // Fachglossar, Graph und die Beziehungen der Auswahl hinten in derselben Zeile (BG2c).
-        assertThat(onEdt(() -> detail.standing().tabs().names())).containsExactly("Begriffe", "Aussagen",
+        assertThat(onEdt(() -> detail.standing().tabs().names())).containsExactly("Statistik", "Aussagen",
                 "Zuerst lesen", "Mögliche Widersprüche", "Fachglossar", "Graph", "Beziehungen");
-        assertThat(onEdt(() -> detail.standing().tabs().selected())).isEqualTo("Begriffe");
+        assertThat(onEdt(() -> detail.standing().tabs().selected())).isEqualTo("Statistik");
         assertThat(onEdt(() -> detail.overviewTerms().showsSelection())).isTrue();
         assertThat(onEdt(() -> detail.overviewTerms().title())).isEqualTo("Begriffe in handbuch");
         assertThat(onEdt(() -> detail.selectedTab())).isEqualTo(PageDetailPanel.OVERVIEW_TERMS);

@@ -90,7 +90,7 @@ import java.util.function.Supplier;
 final class StandingTab extends JPanel {
 
     /** Die Begriffe der Auswahl, vorn in derselben Reiterzeile wie auf der Seite (BG2a, AT 17.11.2026). */
-    static final String TERMS = "Begriffe";
+    static final String TERMS = "Statistik";
     static final String GLOSSARY = "Fachglossar";
     static final String GRAPH = "Graph";
     static final String STATEMENTS = "Aussagen";
