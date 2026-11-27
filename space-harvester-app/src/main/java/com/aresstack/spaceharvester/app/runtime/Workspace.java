@@ -4070,6 +4070,28 @@ public final class Workspace {
         return harvester.pagePodcasts().start(caller, sourceId, pageId);
     }
 
+    /** Der Schlüssel des Podcasts zum Buch eines Favoritenordners, ohne zu lesen (auch auf dem EDT). */
+    public String bookPodcastKey(String folderId) {
+        return com.aresstack.spaceharvester.application.podcast.PagePodcasts.bookKey(caller, folderId);
+    }
+
+    /** Der Stand des Podcasts zum Buch eines Ordners (ADR 0044); leer ohne oder nach neuer Auflage. Nie auf dem EDT. */
+    public java.util.Optional<com.aresstack.spaceharvester.application.podcast.Podcast> bookPodcast(
+            com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
+        return harvester.pagePodcasts().bookPodcast(caller, book);
+    }
+
+    /** Der gesprochene Text des Podcasts zum Buch, soweit geschrieben. Nie auf dem EDT. */
+    public java.util.Optional<String> bookPodcastTranscript(
+            com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
+        return harvester.pagePodcasts().bookTranscript(caller, book);
+    }
+
+    /** Startet den Podcast zum Buch eines Ordners oder setzt ihn fort. */
+    public JobStatus startBookPodcast(com.aresstack.spaceharvester.application.podcast.PagePodcasts.Book book) {
+        return harvester.pagePodcasts().startBook(caller, book);
+    }
+
     /** Meldet jede abgelegte Stufe eines Erklär-Podcasts, auf einem Thread des Core. */
     public Subscription subscribePagePodcast(String key, Runnable listener) {
         return harvester.pagePodcasts().subscribe(key, listener);

@@ -338,15 +338,33 @@ class AreaSummaryViewTest {
     }
 
     @Test
-    void theListeningViewKeepsTheOverviewForNow() {
-        AreaSummaryView view = view(AreaSummaryView.Mode.LISTEN, true);
-        actions.stored = overview("selection-abc");
-        view.books(id -> new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, "Buch", "",
-                List.of()));
+    void theListeningViewReadsTheBookUnderBookAndTheOverviewUnderArea() throws Exception {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            String before = com.aresstack.spaceharvester.app.ui.AppState.shared().get(AreaSummaryView.BOOK_KEY
+                    + "ordner-a");
+            try {
+                AreaSummaryView view = view(AreaSummaryView.Mode.LISTEN, true);
+                actions.stored = overview("selection-abc");
+                view.books(id -> new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT,
+                        "# Erfundenes Buch\n\nText.", "", List.of()));
 
-        view.folder(folder("ordner-a", Root.space("wiki", "BAU")));
+                view.folder(folder("ordner-a", Root.space("wiki", "BAU")));
 
-        assertThat(view.edition()).isNull();
+                assertThat(view.edition()).isNotNull();
+                assertThat(view.podcast().shown().book()).isNotNull();
+                assertThat(view.podcast().shown().book().folderId()).isEqualTo("ordner-a");
+                assertThat(view.podcast().shown().book().markdown()).contains("Erfundenes Buch");
+                assertThat(actions.summarized).isEmpty();
+
+                AreaSummaryView.chooseBook("ordner-a", false);
+                view.bookChanged();
+
+                assertThat(view.podcast().shown().summary()).isEqualTo(actions.stored);
+            } finally {
+                com.aresstack.spaceharvester.app.ui.AppState.shared().put(AreaSummaryView.BOOK_KEY + "ordner-a",
+                        before);
+            }
+        });
     }
 
     @Test

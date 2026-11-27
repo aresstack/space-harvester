@@ -36,6 +36,10 @@ public final class StoredPageImages implements PodcastPictures.PageImageSource {
 
     @Override
     public List<Candidate> candidates(String sourceId, List<String> pageIds) {
+        if (sourceId == null) {
+            // Ohne Quelle (etwa der Podcast zum Buch eines Ordners) gibt es keine Seitenbilder: Schaubild statt Foto.
+            return List.of();
+        }
         List<Candidate> found = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         for (String pageId : pageIds) {

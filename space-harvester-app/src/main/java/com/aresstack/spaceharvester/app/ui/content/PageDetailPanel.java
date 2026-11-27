@@ -689,9 +689,13 @@ public final class PageDetailPanel extends JPanel {
         areaPodcast.podcastEvents(context.events()::publish);
         areaView.onBook(() -> javax.swing.SwingUtilities.invokeLater(this::showDeck));
         // Hat ein Favoritenordner ein Buch, zeigt die Leseansicht dessen neueste Auflage (Architekt 27.11.2026).
-        areaView.books(folderId -> context.settings() == null || context.settings().storage() == null ? null
-                : com.aresstack.spaceharvester.app.research.BookEditions.latest(
-                        context.settings().storage().dataDirectory(), folderId).orElse(null));
+        java.util.function.Function<String, com.aresstack.spaceharvester.app.research.BookEditions.Edition> latest =
+                folderId -> context.settings() == null || context.settings().storage() == null ? null
+                        : com.aresstack.spaceharvester.app.research.BookEditions.latest(
+                                context.settings().storage().dataDirectory(), folderId).orElse(null);
+        areaView.books(latest);
+        // Die Podcast-Ansicht liest unter „Buch“ dieselbe Auflage vor (ADR 0044: der Podcast nutzt das Buch).
+        areaPodcast.books(latest);
         // Geänderte Seiten seit der Auflage: gemerkter Stand gegen den jetzigen in der Ablage (kein Abfragen; die
         // Ansicht prüft nur, wenn eine Quelle eine Änderung meldet oder der Ordner neu gezeigt wird).
         areaView.staleness((folderId, shown) -> {
