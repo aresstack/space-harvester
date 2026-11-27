@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 30
     # Bewusst ohne Secrets: Tests laufen gegen Fake-Confluence und temporäre Verzeichnisse (#15).
     # Arbeitszweig: Space Harvester liegt neben den unveröffentlichten Bibliotheken, die per Composite Build eingebunden
-    # werden (settings.gradle, -Paresstack.libs); feste Commits, damit der Lauf reproduzierbar ist.
+    # werden (settings.gradle, -Paresstack.libs); die Bibliotheken kommen vom jeweils aktuellen main.
     defaults:
       run:
         working-directory: space-harvester
@@ -33,12 +33,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: aresstack/knowledge4j
-          ref: 230a6237b3d8011991db56e17a2d5262abb30bc8
+          ref: main
           path: knowledge4j
       - uses: actions/checkout@v4
         with:
           repository: aresstack/research4j
-          ref: 8d861fdbfe71fbade5ea464890cf8b214951a7d6
+          ref: main
           path: research4j
       - uses: actions/setup-java@v4
         with:
@@ -46,6 +46,24 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew build --console=plain -Paresstack.libs=..
+      # Arbeitszweig: startbare Desktop-App zum Herunterladen als Artefakt des Laufs (kein Release, kein Tag); die
+      # Commits der Bibliotheken stehen in der Laufübersicht, damit klar ist, welcher Stand im JAR steckt.
+      - name: App-JAR des Arbeitszweigs bereitstellen
+        if: github.ref == 'refs/heads/claude/project-thread-kcf5hj'
+        run: |
+          mkdir -p build/arbeitszweig
+          cp space-harvester-app/build/libs/space-harvester-app-*-SNAPSHOT.jar build/arbeitszweig/space-harvester-app.jar
+          java -jar build/arbeitszweig/space-harvester-app.jar --version
+          {
+            echo "### Arbeitszweig-App"
+            echo "space-harvester $(git rev-parse --short HEAD), knowledge4j $(git -C ../knowledge4j rev-parse --short HEAD), research4j $(git -C ../research4j rev-parse --short HEAD)"
+          } | tee build/arbeitszweig/STAND.txt >> "$GITHUB_STEP_SUMMARY"
+      - if: github.ref == 'refs/heads/claude/project-thread-kcf5hj'
+        uses: actions/upload-artifact@v4
+        with:
+          name: space-harvester-app-arbeitszweig-${{ github.sha }}
+          path: space-harvester/build/arbeitszweig/
+          if-no-files-found: error
       # Kopien in enterprise-ai-sources, comic-controls, enterprise-ai-keepass und enterprise-ai-browser gegen den festgehaltenen Upstream-Commit prüfen (siehe UPSTREAM.md)
       - run: enterprise-ai-sources/sync-from-upstream.sh verify
       - run: comic-controls/sync-from-upstream.sh verify
