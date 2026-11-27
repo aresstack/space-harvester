@@ -824,6 +824,8 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         append(yaml, inner, AiServiceSettings.PODCAST_PAUSE_MILLIS, digits(speech.podcastPauseMillis()));
         append(yaml, inner, AiServiceSettings.PODCAST_SPEECH_ATTEMPTS, digits(speech.podcastAttempts()));
         append(yaml, inner, AiServiceSettings.PODCAST_SPEECH_WORKERS, digits(speech.podcastWorkers()));
+        append(yaml, inner, AiServiceSettings.PODCAST_SECTION_CHARS, digits(speech.podcastSectionChars()));
+        append(yaml, inner, AiServiceSettings.PODCAST_SECTIONS, digits(speech.podcastSections()));
         if (retryCount() != null) {
             yaml.append(inner).append("retries: ").append(retryCount()).append('\n');
         }

@@ -294,6 +294,25 @@ final class AiSettingsPanel {
             + AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS + ".\n\nSchlüssel in der Konfigurationsdatei: "
             + "space-harvester.ai." + AiServiceSettings.PODCAST_PAUSE_MILLIS + ", ."
             + AiServiceSettings.PODCAST_SPEECH_ATTEMPTS + " und ." + AiServiceSettings.PODCAST_SPEECH_WORKERS + ".";
+    /**
+     * Was der Erklär-Podcast einer Seite liest (Angelo 27.11.2026: keine festen Grenzen): so viele Zeichen je Abschnitt
+     * und so viele Abschnitte als eigene Teile; was darüber hinausgeht, steht in der Podcast-Ansicht grau.
+     */
+    final JSpinner podcastSectionChars = countSpinner(1, Integer.MAX_VALUE, 500,
+            AiServiceSettings.Speech.DEFAULT_PODCAST_SECTION_CHARS);
+    final JSpinner podcastSections = countSpinner(1, Integer.MAX_VALUE, 1,
+            AiServiceSettings.Speech.DEFAULT_PODCAST_SECTIONS);
+    static final String PODCAST_READING_LABEL = "Podcast – Lesen";
+    static final String PODCAST_SECTION_CHARS_UNIT = "Zeichen je Abschnitt";
+    static final String PODCAST_SECTIONS_UNIT = "Abschnitte";
+    static final String PODCAST_READING_HELP = "Was der Erklär-Podcast einer Seite vom Text liest. Was darüber "
+            + "hinausgeht, hört man im Podcast nicht; die Podcast-Ansicht hinterlegt es grau.\n\nZeichen je Abschnitt: "
+            + "so viel vom Anfang jedes Abschnitts geht an das Modell; Vorgabe "
+            + AiServiceSettings.Speech.DEFAULT_PODCAST_SECTION_CHARS + ".\n\nAbschnitte: so viele Abschnitte der Seite "
+            + "werden eigene Teile, der Rest der Seite hängt am letzten; Vorgabe "
+            + AiServiceSettings.Speech.DEFAULT_PODCAST_SECTIONS + ".\n\nEine Änderung erzeugt vorhandene Podcasts beim "
+            + "nächsten Abspielen neu.\n\nSchlüssel in der Konfigurationsdatei: space-harvester.ai."
+            + AiServiceSettings.PODCAST_SECTION_CHARS + " und ." + AiServiceSettings.PODCAST_SECTIONS + ".";
     private static final com.aresstack.spaceharvester.application.podcast.PodcastVoices VOICES =
             com.aresstack.spaceharvester.application.podcast.PodcastVoices.bundled();
     final JTextField chunkOverlap = Comic.field(6);
@@ -724,6 +743,9 @@ final class AiSettingsPanel {
                     podcastAttempts, Comic.text(PODCAST_ATTEMPTS_UNIT), podcastWorkers,
                     Comic.text(PODCAST_WORKERS_UNIT), new HelpButton(Dialogs.CLOSE_SIZE, PODCAST_TIMING_LABEL,
                             PODCAST_TIMING_HELP)), null);
+            modelRows.add(PODCAST_READING_LABEL, Comic.row(podcastSectionChars,
+                    Comic.text(PODCAST_SECTION_CHARS_UNIT), podcastSections, Comic.text(PODCAST_SECTIONS_UNIT),
+                    new HelpButton(Dialogs.CLOSE_SIZE, PODCAST_READING_LABEL, PODCAST_READING_HELP)), null);
             modelRows.add(READ_ALOUD_DIAL_LABEL, readAloudDialRow(), null);
             advanced.addActionListener(e -> advanced(!advancedOpen()));
             advanced(false);
@@ -834,6 +856,8 @@ final class AiSettingsPanel {
         podcastPause.setValue(current.speech().podcastPause());
         podcastAttempts.setValue(current.speech().podcastSynthesisAttempts());
         podcastWorkers.setValue(current.speech().podcastSynthesisWorkers());
+        podcastSectionChars.setValue(current.speech().podcastSectionLength());
+        podcastSections.setValue(current.speech().podcastSectionCount());
         loadPollInterval.setText(current.loadPollInterval() == null ? "" : current.loadPollInterval());
         chatModel.setText(current.chatModel() == null ? "" : current.chatModel());
         embeddingModel.setText(current.embeddingModel() == null ? "" : current.embeddingModel());
@@ -876,7 +900,8 @@ final class AiSettingsPanel {
                 || savedSimplification(settings).parallel() != SimplificationSettings.DEFAULT_PARALLEL
                 || savedCheck(settings).parallel() != CheckSettings.DEFAULT_PARALLEL
                 || current.speech().podcastPauseMillis() != null || current.speech().podcastAttempts() != null
-                || current.speech().podcastWorkers() != null);
+                || current.speech().podcastWorkers() != null || current.speech().podcastSectionChars() != null
+                || current.speech().podcastSections() != null);
         timeout = current.timeout();
         releasedIds = current.externalProcessingSources();
         renderReleased(settings, releasedIds);
@@ -1156,7 +1181,9 @@ final class AiSettingsPanel {
                         readAloudModel.getText(), voice(readAloudVoice)).withPodcastTiming(
                         own(podcastPause, AiServiceSettings.Speech.DEFAULT_PODCAST_PAUSE_MILLIS),
                         own(podcastAttempts, AiServiceSettings.Speech.DEFAULT_PODCAST_ATTEMPTS),
-                        own(podcastWorkers, AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS)),
+                        own(podcastWorkers, AiServiceSettings.Speech.DEFAULT_PODCAST_WORKERS)).withPodcastReading(
+                        own(podcastSectionChars, AiServiceSettings.Speech.DEFAULT_PODCAST_SECTION_CHARS),
+                        own(podcastSections, AiServiceSettings.Speech.DEFAULT_PODCAST_SECTIONS)),
                 new AiDraft.Use(ownDiagnosisModel(), diagnosisMaxTokens.text(), diagnosisThinking.level()),
                 diagnosisEnabled.isSelected(), new AiServiceSettings.Timeouts(
                         own(summaryTimeout, AiServiceSettings.Timeouts.DEFAULT_SUMMARY),
@@ -2365,6 +2392,7 @@ final class AiSettingsPanel {
         modelRows.visible(simplifyParallel, open);
         modelRows.visible(checkParallel, open);
         modelRows.visible(podcastPause, open);
+        modelRows.visible(podcastSectionChars, open);
         modelRows.visible(liveDictationStep, open);
         modelRows.visible(readAloudRateMin, open);
         Comic.disclose(advanced, open);

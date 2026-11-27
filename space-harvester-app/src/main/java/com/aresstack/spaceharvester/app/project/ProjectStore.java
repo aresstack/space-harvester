@@ -48,6 +48,8 @@ public final class ProjectStore {
     static final String FILE = "projekt.json";
     static final String GROUPS = "gruppen.json";
     static final String ACTIVE = "aktiv.json";
+    /** Der Bestandteil „Artefakte“ (F3, F4): die Artefakte der Schreibumgebung, die dem Projekt gehören. */
+    static final String ARTIFACTS = "artefakte";
     static final int FORMAT_VERSION = 1;
     /** Ein gelöschter Projektordner bis zum nächsten Start der App. */
     private static final String DELETED = ".deleted";
@@ -137,6 +139,16 @@ public final class ProjectStore {
         Path base = root.get();
         return base == null || projectId == null || !ID.matcher(projectId).matches() ? null
                 : base.resolve(projectId);
+    }
+
+    /**
+     * Der Ordner der Artefakte eines Projekts (F3); {@code null} für das Standardprojekt, in dem die Chats ihre
+     * Artefakte selbst besitzen, und für ein unbekanntes oder gelöschtes Projekt.
+     */
+    public Path artifacts(String projectId) {
+        Project project = resolve(projectId);
+        Path folder = project.isDefault() ? null : folder(project.id());
+        return folder == null ? null : folder.resolve(ARTIFACTS);
     }
 
     // ------------------------------------------------------------------ Ändern

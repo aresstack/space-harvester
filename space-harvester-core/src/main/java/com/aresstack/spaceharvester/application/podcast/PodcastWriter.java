@@ -544,12 +544,24 @@ public final class PodcastWriter {
      * @param show     wie die Sendung heißt, nach der Art der Quelle, etwa „Confluence-Update“ (Angelo 22.11.2026);
      *                 nie ein Servername, {@code null} ohne Namen
      */
-    public record Material(String overview, List<Story> stories, String scope, Format format, String show) {
+    /**
+     * @param storyChars so viel vom Text jeder Meldung geht beim Planen der Abschnitte und beim Schreiben an das Modell
+     *                   (Seiten-Podcast: die Einstellung „Podcast – Lesen“, sonst {@link #MAX_STORY_CHARS})
+     */
+    public record Material(String overview, List<Story> stories, String scope, Format format, String show,
+                           int storyChars) {
         public Material {
             overview = overview == null ? "" : overview;
             stories = List.copyOf(stories);
             format = format == null ? Format.NEWS : format;
             show = show == null || show.isBlank() ? null : show.strip();
+            if (storyChars < 1) {
+                throw new IllegalArgumentException("storyChars muss mindestens 1 sein");
+            }
+        }
+
+        public Material(String overview, List<Story> stories, String scope, Format format, String show) {
+            this(overview, stories, scope, format, show, MAX_STORY_CHARS);
         }
 
         public Material(String overview, List<Story> stories, String scope, Format format) {
@@ -558,7 +570,12 @@ public final class PodcastWriter {
 
         /** Dasselbe Material für die Sendung {@code show}. */
         public Material withShow(String show) {
-            return new Material(overview, stories, scope, format, show);
+            return new Material(overview, stories, scope, format, show, storyChars);
+        }
+
+        /** Dasselbe Material, von jeder Meldung bis zu {@code chars} Zeichen an das Modell. */
+        public Material withStoryChars(int chars) {
+            return new Material(overview, stories, scope, format, show, chars);
         }
 
         /** Neuigkeiten eines Updates. */
@@ -682,7 +699,7 @@ public final class PodcastWriter {
             if (!material.place(story).isEmpty()) {
                 text.append(" – steht ").append(material.place(story));
             }
-            text.append(":\n").append(cut(story.text(), MAX_STORY_CHARS)).append('\n');
+            text.append(":\n").append(cut(story.text(), material.storyChars())).append('\n');
         }
         return text.toString();
     }

@@ -157,7 +157,8 @@ class PodcastWriterLiveTest {
                         Bleibt eine Störung offen, gelten drei Stufen: erst die Bereitschaft, nach einer Stunde das \
                         Betriebsteam, ab zwei Stunden die Leitung.""", List.of()));
         PodcastWriter.Material material = PagePodcasts.material(page,
-                List.of(new PagePodcasts.Subpage(escalation, List.of())), List.of("Betriebshandbuch"));
+                List.of(new PagePodcasts.Subpage(escalation, List.of())), List.of("Betriebshandbuch"),
+                PagePodcasts.Reading.DEFAULT);
         PodcastWriter.Voices voices = new PodcastWriter.Voices("Jana", "Thomas");
 
         PodcastPlan plan = writer.outline(material);

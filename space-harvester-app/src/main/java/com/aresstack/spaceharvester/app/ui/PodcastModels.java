@@ -40,9 +40,7 @@ public final class PodcastModels {
                     + "Sprachmodell des Dienstes", AiModel.TTS, draft -> speech(draft).podcastModel(),
                     (draft, model) -> {
                         AiServiceSettings.Speech speech = speech(draft);
-                        return draft.withSpeech(new AiServiceSettings.Speech(model, speech.podcastHost(),
-                                speech.podcastCohost(), speech.readAloudModel(), speech.readAloudVoice(),
-                                speech.podcastPauseMillis(), speech.podcastAttempts(), speech.podcastWorkers()));
+                        return draft.withSpeech(speech.withPodcastModel(model));
                     }));
 
     private PodcastModels() {
