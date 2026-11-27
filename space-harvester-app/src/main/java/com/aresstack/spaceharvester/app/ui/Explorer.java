@@ -75,6 +75,8 @@ import java.util.function.Consumer;
 public final class Explorer {
 
     static final String LOADING = "Lädt …";
+    private static final String SEARCHING = "Wissensquellen werden durchsucht …";
+    private static final String MORE_HINT = " · weitere vorhanden, Titel genauer eingeben";
     static final String MORE = "Weitere laden …";
     private static final String TREE = "tree";
     private static final String MATCHES = "matches";
@@ -2215,7 +2217,14 @@ public final class Explorer {
                     first.putAll(found);
                     found.clear();
                     found.putAll(first);
-                    show(found, true);
+                    // Läuft die Titelsuche noch, bleibt „durchsucht …“; ist sie fertig, gilt ihr Ergebnis samt Hinweis.
+                    String shown = note.getText();
+                    boolean pending = shown.equals(SEARCHING);
+                    int more = shown.indexOf(MORE_HINT);
+                    show(found, pending);
+                    if (!pending && more >= 0) {
+                        note.setText(note.getText() + shown.substring(more));
+                    }
                 }
             }, error -> { });
         }
@@ -2337,7 +2346,7 @@ public final class Explorer {
             }
             show(found, false);
             if (live.truncated() || found.size() > MATCH_LIMIT) {
-                note.setText(note.getText() + " · weitere vorhanden, Titel genauer eingeben");
+                note.setText(note.getText() + MORE_HINT);
             }
         }, error -> {
             if (id == filterRequest) {
@@ -2352,7 +2361,7 @@ public final class Explorer {
     private void show(Map<String, Match> found, boolean searching) {
         matchModel.clear();
         found.values().stream().limit(MATCH_LIMIT).forEach(matchModel::addElement);
-        note.setText(searching ? "Wissensquellen werden durchsucht …"
+        note.setText(searching ? SEARCHING
                 : found.isEmpty() ? "Kein Seitentitel passt" : Texts.count(Math.min(found.size(), MATCH_LIMIT),
                 "Seite", "Seiten"));
     }
