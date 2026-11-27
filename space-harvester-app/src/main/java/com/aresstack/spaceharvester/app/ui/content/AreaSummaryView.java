@@ -553,8 +553,10 @@ final class AreaSummaryView extends JPanel {
      * einmal von selbst.
      */
     private boolean startsByItself() {
+        // Den ersten sichtbaren Besuch merken, auch wenn schon ein Überblick da ist: Ändert sich danach der Ordner,
+        // zeigt er nur „veraltet“ bzw. bietet den Klick an, statt von selbst zu starten.
         return loaded && available && runningJob == null && target != null && target.automatic()
-                && summary == null && !empty && showing.getAsBoolean() && AUTO_CONSIDERED.add(target.identity());
+                && showing.getAsBoolean() && AUTO_CONSIDERED.add(target.identity()) && summary == null && !empty;
     }
 
     private void summarize(boolean interactive) {
@@ -684,12 +686,12 @@ final class AreaSummaryView extends JPanel {
     private void cancel() {
         Actions current = actions.get();
         String job = runningJob;
-        if (current == null || job == null || job.isEmpty()) {
+        Target of = target;
+        if (current == null || job == null || job.isEmpty() || of == null) {
             return;
         }
         busy.setText("Wird abgebrochen …");
-        runner.run(() -> current.shared().cancelJob(job), status -> progressed(status, target),
-                failure -> { });
+        runner.run(() -> current.shared().cancelJob(job), status -> progressed(status, of), failure -> { });
     }
 
     /** Knopf „Zusammenfassen“, Einstieg und Ring nach dem Stand. */
