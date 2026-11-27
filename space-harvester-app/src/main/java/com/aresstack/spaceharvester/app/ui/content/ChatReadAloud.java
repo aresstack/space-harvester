@@ -64,7 +64,7 @@ final class ChatReadAloud {
     });
     /** Gelb wie die Marke des Podcasts, aber als Strich unter der Zeile: auf der farbigen Blase bleibt Text lesbar. */
     private final ReadAloudMarker marker = new ReadAloudMarker(
-            () -> reading == null ? List.of() : texts(reading), ReadAloudMarker.underline());
+            () -> this.reading == null ? List.of() : texts(this.reading), ReadAloudMarker.underline());
     /** Die fertigen Antworten des gezeigten Chats in Reihenfolge. */
     private final List<AssistantMarkdownMessage> answers = new ArrayList<>();
     private final AWTEventListener doubleClicks = this::mouseEvent;
