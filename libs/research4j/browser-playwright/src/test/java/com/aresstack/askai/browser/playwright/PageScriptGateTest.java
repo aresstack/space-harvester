@@ -127,7 +127,7 @@ public class PageScriptGateTest {
      * fallback. Script-free mode and the no-interaction rule belong to the research browser only.
      */
     static final List<String> CHAT_ENGINE_SOURCES = java.util.Arrays.asList("ChatPageScripts.java",
-            "PlaywrightChatConnection.java");
+            "PlaywrightChatConnection.java", "PageOperations.java");
 
     private static List<Path> mainSources() throws IOException {
         Path root = Paths.get("src/main/java/com/aresstack/askai/browser/playwright");
