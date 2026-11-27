@@ -127,7 +127,7 @@ public final class FolderTree<T> {
         tree.setToggleClickCount(2);
         tree.setEditable(true);
         tree.setInvokesStopCellEditing(true);
-        tree.setCellRenderer(new DefaultTreeCellRenderer() {
+        tree.setCellRenderer(new ComicTreeRenderer() {
             @Override
             public java.awt.Component getTreeCellRendererComponent(JTree owner, Object value, boolean selected,
                                                                    boolean expanded, boolean leaf, int row,
