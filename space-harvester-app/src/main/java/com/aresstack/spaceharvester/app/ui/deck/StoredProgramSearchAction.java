@@ -16,13 +16,16 @@ public final class StoredProgramSearchAction {
     private final Component parent;
     private final java.util.function.BooleanSupplier active;
     private final java.util.function.Consumer<Boolean> busy;
+    /** Was der Bereich ohne lesbare Programmquelle rät: wie man eine einträgt. */
+    private final String noSourceHint;
     private Future<?> task;
     private long generation;
     private boolean dialogOpen;
 
     public StoredProgramSearchAction(AppContext context, Component parent,
                                    java.util.function.BooleanSupplier active,
-                                   java.util.function.Consumer<Boolean> busy) {
+                                   java.util.function.Consumer<Boolean> busy, String noSourceHint) {
+        this.noSourceHint = noSourceHint;
         this.context = context;
         this.parent = parent;
         this.active = active;
@@ -52,7 +55,7 @@ public final class StoredProgramSearchAction {
         if (runtime == null || !active.getAsBoolean()) return;
         var sources = runtime.workspace().programSearchSources();
         if (sources.isEmpty()) {
-            Dialogs.view(parent, "Programmsuche", Comic.note("Keine lesbare FTP- oder NDV-Wissensquelle vorhanden."));
+            Dialogs.view(parent, "Programmsuche", Comic.note("Noch keine FTP- oder NDV-Wissensquelle. " + noSourceHint));
             return;
         }
         long request = ++generation;

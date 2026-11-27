@@ -741,6 +741,12 @@ final class FtpDatasetsView extends JPanel {
             menu.add(item("Binärdiagnose beenden", diagnosis != null, this::revokeDiagnosis));
         }
         menu.add(item("Als Job einreichen", readable(single), this::submit));
+        if (owner.addsSources()) {
+            // Gewählter Ordner (PDS, Dataset-Ebene, Unix-Ordner), sonst das gezeigte Verzeichnis (Angelo, 27.11.2026).
+            String sourceTarget = single != null && single.directory() ? single.path() : current;
+            menu.add(item("Als Wissensquelle hinzufügen", !sourceTarget.isEmpty(),
+                    () -> owner.addSource(sourceTarget)));
+        }
         menu.addSeparator();
         menu.add(item(mvs ? "Neues Dataset …" : "Neuer Ordner …", connected && !current.isEmpty(),
                 () -> askNew(true)));

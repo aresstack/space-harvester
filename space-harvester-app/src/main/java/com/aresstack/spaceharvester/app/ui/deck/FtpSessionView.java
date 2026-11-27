@@ -39,6 +39,8 @@ final class FtpSessionView extends JPanel {
     private final JPanel footTools;
     private String view = DATASETS;
     private boolean started;
+    /** „Als Wissensquelle hinzufügen“ des Bereichs; ohne Wissensquellen nichts. */
+    private java.util.function.Consumer<String> sourceAdder;
 
     FtpSessionView(FtpSession session, Runnable showJobs,
                    com.aresstack.spaceharvester.deck.editor.EditorSessions editors) {
@@ -84,6 +86,19 @@ final class FtpSessionView extends JPanel {
 
     void navigationListed(java.util.List<com.aresstack.spaceharvester.deck.ftp.RemoteEntry> entries) {
         navigation.listed(session, entries);
+    }
+
+    void sourceAdder(java.util.function.Consumer<String> adder) {
+        sourceAdder = adder;
+    }
+
+    /** Ob „Als Wissensquelle hinzufügen“ angeboten wird. */
+    boolean addsSources() {
+        return sourceAdder != null;
+    }
+
+    void addSource(String location) {
+        if (sourceAdder != null) sourceAdder.accept(location);
     }
 
     FtpSession session() {

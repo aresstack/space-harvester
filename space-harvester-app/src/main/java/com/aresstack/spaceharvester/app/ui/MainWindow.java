@@ -232,6 +232,7 @@ public final class MainWindow implements AppContext.Navigator {
         // NDV direkt wie MainframeMate; nur Verbindungen mit „Proxy der App verwenden“ nehmen den Proxy der App.
         commandDeck.ndvRoute(com.aresstack.spaceharvester.app.ui.deck.NdvNetwork.of(context));
         commandDeck.ftpNavigation(new FtpNavigationFill(context));
+        commandDeck.ftpSources(new FtpSourceRules(context));
         commandDeck.ftpStoredSearch(context);
         // E-Akte: Proxy und TLS-Vertrauen der App (Windows-ROOT), das Anmeldeprotokoll ohne Werte ins Log.
         org.slf4j.Logger eakteLog = org.slf4j.LoggerFactory.getLogger("command-deck.eakte");
@@ -413,7 +414,8 @@ public final class MainWindow implements AppContext.Navigator {
                     context.events().publish(busy
                             ? new StatusMessageEvent(message, Integer.MAX_VALUE, Severity.INFO)
                             : StatusMessageEvent.clear(message));
-                });
+                }, "FTP-Verzeichnis im Command Deck öffnen und „Als Wissensquelle hinzufügen“ klicken, oder in NDV "
+                        + "Rechtsklick auf eine Bibliothek › „Indexieren (Regel anlegen)“.");
         var programShortcut = new DoubleShiftShortcut(frame, programSearch::open);
         programShortcut.install();
         frame.addWindowListener(new WindowAdapter() {

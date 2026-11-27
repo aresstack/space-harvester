@@ -72,13 +72,22 @@ final class FtpNavigationFill implements FtpNavigationObserver {
     });
 
     static boolean matches(SourceSettingsConfig config, FtpProfile profile, String account, String user, boolean mvs) {
-        if (!"ftp".equals(config.type()) || !Boolean.parseBoolean(config.options().get("navigationFill"))) {
+        return Boolean.parseBoolean(config.options().get("navigationFill")) && serves(config, profile, account, user, mvs);
+    }
+
+    /** Ob die Quelle denselben FTP-Server hat (Host und Port, wie die Quelle selbst sie liest). */
+    static boolean sameEndpoint(SourceSettingsConfig config, FtpProfile profile) {
+        if (!"ftp".equals(config.type())) {
             return false;
         }
         // Host und Port wie die Quelle selbst sie liest (Standardports des Anbieters, etwa bei implizitem TLS).
         String endpoint = FTP.locator(SourceSettings.of(config.options()));
-        if (endpoint.isEmpty() || !endpoint.equals(SourceLocators.hostPort(profile.host(), profile.port()))
-                || user == null || user.isBlank()) {
+        return !endpoint.isEmpty() && endpoint.equals(SourceLocators.hostPort(profile.host(), profile.port()));
+    }
+
+    /** Ob die Quelle denselben Server mit demselben Konto liest wie die Sitzung (Benutzer oder KeePass-Eintrag). */
+    static boolean serves(SourceSettingsConfig config, FtpProfile profile, String account, String user, boolean mvs) {
+        if (!sameEndpoint(config, profile) || user == null || user.isBlank()) {
             return false;
         }
         if (config.auth().type() == SourceSettingsConfig.AuthType.BASIC) {
