@@ -46,6 +46,13 @@ class ArtifactTabsTest {
             assertThat(tabs[0].openIds()).containsExactly("D1");
             assertThat(tabs[0].focus()).isEqualTo("D1");
             assertThat(tabs[0].selectedView().sectionOrder()).containsExactly("a1", "a2");
+            // Markieren und zitieren (ADR 0045 §7): jedes Textfeld eines Abschnitts trägt Artefakt und Abschnitt.
+            SwingUtilities.invokeAndWait(() -> {
+                javax.swing.text.JTextComponent text = textIn(tabs[0].selectedView().block("a2"));
+                assertThat(text).isNotNull();
+                assertThat(com.aresstack.spaceharvester.app.ui.controls.TextContextMenu.quoteReference(text))
+                        .isEqualTo("Dokument D1 \u201EGartenfibel\u201C, Abschnitt a2");
+            });
 
             store.edit(folder, chat.id(), "D1", ChatArtifactStore.ANY, ChatArtifact.Origin.AI, "",
                     document -> document.replaceText("a2", "Lockerer Humus."));
@@ -90,5 +97,20 @@ class ArtifactTabsTest {
             });
             assertThat(tabs[0].openIds()).as("der Chat merkt sich seine Reiter").containsExactly("D1");
         }
+    }
+
+    private static javax.swing.text.JTextComponent textIn(java.awt.Component component) {
+        if (component instanceof javax.swing.text.JTextComponent text) {
+            return text;
+        }
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                javax.swing.text.JTextComponent found = textIn(child);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
     }
 }

@@ -897,9 +897,14 @@ class ChatPanelTest {
             panel.quote("  Der Nachtlauf bricht ab  ");
             panel.quote("Team 10 ist zuständig");
             panel.quote("Der Nachtlauf bricht ab"); // derselbe Ausschnitt nur einmal
+            // Aus einem Artefakt mit Bezug (ADR 0045 §7): erste Zeile des Zitats.
+            panel.quote("Humus.", "Dokument D1 \u201EGartenfibel\u201C, Abschnitt a2");
             seen.addAll(panel.quotes());
         });
-        assertThat(seen).containsExactly("Der Nachtlauf bricht ab", "Team 10 ist zuständig");
+        assertThat(seen).containsExactly("Der Nachtlauf bricht ab", "Team 10 ist zuständig",
+                "(Bezug: Dokument D1 \u201EGartenfibel\u201C, Abschnitt a2)\nHumus.");
+        assertThat(ChatPanel.withQuotes("Kürzer, bitte.", List.of(seen.get(2))))
+                .isEqualTo("> (Bezug: Dokument D1 \u201EGartenfibel\u201C, Abschnitt a2)\n> Humus.\n\nKürzer, bitte.");
     }
 
     @Test
