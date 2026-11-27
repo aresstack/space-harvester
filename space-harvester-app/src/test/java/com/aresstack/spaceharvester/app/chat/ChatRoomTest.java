@@ -41,4 +41,26 @@ class ChatRoomTest {
         assertThat(ChatRoom.within(0, () -> DeckChatTools.page("Editor", text, 0))).isEqualTo(ChatRoom.FULL);
         assertThat(ChatRoom.chars()).as("danach wieder ohne Grenze").isEqualTo(ChatRoom.UNLIMITED);
     }
+
+    @Test
+    void aBinaryFileInTheViewStaysInsideTheRoomInTokensNotJustInCharacters() {
+        // Erfundener Inhalt eines Lademoduls, als Text gelesen; früher ging die Ansicht nach Zeichen gekürzt mit und
+        // sprengte die Anfrage in Tokens (HTTP 400 „Prompt umfasst 727218 Tokens“ bei 128000 Kontext).
+        byte[] raw = new byte[200_000];
+        for (int i = 0; i < raw.length; i++) {
+            raw[i] = (byte) (i % 256);
+        }
+        String salad = new String(raw, java.nio.charset.StandardCharsets.ISO_8859_1);
+        javax.swing.JTextArea editor = new javax.swing.JTextArea(salad);
+        javax.swing.JPanel view = new javax.swing.JPanel();
+        view.add(editor);
+        int room = 30_000;
+        String shown = ChatRoom.within(room, () -> new DeckChatTools(() -> view, () -> true, null).snapshot());
+        assertThat(ModelBudget.tokens(shown)).as("Ansicht im Platz der Anfrage, in Tokens gemessen")
+                .isLessThanOrEqualTo(room / ModelBudget.CHARACTERS_PER_TOKEN + 64);
+        assertThat(shown).contains("text_lesen nr=1");
+        String piece = ChatRoom.within(room, () -> DeckChatTools.page("Editor", salad, 0));
+        assertThat(ModelBudget.tokens(piece)).isLessThanOrEqualTo(room / ModelBudget.CHARACTERS_PER_TOKEN + 64);
+        assertThat(piece).contains("weiter mit ab=");
+    }
 }

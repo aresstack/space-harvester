@@ -518,7 +518,7 @@ public final class ChatTools {
         if (room == 0) {
             return ChatRoom.FULL;
         }
-        int to = (int) Math.min(text.length(), (long) from + room);
+        int to = com.aresstack.spaceharvester.app.runtime.ModelBudget.fit(text, from, room);
         release(key, page);
         int number = sources.cite(new ChatKnowledge.Excerpt(page.title(), key.sourceId(), page.location(),
                 ChatKnowledge.excerpt(text, ChatKnowledge.MAX_HIT_CHARS), key.pageId()), key);

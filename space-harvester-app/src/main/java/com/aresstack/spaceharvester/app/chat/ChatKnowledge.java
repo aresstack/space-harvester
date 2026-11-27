@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.chat;
 
+import com.aresstack.spaceharvester.app.runtime.ModelBudget;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -304,17 +305,21 @@ public final class ChatKnowledge {
         return b.toString();
     }
 
-    /** Kürzt einen Text auf höchstens {@code max} Zeichen, an einer Wortgrenze, mit Auslassungszeichen. */
+    /**
+     * Kürzt einen Text auf höchstens {@code max} Zeicheneinheiten ({@link ModelBudget#units}), an einer Wortgrenze,
+     * mit Auslassungszeichen.
+     */
     public static String excerpt(String text, int max) {
         if (text == null) {
             return "";
         }
         String stripped = text.strip();
-        if (stripped.length() <= max) {
+        int end = ModelBudget.fit(stripped, 0, max);
+        if (end >= stripped.length()) {
             return stripped;
         }
-        int cut = stripped.lastIndexOf(' ', max);
-        return stripped.substring(0, cut > max / 2 ? cut : max).stripTrailing() + " …";
+        int cut = stripped.lastIndexOf(' ', end);
+        return stripped.substring(0, cut > end / 2 ? cut : end).stripTrailing() + " …";
     }
 
     private static String oneLine(String text) {

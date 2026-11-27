@@ -450,6 +450,30 @@ public final class ChatTurn {
     public static final String NO_TOOLS = "Das gewählte Modell nimmt keine Werkzeuge an; ohne Werkzeuge kann der "
             + "Chat hier nichts lesen oder ausfüllen.";
 
+    /** Die Meldung, wenn der Dienst die Anfrage wegen der Kontextlänge des Modells abweist. */
+    public static final String TOO_LONG = "Die Anfrage war zu lang für die Kontextlänge des Modells. Bitte die Frage "
+            + "neu stellen; ist die Kontextlänge unter Einstellungen › KI-Dienst › Modelle zu groß eingetragen, dort "
+            + "korrigieren.";
+
+    /**
+     * Ob der Dienst die Anfrage wegen der Kontextlänge abgewiesen hat (OpenAI-kompatibel „maximum context length“,
+     * „context_length_exceeded“, deutsche Dienste „Kontextlänge“). Sonst hielte der Chat das für fehlende
+     * Werkzeugunterstützung.
+     */
+    static boolean contextExceeded(AiChatException error) {
+        if (error.kind() != AiChatException.Kind.INVALID_REQUEST) {
+            return false;
+        }
+        for (Throwable t = error; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            String message = t.getMessage() == null ? "" : t.getMessage().toLowerCase(java.util.Locale.ROOT);
+            if (message.contains("context length") || message.contains("context_length")
+                    || message.contains("context window") || message.contains("kontextlänge")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Für Tests: ein anderes Begriffswissen für {@value ChatTools#TERM}. */
     ChatTurn termLookup(ChatTools.TermLookup lookup) {
         this.termLookup = Objects.requireNonNull(lookup, "lookup");
@@ -941,6 +965,11 @@ public final class ChatTurn {
                 boolean nothingYet;
                 synchronized (received) {
                     nothingYet = received.length() == 0;
+                }
+                if (contextExceeded(error)) {
+                    // Zu lang ist zu lang – mit Werkzeugen hat das nichts zu tun; das Modell nicht als werkzeuglos merken.
+                    finish(() -> listener.failed(TOO_LONG + "\nTechnische Ursache: " + describe(error)));
+                    return;
                 }
                 if (custom != null && round == 0 && nothingYet
                         && error.kind() == AiChatException.Kind.INVALID_REQUEST) {
