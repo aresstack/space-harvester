@@ -94,6 +94,44 @@ class AttachmentPreviewTabTest {
     }
 
     @Test
+    void imagesAreHiddenUntilShowImagesIsTickedAndTheChoiceIsRemembered() throws Exception {
+        FakeConfluence wiki = new FakeConfluence();
+        wiki.space("DEV", "Entwicklung");
+        wiki.page("200", "Betrieb", "DEV", "<p>Ansicht</p>").storage("<p>Text</p>");
+        wiki.homepage("DEV", "200");
+        wiki.attachment("att901", "200", "notizen.txt", "text/plain", "Zeile 1\n");
+        wiki.attachment("att902", "200", "bild.png", "image/png", "kein echtes Bild");
+        wiki.attachment("att903", "200", "grafik.svg", "image/svg+xml", "<svg/>");
+        start(serve(wiki));
+        com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(PageDetailPanel.SHOW_IMAGES_KEY, 0);
+
+        PageDetailPanel panel = onEdt(() -> new PageDetailPanel(context));
+        assertThat(onEdt(() -> panel.showImages().isSelected())).as("Vorgabe aus").isFalse();
+        onEdt(() -> {
+            panel.tabs().select("Anhänge");
+            panel.load("wiki", "200", false);
+            return null;
+        });
+        await(() -> onEdt(() -> panel.assets().getRowCount() == 1));
+        assertThat(onEdt(() -> panel.assets().getValueAt(0, 0))).isEqualTo("notizen.txt");
+        assertThat(onEdt(() -> panel.footTools().getComponent(0))).as("Knöpfe in der Leiste mit der Lupe")
+                .matches(foot -> javax.swing.SwingUtilities.isDescendingFrom(panel.previewAsset(),
+                        (java.awt.Component) foot) && javax.swing.SwingUtilities.isDescendingFrom(panel.showImages(),
+                        (java.awt.Component) foot));
+
+        onEdt(() -> {
+            panel.showImages().doClick();
+            return null;
+        });
+        assertThat(onEdt(() -> panel.assets().getRowCount())).isEqualTo(3);
+        assertThat(com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(PageDetailPanel.SHOW_IMAGES_KEY, 0))
+                .as("global gemerkt").isEqualTo(1);
+        PageDetailPanel other = onEdt(() -> new PageDetailPanel(context));
+        assertThat(onEdt(() -> other.showImages().isSelected())).as("letzte Wahl gilt überall").isTrue();
+        com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(PageDetailPanel.SHOW_IMAGES_KEY, 0);
+    }
+
+    @Test
     void changingThePageReleasesTheWatchOfThePrefetchPart() throws Exception {
         FakeConfluence wiki = new FakeConfluence();
         wiki.space("DEV", "Entwicklung");

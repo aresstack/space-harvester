@@ -380,6 +380,14 @@ public final class PageDetailPanel extends JPanel {
     private final ComposerButton saveAsset = Comic.button("Anhang speichern …", "Datei des gewählten Anhangs");
     private final ComposerButton previewAsset = Comic.button("Vorschau",
             "Zeigt den gewählten Anhang im Anhang-Viewer (auch per Doppelklick)");
+    /**
+     * „Bilder anzeigen“ rechts in der Leiste der Anhänge (Angelo 27.11.2026): Bilder sieht man sich im Editor an, in der
+     * Liste verwirren sie. Vorgabe aus; die Wahl gilt global und wird im Application State gemerkt.
+     */
+    private final JCheckBox showImages = Comic.checkBox("Bilder anzeigen");
+    static final String SHOW_IMAGES_KEY = "attachments.images.shown";
+    /** Die Leiste mit der Lupe unter „Anhänge“: Vorschau, Ablegen, Speichern links, „Bilder anzeigen“ rechts. */
+    private final JPanel attachmentsFoot = footRow();
     /** Reiter „Anhänge“: Liste unten, der Anhang-Viewer als Comic-Overlay darüber (wie im Enterprise AI Client). */
     private final JLayeredPane attachmentLayers = new JLayeredPane();
     private ComicOverlayPanel attachmentOverlay;
@@ -839,7 +847,19 @@ public final class PageDetailPanel extends JPanel {
         assetsBusy.setHighlight(Comic.BLUE);
         assetsBusy.setVeilColor(Comic.SURFACE);
         attachmentList.add(assetsBusy, BorderLayout.CENTER);
-        attachmentList.add(Comic.row(previewAsset, harvest, saveAsset), BorderLayout.SOUTH);
+        // Die Knöpfe stehen in der Leiste mit der Lupe, nicht in einer eigenen Zeile darüber (Angelo 27.11.2026).
+        attachmentsFoot.add(Comic.row(previewAsset, harvest, saveAsset), BorderLayout.WEST);
+        attachmentsFoot.add(showImages, BorderLayout.EAST);
+        showImages.setToolTipText("Bilder und SVG-Grafiken in der Liste zeigen; gilt für alle Seiten");
+        showImages.setSelected(com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(SHOW_IMAGES_KEY, 0) == 1);
+        assetsModel.showImages(showImages.isSelected());
+        showImages.addActionListener(e -> {
+            com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(SHOW_IMAGES_KEY,
+                    showImages.isSelected() ? 1 : 0);
+            assetsModel.showImages(showImages.isSelected());
+            updateAssetsHint();
+            updatePreviewEnabled();
+        });
         attachmentLayers.setLayout(new FillLayout());
         attachmentLayers.add(attachmentList, JLayeredPane.DEFAULT_LAYER);
         JPanel attachmentsPanel = new JPanel(new BorderLayout());
@@ -3535,6 +3555,7 @@ public final class PageDetailPanel extends JPanel {
                 : READING.equals(selected) && SOURCE_CARD.equals(pageCard) && sourceView.sourceId() != null
                 ? readingSourceFoot
                 : READ.equals(selected) && PAGE.equals(pageCard) ? pageFoot
+                : ATTACHMENTS.equals(selected) && PAGE.equals(pageCard) ? attachmentsFoot
                 : wide && folder != null ? folderFoot
                 : null;
         // Podcast-Ansicht eines Ordners: „mit Unterseiten“ rechts in ihrer Leiste, wie in der Ordnerleiste.
@@ -3956,9 +3977,7 @@ public final class PageDetailPanel extends JPanel {
                 prefetch(context.runtime()).focus(attachmentsOfKind(
                         com.aresstack.spaceharvester.application.assets.AssetKind.MARK), null);
             }
-            assetsHint.setText(Texts.count(overview.entries().size(), "Anhang", "Anhänge")
-                    + (overview.listComplete() ? "" : " (Liste unvollständig)") + " · live, "
-                    + Texts.time(overview.retrievedAt()));
+            updateAssetsHint();
         }, error -> {
             if (shown != page) {
                 return;
@@ -3972,6 +3991,19 @@ public final class PageDetailPanel extends JPanel {
                     .describe(error).title() + " (" + detail + "); der nächste Wechsel auf „Anhänge“ versucht es "
                     + "erneut.");
         });
+    }
+
+    /** „N Anhänge · live, Zeit“ über der Liste; ausgeblendete Bilder stehen mit ihrer Zahl dabei. */
+    private void updateAssetsHint() {
+        PageAssets overview = assetsModel.overview;
+        if (overview == null) {
+            return;
+        }
+        int hidden = overview.entries().size() - assetsModel.rows.size();
+        assetsHint.setText(Texts.count(overview.entries().size(), "Anhang", "Anhänge")
+                + (overview.listComplete() ? "" : " (Liste unvollständig)")
+                + (hidden == 0 ? "" : ", davon " + Texts.count(hidden, "Bild", "Bilder") + " ausgeblendet")
+                + " · live, " + Texts.time(overview.retrievedAt()));
     }
 
     /**
@@ -5973,6 +6005,10 @@ public final class PageDetailPanel extends JPanel {
         return assets;
     }
 
+    JCheckBox showImages() {
+        return showImages;
+    }
+
     ComposerButton previewAsset() {
         return previewAsset;
     }
@@ -6915,11 +6951,30 @@ public final class PageDetailPanel extends JPanel {
     private static final class AssetsModel extends AbstractTableModel {
 
         private static final String[] COLUMNS = {"Titel", "Art", "Größe", "Version", "Abgelegt", "Vorschau von"};
+        /** Die gezeigten Zeilen: ohne „Bilder anzeigen“ alle außer Bildern und SVG-Grafiken. */
         private List<PageAssets.Entry> rows = new ArrayList<>();
+        private PageAssets overview;
+        private boolean images;
 
-        void set(PageAssets overview) {
-            rows = overview == null ? new ArrayList<>() : new ArrayList<>(overview.entries());
+        void set(PageAssets next) {
+            overview = next;
+            refilter();
+        }
+
+        void showImages(boolean shown) {
+            images = shown;
+            refilter();
+        }
+
+        private void refilter() {
+            rows = overview == null ? new ArrayList<>() : new ArrayList<>(overview.entries().stream()
+                    .filter(entry -> images || !isImage(entry.kind())).toList());
             fireTableDataChanged();
+        }
+
+        private static boolean isImage(com.aresstack.spaceharvester.application.assets.AssetKind kind) {
+            return kind == com.aresstack.spaceharvester.application.assets.AssetKind.IMAGE
+                    || kind == com.aresstack.spaceharvester.application.assets.AssetKind.VECTOR;
         }
 
         @Override
