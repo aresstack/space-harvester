@@ -49,6 +49,9 @@ final class CommonsNetFiles implements FileConnection {
     /** Art jedes gelisteten MVS-Orts (wie MainframeMate sie am {@code MvsVirtualResource} trägt). */
     private final java.util.Map<String, MvsLocation> locations = new java.util.concurrent.ConcurrentHashMap<>();
     private static final int LIST_PAGE = 200;
+    /** Hinweis, wenn ein Dataset Binärdaten enthält (etwa ein Lademodul einer LOAD-Bibliothek). */
+    static final String BINARY_NOTICE = "Binärdaten, kein Quelltext (etwa ein Lademodul aus einer LOAD-Bibliothek) – "
+            + "als Text nicht lesbar, Bearbeiten gesperrt. Rechtsklick › Hex-Ansicht zeigt die Bytes samt EBCDIC-Spalte.";
 
     CommonsNetFiles(FtpProfile profile, String user, char[] password) throws IOException {
         this.ftp = Clients.connect(profile, user, password);
@@ -348,7 +351,7 @@ final class CommonsNetFiles implements FileConnection {
                 byte[] raw = retrieve(candidate);
                 String restriction = mvs && (transfer.fileType() == TransferOptions.FileType.BINARY
                         || RecordStructure.suspectBinary(raw, charset, transfer.transform(), recordStructure))
-                        ? "Mögliche Binärdaten – Textbearbeitung gesperrt. Binärdiagnose oder Hex-Ansicht verwenden." : "";
+                        ? BINARY_NOTICE : "";
                 byte[] bytes = RecordStructure.withoutPadding(raw, transfer.transform());
                 String text = recordStructure ? RecordStructure.decode(bytes, charset, transfer.transform()) : new String(bytes, charset);
                 return new RemoteFile(candidate, text, null, restriction);
