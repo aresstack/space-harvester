@@ -221,10 +221,11 @@ spring:
   (Indexieren, Bestand abgleichen, Initialisieren, Änderungen prüfen, Nachholen), zählt die App die Größe des Ordners.
   Liegen darin Unterordner über `space-harvester-app.large-folder-size` (Vorgabe 5GB, `0` nie; **Einstellungen ›
   Allgemein › Ablage › Große Ordner nachfragen ab**), fragt „Großer Ordner“ nach und nennt die engsten solchen Unterordner,
-  angekreuzt; **Synchronisieren** schließt die angekreuzten über „Ausschließen“ aus (wieder einblenden unter
+  ohne Kreuz; **Synchronisieren** schließt die angekreuzten über „Ausschließen“ aus (wieder einblenden unter
   Wissensquellen › Ausgeschlossen), **Abbrechen** startet nichts. Ohne Kreuz fragt die App für diesen Ordner bis zum
-  Neustart nicht wieder. Es ist nur eine Warnung: ohne Kreuz liest der Abgleich alles, keine Datei fällt wegen ihrer
-  Größe heraus.
+  Neustart nicht wieder. Es ist nur eine Warnung, keine Grenze auf Ordnerebene. Auf Dateiebene gilt wie bei allen
+  Quellen **Große Dateien ganz laden bis** (`cache.max-text-file-size`, einstellbar, 0 = ohne Grenze): größere Dateien
+  liest der Abgleich auch bei lokalen Ordnern nicht, er legt nur ihre Kopfdaten ab.
 - **Terminal-Ausgabe:** Das Terminal, aus dem die App gestartet wurde, bleibt ohne Angabe still.
   `logging.threshold.console` (derselbe Schlüssel wie beim Dienst: `off`, `error`, `warn`, `info` oder `all`) bzw.
   **Einstellungen › Allgemein › Terminal-Ausgabe** legt fest, ab welcher Stufe Meldungen dort erscheinen; „Warnungen“

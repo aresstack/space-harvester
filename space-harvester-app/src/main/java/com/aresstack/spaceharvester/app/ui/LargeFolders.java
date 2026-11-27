@@ -38,7 +38,8 @@ import javax.swing.SwingUtilities;
  * <p>Genannt werden die engsten Unterordner über der Grenze: einer, in dem kein Unterordner selbst über der Grenze liegt.
  * So fällt nur heraus, was wirklich groß ist. Versteckte Ordner, Punkt-Ordner, Ausschlussmuster der Quelle und schon
  * ausgeschlossene Ordner zählen nicht mit, weil der Abgleich sie ohnehin nicht liest. Es ist nur eine Warnung (Angelo
- * 27.11.2026: keine Größenbegrenzung): Ohne Kreuz liest der Abgleich alles.
+ * 27.11.2026: keine Grenze auf Ordnerebene): Nichts ist vorangekreuzt, ohne Kreuz liest der Abgleich alles. Einzelne
+ * Dateien über „Große Dateien ganz laden bis“ (einstellbar) liest der Abgleich nicht ganz.
  */
 final class LargeFolders {
 
@@ -131,13 +132,13 @@ final class LargeFolders {
                 : String.valueOf(start.getFileName());
         String text = "„" + name + "“ ist " + Texts.bytes(report.totalBytes()) + " groß. "
                 + (report.large().size() == 1 ? "Dieser Unterordner ist" : "Diese Unterordner sind")
-                + " größer als " + Texts.bytes(limit) + ". Angekreuzte werden ausgeschlossen; wieder einblenden unter "
+                + " größer als " + Texts.bytes(limit) + ". Wer will, kreuzt welche zum Ausschließen an; wieder einblenden unter "
                 + "Wissensquellen › Ausgeschlossen. Die Grenze steht unter Einstellungen › Allgemein › Ablage.\n\n"
                 + "Wirklich synchronisieren?";
         List<String> options = report.large().stream()
                 .map(folder -> folder.path() + " (" + Texts.bytes(folder.bytes()) + ")").toList();
+        // Nur eine Warnung (Angelo 27.11.2026): keine Grenze auf Ordnerebene, ausgeschlossen wird nur, was er ankreuzt.
         boolean[] initial = new boolean[options.size()];
-        java.util.Arrays.fill(initial, true);
         boolean[][] result = {null};
         try {
             SwingUtilities.invokeAndWait(() -> {
