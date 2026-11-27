@@ -2380,7 +2380,15 @@ public final class ChatPanel extends JPanel {
         turn = new ChatTurn(runtime.workspace(), port, modelName, effort, history, question, scope, area, kind,
                 listener, SwingUtilities::invokeLater).budget(() -> chatBudget(true, use))
                 // Spezialmodelle (Angelo 27.11.2026): Schaubilder über die Zeilen „Bildgenerierung“.
-                .diagrams(runtime.workspace()::composeDiagram);
+                .diagrams(runtime.workspace()::composeDiagram)
+                // Aussagen-, Vereinfachungs-, Prüf- und Podcast-Modell für Seiten des Bereichs.
+                .pageModels(new com.aresstack.spaceharvester.app.chat.ChatTools.PageModels(
+                        () -> context.settings() == null
+                                ? com.aresstack.spaceharvester.application.configuration.SimplificationSettings.DEFAULT
+                                : context.settings().simplification(),
+                        () -> context.settings() == null
+                                ? com.aresstack.spaceharvester.application.configuration.CheckSettings.DEFAULT
+                                : context.settings().check()));
         if (custom != null) {
             // #1151: dieselbe Unterhaltung, aber die Werkzeuge der Perspektive (Command Deck: Maskenassistent).
             custom.tools().modelSelected(modelName);

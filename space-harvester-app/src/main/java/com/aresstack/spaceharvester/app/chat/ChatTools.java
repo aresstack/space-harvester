@@ -72,6 +72,10 @@ public final class ChatTools {
      * (Angelo 24.11.2026, „Parallele Agenten (intern)“ im ▾-Menü des Chats).
      */
     static final String EVALUATE = "treffer_auswerten";
+    /** Aussagenanalyse einer Seite mit den Zeilen „Aussagen-“, „Vereinfachungs-“ und „Prüf-Modell“ (27.11.2026). */
+    static final String STATEMENTS = "aussagen_analysieren";
+    /** Erklär-Podcast einer Seite mit den Zeilen „Podcast“ und „Podcast – Sprache“ (27.11.2026). */
+    static final String PODCAST = "podcast_erstellen";
     /** Präfix der virtuellen Ordnerknoten einer Sammlung in {@value #LIST} (ADR 0034 §5). */
     static final String FOLDER = "ordner/";
 
@@ -244,13 +248,33 @@ public final class ChatTools {
             if (explicitAppSources != null) all.addAll(storedProgramTools().definitions());
             return List.copyOf(all);
         }
-        if (appSources == null) {
-            return definitions(nodes != null);
-        }
         List<AiChat.Tool> all = new ArrayList<>(definitions(nodes != null));
+        if (pageModels != null) {
+            all.addAll(pageModelDefinitions());
+        }
+        if (appSources == null) {
+            return List.copyOf(all);
+        }
         all.add(appSearchDefinition());
         if (explicitAppSources != null) all.addAll(storedProgramTools().definitions());
         return List.copyOf(all);
+    }
+
+    /** {@value #STATEMENTS} und {@value #PODCAST}: die Auswertungsmodelle für eine Seite des Bereichs. */
+    static List<AiChat.Tool> pageModelDefinitions() {
+        return List.of(
+                new AiChat.Tool(STATEMENTS, "Analysiert die Aussagen einer Seite des Bereichs (wer muss, soll, kann "
+                        + "was) mit den eingestellten Auswertungsmodellen und liefert sie; mit pruefen beurteilt das "
+                        + "Prüf-Modell zusätzlich, ob jede Aussage den Satz richtig wiedergibt. Nur auf Wunsch des "
+                        + "Benutzers, es dauert.",
+                        "{\"type\":\"object\",\"properties\":{\"kennung\":{\"type\":\"string\"},"
+                                + "\"pruefen\":{\"type\":\"boolean\",\"description\":\"auch prüfen, Vorgabe "
+                                + "nein\"}},\"required\":[\"kennung\"]}"),
+                new AiChat.Tool(PODCAST, "Startet den Erklär-Podcast einer Seite des Bereichs (Podcast-Modell und "
+                        + "Sprachausgabe). Er läuft als Auftrag und erscheint in der Podcast-Ansicht der Seite. Nur "
+                        + "auf Wunsch des Benutzers.",
+                        "{\"type\":\"object\",\"properties\":{\"kennung\":{\"type\":\"string\"}},"
+                                + "\"required\":[\"kennung\"]}"));
     }
 
     /** {@value #READ}: liest eine Seite des Bereichs oder einen Treffer der internen Suche im Volltext. */
@@ -306,6 +330,27 @@ public final class ChatTools {
         return this;
     }
 
+    /**
+     * Die Einstellungen der Auswertungen, deren Modelle der Chat nutzt (Angelo 27.11.2026: „Der Chat soll die
+     * Einstellungen ruhig alle nutzen“): Vorstufe „Sätze vereinfachen“ und „Aussagen prüfen“.
+     */
+    public record PageModels(
+            java.util.function.Supplier<com.aresstack.spaceharvester.application.configuration.SimplificationSettings> simplification,
+            java.util.function.Supplier<com.aresstack.spaceharvester.application.configuration.CheckSettings> check) {
+        public PageModels {
+            Objects.requireNonNull(simplification, "simplification");
+            Objects.requireNonNull(check, "check");
+        }
+    }
+
+    /** Ohne Aufruf bietet der Bereich {@value #STATEMENTS} und {@value #PODCAST} nicht an. */
+    private PageModels pageModels;
+
+    ChatTools pageModels(PageModels models) {
+        this.pageModels = models;
+        return this;
+    }
+
     /** Für Tests: ein anderes Begriffswissen. */
     ChatTools termLookup(TermLookup terms) {
         this.terms = Objects.requireNonNull(terms, "terms");
@@ -350,6 +395,8 @@ public final class ChatTools {
             case READ -> "Liest eine Seite";
             case TERM -> "Schlägt einen Fachbegriff nach";
             case APP_SEARCH -> "Durchsucht die Wissensquellen";
+            case STATEMENTS -> "Analysiert die Aussagen einer Seite";
+            case PODCAST -> "Startet den Erklär-Podcast";
             case StoredProgramChatTools.SOURCES, StoredProgramChatTools.SEARCH, StoredProgramChatTools.ANALYSIS ->
                     StoredProgramChatTools.describe(call.name());
             default -> "Werkzeug";
@@ -383,6 +430,10 @@ public final class ChatTools {
                         .asInt(0)));
                 case TERM -> term(arguments.path("begriff").asString(""));
                 case APP_SEARCH -> appSearch(arguments);
+                case STATEMENTS -> pageModels == null ? "Unbekanntes Werkzeug."
+                        : statements(arguments.path("kennung").asString(""), arguments.path("pruefen").asBoolean(false));
+                case PODCAST -> pageModels == null ? "Unbekanntes Werkzeug."
+                        : podcast(arguments.path("kennung").asString(""));
                 case StoredProgramChatTools.SOURCES, StoredProgramChatTools.SEARCH, StoredProgramChatTools.ANALYSIS ->
                         explicitAppSources == null || appSources == null ? "Unbekanntes Werkzeug."
                                 : storedProgramTools().run(call.name(), arguments);
@@ -460,18 +511,7 @@ public final class ChatTools {
             return ChatRoom.FULL;
         }
         int to = (int) Math.min(text.length(), (long) from + room);
-        String spaceKey = spaceOf(key);
-        if (spaceKey == null) {
-            spaceKey = page.spaceKey();
-        }
-        if (spaceKey == null) {
-            spaceKey = live.spaceOf(key);
-        }
-        if (spaceKey == null) {
-            // Ohne Space lässt sich die Seite nicht freigeben; dann geht ihr Text nicht hinaus.
-            throw new ReleaseFailed(new IllegalStateException("Seite ohne Space"));
-        }
-        release(spaceKey, key);
+        release(key, page);
         int number = sources.cite(new ChatKnowledge.Excerpt(page.title(), key.sourceId(), page.location(),
                 ChatKnowledge.excerpt(text, ChatKnowledge.MAX_HIT_CHARS), key.pageId()), key);
         StringBuilder b = new StringBuilder();
@@ -486,6 +526,133 @@ public final class ChatTools {
             b.append("\n\n(Fortsetzung mit ").append(READ).append(", versatz ").append(to).append(')');
         }
         return b.toString();
+    }
+
+    /** Gibt die Seite frei, bevor ihr Inhalt an ein Modell geht; ohne Space {@link ReleaseFailed}. */
+    private void release(PageKey key, Page page) {
+        String spaceKey = spaceOf(key);
+        if (spaceKey == null) {
+            spaceKey = page.spaceKey();
+        }
+        if (spaceKey == null) {
+            spaceKey = live.spaceOf(key);
+        }
+        if (spaceKey == null) {
+            // Ohne Space lässt sich die Seite nicht freigeben; dann geht ihr Text nicht hinaus.
+            throw new ReleaseFailed(new IllegalStateException("Seite ohne Space"));
+        }
+        release(spaceKey, key);
+    }
+
+    // ------------------------------------------------------------------ Auswertungsmodelle (27.11.2026)
+
+    /**
+     * {@value #STATEMENTS}: dieselbe Analyse wie „Analysieren“ im Reiter Aussagen (Aussagen-Modell, Vorstufe mit dem
+     * Vereinfachungs-Modell nach den Einstellungen), mit {@code check} danach „Prüfen“ (Prüf-Modell).
+     */
+    String statements(String ref, boolean check) {
+        PageKey key = parse(ref);
+        if (!allows(key)) {
+            return UNAVAILABLE;
+        }
+        if (live.isFolder(key)) {
+            return FOLDER_ONLY;
+        }
+        Page page;
+        try {
+            page = fetchedPage(workspace, key);
+        } catch (RuntimeException failed) {
+            return NOT_FETCHED.formatted(failed.getClass().getSimpleName());
+        }
+        DeliveredPage delivered = page == null ? null
+                : workspace.cachedPage(key.sourceId(), key.pageId()).orElse(null);
+        if (delivered == null) {
+            return NOT_STORED;
+        }
+        release(key, page);
+        BooleanSupplier stop = () -> cancelled;
+        com.aresstack.spaceharvester.application.knowledge.PageStatements result;
+        try {
+            result = workspace.analyzeStatements(delivered.snapshot(), stop, pageModels.simplification().get());
+            if (check) {
+                result = workspace.checkStatements(delivered.snapshot(), stop, pageModels.check().get());
+            }
+        } catch (com.aresstack.spaceharvester.application.knowledge.AnalyzerUnavailableException e) {
+            return "Keine Aussagenanalyse möglich (" + e.reason() + "); unter Einstellungen › KI-Dienst › Modelle "
+                    + "fehlt das Aussagen-Modell oder die Seite ist nicht für die KI freigegeben.";
+        } catch (com.aresstack.spaceharvester.application.check.CheckUnavailableException e) {
+            return "Prüfen nicht möglich (" + e.reason() + "); unter Einstellungen › KI-Dienst › Modelle fehlt das "
+                    + "Prüf-Modell oder die Seite ist nicht für die KI freigegeben.";
+        }
+        return statementsText(page, result, check);
+    }
+
+    /** Die Aussagen als Liste, so viele wie in die Anfrage passen. */
+    static String statementsText(Page page, com.aresstack.spaceharvester.application.knowledge.PageStatements result,
+                                 boolean checked) {
+        if (result == null || result.analysis() == null) {
+            return "Keine Aussagen: " + (result == null ? "keine Analyse" : result.reason());
+        }
+        List<ParsedStatements.Statement> all = result.analysis().result().statements();
+        String text = page.reading() == null ? page.text() : page.reading().text();
+        StringBuilder b = new StringBuilder("Aussagen der Seite „").append(oneLine(page.title())).append("“: ")
+                .append(all.size()).append(checked ? ", geprüft" : "").append('\n');
+        int room = ChatRoom.chars();
+        int shown = 0;
+        for (ParsedStatements.Statement statement : all) {
+            String line = "- " + statementLine(text, statement) + '\n';
+            if (room != ChatRoom.UNLIMITED && b.length() + line.length() > room) {
+                break;
+            }
+            b.append(line);
+            shown++;
+        }
+        if (shown < all.size()) {
+            b.append("(").append(all.size() - shown).append(" weitere passen nicht in die Anfrage)\n");
+        }
+        return b.toString().stripTrailing();
+    }
+
+    private static String statementLine(String text, ParsedStatements.Statement statement) {
+        int from = Math.max(0, Math.min(statement.start(), text.length()));
+        int to = Math.max(from, Math.min(statement.end(), text.length()));
+        StringBuilder b = new StringBuilder(oneLine(text.substring(from, to)));
+        if (b.isEmpty()) {
+            b.append(oneLine(statement.predicateText()));
+        }
+        if (statement.features() != null && statement.features().modality() != null) {
+            b.append(" [").append(statement.features().modality().name().toLowerCase(java.util.Locale.ROOT))
+                    .append(']');
+        }
+        if (statement.check() != null && statement.check().verdict() != null) {
+            b.append(" (Prüfung: ").append(statement.check().verdict().name().toLowerCase(java.util.Locale.ROOT))
+                    .append(')');
+        }
+        return b.toString();
+    }
+
+    /** {@value #PODCAST}: startet den Erklär-Podcast wie der Kopfhörer-Knopf der Seite. */
+    String podcast(String ref) {
+        PageKey key = parse(ref);
+        if (!allows(key)) {
+            return UNAVAILABLE;
+        }
+        if (live.isFolder(key)) {
+            return FOLDER_ONLY;
+        }
+        Page page;
+        try {
+            page = fetchedPage(workspace, key);
+        } catch (RuntimeException failed) {
+            return NOT_FETCHED.formatted(failed.getClass().getSimpleName());
+        }
+        if (page == null) {
+            return NOT_STORED;
+        }
+        release(key, page);
+        var job = workspace.startPagePodcast(key.sourceId(), key.pageId());
+        return "Der Erklär-Podcast der Seite „" + oneLine(page.title()) + "“ wird erzeugt (Auftrag " + job.state()
+                + "); er erscheint unter Aufträge und in der Podcast-Ansicht der Seite.";
     }
 
     /** Titel, Ort und Lesetext aus dem Cache; {@code null}, wenn die Seite nicht lokal liegt. */
