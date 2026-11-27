@@ -651,6 +651,64 @@ class ChatToolsTurnTest {
         assertThat(messages.get(messages.size() - 1).text()).contains("Berechtigungsmanagement");
     }
 
+    /** Browser-Werkzeuge für Tests: browser_navigate meldet eine erfundene Seite. */
+    private static ChatTurn.WebSearch web() {
+        return new ChatTurn.WebSearch(new com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools(List.of(
+                com.aresstack.enterpriseai.proasteion.katagogion.McpToolContribution.of("browser_navigate",
+                        "Öffnet eine Adresse",
+                        call -> com.aresstack.enterpriseai.proasteion.katagogion.McpToolResult.ok("Seite geöffnet"),
+                        com.aresstack.enterpriseai.proasteion.katagogion.McpToolParameter.string("url", true,
+                                "Adresse")))), null, null, null);
+    }
+
+    @Test
+    void withWebSearchTheRoleNoLongerLimitsTheModelToTheArea() throws Exception {
+        // Angelo 27.11.2026: Mit eingeschalteter Websuche lehnte der Chat eine genannte Adresse ab, weil die Rolle
+        // „Du erreichst nur den gewählten Bereich“ sagte.
+        PageKey open = page("datenhaus");
+        ScriptedChat port = new ScriptedChat(List.of((request, listener) -> listener.completed("Gesucht.")));
+        Events events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Suche auf https://intranet.example/ nach Urlaub",
+                space, "Handbuch", events, Runnable::run).knowledgeByTools(open).webSearch(web()).start();
+        assertThat(events.done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        AiChat.Request first = port.requests.get(0);
+        assertThat(first.tools()).extracting(AiChat.Tool::name).contains("browser_navigate", ChatTools.SEARCH);
+        assertThat(first.messages().get(0).text()).contains(ChatKnowledge.WEB_SEARCH_PROMPT)
+                .doesNotContain(ChatKnowledge.AREA_ONLY).contains(ChatKnowledge.NO_INVENTION);
+
+        // Ohne Websuche bleibt die Grenze.
+        ScriptedChat without = new ScriptedChat(List.of((request, listener) -> listener.completed("Bereich.")));
+        Events plain = new Events();
+        new ChatTurn(workspace, without, "modell", null, List.of(), "Frage", space, "Handbuch", plain,
+                Runnable::run).knowledgeByTools(open).start();
+        assertThat(plain.done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(without.requests.get(0).messages().get(0).text()).contains(ChatKnowledge.AREA_ONLY)
+                .doesNotContain(ChatKnowledge.WEB_SEARCH_PROMPT);
+    }
+
+    @Test
+    void withWebSearchARejectionOfToolsIsReportedAndNeverAnsweredSilentlyWithoutThem() throws Exception {
+        ScriptedChat port = new ScriptedChat(List.of(
+                (request, listener) -> listener.failed(new AiChatException(AiChatException.Kind.INVALID_REQUEST, 400,
+                        "HTTP 400", null))));
+        Events events = new Events();
+        new ChatTurn(workspace, port, "modell", null, List.of(), "Suche im Web", space, "Handbuch", events,
+                Runnable::run).knowledgeByTools(null).webSearch(web()).start();
+        assertThat(events.done.await(60, TimeUnit.SECONDS)).isTrue();
+        assertThat(events.failed).startsWith(ChatTurn.NO_WEB_TOOLS);
+        assertThat(port.requests).hasSize(1);
+
+        // Auch wenn das Modell als werkzeuglos gemerkt ist: Mit Websuche geht die Frage mit Werkzeugen hinaus.
+        assertThat(ChatTurn.WITHOUT_TOOLS).contains("modell");
+        ScriptedChat again = new ScriptedChat(List.of((request, listener) -> listener.completed("Mit Browser.")));
+        Events next = new Events();
+        new ChatTurn(workspace, again, "modell", null, List.of(), "Noch einmal", space, "Handbuch", next,
+                Runnable::run).knowledgeByTools(null).webSearch(web()).start();
+        assertThat(next.done.await(60, TimeUnit.SECONDS)).isTrue();
+        assertThat(again.requests.get(0).tools()).extracting(AiChat.Tool::name).contains("browser_navigate");
+    }
+
     @Test
     void aServiceThatRejectsToolsFallsBackToTheSearchAndIsRemembered() throws Exception {
         ScriptedChat port = new ScriptedChat(List.of(

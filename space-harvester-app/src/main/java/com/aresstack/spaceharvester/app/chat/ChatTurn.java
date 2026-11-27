@@ -376,8 +376,16 @@ public final class ChatTurn {
      *
      * @param open die Seite, die der Benutzer gerade offen hat, oder {@code null} bei Space, Quelle oder allen Quellen
      */
+    /**
+     * Ob der Turn Wissen per Werkzeug will ({@link #knowledgeByTools}), auch wenn der Dienst Werkzeuge für dieses
+     * Modell schon einmal abgelehnt hat: Mit eingeschalteter Websuche versucht er es dann trotzdem, denn ohne
+     * Werkzeuge gibt es keine Websuche (Angelo 27.11.2026).
+     */
+    private boolean toolsAsked;
+
     public ChatTurn knowledgeByTools(PageKey open) {
-        this.byTools = kind == Kind.QUESTION && !WITHOUT_TOOLS.contains(model);
+        this.toolsAsked = kind == Kind.QUESTION;
+        this.byTools = toolsAsked && !WITHOUT_TOOLS.contains(model);
         this.openPage = open;
         return this;
     }
@@ -461,6 +469,10 @@ public final class ChatTurn {
     /** Die feste Meldung, wenn der Dienst für dieses Modell keine Werkzeuge annimmt. */
     public static final String NO_TOOLS = "Das gewählte Modell nimmt keine Werkzeuge an; ohne Werkzeuge kann der "
             + "Chat hier nichts lesen oder ausfüllen.";
+
+    /** Die Meldung, wenn der Dienst Werkzeuge ablehnt, die Websuche aber an ist (sie braucht Werkzeuge). */
+    public static final String NO_WEB_TOOLS = "Der KI-Dienst hat die Anfrage mit Werkzeugen abgelehnt; ohne Werkzeuge "
+            + "kann der Chat nicht im Web suchen.";
 
     /** Die Meldung, wenn der Dienst die Anfrage wegen der Kontextlänge des Modells abweist. */
     public static final String TOO_LONG = "Die Anfrage war zu lang für die Kontextlänge des Modells. Bitte die Frage "
@@ -618,7 +630,7 @@ public final class ChatTurn {
             toolset = withWriting(withModelTools(withWebSearch(custom)));
             onUi(() -> listener.context(ChatKnowledge.Context.EMPTY));
             round(conversation(withWebSearchRules(customSystem), question), 0);
-        } else if (byTools) {
+        } else if (byTools || toolsAsked && web != null) {
             runWithTools();
         } else {
             runWithSearch();
@@ -838,7 +850,8 @@ public final class ChatTurn {
         String system = searchAgent
                 ? ChatKnowledge.agentSystemMessage(area, scope != null, appSources != null,
                         !toolset.definitions().isEmpty(), open, shown, total, openRef)
-                : ChatKnowledge.toolSystemMessage(area, open, shown, total, openRef, appSources != null);
+                : ChatKnowledge.toolSystemMessage(area, open, shown, total, openRef, appSources != null,
+                        webSearch != null);
         List<AiChat.Message> messages = conversation(withWebSearchRules(system), question);
         round(messages, 0);
     }
@@ -991,6 +1004,11 @@ public final class ChatTurn {
                 if (round == 0 && nothingYet && error.kind() == AiChatException.Kind.INVALID_REQUEST) {
                     // Der Dienst lehnt Werkzeuge ab: für dieses Modell merken und still auf die Suche zurückfallen.
                     WITHOUT_TOOLS.add(model);
+                    if (webSearch != null) {
+                        // Ohne Werkzeuge keine Websuche: nie still ohne sie antworten (Angelo 27.11.2026).
+                        finish(() -> listener.failed(NO_WEB_TOOLS + "\nTechnische Ursache: " + describe(error)));
+                        return;
+                    }
                     runWithSearch();
                     return;
                 }
@@ -1832,8 +1850,11 @@ public final class ChatTurn {
     private String withWebSearchRules(String system) {
         String all = system;
         WebSearch web = webSearch;
-        if (web != null && web.rules() != null && !web.rules().isBlank()) {
-            all = (all == null || all.isBlank() ? "" : all + "\n\n") + web.rules();
+        if (web != null) {
+            all = (all == null || all.isBlank() ? "" : all + "\n\n") + ChatKnowledge.WEB_SEARCH_PROMPT;
+            if (web.rules() != null && !web.rules().isBlank()) {
+                all = all + "\n\n" + web.rules();
+            }
         }
         var tools = writing;
         if (tools != null) {
