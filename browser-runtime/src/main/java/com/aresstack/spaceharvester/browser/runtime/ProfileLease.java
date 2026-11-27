@@ -62,6 +62,7 @@ final class ProfileLease implements AutoCloseable {
             FileLock lock = lockReleasedWithin(channel, releaseWaitMillis);
             if (lock != null) {
                 Path persistent = folder.resolve(browser);
+                adoptEarlierProfile(folder, browser, persistent);
                 Files.createDirectories(persistent);
                 return new ProfileLease(persistent, channel, lock, false);
             }
@@ -71,6 +72,46 @@ final class ProfileLease implements AutoCloseable {
         } catch (IOException failed) {
             throw new UncheckedIOException("browser profile unavailable under " + folder, failed);
         }
+    }
+
+    /** Files that only a Chromium profile has in its root (Chrome, Edge). */
+    private static final String CHROMIUM_MARKER = "Local State";
+    /** Files that only a Firefox profile has in its root (Firefox, Camoufox). */
+    private static final String FIREFOX_MARKER = "prefs.js";
+
+    /**
+     * Before the per-browser layout, a browser ran directly in the host's folder ({@code <folder>} instead of
+     * {@code <folder>/<browser>}). Such a profile moves once into the subfolder of the first browser of the same kind
+     * (Chromium or Firefox), so its sign-ins, cookies and site storage stay; a profile of the other kind is left alone.
+     */
+    static void adoptEarlierProfile(Path folder, String browser, Path persistent) throws IOException {
+        if (Files.exists(persistent)) {
+            return;
+        }
+        boolean firefoxKind = BrowserChannel.of(browser).firefoxFamily();
+        if (!Files.exists(folder.resolve(firefoxKind ? FIREFOX_MARKER : CHROMIUM_MARKER))) {
+            return;
+        }
+        Files.createDirectories(persistent);
+        try (Stream<Path> entries = Files.list(folder)) {
+            for (Path entry : (Iterable<Path>) entries::iterator) {
+                String name = entry.getFileName().toString();
+                if (entry.equals(persistent) || name.endsWith(".lock") || isLayoutEntry(name)) {
+                    continue;
+                }
+                Files.move(entry, persistent.resolve(name));
+            }
+        }
+    }
+
+    /** The runtime's own entries in a profile folder: a browser subfolder or a temporary session profile. */
+    private static boolean isLayoutEntry(String name) {
+        for (BrowserChannel channel : BrowserChannel.values()) {
+            if (name.equals(channel.id()) || name.startsWith(channel.id() + "-session-")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** A temporary profile under {@code <profiles>/temporary}, deleted on {@link #close()}. */

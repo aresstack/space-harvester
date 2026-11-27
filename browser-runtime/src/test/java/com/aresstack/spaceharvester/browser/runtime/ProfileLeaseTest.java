@@ -61,6 +61,26 @@ class ProfileLeaseTest {
     }
 
     @Test
+    void aProfileFromBeforeThePerBrowserLayoutMovesIntoTheSubfolderOfItsKind() throws Exception {
+        Path folder = Files.createDirectories(profiles.resolve("chat-from-yesterday"));
+        Files.write(folder.resolve("Local State"), new byte[]{1});
+        Files.createDirectories(folder.resolve("Default"));
+        Files.write(folder.resolve("Default").resolve("Cookies"), new byte[]{2});
+        try (ProfileLease firefox = ProfileLease.lasting(folder, "firefox", 0L, DAY)) {
+            assertFalse(Files.exists(firefox.directory().resolve("Default")), "a Chromium profile never goes to Firefox");
+        }
+        try (ProfileLease edge = ProfileLease.lasting(folder, "msedge", 0L, DAY)) {
+            assertTrue(Files.exists(edge.directory().resolve("Default").resolve("Cookies")), "the sign-ins stay");
+            assertTrue(Files.exists(edge.directory().resolve("Local State")));
+            assertFalse(Files.exists(folder.resolve("Default")));
+            assertTrue(Files.isDirectory(folder.resolve("firefox")), "other browsers' folders stay where they are");
+        }
+        try (ProfileLease chrome = ProfileLease.lasting(folder, "chrome", 0L, DAY)) {
+            assertFalse(Files.exists(chrome.directory().resolve("Default")), "moved once, to the first browser of its kind");
+        }
+    }
+
+    @Test
     void aSecondBrowserOfTheSameProfileGetsATemporaryProfileThatIsDeletedOnClose() throws Exception {
         ProfileLease first = lease("chat-a");
         ProfileLease second = lease("chat-a");
