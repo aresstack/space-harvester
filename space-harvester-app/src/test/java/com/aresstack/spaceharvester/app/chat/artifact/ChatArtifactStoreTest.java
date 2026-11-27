@@ -119,6 +119,34 @@ class ChatArtifactStoreTest {
     }
 
     @Test
+    void theMoveWaitsForTheDataFolderAndAnOpenedOldChatFollows() {
+        // Die Einstellungen kommen nach dem Fenster: ohne Datenordner zieht nichts um, und es wird später nachgeholt.
+        java.util.concurrent.atomic.AtomicReference<Path> root = new java.util.concurrent.atomic.AtomicReference<>();
+        ChatStore unset = new ChatStore(root::get);
+        ChatArtifactStore early = new ChatArtifactStore(unset);
+        assertThat(early.adoptOnce()).isEmpty();
+
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        ChatRecord old = chat(chats);
+        new ChatArtifactStore(chats).createDocument(folder, old.id(), "Plan", "# Plan\n\nSäen.",
+                ChatArtifact.Origin.AI);
+        root.set(home.resolve("chats"));
+        Path standard = home.resolve("projekte").resolve("standard").resolve("artefakte");
+        early.projects(id -> "standard".equals(id) ? standard : null);
+        assertThat(early.adoptOnce()).as("jetzt mit Datenordner, je Chat die neuen Kennungen")
+                .containsOnlyKeys(old.id());
+        assertThat(early.adoptOnce()).as("einmal je Datenordner").isEmpty();
+        assertThat(ChatArtifactStore.listIn(standard)).extracting(ChatArtifact::title).containsExactly("Plan");
+
+        // Ein Chat ohne Projektangabe (Standardprojekt) zieht beim Öffnen ebenfalls ins Standardprojekt.
+        ChatRecord later = chat(chats);
+        new ChatArtifactStore(chats).createDocument(folder, later.id(), "Brief", "", ChatArtifact.Origin.AI);
+        assertThat(early.moveToProject(folder, later.id(), null)).containsOnlyKeys("D1");
+        assertThat(ChatArtifactStore.listIn(standard)).hasSize(2);
+    }
+
+    @Test
     void documentsAreKeptWithAllRevisionsAndListedInCreationOrder() {
         ChatStore chats = chats();
         ChatRecord chat = chat(chats);

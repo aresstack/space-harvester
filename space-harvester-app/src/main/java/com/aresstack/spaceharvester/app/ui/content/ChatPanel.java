@@ -474,7 +474,6 @@ public final class ChatPanel extends JPanel {
         projects = context.projects();
         // Artefakte gehören immer dem Projekt, auch dem Standardprojekt (ADR 0047).
         artifacts.projects(projects::artifacts);
-        adoptOldArtifacts();
         chat = freshChat(null);
         // Wechselt das aktive Projekt (Ecke unten) oder ändert sich eine Gruppe, folgt der Chat (ADR 0027, ohne Abfragen).
         projects.addListener(() -> SwingUtilities.invokeLater(this::projectsChanged));
@@ -1878,6 +1877,13 @@ public final class ChatPanel extends JPanel {
      * sie ins Projekt um (ADR 0043 F3), und die Verweise in seinen Antworten folgen den neuen Kennungen.
      */
     private java.util.Map<String, String> adoptArtifacts() {
+        // Der einmalige Umzug (ADR 0047) beim ersten Zugriff mit bekanntem Datenordner, auf dem EDT vor allem anderen:
+        // ein schon geladener Chat zieht seine Verweise sofort nach, sonst überschriebe er die umgeschriebene Datei.
+        java.util.Map<String, String> early = artifacts.adoptOnce().getOrDefault(chat.id(), java.util.Map.of());
+        if (!early.isEmpty()) {
+            chat = chat.withTexts(text -> com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore.relink(
+                    text, early));
+        }
         java.util.Map<String, String> renamed = artifacts.moveToProject(home, chat.id(), chat.projectId());
         if (renamed.isEmpty()) {
             return renamed;
@@ -1888,43 +1894,6 @@ public final class ChatPanel extends JPanel {
             store.save(home, chat);
         }
         return renamed;
-    }
-
-    /** Ob der einmalige Umzug der Artefakte aus den Chat-Ordnern in diesem Programmlauf schon lief. */
-    private static final java.util.concurrent.atomic.AtomicBoolean ADOPTED =
-            new java.util.concurrent.atomic.AtomicBoolean();
-
-    /**
-     * Der einmalige Umzug (ADR 0047): Artefakte aus der Zeit, als im Standardprojekt der Chat besaß, ziehen in den
-     * Ordner ihres Projekts, damit jeder Chat sie sieht, ohne den alten zu öffnen. Nur Dateien verschieben, lokal,
-     * ohne Netz und ohne KI; danach gibt es nichts mehr umzuziehen. Danach zeigt die Mitte die neuen Kennungen.
-     */
-    private void adoptOldArtifacts() {
-        if (!ADOPTED.compareAndSet(false, true)) {
-            return;
-        }
-        Thread worker = new Thread(() -> {
-            int moved = artifacts.adoptAll();
-            if (moved > 0) {
-                System.getLogger(ChatPanel.class.getName()).log(System.Logger.Level.INFO,
-                        "Artefakte ins Projekt umgezogen: " + moved);
-                SwingUtilities.invokeLater(this::reloadArtifactChat);
-            }
-        }, "artefakte-umzug");
-        worker.setDaemon(true);
-        worker.start();
-    }
-
-    /**
-     * Zeigt die Artefakte des offenen Chats neu (nach dem Umzug haben sie neue Kennungen). Der Umzug läuft beim Öffnen
-     * der Ansicht, wenn noch ein frischer Chat offen ist; ein später geladener Chat bringt die neuen Verweise mit.
-     */
-    private void reloadArtifactChat() {
-        if (artifactHost == null || artifactChat == null) {
-            return;
-        }
-        artifactHost.chat(null, null);
-        artifactHost.chat(home, chat.id());
     }
 
     /** Meldet der Mitte einen Wechsel des offenen Chats (neuer, geladener oder erstmals gespeicherter Chat). */

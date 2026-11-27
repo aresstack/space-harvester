@@ -127,7 +127,28 @@ public final class ChatArtifactStore {
      * @return die Zahl der umgezogenen Artefakte
      */
     public int adoptAll() {
-        int moved = 0;
+        return adoptAllByChat().values().stream().mapToInt(Map::size).sum();
+    }
+
+    /** Welche Chat-Datenordner in diesem Programmlauf schon umgezogen sind (einmal je Datenordner). */
+    private static final java.util.Set<Path> ADOPTED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Der einmalige Umzug, beim ersten Zugriff auf einen bekannten Datenordner; ohne Datenordner (die Einstellungen
+     * sind noch nicht geladen) geschieht nichts und der nächste Aufruf versucht es wieder.
+     *
+     * @return je Chat die neuen Kennungen (alt → neu), damit ein schon geladener Chat seinen Verlauf nachzieht
+     */
+    public Map<String, Map<String, String>> adoptOnce() {
+        Path root = chats.rootPath();
+        if (root == null || !ADOPTED.add(root)) {
+            return Map.of();
+        }
+        return adoptAllByChat();
+    }
+
+    private Map<String, Map<String, String>> adoptAllByChat() {
+        Map<String, Map<String, String>> moved = new LinkedHashMap<>();
         for (com.aresstack.spaceharvester.app.chat.ChatStore.ArtifactFolder each : chats.artifactFolders()) {
             // Ein Chat, dessen Umzug scheitert, bleibt unverändert liegen und hält die übrigen nicht auf.
             try {
@@ -136,7 +157,7 @@ public final class ChatArtifactStore {
                 if (renamed.isEmpty()) {
                     continue;
                 }
-                moved += renamed.size();
+                moved.put(each.chatId(), renamed);
                 com.aresstack.spaceharvester.app.chat.ChatRecord record = chats.load(each.folder(), each.chatId());
                 if (record != null && !record.isEmpty()) {
                     chats.save(each.folder(), record.withTexts(text -> relink(text, renamed)));
@@ -162,7 +183,8 @@ public final class ChatArtifactStore {
         synchronized (LOCK) {
             chatProject(chatId, projectId);
             Path from = chats.artifacts(folder, chatId);
-            Path to = projectId == null ? null : projectArtifacts.apply(projectId);
+            Path to = projectArtifacts.apply(projectId == null || projectId.isEmpty()
+                    ? com.aresstack.spaceharvester.app.project.Project.DEFAULT_ID : projectId);
             List<ChatArtifact> own = from == null ? List.of() : listIn(from);
             if (to == null || to.equals(from)) {
                 return Map.of();

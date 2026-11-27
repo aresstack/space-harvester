@@ -261,6 +261,12 @@ public final class ChatStore {
         return entries;
     }
 
+    /** Der Chat-Ordner auf der Platte, normalisiert; {@code null}, solange die App keinen Datenordner kennt. */
+    public Path rootPath() {
+        Path base = root == null ? null : root.get();
+        return base == null ? null : base.toAbsolutePath().normalize();
+    }
+
     /** Ein Chat, der noch einen eigenen Artefakt-Ordner hat: Bereich (relativ) und Kennung. */
     public record ArtifactFolder(Path folder, String chatId) {
     }
