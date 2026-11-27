@@ -2212,6 +2212,7 @@ public final class ActivitiesView implements View {
                 case READING_PREFETCH -> new Counters("Seiten", "Erledigt", "Vorgeladen", "Fehlgeschlagen");
                 case DOCUMENT_ANALYSIS -> new Counters("Dokumente", "Gelesen", "Analysiert", "Fehlgeschlagen");
                 case RESEARCH -> new Counters("Schritte", "Erledigt", "Im Korb", "Fehlgeschlagen");
+                case BOOK -> new Counters("Schritte", "Erledigt", "Abschnitte", "Fehlgeschlagen");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }
@@ -3223,7 +3224,7 @@ public final class ActivitiesView implements View {
             case KNOWLEDGE_GRAPH_EXPORT -> Glyph.GRAPH;
             case ASSETS -> ComposerIcons.picture();
             case ATTACHMENTS -> ComposerIcons.paperclip();
-            case ENRICHMENT, STATEMENT_ANALYSIS, STATEMENT_CHECK, DOCUMENT_ANALYSIS, RESEARCH -> Glyph.SPARKLE;
+            case ENRICHMENT, STATEMENT_ANALYSIS, STATEMENT_CHECK, DOCUMENT_ANALYSIS, RESEARCH, BOOK -> Glyph.SPARKLE;
             case GLOSSARY -> ComposerIcons.openBook();
             case SEARCH_QUALITY -> ComposerIcons.magnifier();
             case UPDATE_SUMMARY -> Glyph.SUMMARIZE;

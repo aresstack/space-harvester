@@ -143,6 +143,11 @@ public enum JobType {
     /** Buchfunktion Phase 3: Research4j füllt einen Favoritenordner als Korb (Arbeitszweig, nur auf Klick). */
     RESEARCH,
     /**
+     * Buchfunktion Phase 4: Writing4j schreibt aus einem Korb-Ordner das Buch, in zwei Aufträgen je Klick (Vorbereiten,
+     * Schreiben); nur im Speicher, nach einem Neustart wird nichts fortgesetzt (Arbeitszweig).
+     */
+    BOOK,
+    /**
      * Hintergrundauftrag (Angelo 21.11.2026, ADR 0025 Nachtrag „Hintergrundaufträge“): alles, was die App von sich aus
      * anstößt, etwa fehlende Seiten nachladen oder Bilder automatisch beschreiben. Welche Arbeit, sagt die Angabe
      * {@code background.kind}; zusammengehörige Unteraufträge (je Space einer) tragen dieselbe {@code background.group}
