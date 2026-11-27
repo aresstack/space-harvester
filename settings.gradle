@@ -68,10 +68,9 @@ include 'space-harvester-app'
 // DOCX, PDF und Markdown, ParityReport für den Live-Lauf; hängt nur am Core, nichts hängt davon ab.
 include 'parity-tests'
 
-// Arbeitszweig der Bibliotheksintegration (ADR-Aufteilung Ask AI, Reihenfolge 5): Knowledge4j und Research4j sind noch
-// nicht veröffentlicht und kommen per Composite Build aus Nachbarverzeichnissen. Die Eigenschaft nennt den Ordner, in
-// dem beide liegen: -Paresstack.libs=.. (Kommandozeile) oder aresstack.libs=.. in der eigenen gradle.properties.
-// Ohne sie gelten die veröffentlichten Versionen. Dieser Zweig geht nicht nach develop, bevor sie veröffentlicht sind.
+// Knowledge4j und Research4j kommen in der veröffentlichten Version von Maven Central (gradle/libs.versions.toml). Wer an
+// ihnen mitentwickelt, bindet die Nachbarverzeichnisse per Composite Build ein: -Paresstack.libs=.. (Kommandozeile) oder
+// aresstack.libs=.. in der eigenen gradle.properties nennt den Ordner, in dem beide liegen.
 def aresstackLibs = providers.gradleProperty('aresstack.libs').getOrNull()
 if (aresstackLibs != null) {
     def libs = file(aresstackLibs)
