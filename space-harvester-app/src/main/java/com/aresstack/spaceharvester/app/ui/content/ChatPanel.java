@@ -741,7 +741,7 @@ public final class ChatPanel extends JPanel {
         // Klick auf die Wellen: zwischen „erst komplett“ und „live mitschreiben“ umschalten, auch während der Aufnahme.
         waveform.setLive(LiveDictationSettings.live(), LIVE_MODE, COMPLETE_MODE);
         waveform.onToggle(() -> LiveDictationSettings.live(!LiveDictationSettings.live()));
-        LiveDictationSettings.listen(() -> SwingUtilities.invokeLater(() -> {
+        LiveDictationSettings.listenWhileDisplayable(waveform, () -> SwingUtilities.invokeLater(() -> {
             boolean live = LiveDictationSettings.live();
             dictation.setLive(live);
             waveform.setLive(live, LIVE_MODE, COMPLETE_MODE);

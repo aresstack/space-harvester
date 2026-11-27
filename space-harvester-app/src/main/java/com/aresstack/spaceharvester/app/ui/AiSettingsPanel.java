@@ -1838,8 +1838,8 @@ final class AiSettingsPanel {
         live.setSelected(com.aresstack.spaceharvester.app.speech.LiveDictationSettings.live());
         live.addActionListener(e -> com.aresstack.spaceharvester.app.speech.LiveDictationSettings.live(
                 live.isSelected()));
-        com.aresstack.spaceharvester.app.speech.LiveDictationSettings.listen(() -> javax.swing.SwingUtilities
-                .invokeLater(() -> live.setSelected(
+        com.aresstack.spaceharvester.app.speech.LiveDictationSettings.listenWhileDisplayable(live,
+                () -> javax.swing.SwingUtilities.invokeLater(() -> live.setSelected(
                         com.aresstack.spaceharvester.app.speech.LiveDictationSettings.live())));
         return Comic.row(live, new HelpButton(Dialogs.CLOSE_SIZE, LIVE_DICTATION_LABEL, LIVE_DICTATION_HELP));
     }
