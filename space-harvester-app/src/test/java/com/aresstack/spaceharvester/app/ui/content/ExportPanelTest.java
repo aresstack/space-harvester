@@ -381,6 +381,15 @@ class ExportPanelTest {
         assertThat(ExportPanel.affects(new JobStatus("m", JobType.ANALYTICS_EXPORT, "wiki", "OPS", "local",
                 JobState.RUNNING, new JobProgress(3, 1, 1, 0), null, false, Instant.EPOCH, Instant.EPOCH, null, null,
                 null, Map.of(), false, false, null))).isTrue();
+        // Ein zweiter Export-Reiter für dieselbe Auswahl startet denselben Export aus der Quelle nicht noch einmal.
+        JobStatus analytics = new JobStatus("a", JobType.ANALYTICS_EXPORT, "wiki", "OPS", "local", JobState.RUNNING,
+                new JobProgress(3, 1, 1, 0), null, false, Instant.EPOCH, Instant.EPOCH, null, null, null, Map.of(),
+                false, false, null);
+        ExportPanel.Selection space = new ExportPanel.Selection.Node("wiki", "OPS", null, "Betrieb");
+        assertThat(ExportPanel.sourceRunning(List.of(analytics), space, "analytics")).isTrue();
+        assertThat(ExportPanel.sourceRunning(List.of(analytics), space, "metadata")).isFalse();
+        assertThat(ExportPanel.sourceRunning(List.of(analytics),
+                new ExportPanel.Selection.Node("wiki", "DEV", null, "Entwicklung"), "analytics")).isFalse();
     }
 
     @Test

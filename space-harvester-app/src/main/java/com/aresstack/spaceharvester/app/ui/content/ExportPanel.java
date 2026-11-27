@@ -412,6 +412,8 @@ public final class ExportPanel extends JPanel {
      * die Auswahl wechselt. Nach dem Ende nennt die Rückmeldung die Datei, sofern die Karte noch diese Auswahl zeigt.
      */
     private final Map<String, Pending> sourceJobs = new LinkedHashMap<>();
+    /** Die Anmeldung bei {@link AppContext#onChange}; ein geschlossener Export-Reiter meldet sich damit ab. */
+    private final Subscription contextSubscription;
     /** Ein Export aus der Quelle, dessen Auftrag gerade erst angefordert wird. */
     private Pending sourceStarting;
     /** Zählt Abfragen; nur das Ergebnis der jüngsten wird gezeigt. */
@@ -490,7 +492,7 @@ public final class ExportPanel extends JPanel {
         toggleNotices.setVisible(false);
         noticeList.setVisible(false);
         render(Data.NONE);
-        context.onChange(ignored -> {
+        contextSubscription = context.onChange(ignored -> {
             if (!disposed) {
                 subscribe();
                 refresh();
@@ -552,6 +554,7 @@ public final class ExportPanel extends JPanel {
     /** Meldet die Fläche ab (Reiter geschlossen); laufende Aufträge laufen weiter. */
     void dispose() {
         disposed = true;
+        contextSubscription.close();
         if (subscription != null) {
             subscription.close();
             subscription = null;
@@ -1370,7 +1373,17 @@ public final class ExportPanel extends JPanel {
             return NO_PAGES;
         }
         Pending running = sourcePendingFor(selection, kind);
-        return running == null ? null : sourceTitle(kind) + " läuft schon";
+        return running == null && !sourceRunning(context.runtime().workspace().jobs(), selection, kind) ? null
+                : sourceTitle(kind) + " läuft schon";
+    }
+
+    /**
+     * Ob für die Auswahl schon ein Export dieser Art aus der Quelle läuft, auch aus einem anderen Export-Reiter
+     * gestartet: jeder Reiter hat seine eigene Fläche, die Aufträge stehen aber im gemeinsamen Arbeitsbereich.
+     */
+    static boolean sourceRunning(List<JobStatus> jobs, Selection selection, String kind) {
+        return jobs.stream().anyMatch(job -> sourceExport(job.type()) && sourceKind(job.type()).equals(kind)
+                && !job.state().terminal() && selection.covers(job));
     }
 
     static String sourceTitle(String kind) {

@@ -136,6 +136,7 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
         this.folder = folder;
         this.chatId = chatId;
         boolean wasShowing = selected != null;
+        String showingExport = selectedExport;
         tabs.values().forEach(tab -> tab.view().dispose());
         tabs.clear();
         group = new ButtonGroup();
@@ -152,7 +153,10 @@ final class ArtifactTabs implements ChatPanel.ArtifactHost {
             }
         }
         refreshStrip();
-        if (wasShowing) {
+        // Export-Reiter gehören nicht zum Chat: der gewählte bleibt vorn.
+        if (showingExport != null && exports.containsKey(showingExport)) {
+            selectExport(showingExport);
+        } else if (wasShowing) {
             showPage();
         }
     }

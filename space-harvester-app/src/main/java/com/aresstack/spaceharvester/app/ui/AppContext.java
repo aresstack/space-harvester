@@ -966,9 +966,13 @@ public final class AppContext {
         this.navigator = navigator;
     }
 
-    /** Ansichten melden sich hier, um nach jedem (Neu-)Start ihre Daten neu zu laden. */
-    public void onChange(Consumer<AppContext> listener) {
+    /**
+     * Ansichten melden sich hier, um nach jedem (Neu-)Start ihre Daten neu zu laden; wer vor der App endet (etwa ein
+     * geschlossener Export-Reiter), meldet sich mit der Rückgabe wieder ab.
+     */
+    public com.aresstack.spaceharvester.application.observe.Subscription onChange(Consumer<AppContext> listener) {
         listeners.add(listener);
+        return () -> listeners.remove(listener);
     }
 
     public Connection connection(String sourceId) {
