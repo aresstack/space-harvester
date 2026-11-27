@@ -72,11 +72,12 @@ class ExplorerArtifactsTest {
 
         List<String> opened = new ArrayList<>();
         List<String> asked = new ArrayList<>();
+        List<String> exported = new ArrayList<>();
         Explorer[] holder = new Explorer[1];
         SwingUtilities.invokeAndWait(() -> {
             Explorer explorer = new Explorer(context);
             holder[0] = explorer;
-            explorer.artifacts(store, opened::add);
+            explorer.artifacts(store, opened::add, (id, format) -> exported.add(id + ":" + format));
             assertThat(explorer.artifactsShown()).isFalse();
 
             explorer.view.select(Explorer.ARTIFACTS_TAB);
@@ -88,6 +89,11 @@ class ExplorerArtifactsTest {
             list.list().setSelectedIndex(1);
             ((javax.swing.JMenuItem) list.menu(list.list().getSelectedValue()).getComponent(0)).doClick();
             assertThat(opened).containsExactly(flow.id());
+            // „Ausgeben ▸“: bei der Grafik nur SVG
+            javax.swing.JMenu output = (javax.swing.JMenu) list.menu(list.list().getSelectedValue()).getComponent(1);
+            assertThat(output.getItemCount()).isEqualTo(1);
+            output.getItem(0).doClick();
+            assertThat(exported).containsExactly(flow.id() + ":null");
 
             // Das Filterfeld filtert nach Titel
             list.filter("lager");
@@ -106,7 +112,13 @@ class ExplorerArtifactsTest {
         SwingUtilities.invokeAndWait(() -> { });
         SwingUtilities.invokeAndWait(() -> {
             ArtifactList list = holder[0].artifactList();
-            assertThat(list.shownIds()).containsExactly(book.id(), flow.id());
+            // Gelöscht steht es durchgestrichen am Ende, bis zum nächsten Start; ein Klick holt es zurück.
+            assertThat(list.shownIds()).containsExactly(book.id(), flow.id(), notes.id());
+            assertThat(list.menu(list.list().getModel().getElementAt(2)).getComponentCount()).isEqualTo(1);
+            list.restore(list.list().getModel().getElementAt(2));
+            assertThat(opened).containsExactly(flow.id(), notes.id());
+            assertThat(store.listInProject(null)).extracting(ChatArtifact::id)
+                    .containsExactlyInAnyOrder(book.id(), flow.id(), notes.id());
 
             list.askTitle = current -> "Lagerprozesse 2027";
             list.rename(store.readInProject(null, book.id()));
