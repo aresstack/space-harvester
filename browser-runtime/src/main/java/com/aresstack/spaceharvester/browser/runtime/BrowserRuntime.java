@@ -30,8 +30,10 @@ import java.util.function.Consumer;
  *   <li>{@link #ephemeral}: a browser with a throw-away profile; the caller creates its contexts.</li>
  *   <li>Camoufox: {@link #camoufoxInstalled()} and {@link #installCamoufox} are separate. A start only uses an
  *   installed Camoufox and never downloads one.</li>
- *   <li>An add-on handed to a start is loaded on the way the browser supports, or the start reports why not
- *   ({@link RunningBrowser#addonFailure()}); it is never dropped silently.</li>
+ *   <li>An add-on handed to a start is loaded on the way the browser supports: Camoufox at its start, the installed
+ *   Firefox right after the start as a temporary add-on ({@link FirefoxAddon}), Chrome/Edge as an unpacked extension
+ *   on a persistent profile. Otherwise the start reports why not ({@link RunningBrowser#addonFailure()}); it is never
+ *   dropped silently.</li>
  *   <li>The driver: playwright4j runs the Playwright driver in a child JVM on GraalVM 25. Its JARs come from the host
  *   package ({@link PlaywrightDriverJars}); a long class path goes through a pathing JAR ({@link DriverClasspathJar}).
  *   Playwright never downloads a browser.</li>
@@ -157,6 +159,7 @@ public final class BrowserRuntime {
             boolean addonLoaded = false;
             String addonFailure = null;
             Path extension = null;
+            Path firefoxAddon = null;
             if (addon != null) {
                 stage = "ADDON_PREPARE";
                 try {
@@ -166,7 +169,10 @@ public final class BrowserRuntime {
                         camoufox = camoufox.withAddon(addon.prepare(parent, false));
                         addonLoaded = true;
                     } else if (channel == BrowserChannel.FIREFOX) {
-                        addonFailure = "the installed Firefox does not load the add-on yet (research4j #1)";
+                        // The installed Firefox takes it after the start, as a temporary add-on over Playwright's
+                        // BiDi session (nothing can be preinstalled there); see ADDON_LOAD below.
+                        Path parent = persistent ? profile.directory() : (temporaryFiles = temporaryDirectory("addon-"));
+                        firefoxAddon = addon.prepare(parent, false);
                     } else if (persistent) {
                         temporaryFiles = temporaryDirectory("extension-");
                         extension = addon.prepare(temporaryFiles, true);
@@ -179,6 +185,7 @@ public final class BrowserRuntime {
                     // The browser still starts, without the add-on; the caller is told why.
                     addonFailure = "add-on not prepared: " + firstLine(failed);
                     extension = null;
+                    firefoxAddon = null;
                 }
             }
 
@@ -214,6 +221,15 @@ public final class BrowserRuntime {
                 }
                 browser = channel.firefoxFamily() ? playwright.firefox().launch(options)
                         : playwright.chromium().launch(options);
+            }
+            if (firefoxAddon != null) {
+                stage = "ADDON_LOAD";
+                try {
+                    FirefoxAddon.install(context, browser, firefoxAddon);
+                    addonLoaded = true;
+                } catch (RuntimeException loadFailed) {
+                    addonFailure = "add-on not loaded: " + firstLine(loadFailed);
+                }
             }
             if (addonFailure != null) {
                 LOG.log(System.Logger.Level.WARNING, "browser " + channel.id() + " runs without its add-on: "

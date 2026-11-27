@@ -6,13 +6,13 @@
 #   sync-from-upstream.sh sync <bibliothek> <commit|tag|branch>   neu kopieren und upstream/<bibliothek>.sha256 schreiben
 #   sync-from-upstream.sh verify [<bibliothek>]                   Kopie(n) gegen den festgehaltenen Upstream-Commit prüfen
 #
-# Bibliotheken: knowledge4j, research4j, writing4j (Liste unten). Ohne lokalen Checkout wird der Upstream in ein
+# Bibliotheken: knowledge4j, playwright4j, research4j, writing4j (Liste unten). Ohne lokalen Checkout wird der Upstream in ein
 # temporäres Verzeichnis geklont. <BIBLIOTHEK>_DIR=<pfad> (z. B. RESEARCH4J_DIR) nutzt stattdessen einen vorhandenen
 # Checkout (er wird nicht verändert, der Commit wird per git archive gelesen).
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
-libraries=(knowledge4j research4j writing4j)
+libraries=(knowledge4j playwright4j research4j writing4j)
 # Nicht mitkopiert: die CI des Upstreams und sein Gradle-Wrapper (ein eingebundener Build läuft mit dem Gradle des
 # Space Harvester).
 excludes=(.github gradlew gradlew.bat gradle/wrapper)
