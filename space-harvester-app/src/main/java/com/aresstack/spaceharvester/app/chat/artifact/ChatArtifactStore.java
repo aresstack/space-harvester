@@ -41,6 +41,11 @@ public final class ChatArtifactStore {
     static final String SUFFIX = ".artefakt";
     /** Ein gelöschtes Artefakt bis zum nächsten Start (Papierkorb wie beim Chat, ADR 0047): wiederherstellbar. */
     static final String DELETED = SUFFIX + ".deleted";
+    /**
+     * Was vom endgültig Gelöschten bleibt: eine leere Marke, damit seine Kennung nie wieder vergeben wird und alte
+     * Verweise ({@code artefakt:G2}) nie auf fremden Inhalt zeigen.
+     */
+    static final String TOMBSTONE = SUFFIX + ".vergeben";
     /** Die Besitzer, deren Gelöschte dieser Programmlauf schon endgültig entfernt hat (einmal je Start). */
     private static final java.util.Set<Path> PURGED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Jede Kennung eines erwarteten Stands passt: Die Werkzeuge schreiben immer auf den neuesten. */
@@ -318,16 +323,12 @@ public final class ChatArtifactStore {
         }
     }
 
-    /** Die Kennungen, auf die ein Dokument in irgendeinem Stand verweist ({@code artefakt:G1}). */
+    /** Die Grafiken, auf die ein Dokument in irgendeinem Stand verweist ({@code artefakt:G1}). */
     private static java.util.Set<String> references(ChatArtifact artifact) {
         java.util.Set<String> ids = new java.util.LinkedHashSet<>();
         for (ChatArtifact.Revision revision : artifact.revisions()) {
-            if (revision.document() == null) {
-                continue;
-            }
-            Matcher match = LINK.matcher(revision.document().markdown());
-            while (match.find()) {
-                ids.add(match.group(1).toUpperCase(java.util.Locale.ROOT));
+            if (revision.document() != null) {
+                ids.addAll(GraphicReferences.ids(revision.document().markdown()));
             }
         }
         return ids;
@@ -419,6 +420,8 @@ public final class ChatArtifactStore {
                 return WriteResult.failed(current, problem);
             }
             Path owner = owner(folder, chatId);
+            // Erst den Papierkorb des letzten Laufs leeren, sonst ginge beim nächsten Auflisten auch dieses mit.
+            purgeOnce(owner);
             try {
                 Files.move(owner.resolve(current.id() + SUFFIX), owner.resolve(current.id() + DELETED),
                         StandardCopyOption.REPLACE_EXISTING);
@@ -470,6 +473,7 @@ public final class ChatArtifactStore {
             for (Path file : files) {
                 String name = file.getFileName().toString();
                 String id = name.endsWith(DELETED) ? name.substring(0, name.length() - DELETED.length())
+                        : name.endsWith(TOMBSTONE) ? name.substring(0, name.length() - TOMBSTONE.length())
                         : name.endsWith(SUFFIX) ? name.substring(0, name.length() - SUFFIX.length()) : null;
                 if (id != null && ID.matcher(id).matches()) {
                     ids.add(id);
@@ -481,6 +485,11 @@ public final class ChatArtifactStore {
         return ids;
     }
 
+    /** Für Tests: wie ein Neustart der App, der Papierkorb des letzten Laufs wird beim nächsten Zugriff geleert. */
+    static void newRun() {
+        PURGED.clear();
+    }
+
     /** Beim ersten Zugriff eines Programmlaufs: Was im letzten Lauf gelöscht wurde, geht endgültig. */
     private static void purgeOnce(Path owner) {
         if (owner == null || !Files.isDirectory(owner) || !PURGED.add(owner.toAbsolutePath().normalize())) {
@@ -488,6 +497,11 @@ public final class ChatArtifactStore {
         }
         try (DirectoryStream<Path> files = Files.newDirectoryStream(owner, "*" + DELETED)) {
             for (Path file : files) {
+                String name = file.getFileName().toString();
+                Path mark = owner.resolve(name.substring(0, name.length() - DELETED.length()) + TOMBSTONE);
+                if (!Files.exists(mark)) {
+                    Files.createFile(mark);
+                }
                 Files.deleteIfExists(file);
             }
         } catch (IOException e) {
