@@ -16,14 +16,25 @@ public final class GroupStripe extends AbstractBorder {
 
     private final GroupColors color;
     private final int indent;
+    private final int inset;
 
     /**
      * @param color  die Farbe der Gruppe
      * @param indent Abstand des Streifens vom linken Rand, der Inhalt beginnt danach mit {@code indent} Abstand
      */
     public GroupStripe(GroupColors color, int indent) {
+        this(color, indent, indent + WIDTH + indent);
+    }
+
+    /**
+     * @param color  die Farbe der Gruppe
+     * @param indent Abstand des Streifens vom linken Rand
+     * @param inset  linker Einzug des Inhalts, gemessen vom linken Rand
+     */
+    public GroupStripe(GroupColors color, int indent, int inset) {
         this.color = color;
         this.indent = indent;
+        this.inset = Math.max(inset, indent + WIDTH);
     }
 
     @Override
@@ -34,7 +45,7 @@ public final class GroupStripe extends AbstractBorder {
 
     @Override
     public Insets getBorderInsets(Component c, Insets insets) {
-        insets.set(0, indent + WIDTH + indent, 0, 0);
+        insets.set(0, inset, 0, 0);
         return insets;
     }
 }

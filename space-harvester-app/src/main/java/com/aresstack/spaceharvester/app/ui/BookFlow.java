@@ -152,6 +152,43 @@ final class BookFlow {
     }
 
     /**
+     * „Neue Auflage erzeugen“ (Architekt 27.11.2026): startet „Buch schreiben“ ohne Fenster mit den am Ordner gemerkten
+     * Angaben; fertige Quellensteckbriefe kommen aus dem Gedächtnis am Ordner, die bisherige Auflage bleibt lesbar.
+     * Fehlt etwas, sagt ein Hinweis, was.
+     */
+    void newEdition(String folderId) {
+        BookJob.Session session;
+        try {
+            session = notedSession(folderId, IllegalStateException::new);
+        } catch (IllegalStateException missing) {
+            Dialogs.view(parent, BasketResearchForm.BOOK_TITLE, Comic.note("Neue Auflage geht nicht: "
+                    + missing.getMessage() + "."));
+            return;
+        }
+        context.runtime().workspace().startBook(folderId, session.folderName(), BookJob.prepare(session,
+                done -> SwingUtilities.invokeLater(() -> prepared(done))));
+    }
+
+    /**
+     * Die Sitzung aus den am Ordner gemerkten Angaben (Weidezaun, Länge, Fragen) und dem Chat-Modell der Einstellungen;
+     * fehlt etwas, wirft sie, was {@code fail} aus dem Grund macht.
+     */
+    private BookJob.Session notedSession(String folderId,
+                                         java.util.function.Function<String, ? extends RuntimeException> fail) {
+        String name = context.favorites().folder(folderId).map(Favorites.Folder::name).orElse("Ordner");
+        BookNotes notes = notes(folderId).orElseThrow(() -> fail.apply(
+                "zum Ordner sind keine Angaben gemerkt; bitte „Buch schreiben …“ am Ordner neu starten"));
+        var ai = context.settings() == null ? null : context.settings().ai();
+        var chat = context.runtime() == null ? null : context.runtime().workspace().aiChat();
+        if (chat == null || ai == null || ai.chatModel() == null || ai.chatModel().isBlank()) {
+            throw fail.apply("dafür braucht es einen KI-Dienst mit Chat-Modell");
+        }
+        AiChatModel model = new AiChatModel(chat, ai.chatModel(), null,
+                ai.contextTokens() == null ? 0 : ai.contextTokens());
+        return session(model, folderId, name, notes.fence(), notes.targetWords(), notes.questions());
+    }
+
+    /**
      * ▶ an einem abgebrochenen oder unterbrochenen „Buch schreiben“ (Angelo 27.11.2026): bereitet im selben Eintrag
      * mit den Angaben am Ordner neu vor; fertige Quellensteckbriefe kommen aus dem Gedächtnis am Ordner. Danach geht es
      * weiter wie nach jedem Vorbereiten.
@@ -162,18 +199,7 @@ final class BookFlow {
         if (folderId == null) {
             throw new JobNotResumableException(job.id(), "der Favoritenordner des Buchs ist nicht mehr da");
         }
-        String name = favorites.folder(folderId).map(Favorites.Folder::name).orElse("Ordner");
-        BookNotes notes = notes(folderId).orElseThrow(() -> new JobNotResumableException(job.id(),
-                "zum Ordner sind keine Angaben gemerkt; bitte „Buch schreiben …“ am Ordner neu starten"));
-        var ai = context.settings() == null ? null : context.settings().ai();
-        var chat = context.runtime() == null ? null : context.runtime().workspace().aiChat();
-        if (chat == null || ai == null || ai.chatModel() == null || ai.chatModel().isBlank()) {
-            throw new JobNotResumableException(job.id(), "dafür braucht es einen KI-Dienst mit Chat-Modell");
-        }
-        AiChatModel model = new AiChatModel(chat, ai.chatModel(), null,
-                ai.contextTokens() == null ? 0 : ai.contextTokens());
-        BookJob.Session session = session(model, folderId, name, notes.fence(), notes.targetWords(),
-                notes.questions());
+        BookJob.Session session = notedSession(folderId, reason -> new JobNotResumableException(job.id(), reason));
         return context.runtime().workspace().rerunBook(job.id(), folderId, BookJob.prepare(session,
                 done -> SwingUtilities.invokeLater(() -> prepared(done))));
     }
@@ -329,7 +355,7 @@ final class BookFlow {
         Dialogs.view(parent, BasketResearchForm.BOOK_TITLE, body);
     }
 
-    private static Path dataDirectory(AppContext context) {
+    static Path dataDirectory(AppContext context) {
         return context.settings() == null || context.settings().storage() == null ? null
                 : context.settings().storage().dataDirectory();
     }
