@@ -109,7 +109,10 @@ Alles, was die App oder die KI erzeugt und ablegt, ist ein **Artefakt**. Es gibt
 
 ### 5. Ort der globalen Artefakte: links, „Wissensquellen | Artefakte“
 - Die globalen Artefakte stehen nicht unter „Export“. Im Kopf der linken Seitenleiste steht dieselbe Wippe wie bei
-  „Aufträge | Hintergrund“ (`SegmentedToggle`), hier mit den Hälften **„Wissensquellen“** und **„Artefakte“**.
+  „Aufträge | Hintergrund“ (`SegmentedToggle`), hier mit den Hälften **„Wissensquellen“** und **„Artefakte“**. Sie
+  steht an der Stelle der Überschrift, so wie bei den Aufträgen in der Titelzeile; Angelos Bild zur Nachricht zeigt
+  diese Stelle. Das ist eine bewusste Ausnahme von der Regel „Reiter einer Seitenleiste stehen mittig im `SideFoot`“.
+- Zeile, Rechtsklick-Menü und Übergang stehen im [Entwurf des UX-Strangs](../artefakte-seitenleiste.md).
 - Unter „Wissensquellen“ zeigt die Seitenleiste den Baum wie heute. Unter „Artefakte“ zeigt sie die Liste der
   globalen Artefakte des aktiven Projekts, und nur diese. Lokale Artefakte stehen dort nie.
 - Die Liste nutzt Kopf und Fuß der Seitenleiste wie der Baum (`SideHead` mit Filterfeld, `SideFoot`). Es entsteht
@@ -133,9 +136,14 @@ Alles, was die App oder die KI erzeugt und ablegt, ist ein **Artefakt**. Es gibt
 6. Ein Klick auf ein Artefakt in der Liste links öffnet es in der Mitte, so wie ein Klick im Baum eine Seite öffnet.
    Die Schreibansicht (ADR 0045) bleibt dieselbe, sie steht dann in der Mitte statt im Reiter „Export“ einer Seite.
    Unter „Export“ stehen danach nur noch Exporte. Angelo am 27.11.2026 um 21:31 MEZ so genannt.
-7. Legt die KI im Chat ein Artefakt an oder ändert sie eines, während links „Wissensquellen“ gewählt ist, bleibt es
-   bis zum Entwurf des UX-Strangs beim heutigen Verhalten (ADR 0045, Abschnitt 5). Es wird nicht von selbst
-   umgeschaltet.
+7. Die Mitte folgt der Wippe: unter „Wissensquellen“ die Seite wie heute, unter „Artefakte“ die geöffneten
+   Artefakte. `ArtifactTabs` zieht dafür aus „Export“ in die Mitte um und wird nicht neu gebaut.
+8. Legt die KI im Chat ein Artefakt an oder ändert sie eines, während links „Wissensquellen“ gewählt ist, schaltet
+   nichts von selbst um. Die Antwort trägt den Verweis (ein Klick wechselt), die Hälfte „Artefakte“ der Wippe zeigt
+   eine Zahl, die Statuszeile meldet es einmal. Steht links „Artefakte“, öffnet sich das Artefakt wie heute.
+9. Vorschlag, noch nicht zum Bau vergeben: Die lokalen Artefakte einer Seite stehen im Menü „Weitere Aktionen zur
+   Seite“ als Abschnitt „Aus dieser Seite erzeugt“, an der Stelle der bisherigen Artefaktliste, mit Öffnen, Neu
+   erzeugen und Löschen.
 
 Zurückgenommen: Der Architekt hatte „keine Versionierung“ von 21:04 MEZ zunächst auch auf das Buch bezogen („Neue
 Auflage überschreibt“). Das war falsch und ist nie gebaut worden.
@@ -158,8 +166,8 @@ Jeder Schritt ein kleiner PR auf develop. Den Speicher der Artefakte ändert nur
 1. Besitzer ist immer das Projekt, Umzug der vorhandenen Artefakte, Löschen am Artefakt.
 2. Buch als Artefakt des Projekts mit Auflagen als Versionen (ADR 0044, Nachtrag N7; baut auf Schritt 1).
 3. Wippe „Wissensquellen | Artefakte“ links mit der Liste der globalen Artefakte, Öffnen in der Mitte.
-4. Globale Artefakte aus „Export“ und aus dem Menü „Weitere Aktionen zur Seite“ herausnehmen, nach dem Entwurf des
-   UX-Strangs für den Übergang (Abschnitt 6, Punkt 7).
+4. Globale Artefakte aus „Export“ und aus dem Menü „Weitere Aktionen zur Seite“ herausnehmen (Abschnitt 6,
+   Punkte 7 und 8).
 5. Ordnung der Liste nach Angelos Antwort zu Abschnitt 5.
 
 ## Der einmalige Umzug (Schritt 1, Stand des Baus vom 27.11.2026)
