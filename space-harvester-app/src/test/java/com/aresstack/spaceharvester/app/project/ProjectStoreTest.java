@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.project;
 
+import com.aresstack.spaceharvester.app.group.GroupColor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -21,55 +22,84 @@ class ProjectStoreTest {
     }
 
     @Test
-    void theDefaultProjectAlwaysExistsWithoutAFileAndWithoutColor() {
+    void theDefaultProjectAlwaysExistsWithoutAFile() {
         ProjectStore store = store();
         List<Project> projects = store.list();
         assertThat(projects).hasSize(1);
         Project standard = projects.get(0);
         assertThat(standard.isDefault()).isTrue();
         assertThat(standard.name()).isEqualTo("AresStack");
-        assertThat(standard.color()).isNull();
         assertThat(store.active().isDefault()).isTrue();
         assertThat(home.resolve(ProjectStore.FOLDER)).doesNotExist();
     }
 
     @Test
-    void newProjectsGetTheNextUnusedColorAndAreListedAfterTheDefaultByName() {
+    void newProjectsAreListedAfterTheDefaultByNameAndHaveNoColor() {
         ProjectStore store = store();
-        Project zebra = store.create("Zebra", null);
-        Project apfel = store.create("Apfel", null);
-        Project eigene = store.create("Mitte", ProjectColor.GRAU);
-
-        assertThat(zebra.color()).isEqualTo(ProjectColor.BLAU);
-        assertThat(apfel.color()).isEqualTo(ProjectColor.TUERKIS);
-        assertThat(eigene.color()).isEqualTo(ProjectColor.GRAU);
-        assertThat(store.list()).extracting(Project::name).containsExactly("AresStack", "Apfel", "Mitte", "Zebra");
+        Project zebra = store.create("Zebra");
+        Project apfel = store.create("Apfel");
+        assertThat(store.list()).extracting(Project::name).containsExactly("AresStack", "Apfel", "Zebra");
         assertThat(home.resolve(ProjectStore.FOLDER).resolve(zebra.id()).resolve(ProjectStore.FILE)).exists();
         assertThat(new ProjectStore(() -> home.resolve(ProjectStore.FOLDER)).resolve(apfel.id())).isEqualTo(apfel);
     }
 
     @Test
-    void renameAndRecolorAreStoredAndTheDefaultStaysAresStack() throws Exception {
+    void renameIsStoredAndTheDefaultStaysAresStack() throws Exception {
         ProjectStore store = store();
-        Project project = store.create("Alt", ProjectColor.GRUEN);
+        Project project = store.create("Alt");
         store.rename(project.id(), "Neu");
-        store.recolor(project.id(), ProjectColor.LILA);
-        assertThat(store.resolve(project.id())).isEqualTo(new Project(project.id(), "Neu", ProjectColor.LILA));
-
+        assertThat(store.resolve(project.id())).isEqualTo(new Project(project.id(), "Neu", null));
         assertThat(store.rename(Project.DEFAULT_ID, "Sonstiges").name()).isEqualTo("AresStack");
-        assertThat(store.recolor(Project.DEFAULT_ID, ProjectColor.ROSA).color()).isNull();
         assertThat(store.list().get(0).name()).isEqualTo("AresStack");
         assertThat(store.resolve(null).name()).isEqualTo("AresStack");
-        assertThat(store.folder(Project.DEFAULT_ID)).doesNotExist();
         String json = Files.readString(home.resolve(ProjectStore.FOLDER).resolve(project.id())
                 .resolve(ProjectStore.FILE));
-        assertThat(json).contains("\"version\"").contains("\"lila\"");
+        assertThat(json).contains("\"version\"").contains("\"Neu\"").doesNotContain("color");
+    }
+
+    @Test
+    void groupsGetTheNextUnusedColorAndBelongToTheirProjectAlsoInTheDefault() throws Exception {
+        ProjectStore store = store();
+        Project project = store.create("Mit Gruppen");
+        ChatGroup first = store.createGroup(project.id(), "Entwurf", null);
+        ChatGroup second = store.createGroup(project.id(), "Prüfung", null);
+        ChatGroup own = store.createGroup(project.id(), "Eigen", GroupColor.GRAU);
+        assertThat(first.color()).isEqualTo(GroupColor.BLAU);
+        assertThat(second.color()).isEqualTo(GroupColor.TUERKIS);
+        assertThat(own.color()).isEqualTo(GroupColor.GRAU);
+        assertThat(store.groups(project.id())).extracting(ChatGroup::name)
+                .containsExactly("Entwurf", "Prüfung", "Eigen");
+
+        store.updateGroup(project.id(), first.withName("Text").withColor(GroupColor.LILA));
+        assertThat(new ProjectStore(() -> home.resolve(ProjectStore.FOLDER)).group(project.id(), first.id()))
+                .isEqualTo(new ChatGroup(first.id(), "Text", GroupColor.LILA));
+        assertThat(store.dissolveGroup(project.id(), second.id())).isTrue();
+        assertThat(store.group(project.id(), second.id())).as("aufgelöst = Chats ohne Gruppe").isNull();
+
+        ChatGroup standard = store.createGroup(Project.DEFAULT_ID, "Allerlei", null);
+        assertThat(store.groups(Project.DEFAULT_ID)).containsExactly(standard);
+        assertThat(standard.color()).as("Farben je Projekt").isEqualTo(GroupColor.BLAU);
+        assertThat(store.list()).extracting(Project::id).as("Gruppenordner ist kein Projekt")
+                .containsExactly(Project.DEFAULT_ID, project.id());
+        assertThat(store.createGroup("gibt-es-nicht", "x", null)).isNull();
+        assertThat(Files.readString(store.folder(project.id()).resolve(ProjectStore.GROUPS)))
+                .contains("\"version\"").contains("\"lila\"");
+    }
+
+    @Test
+    void unreadableGroupsGoToQuarantine() throws Exception {
+        ProjectStore store = store();
+        Project project = store.create("Kaputt");
+        Path file = store.folder(project.id()).resolve(ProjectStore.GROUPS);
+        Files.writeString(file, "[nicht json");
+        assertThat(store.groups(project.id())).isEmpty();
+        assertThat(file).doesNotExist();
     }
 
     @Test
     void theTargetIsStoredWithItsKindAndTheDefaultHasNone() {
         ProjectStore store = store();
-        Project project = store.create("Mit Ziel", null);
+        Project project = store.create("Mit Ziel");
         assertThat(project.target()).isNull();
         store.retarget(project.id(), ProjectTarget.of(ProjectTarget.Kind.WEBSITE, "beispiel.invalid/projekt"));
         Project web = new ProjectStore(() -> home.resolve(ProjectStore.FOLDER)).resolve(project.id());
@@ -97,14 +127,16 @@ class ProjectStoreTest {
     }
 
     @Test
-    void unknownIdsAndUnknownColorsFallBackInsteadOfFailing() throws Exception {
+    void unknownIdsAndUnknownGroupColorsFallBackInsteadOfFailing() throws Exception {
         ProjectStore store = store();
         assertThat(store.resolve("gibt-es-nicht").isDefault()).isTrue();
         Path folder = home.resolve(ProjectStore.FOLDER).resolve("p1");
         Files.createDirectories(folder);
-        Files.writeString(folder.resolve(ProjectStore.FILE),
-                "{\"version\":1,\"id\":\"p1\",\"name\":\"Alt\",\"color\":\"rot\"}");
-        assertThat(store.resolve("p1").color()).as("rot gibt es nicht mehr").isEqualTo(ProjectColor.GRAU);
+        Files.writeString(folder.resolve(ProjectStore.FILE), "{\"version\":1,\"id\":\"p1\",\"name\":\"Alt\"}");
+        Files.writeString(folder.resolve(ProjectStore.GROUPS),
+                "{\"version\":1,\"groups\":[{\"id\":\"g1\",\"name\":\"Alt\",\"color\":\"rot\"}]}");
+        assertThat(store.group("p1", "g1").color()).as("rot gibt es nicht").isEqualTo(GroupColor.GRAU);
+        assertThat(store.group("p1", "unbekannt")).isNull();
     }
 
     @Test
@@ -125,7 +157,8 @@ class ProjectStoreTest {
     @Test
     void deletingMovesTheFolderToTheTrashUntilRestoredAndNeverTheDefault() throws Exception {
         ProjectStore store = store();
-        Project project = store.create("Weg", null);
+        Project project = store.create("Weg");
+        store.createGroup(project.id(), "Mit", null);
         Path parts = store.folder(project.id()).resolve("artefakte");
         Files.createDirectories(parts);
         Files.writeString(parts.resolve("D1.artefakt"), "{}");
@@ -139,6 +172,7 @@ class ProjectStoreTest {
 
         assertThat(store.restore(project.id())).isEqualTo(project);
         assertThat(store.folder(project.id()).resolve("artefakte/D1.artefakt")).exists();
+        assertThat(store.groups(project.id())).hasSize(1);
         assertThat(store.deleted()).isEmpty();
     }
 
@@ -147,7 +181,7 @@ class ProjectStoreTest {
         ProjectStore store = store();
         AtomicInteger changes = new AtomicInteger();
         store.addListener(changes::incrementAndGet);
-        Project project = store.create("Aktiv", null);
+        Project project = store.create("Aktiv");
         assertThat(changes).hasValue(1);
 
         store.activate(project.id());

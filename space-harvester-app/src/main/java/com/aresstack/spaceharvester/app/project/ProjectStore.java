@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.project;
 
+import com.aresstack.spaceharvester.app.group.GroupColor;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
@@ -27,12 +28,14 @@ import java.util.regex.Pattern;
 
 /**
  * Die Projekte im Datenordner der App (ADR 0043, Abschnitt 3 und Nachtrag F4): je Projekt ein Ordner
- * {@code projekte/<id>/}, darin {@code projekt.json} mit Versionsfeld, Name, Farbe und Ziel. Atomar geschrieben, eine
- * unlesbare Datei kommt in Quarantäne und das Projekt fehlt, bis jemand sie repariert; überschrieben wird sie nie.
+ * {@code projekte/<id>/}, darin je Bestandteil eine Datei mit Versionsfeld: {@code projekt.json} (Name und Ziel) und
+ * {@code gruppen.json} (die farbigen Chat-Gruppen, F2). Atomar geschrieben, eine unlesbare Datei kommt in Quarantäne
+ * und fehlt, bis jemand sie repariert; überschrieben wird sie nie.
  *
- * <p>Das Standardprojekt „AresStack“ gibt es immer, ohne Datei; es lässt sich weder umbenennen noch umfärben noch
- * löschen (F5; Angelo, 27.11.2026). Ein gelöschtes Projekt geht samt Ordner (also auch seinen Artefakten) in den
- * Papierkorb und lässt sich bis zum nächsten Start der App zurückholen, wie ein gelöschter Chat.
+ * <p>Das Standardprojekt „AresStack“ gibt es immer, ohne {@code projekt.json}; es lässt sich weder umbenennen noch
+ * löschen (F5; Angelo, 27.11.2026), hat aber Gruppen wie jedes Projekt. Ein gelöschtes Projekt geht samt Ordner (also
+ * mit Gruppen und Artefakten) in den Papierkorb und lässt sich bis zum nächsten Start der App zurückholen, wie ein
+ * gelöschter Chat.
  *
  * <p>Das aktive Projekt (F6) gilt für die ganze App und steht in {@code projekte/aktiv.json}. Fehlt es oder gibt es das
  * Projekt nicht mehr, ist das Standardprojekt aktiv. Jede Änderung an Projekten oder an der Wahl wird den Beobachtern
@@ -43,6 +46,7 @@ public final class ProjectStore {
     /** Der Ordner unter dem Datenordner der App. */
     public static final String FOLDER = "projekte";
     static final String FILE = "projekt.json";
+    static final String GROUPS = "gruppen.json";
     static final String ACTIVE = "aktiv.json";
     static final int FORMAT_VERSION = 1;
     /** Ein gelöschter Projektordner bis zum nächsten Start der App. */
@@ -137,19 +141,9 @@ public final class ProjectStore {
 
     // ------------------------------------------------------------------ Ändern
 
-    /** Legt ein neues Projekt an; ohne Farbe bekommt es die erste noch unbenutzte. */
-    public synchronized Project create(String name, ProjectColor color) {
-        ProjectColor chosen = color;
-        if (chosen == null) {
-            Set<ProjectColor> used = EnumSet.noneOf(ProjectColor.class);
-            for (Project project : list()) {
-                if (project.color() != null) {
-                    used.add(project.color());
-                }
-            }
-            chosen = ProjectColor.next(used);
-        }
-        Project project = new Project(UUID.randomUUID().toString(), name, chosen);
+    /** Legt ein neues Projekt an. */
+    public synchronized Project create(String name) {
+        Project project = new Project(UUID.randomUUID().toString(), name, null);
         write(project);
         changed();
         return project;
@@ -167,18 +161,6 @@ public final class ProjectStore {
         return renamed;
     }
 
-    /** Ändert die Farbe; das Standardprojekt hat keine (liefert es unverändert). */
-    public synchronized Project recolor(String projectId, ProjectColor color) {
-        Project project = existing(projectId);
-        if (project == null || project.isDefault() || color == null) {
-            return project;
-        }
-        Project recolored = project.withColor(color);
-        write(recolored);
-        changed();
-        return recolored;
-    }
-
     /** Setzt das Ziel ({@code null} entfernt es); beim Standardprojekt unverändert, sein Ziel ist fest. */
     public synchronized Project retarget(String projectId, ProjectTarget target) {
         Project project = existing(projectId);
@@ -193,8 +175,8 @@ public final class ProjectStore {
 
     /**
      * Löscht ein Projekt vorläufig (F5): Sein Ordner samt Bestandteilen geht in den Papierkorb, bis zum nächsten Start
-     * mit {@link #restore} zurückzuholen. Die Chats bleiben unangetastet; da ihre Projekt-ID ins Leere zeigt, gehören
-     * sie zum Standardprojekt. War das Projekt aktiv, wird das Standardprojekt aktiv. Das Standardprojekt selbst lässt
+     * mit {@link #restore} zurückzuholen, mit ihm seine Gruppen und Artefakte. Die Chats bleiben unangetastet; da ihre
+     * Projekt-ID ins Leere zeigt, gehören sie zum Standardprojekt, und ihre Gruppen-ID kennt dort keine Gruppe. War das Projekt aktiv, wird das Standardprojekt aktiv. Das Standardprojekt selbst lässt
      * sich nicht löschen.
      *
      * @return ob gelöscht wurde
@@ -206,6 +188,9 @@ public final class ProjectStore {
             return false;
         }
         purgeOnce();
+        if (active().id().equals(projectId)) {
+            activate(Project.DEFAULT_ID);
+        }
         try {
             Path target = folder.resolveSibling(projectId + DELETED);
             deleteTree(target);
@@ -260,6 +245,120 @@ public final class ProjectStore {
         }
         projects.sort(Comparator.comparing(Project::name));
         return projects;
+    }
+
+    // ------------------------------------------------------------------ Gruppen
+
+    /** Die Gruppen eines Projekts in ihrer Reihenfolge; leer bei unbekanntem Projekt oder unlesbarer Datei. */
+    public synchronized List<ChatGroup> groups(String projectId) {
+        Path file = groupsFile(projectId);
+        List<ChatGroup> groups = new ArrayList<>();
+        if (file == null || !Files.isRegularFile(file)) {
+            return groups;
+        }
+        try {
+            JsonNode json = JSON.readTree(Files.readString(file, StandardCharsets.UTF_8));
+            Set<String> ids = new java.util.HashSet<>();
+            for (JsonNode entry : json.path("groups")) {
+                String id = text(entry, "id");
+                if (id != null && !id.isBlank() && ids.add(id)) {
+                    groups.add(new ChatGroup(id, text(entry, "name"), GroupColor.of(text(entry, "color"))));
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            quarantine(file, e);
+            groups.clear();
+        }
+        return groups;
+    }
+
+    /** Legt eine Gruppe im Projekt an; ohne Farbe bekommt sie die erste dort noch unbenutzte. */
+    public synchronized ChatGroup createGroup(String projectId, String name, GroupColor color) {
+        if (groupsFile(projectId) == null) {
+            return null;
+        }
+        List<ChatGroup> groups = groups(projectId);
+        GroupColor chosen = color;
+        if (chosen == null) {
+            Set<GroupColor> used = EnumSet.noneOf(GroupColor.class);
+            groups.forEach(group -> used.add(group.color()));
+            chosen = GroupColor.next(used);
+        }
+        ChatGroup group = new ChatGroup(UUID.randomUUID().toString(), name, chosen);
+        groups.add(group);
+        writeGroups(projectId, groups);
+        changed();
+        return group;
+    }
+
+    /** Ersetzt eine Gruppe (umbenannt oder umgefärbt); liefert {@code null}, wenn es sie nicht gibt. */
+    public synchronized ChatGroup updateGroup(String projectId, ChatGroup group) {
+        List<ChatGroup> groups = groups(projectId);
+        for (int i = 0; i < groups.size(); i++) {
+            if (groups.get(i).id().equals(group.id())) {
+                groups.set(i, group);
+                writeGroups(projectId, groups);
+                changed();
+                return group;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Löst eine Gruppe auf: Die Chats bleiben, ihre Gruppen-ID zeigt ins Leere, sie stehen damit ohne Gruppe da.
+     *
+     * @return ob es die Gruppe gab
+     */
+    public synchronized boolean dissolveGroup(String projectId, String groupId) {
+        List<ChatGroup> groups = groups(projectId);
+        if (!groups.removeIf(group -> group.id().equals(groupId))) {
+            return false;
+        }
+        writeGroups(projectId, groups);
+        changed();
+        return true;
+    }
+
+    /** Die Gruppe im Projekt; {@code null} bei unbekannter Kennung (der Chat steht dann ohne Gruppe da). */
+    public synchronized ChatGroup group(String projectId, String groupId) {
+        if (groupId == null) {
+            return null;
+        }
+        for (ChatGroup group : groups(projectId)) {
+            if (group.id().equals(groupId)) {
+                return group;
+            }
+        }
+        return null;
+    }
+
+    private Path groupsFile(String projectId) {
+        Path folder = existing(projectId) == null ? null : folder(projectId);
+        return folder == null ? null : folder.resolve(GROUPS);
+    }
+
+    private void writeGroups(String projectId, List<ChatGroup> groups) {
+        Path file = groupsFile(projectId);
+        if (file == null) {
+            return;
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (ChatGroup group : groups) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", group.id());
+            row.put("name", group.name());
+            row.put("color", group.color().key());
+            rows.add(row);
+        }
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("version", FORMAT_VERSION);
+        content.put("groups", rows);
+        try {
+            ProfileFiles.writeAtomic(file, JSON.writeValueAsString(content));
+        } catch (IOException | RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Gruppen nicht gespeichert: " + e.getClass().getSimpleName());
+        }
     }
 
     // ------------------------------------------------------------------ Aktives Projekt
@@ -326,9 +425,6 @@ public final class ProjectStore {
         content.put("version", FORMAT_VERSION);
         content.put("id", project.id());
         content.put("name", project.name());
-        if (project.color() != null) {
-            content.put("color", project.color().key());
-        }
         if (project.target() != null) {
             content.put("targetKind", project.target().kind().key());
             content.put("target", project.target().value());
@@ -354,7 +450,7 @@ public final class ProjectStore {
             JsonNode name = json.get("name");
             ProjectTarget.Kind kind = ProjectTarget.Kind.of(text(json, "targetKind"));
             String target = text(json, "target");
-            return new Project(id, text(json, "name"), ProjectColor.of(text(json, "color")),
+            return new Project(id, text(json, "name"),
                     kind == null || target == null || target.isBlank() ? null : new ProjectTarget(kind, target));
         } catch (IOException | RuntimeException e) {
             quarantine(file, e);

@@ -19,23 +19,29 @@ import java.util.UUID;
  *                   „AresStack“. Eine Kennung, die es nicht (mehr) gibt, gilt ebenfalls als Standardprojekt; das
  *                   entscheidet {@code ProjectStore#resolve}, nicht der Chat. Geht mit dem Chat in den Papierkorb
  *                   und zurück, denn es steht in seiner Datei.
+ * @param groupId    die farbige Gruppe innerhalb des Projekts (F2); {@code null} = ohne Gruppe, ebenso eine Kennung,
+ *                   die das Projekt nicht kennt
  */
 @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
 public record ChatRecord(String id, String title, long createdAt, long modifiedAt, List<Message> messages,
                          @com.fasterxml.jackson.annotation.JsonInclude(
                                  com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
-                         String projectId) {
+                         String projectId,
+                         @com.fasterxml.jackson.annotation.JsonInclude(
+                                 com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+                         String groupId) {
 
     public ChatRecord {
         Objects.requireNonNull(id, "id");
         title = title == null || title.isBlank() ? id : title;
         messages = List.copyOf(messages == null ? List.of() : messages);
         projectId = projectId == null || projectId.isBlank() ? null : projectId;
+        groupId = groupId == null || groupId.isBlank() ? null : groupId;
     }
 
-    /** Ein Chat des Standardprojekts. */
+    /** Ein Chat des Standardprojekts ohne Gruppe. */
     public ChatRecord(String id, String title, long createdAt, long modifiedAt, List<Message> messages) {
-        this(id, title, createdAt, modifiedAt, messages, null);
+        this(id, title, createdAt, modifiedAt, messages, null, null);
     }
 
     /** Ein neuer, leerer Chat mit frischer UUID als Titel im Standardprojekt. */
@@ -45,16 +51,26 @@ public record ChatRecord(String id, String title, long createdAt, long modifiedA
 
     /** Ein neuer, leerer Chat mit frischer UUID als Titel im Projekt {@code projectId} (ADR 0043, F6). */
     public static ChatRecord fresh(long now, String projectId) {
+        return fresh(now, projectId, null);
+    }
+
+    /** Ein neuer, leerer Chat im Projekt und gleich in einer seiner Gruppen („Neuer Chat in dieser Gruppe“). */
+    public static ChatRecord fresh(long now, String projectId, String groupId) {
         String id = UUID.randomUUID().toString();
-        return new ChatRecord(id, id, now, now, List.of(), projectId);
+        return new ChatRecord(id, id, now, now, List.of(), projectId, groupId);
     }
 
     /**
-     * Derselbe Chat in einem anderen Projekt; {@code null} legt ihn ins Standardprojekt („Aus Projekt entfernen“).
+     * Derselbe Chat in einem anderen Projekt, ohne Gruppe („In Projekt verschieben“); {@code null} = Standardprojekt.
      * Die Änderungszeit bleibt, damit der Chat in den Listen nicht nach oben springt.
      */
     public ChatRecord inProject(String newProjectId) {
-        return new ChatRecord(id, title, createdAt, modifiedAt, messages, newProjectId);
+        return new ChatRecord(id, title, createdAt, modifiedAt, messages, newProjectId, null);
+    }
+
+    /** Derselbe Chat in einer Gruppe seines Projekts; {@code null} = ohne Gruppe. Die Änderungszeit bleibt. */
+    public ChatRecord inGroup(String newGroupId) {
+        return new ChatRecord(id, title, createdAt, modifiedAt, messages, projectId, newGroupId);
     }
 
     /** Ob der Titel vom Benutzer stammt (nicht mehr die Kennung). */
@@ -67,13 +83,13 @@ public record ChatRecord(String id, String title, long createdAt, long modifiedA
     }
 
     public ChatRecord withTitle(String newTitle, long now) {
-        return new ChatRecord(id, newTitle, createdAt, now, messages, projectId);
+        return new ChatRecord(id, newTitle, createdAt, now, messages, projectId, groupId);
     }
 
     public ChatRecord plus(Message message, long now) {
         List<Message> next = new ArrayList<>(messages);
         next.add(message);
-        return new ChatRecord(id, title, createdAt, now, next, projectId);
+        return new ChatRecord(id, title, createdAt, now, next, projectId, groupId);
     }
 
     /**
