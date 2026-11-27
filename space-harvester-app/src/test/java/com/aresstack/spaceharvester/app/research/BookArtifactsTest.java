@@ -73,4 +73,25 @@ class BookArtifactsTest {
         assertThat(books(List.of(), "v1").stale("ordner-3")).isTrue();
         assertThat(books(List.of(), "v1").stale("ordner-ohne-buch")).isFalse();
     }
+
+    @Test
+    void anEditionUnreadableForAMomentIsNotImportedTwiceOrOutOfOrder() throws Exception {
+        Instant at = Instant.parse("2026-11-27T10:00:00Z");
+        BookEditions.add(data, "ordner-4", at, "# Eins", "", List.of());
+        BookEditions.add(data, "ordner-4", at.plusSeconds(60), "# Zwei", "", List.of());
+        Path second = BookEditions.directory(data, "ordner-4").resolve("auflage-0002.json");
+        byte[] saved = java.nio.file.Files.readAllBytes(second);
+        java.nio.file.Files.writeString(second, "{kaputt");
+        BookArtifacts books = books(List.of(), null);
+        assertThat(books.publish("ordner-4", null, "Ordner").editions()).hasSize(1);
+
+        BookEditions.add(data, "ordner-4", at.plusSeconds(120), "# Drei", "", List.of());
+        java.nio.file.Files.write(second, saved);
+        ChatArtifact book = books.publish("ordner-4", null, "Ordner");
+
+        // Auflage 2 war beim ersten Mal nicht lesbar; danach zählt die Nummer, nicht die Anzahl
+        assertThat(book.editions()).hasSize(3);
+        assertThat(book.edition(1).document().markdown()).contains("Eins");
+        assertThat(book.content()).contains("Drei");
+    }
 }

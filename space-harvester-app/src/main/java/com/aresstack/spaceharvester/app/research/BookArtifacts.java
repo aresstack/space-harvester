@@ -38,6 +38,7 @@ public final class BookArtifacts {
     private final Function<String, Path> projectArtifacts;
     private final Function<String, List<BookEditions.Source>> members;
     private final Function<BookEditions.Source, String> version;
+    private final Supplier<ChatArtifactStore> store;
 
     /**
      * @param data             der Datenordner der App, {@code null} ohne
@@ -48,6 +49,17 @@ public final class BookArtifacts {
     public BookArtifacts(Supplier<Path> data, Function<String, Path> projectArtifacts,
                          Function<String, List<BookEditions.Source>> members,
                          Function<BookEditions.Source, String> version) {
+        this(data, projectArtifacts, members, version, null);
+    }
+
+    /**
+     * @param store der Artefakt-Speicher der App, damit offene Ansichten die neue Auflage sofort sehen; {@code null}:
+     *              ein eigener über {@code projectArtifacts}
+     */
+    public BookArtifacts(Supplier<Path> data, Function<String, Path> projectArtifacts,
+                         Function<String, List<BookEditions.Source>> members,
+                         Function<BookEditions.Source, String> version, Supplier<ChatArtifactStore> store) {
+        this.store = store;
         this.data = Objects.requireNonNull(data, "data");
         this.projectArtifacts = Objects.requireNonNull(projectArtifacts, "projectArtifacts");
         this.members = Objects.requireNonNull(members, "members");
@@ -125,20 +137,30 @@ public final class BookArtifacts {
         if (editions.isEmpty()) {
             return null;
         }
-        ChatArtifactStore store = new ChatArtifactStore(null);
-        store.projects(projectArtifacts);
+        ChatArtifactStore store = this.store == null ? null : this.store.get();
+        if (store == null) {
+            store = new ChatArtifactStore(null);
+            store.projects(projectArtifacts);
+        }
         synchronized (BookArtifacts.class) {
             String id = artifactOf(folderId, projectId);
             ChatArtifact artifact = id == null ? null : store.readInProject(projectId, id);
-            int known = artifact == null ? 0 : artifact.editions().size();
-            for (BookEditions.Edition edition : editions.subList(Math.min(known, editions.size()), editions.size())) {
+            // Übernommen wird nach Nummer der Auflage, nicht nach Anzahl: eine gerade unlesbare Auflage verschiebt
+            // sonst die folgenden und käme doppelt.
+            int imported = artifact == null ? 0 : imported(dir, folderId, projectId, artifact);
+            for (BookEditions.Edition edition : editions) {
+                if (edition.number() <= imported) {
+                    continue;
+                }
                 if (artifact == null) {
                     artifact = store.createBook(projectId, title == null || title.isBlank() ? "Buch" : title,
                             edition.book());
                     if (artifact == null) {
                         return null;
                     }
-                    remember(dir, folderId, projectId, artifact.id());
+                    remember(dir, folderId, projectId, artifact.id(), edition.number());
+                    imported = edition.number();
+                    continue;
                 } else {
                     ChatArtifactStore.WriteResult result = store.newEdition(projectId, artifact.id(), edition.book(),
                             edition.number() + ". Auflage");
@@ -147,19 +169,33 @@ public final class BookArtifacts {
                         return artifact;
                     }
                     artifact = result.artifact();
+                    remember(dir, folderId, projectId, artifact.id(), edition.number());
+                    imported = edition.number();
                 }
             }
             return artifact;
         }
     }
 
-    private static void remember(Path dir, String folderId, String projectId, String artifactId) {
+    /**
+     * Die Nummer der zuletzt übernommenen Auflage; ohne Eintrag (Ablage vor dieser Zählung) die Zahl der Versionen im
+     * Artefakt, die dann den ersten Auflagen entsprechen.
+     */
+    private static int imported(Path dir, String folderId, String projectId, ChatArtifact artifact) {
+        JsonNode known = read(file(dir, folderId)).get(IMPORTED + project(projectId));
+        return known == null || !known.isNumber() ? artifact.editions().size() : known.asInt();
+    }
+
+    private static final String IMPORTED = "imported:";
+
+    private static void remember(Path dir, String folderId, String projectId, String artifactId, int edition) {
         Path file = file(dir, folderId);
         ObjectNode json = JSON.createObjectNode();
         JsonNode old = read(file);
         old.properties().forEach(entry -> json.set(entry.getKey(), entry.getValue()));
         json.put("folderId", folderId);
         json.put(project(projectId), artifactId);
+        json.put(IMPORTED + project(projectId), edition);
         try {
             Files.createDirectories(file.getParent());
             Path temporary = file.resolveSibling(file.getFileName() + ".tmp");

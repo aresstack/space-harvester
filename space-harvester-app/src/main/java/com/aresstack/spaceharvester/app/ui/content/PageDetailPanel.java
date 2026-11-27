@@ -6381,7 +6381,8 @@ public final class PageDetailPanel extends JPanel {
         javax.swing.JPopupMenu menu = pageMenu();
         // Das Buch eines Ordners an erster Stelle (ADR 0044 Nachtrag N5).
         String bookFolder = folderShown() && areaView.folder() != null ? areaView.folder().folderId() : null;
-        if (bookFolder != null && com.aresstack.spaceharvester.app.research.BookEditions.exists(
+        if (bookFolder != null && context.navigator() != null && context.navigator().opensArtifacts()
+                && com.aresstack.spaceharvester.app.research.BookEditions.exists(
                 context.settings() == null || context.settings().storage() == null ? null
                         : context.settings().storage().dataDirectory(), bookFolder)) {
             menu.insert(menuItem(com.aresstack.spaceharvester.app.ui.Texts.OPEN_BOOK,

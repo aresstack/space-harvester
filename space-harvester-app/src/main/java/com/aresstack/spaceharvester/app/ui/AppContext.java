@@ -141,6 +141,11 @@ public final class AppContext {
         default void openArtifact(String projectId, String artifactId) {
         }
 
+        /** Ob {@link #openArtifact} etwas öffnet; ohne Ziel zeigt die App „Buch öffnen“ nicht an. */
+        default boolean opensArtifacts() {
+            return false;
+        }
+
         /** „Buch öffnen“ am Favoritenordner (ADR 0044 Nachtrag N5); ohne eigene Umsetzung nichts. */
         default void openBook(String folderId) {
         }
@@ -999,10 +1004,32 @@ public final class AppContext {
                                         current.workspace(), null).version(
                                         new com.aresstack.spaceharvester.application.snapshot.PageKey(
                                                 source.sourceId(), source.pageId()));
-                    });
+                    }, this::chatArtifacts);
 
     public com.aresstack.spaceharvester.app.research.BookArtifacts bookArtifacts() {
         return bookArtifacts;
+    }
+
+    /**
+     * Der eine Artefakt-Speicher der App (ADR 0047): Chat und Buch schreiben über ihn, damit seine Meldungen jede offene
+     * Ansicht erreichen. Artefakte gehören immer dem Projekt, auch dem Standardprojekt.
+     */
+    private volatile com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore chatArtifacts;
+
+    public com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore chatArtifacts() {
+        com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore store = chatArtifacts;
+        if (store == null) {
+            synchronized (this) {
+                store = chatArtifacts;
+                if (store == null) {
+                    store = new com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore(
+                            new com.aresstack.spaceharvester.app.chat.ChatStore(this::chatsDirectory));
+                    store.projects(projects()::artifacts);
+                    chatArtifacts = store;
+                }
+            }
+        }
+        return store;
     }
 
     /** Der Ordner aller Chats im Datenordner der App; {@code null} ohne Einstellungen. */

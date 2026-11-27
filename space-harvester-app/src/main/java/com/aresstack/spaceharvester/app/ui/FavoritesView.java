@@ -157,10 +157,12 @@ final class FavoritesView {
             write.addActionListener(e -> book.start(id));
             menu.add(write);
             if (com.aresstack.spaceharvester.app.research.BookEditions.exists(BookFlow.dataDirectory(context), id)) {
-                javax.swing.JMenuItem openBook = new javax.swing.JMenuItem(Texts.OPEN_BOOK);
-                openBook.setToolTipText(Texts.OPEN_BOOK_TIP);
-                openBook.addActionListener(e -> book.openBook(id));
-                menu.add(openBook);
+                if (context.navigator() != null && context.navigator().opensArtifacts()) {
+                    javax.swing.JMenuItem openBook = new javax.swing.JMenuItem(Texts.OPEN_BOOK);
+                    openBook.setToolTipText(Texts.OPEN_BOOK_TIP);
+                    openBook.addActionListener(e -> book.openBook(id));
+                    menu.add(openBook);
+                }
                 javax.swing.JMenuItem again = new javax.swing.JMenuItem(Texts.NEW_EDITION);
                 again.setToolTipText(Texts.NEW_EDITION_TIP);
                 again.addActionListener(e -> book.newEdition(id));
