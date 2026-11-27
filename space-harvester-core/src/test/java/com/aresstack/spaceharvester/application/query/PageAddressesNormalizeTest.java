@@ -33,6 +33,12 @@ class PageAddressesNormalizeTest {
     }
 
     @Test
+    void joinersInThePathKeepTheirMeaning() {
+        assertThat(PageAddresses.normalize("\u200Dhttps://wi\u200Cki.example.org/display/DEV/A\u200DB\u200C"))
+                .isEqualTo("https://wiki.example.org/display/DEV/A\u200DB");
+    }
+
+    @Test
     void otherAddressesOnlyLoseOuterWhitespace() {
         assertThat(PageAddresses.normalize("  confluence:wiki.example.org/page/7 ")).isEqualTo(
                 "confluence:wiki.example.org/page/7");

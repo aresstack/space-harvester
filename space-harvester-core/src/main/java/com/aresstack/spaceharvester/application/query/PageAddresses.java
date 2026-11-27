@@ -79,8 +79,14 @@ public final class PageAddresses {
         return new Resolution(matches, unavailable);
     }
 
-    /** Unsichtbare Zeichen, die beim Kopieren aus Mails, Chats oder Office-Dokumenten in Links geraten. */
-    private static final Pattern INVISIBLE = Pattern.compile("[\\u00AD\\u200B-\\u200D\\u2060\\uFEFF]");
+    /**
+     * Unsichtbare Zeichen, die beim Kopieren aus Mails, Chats oder Office-Dokumenten in Links geraten. Außen fallen sie
+     * immer weg, im Hostnamen auch Verbinder (U+200C/U+200D); in Pfad und Titel bleiben die Verbinder, weil sie dort
+     * Bedeutung tragen können (zusammengesetzte Emoji, manche Schriften).
+     */
+    private static final Pattern INVISIBLE = Pattern.compile("[\\u00AD\\u200B\\u2060\\uFEFF]");
+    private static final Pattern JOINERS = Pattern.compile("[\\u200C\\u200D]");
+    private static final Pattern OUTER_JOINERS = Pattern.compile("^[\\u200C\\u200D\\s]+|[\\u200C\\u200D\\s]+$");
     /** Bindestrich-Varianten (geschützt, Gedanken-, Minus-, Vollbreiten-Strich), die im Hostnamen „-“ meinen. */
     private static final Pattern DASHES = Pattern.compile("[\\u2010-\\u2015\\u2212\\uFE58\\uFE63\\uFF0D]");
     private static final Pattern AUTHORITY = Pattern.compile("^([A-Za-z][A-Za-z0-9+.-]*://)([^/?#]*)(.*)$",
@@ -99,12 +105,12 @@ public final class PageAddresses {
         if (address == null) {
             return null;
         }
-        String value = INVISIBLE.matcher(address).replaceAll("").strip();
+        String value = OUTER_JOINERS.matcher(INVISIBLE.matcher(address).replaceAll("")).replaceAll("").strip();
         Matcher parts = AUTHORITY.matcher(value);
         if (!parts.matches()) {
             return value;
         }
-        String authority = DASHES.matcher(parts.group(2)).replaceAll("-");
+        String authority = DASHES.matcher(JOINERS.matcher(parts.group(2)).replaceAll("")).replaceAll("-");
         int at = authority.lastIndexOf('@');
         String user = at < 0 ? "" : authority.substring(0, at + 1);
         String hostPort = authority.substring(at + 1);
