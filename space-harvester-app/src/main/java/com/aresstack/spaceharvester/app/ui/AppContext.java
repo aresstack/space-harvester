@@ -319,6 +319,8 @@ public final class AppContext {
         // Speichern-Dialoge öffnen im eingestellten Ausgabeordner, Vorgabe Downloads (Angelo 20.11.2026), bzw. im
         // Projektordner, wenn das aktive Projekt „Alles hier speichern“ hat (Angelo 27.11.2026).
         com.aresstack.spaceharvester.app.ui.controls.SaveChooser.directory(this::exportDirectory);
+        projects.addListener(() -> SwingUtilities.invokeLater(this::prepareExportDirectory));
+        onChange(ignored -> prepareExportDirectory());
     }
 
     public SecretVault vault() {
@@ -985,9 +987,56 @@ public final class AppContext {
         if (current == null) {
             return null;
         }
-        Path project = com.aresstack.spaceharvester.app.project.ProjectOutput.prepare(projects.active());
-        return project == null ? current.outputDirectory() : project;
+        com.aresstack.spaceharvester.app.project.Project active = projects.active();
+        PreparedOutput prepared = preparedOutput;
+        if (prepared == null || !prepared.project().equals(active)) {
+            // Selten: noch nicht im Hintergrund vorbereitet (gleich nach dem Start oder einem Wechsel).
+            prepared = new PreparedOutput(active,
+                    com.aresstack.spaceharvester.app.project.ProjectOutput.prepare(active));
+            preparedOutput = prepared;
+        }
+        return prepared.directory() == null ? current.outputDirectory() : prepared.directory();
     }
+
+    /**
+     * Meldet, wenn sich der Ordner aus {@link #exportDirectory()} ändert, weil ein anderes Projekt aktiv ist oder sein
+     * Speicherort geändert wurde; auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.observe.Subscription onExportDirectoryChange(Runnable listener) {
+        outputListeners.add(listener);
+        return () -> outputListeners.remove(listener);
+    }
+
+    /**
+     * Bereitet den Projektordner im Hintergrund vor (Dateizugriffe, auch auf langsamen Netzlaufwerken, nie auf dem
+     * EDT), sobald Projekt oder Speicherort wechseln, und meldet einen geänderten Ordner.
+     */
+    private void prepareExportDirectory() {
+        if (settings == null) {
+            return;
+        }
+        com.aresstack.spaceharvester.app.project.Project active = projects.active();
+        PreparedOutput known = preparedOutput;
+        if (known != null && known.project().equals(active)) {
+            return;
+        }
+        Background.run(() -> new PreparedOutput(active,
+                com.aresstack.spaceharvester.app.project.ProjectOutput.prepare(active)), done -> {
+            PreparedOutput before = preparedOutput;
+            preparedOutput = done;
+            Path oldDirectory = before == null ? null : before.directory();
+            if (!java.util.Objects.equals(oldDirectory, done.directory())) {
+                new ArrayList<>(outputListeners).forEach(Runnable::run);
+            }
+        }, error -> { });
+    }
+
+    /** Der vorbereitete Projektordner zum Stand des Projekts; {@code directory} {@code null} = Ausgabeordner. */
+    private record PreparedOutput(com.aresstack.spaceharvester.app.project.Project project, Path directory) {
+    }
+
+    private volatile PreparedOutput preparedOutput;
+    private final List<Runnable> outputListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /**
      * Die Bücher der Favoritenordner als Artefakte der Projekte (ADR 0044 Nachtrag, ADR 0047): Ordner zum Artefakt,
