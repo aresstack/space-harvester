@@ -349,7 +349,7 @@ public final class MainWindow implements AppContext.Navigator {
                     .ModelBudget.chat(settings.ai().contextTokens(), runtime.workspace().catalogContextTokens(model,
                             false), maxTokens);
             return new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramLabels.Target(
-                    runtime.workspace().aiChat(use), model, null, budget, null);
+                    runtime.workspace().aiChat(use), model, null, budget, null, settings.ai().parallel());
         });
         statusView = new StatusView(context);
         sources = new SourcesView(context);
@@ -698,6 +698,11 @@ public final class MainWindow implements AppContext.Navigator {
         work.add(workFoot, BorderLayout.SOUTH);
         chatSidebar = content.chatSidebar();
         chatSidebar.onCollapse(() -> sideOpen(false, sideMode));
+        // Diagramm-Ansicht: „im Chat erklären lassen“ geht in diesen Chat, mit den Werkzeugen des Bereichs
+        com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.chat((question, excerpt, reference) -> {
+            sideOpen(true, SIDE_CHAT);
+            return chatSidebar.chat().askAbout(question, excerpt, reference);
+        });
         activities.sidebar(() -> chatLarge(!chatLarge), () -> sideOpen(false, sideMode));
         analysesSidebar = content.analysesSidebar();
         analysesSidebar.onCollapse(() -> sideOpen(false, sideMode));

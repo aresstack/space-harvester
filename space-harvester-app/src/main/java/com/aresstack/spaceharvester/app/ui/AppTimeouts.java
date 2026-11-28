@@ -28,8 +28,6 @@ public final class AppTimeouts {
         BROWSER_NAVIGATION("browser-navigation-seconds", "Seitenaufruf im Chat-Browser (Sekunden)",
                 "So lange darf eine Seite im Browser des Chats laden, bevor der Aufruf als zu langsam scheitert", 30,
                 1, 86_400),
-        DIAGRAM_LABELS("diagram-labels-seconds", "Beschriftung von Code-Diagrammen (Sekunden)",
-                "So lange wartet die Beschriftung eines Code-Diagramms höchstens auf das Modell", 30, 1, 86_400),
         AUDIO_SILENCE("audio-silence-seconds", "Transkription: ohne Ton (Sekunden)",
                 "So lange darf VLC beim Transkribieren keine Tondaten liefern, bevor der Lauf abbricht", 60, 1,
                 86_400),
