@@ -47,8 +47,6 @@ class AreaSummaryViewTest {
         AreaSummaryView.Target folder = AreaSummaryView.Target.subtree("bscw", "ablage", "ordner");
         assertThat(folder.core().roots()).containsExactly(
                 com.aresstack.spaceharvester.application.holdings.Selection.Root.subtree("bscw", "ablage", "ordner"));
-        assertThat(folder.automatic()).isFalse();
-        assertThat(AreaSummaryView.Target.area("bscw", "ablage").automatic()).isTrue();
         assertThat(folder.identity()).isNotEqualTo(AreaSummaryView.Target.area("bscw", "ablage").identity());
     }
 
@@ -84,12 +82,18 @@ class AreaSummaryViewTest {
     }
 
     @Test
-    void aMissingOverviewIsCreatedOnceOnOpeningAsAnOrdinaryJob() throws Exception {
+    void aMissingOverviewIsCreatedOnlyOnClickNeverOnOpening() throws Exception {
+        // Angelo 28.11.2026: Der Überblick startete beim Öffnen jedes Bereichs von selbst und dauerte; jetzt nur per Klick.
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
 
         view.area("wiki-neu", null);
 
-        assertThat(actions.summarized).containsExactly("wiki-neu|null|false");
+        assertThat(actions.summarized).isEmpty();
+        assertThat(view.texts()).contains(AreaSummaryView.NO_SUMMARY);
+        assertThat(view.summarizeOffered()).isTrue();
+
+        view.clickSummarize();
+        assertThat(actions.summarized).containsExactly("wiki-neu|null|true");
         assertThat(view.busy()).isTrue();
 
         shared.jobNow = JobState.COMPLETED;
@@ -101,7 +105,7 @@ class AreaSummaryViewTest {
         assertThat(view.busy()).isFalse();
         assertThat(view.summary()).isEqualTo(actions.stored);
 
-        // Wieder geöffnet: nicht noch einmal von selbst, auch ohne Überblick.
+        // Wieder geöffnet: nichts von selbst, auch ohne Überblick.
         actions.stored = null;
         view.area(null, null);
         view.area("wiki-neu", null);
@@ -127,6 +131,7 @@ class AreaSummaryViewTest {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
 
         view.area("wiki-leer", "LEER");
+        view.clickSummarize();
 
         assertThat(view.texts()).contains(AreaSummaryView.EMPTY);
         assertThat(view.summarizeOffered()).isFalse();
@@ -172,10 +177,12 @@ class AreaSummaryViewTest {
     }
 
     @Test
-    void aNeverSummarizedFolderStartsOnceInTheBackgroundAndAClickIsInteractive() {
+    void aNeverSummarizedFolderStartsOnlyOnClick() {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
         view.folder(folder("ordner-c", Root.space("wiki", "BAU")));
-        assertThat(actions.summarized).containsExactly("ordner:ordner-c|null|false");
+        assertThat(actions.summarized).isEmpty();
+        view.clickSummarize();
+        assertThat(actions.summarized).containsExactly("ordner:ordner-c|null|true");
     }
 
     @Test
@@ -202,7 +209,8 @@ class AreaSummaryViewTest {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
         ExportPanel.Selection.Collection folder = folder("ordner-lauf", Root.space("wiki", "BAU"));
         view.folder(folder);
-        assertThat(actions.summarized).containsExactly("ordner:ordner-lauf|null|false");
+        view.clickSummarize();
+        assertThat(actions.summarized).containsExactly("ordner:ordner-lauf|null|true");
         assertThat(view.busy()).isTrue();
 
         view.area(null, null);
@@ -232,6 +240,7 @@ class AreaSummaryViewTest {
     void finishedPartsShowAtOnceWithoutTheVeilAndTheEndReplacesThem() throws Exception {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
         view.folder(folder("ordner-teile", Root.space("wiki", "BAU")));
+        view.clickSummarize();
         assertThat(view.busy()).isTrue();
 
         actions.partialNow = overview("selection-teile");
@@ -382,6 +391,7 @@ class AreaSummaryViewTest {
                 "wiki-ungeladen");
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
         view.area("wiki-ungeladen", "BAU");
+        view.clickSummarize();
         assertThat(view.texts()).contains("Von diesem Bereich ist noch keine Seite geladen; erst laden, dann "
                 + "zusammenfassen.", AreaSummaryView.NO_SUMMARY);
         assertThat(view.busy()).isFalse();
@@ -391,6 +401,7 @@ class AreaSummaryViewTest {
     void aFailedRunShowsItsReasonInTheViewUntilTheNextStart() throws Exception {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
         view.area("wiki-fehler", null);
+        view.clickSummarize();
         assertThat(view.busy()).isTrue();
 
         com.aresstack.spaceharvester.application.jobs.JobStatus failed = SourceUpdatesViewTest.FakeActions.job(

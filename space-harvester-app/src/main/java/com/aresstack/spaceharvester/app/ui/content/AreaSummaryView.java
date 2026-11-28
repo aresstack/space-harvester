@@ -48,8 +48,8 @@ import java.util.function.Supplier;
  * die Podcast-Ansicht einen Erklär-Podcast auf ihrer Grundlage mit eigener Textdarstellung: je Thema die ausführliche
  * Erklärung direkt im Text, gelb, was gerade erzählt wird, die Bilder des Podcasts daneben, nichts in Rot und Grün.
  * Gezeichnet wird mit demselben Baustein wie die Update-Zusammenfassung ({@link SummaryReport}), ohne Wolkenleiste.
- * Fehlt die Zusammenfassung, entsteht sie beim Öffnen einmal von selbst; „Zusammenfassen“ erstellt sie neu. Eine
- * Änderung am Bereich startet nie von selbst einen KI-Lauf, sie zeigt nur „veraltet“.
+ * Die Zusammenfassung entsteht nur per Klick auf „Zusammenfassen“, nie von selbst beim Öffnen (Angelo 28.11.2026: der
+ * Lauf dauert, beim Durchklicken der Bereiche störte er). Eine Änderung am Bereich zeigt nur „veraltet“.
  */
 final class AreaSummaryView extends JPanel {
 
@@ -67,7 +67,7 @@ final class AreaSummaryView extends JPanel {
     static final String PARTIAL = "Vorläufig: die Themen der schon fertigen Teile; am Ende werden sie zusammengeführt.";
     static final String EMPTY = "Dieser Bereich hat noch keine geladene Seite, die sich zusammenfassen lässt.";
     static final String NO_MODEL = "Für den Überblick ist kein Chat-Modell eingestellt. Unter Einstellungen › "
-            + "Modelle wählen; danach entsteht er beim Öffnen von selbst.";
+            + "Modelle wählen; danach erstellt „Zusammenfassen“ ihn.";
     static final String NOT_RUNNING = "Der Überblick erscheint, sobald der Dienst läuft.";
     static final String STALE = "Der Bereich hat sich seither geändert; „Neu zusammenfassen“ erstellt den Überblick "
             + "neu.";
@@ -75,19 +75,13 @@ final class AreaSummaryView extends JPanel {
     static final String FAILURE_HINT = "Einzelheiten stehen unter Aufträge.";
     static final String RESUMMARIZE_TIP = "Überblick neu erstellen";
     static final String HELP = "„Bereich“ fasst den ganzen gewählten Bereich zusammen, nicht nur die Änderungen: "
-            + "worum es geht, wie er aufgebaut ist und wo man anfängt, zum Einstieg für Neue. Fehlt der Überblick, "
-            + "erstellt das eingestellte Chat-Modell ihn beim Öffnen von selbst; „Zusammenfassen“ erstellt ihn neu. "
+            + "worum es geht, wie er aufgebaut ist und wo man anfängt, zum Einstieg für Neue. „Zusammenfassen“ "
+            + "lässt das eingestellte Chat-Modell ihn erstellen; von selbst startet nichts. "
             + "Es liest alle geladenen Seiten mit KI-Freigabe, in Teilen nebeneinander, und führt die Teile danach "
             + "zusammen.\n\n"
             + "In der Podcast-Ansicht erklärt ein Podcast denselben Überblick; der Text darunter zeigt je Thema die "
             + "ausführliche Erklärung, gelb, was gerade erzählt wird.";
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm", Locale.GERMAN);
-    /**
-     * Bereiche, die schon einmal sichtbar geladen wurden (je Sitzung, für beide Ansichten): nur beim ersten Mal entsteht
-     * ein fehlender Überblick von selbst. Ein Ordner zählt nach seiner ID, so startet eine Änderung an ihm (andere
-     * Favoriten, „mit Unterseiten“) nie von selbst einen KI-Lauf (ADR 0034 §7).
-     */
-    private static final Set<String> AUTO_CONSIDERED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /**
      * Der laufende Überblick-Auftrag je Bereich ({@link Target#identity()}), für beide Ansichten (Lese- und
      * Podcast-Ansicht) und über einen Wechsel der Auswahl hinweg (Angelo 27.11.2026: der Ring verschwand, der Auftrag
@@ -146,14 +140,6 @@ final class AreaSummaryView extends JPanel {
                     : com.aresstack.spaceharvester.application.holdings.Selection.of(
                     new com.aresstack.spaceharvester.application.holdings.Selection.Root(sourceId, spaceKey,
                             rootPageId));
-        }
-
-        /**
-         * Ob ein fehlender Überblick beim ersten Öffnen von selbst entsteht. Für einen Ordner im Baum nie: Man klickt
-         * sich durch viele davon, der Lauf startet nur per Klick auf „Zusammenfassen“ (Angelo 26.11.2026).
-         */
-        boolean automatic() {
-            return rootPageId == null;
         }
 
         /** Die Quellen, deren Meldungen die Ansicht hört (der Core meldet nach dem Ablegen jede Quelle der Auswahl). */
@@ -770,7 +756,6 @@ final class AreaSummaryView extends JPanel {
             if (!same || interimChanged) {
                 render();
             }
-            autoSummarize();
             offer();
         }, failure -> {
             if (mine == generation) {
@@ -907,10 +892,6 @@ final class AreaSummaryView extends JPanel {
             offer();
             render();
             watch(current, running, target);
-            return;
-        }
-        if (autoSummarize()) {
-            render();
         }
     }
 
@@ -932,33 +913,6 @@ final class AreaSummaryView extends JPanel {
             com.aresstack.spaceharvester.application.jobs.Foreground.close(view);
             view = null;
         }
-    }
-
-    /**
-     * Fehlt der Überblick beim ersten sichtbaren Öffnen des Bereichs, entsteht er einmal von selbst (ADR 0034 §7), mit
-     * dem Vorrang der offenen Ansicht; nur mit Chat-Modell. Wer den Bereich schon einmal gesehen hat, bekommt bei einer
-     * Änderung nur „veraltet“, nie einen KI-Lauf von selbst. {@code true}, wenn gestartet.
-     */
-    private boolean autoSummarize() {
-        if (!startsByItself()) {
-            return false;
-        }
-        summarize(false);
-        return true;
-    }
-
-    /**
-     * Die einzige Stelle, die entscheidet, ob der Überblick beim Öffnen von selbst startet (weitere Bedingungen gehören
-     * hierher, etwa „der Knoten hat ein Buch“). Merkt sich den Bereich, wenn ja, so startet er je Sitzung höchstens
-     * einmal von selbst.
-     */
-    private boolean startsByItself() {
-        // Den ersten sichtbaren Besuch merken, auch wenn schon ein Überblick da ist: Ändert sich danach der Ordner,
-        // zeigt er nur „veraltet“ bzw. bietet den Klick an, statt von selbst zu starten.
-        // Hat der Ordner ein Buch, zeigt die Leseansicht das Buch; der Überblick startet nur per Klick (Architekt).
-        return loaded && available && runningJob == null && target != null && target.automatic() && edition == null
-                && showing.getAsBoolean() && !deletedByUser(target) && AUTO_CONSIDERED.add(target.identity())
-                && summary == null && !empty;
     }
 
     /** Gemerkt, wo der Benutzer den Überblick gelöscht hat (über Neustarts, im Zustand der Anwendung). */
@@ -1406,6 +1360,11 @@ final class AreaSummaryView extends JPanel {
     }
 
     // ---- für Tests
+
+    /** Wie ein Klick auf „Zusammenfassen“: der einzige Weg, auf dem ein Überblick entsteht (Angelo 28.11.2026). */
+    void clickSummarize() {
+        summarize(true);
+    }
 
     boolean summarizeOffered() {
         return summarize.isVisible() && summarize.isEnabled();
