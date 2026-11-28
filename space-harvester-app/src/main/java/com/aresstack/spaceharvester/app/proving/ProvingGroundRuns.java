@@ -127,6 +127,15 @@ public final class ProvingGroundRuns implements AutoCloseable {
      */
     public Recording record(TestCase target, Supplier<Setup> setup, Consumer<List<TestStep>> steps,
                             Consumer<TestCase> done, Consumer<String> failed) {
+        return record(target, null, setup, steps, done, failed);
+    }
+
+    /**
+     * Wie oben; mit {@code startUrl} öffnet der Browser gleich diese Adresse (Playwright nimmt sie als Schritt
+     * „navigate“ auf), sonst eine leere Seite, in der man die Adresse selbst eingibt.
+     */
+    public Recording record(TestCase target, String startUrl, Supplier<Setup> setup, Consumer<List<TestStep>> steps,
+                            Consumer<TestCase> done, Consumer<String> failed) {
         Recording recording = new Recording();
         if (busy) {
             failed.accept("Es läuft schon ein Test oder eine Aufnahme");
@@ -147,7 +156,15 @@ public final class ProvingGroundRuns implements AutoCloseable {
                             recorder.pause();
                         }
                         recorder.onStep(step -> steps.accept(List.copyOf(target.steps())));
-                        context.newPage();
+                        com.microsoft.playwright.Page page = context.newPage();
+                        if (startUrl != null && !startUrl.isBlank()) {
+                            try {
+                                page.navigate(startUrl.strip());
+                            } catch (PlaywrightException unreachable) {
+                                // Adresse falsch oder langsam: die Aufnahme läuft weiter, die Adresse lässt sich im
+                                // Browser korrigieren, Stopp speichert, was bis dahin aufgenommen ist
+                            }
+                        }
                         try {
                             recorder.pump(() -> recording.stopRequested || context.pages().isEmpty());
                         } catch (PlaywrightException browserClosed) {

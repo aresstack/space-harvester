@@ -11,6 +11,9 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Glyph;
 import com.aresstack.spaceharvester.app.ui.IconButton;
+import com.aresstack.spaceharvester.app.ui.Texts;
+import com.aresstack.spaceharvester.app.ui.controls.CenterOffer;
+import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.app.ui.controls.ComicTreeRenderer;
 import com.aresstack.spaceharvester.app.ui.controls.FolderField;
 import com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane;
@@ -80,6 +83,8 @@ public final class ProvingGroundWorkspace extends JPanel {
 
     /** Wo der Ordner des Testprojekts gemerkt wird (App-Zustand). */
     static final String PROJECT_KEY = "provingGround.project";
+    /** Die zuletzt eingegebene Startadresse einer Aufnahme (App-Zustand). */
+    static final String START_URL_KEY = "provingGround.startUrl";
     static final String RUN_TIP = "Ausführen: den gewählten Testfall, die Suite oder das ganze Projekt";
     static final String STOP_TIP = "Abbrechen: den laufenden Test beenden";
     static final String CREATE_TIP = "In diesem Ordner ein leeres Testprojekt anlegen";
@@ -89,6 +94,18 @@ public final class ProvingGroundWorkspace extends JPanel {
     static final String UP_TIP = "Schritt nach oben";
     static final String DOWN_TIP = "Schritt nach unten";
     static final String DELETE_TIP = "Schritt löschen";
+    /** Ordner des Testprojekts, solange keiner gewählt ist (unter dem Datenordner der App). */
+    static final String DEFAULT_PROJECT = "Testprojekt";
+    /** Name der Suite, die ● anlegt, wenn das Projekt noch keine hat. */
+    static final String FIRST_SUITE = "Allgemein";
+    static final String NO_PROJECT = "Noch kein Testprojekt in diesem Ordner – „Testprojekt anlegen“ in der Mitte";
+    static final String NO_SUITE = "Noch keine Suite – „Erste Suite anlegen“ in der Mitte oder Plus links oben";
+    static final String NO_CASES = "Noch keine Testfälle – mit dem roten Aufnahmeknopf einen aufnehmen";
+    static final String RECORDING = "Aufnahme läuft – im Browser arbeiten; das schwarze Quadrat (Stopp) beendet und speichert";
+    static final String RECORDING_PAUSED = "Aufnahme angehalten – der Pause-Knopf setzt fort";
+    static final String OFFER_PROJECT = "Testprojekt anlegen";
+    static final String OFFER_SUITE = "Erste Suite anlegen";
+    static final String OFFER_RECORD = "Testfall aufnehmen";
     /** Rolle „automatisch“: aus der Aktion (Assertion = Then, sonst When). */
     static final String AUTO = "automatisch";
 
@@ -118,6 +135,8 @@ public final class ProvingGroundWorkspace extends JPanel {
         worker.setDaemon(true);
         return worker;
     });
+    private CenterOffer offer;
+    private Runnable offerAction = () -> { };
     private ProvingGroundRuns.Recording recording;
     /** Ergebnisse des letzten Laufs je Testfall ({@code <suite>/<fall>}). */
     private final Map<String, CaseRunResult> results = new HashMap<>();
@@ -147,13 +166,9 @@ public final class ProvingGroundWorkspace extends JPanel {
             if (project == null) {
                 createProject();
             } else {
-                String name = Dialogs.askText(this, "Neue Suite", "Name der Suite", "");
-                if (name != null) {
-                    createSuite(name);
-                }
+                askSuite();
             }
         });
-        create.setVisible(false);
         JPanel sidebar = new JPanel(new BorderLayout(0, 6));
         sidebar.setOpaque(false);
         JPanel top = new JPanel(new BorderLayout(0, 4));
@@ -196,6 +211,11 @@ public final class ProvingGroundWorkspace extends JPanel {
         JSplitPane center = new JSplitPane(JSplitPane.VERTICAL_SPLIT, Comic.scroll(table), Comic.scroll(report));
         center.setResizeWeight(0.65);
         center.setBorder(null);
+        ComicDivider.install(center, Comic.PALETTE);
+        JPanel centerBox = new JPanel(new BorderLayout());
+        centerBox.setOpaque(false);
+        centerBox.add(center, BorderLayout.CENTER);
+        offer = new CenterOffer(centerBox, OFFER_PROJECT, CREATE_TIP).onAccept(() -> offerAction.run());
         JPanel content = new JPanel(new BorderLayout());
         content.setOpaque(false);
         JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
@@ -208,16 +228,14 @@ public final class ProvingGroundWorkspace extends JPanel {
         tools.add(run);
         tools.add(stop);
         content.add(DeckBars.head(title, tools), BorderLayout.NORTH);
-        content.add(center, BorderLayout.CENTER);
+        content.add(offer, BorderLayout.CENTER);
         add(new LeftSidebarPane(sidebar, content, 280).withDividerToggle(), BorderLayout.CENTER);
 
         String remembered = AppState.shared().get(PROJECT_KEY);
-        if (remembered != null && !remembered.isBlank()) {
-            folder.path(Path.of(remembered));
-            open(Path.of(remembered));
-        } else {
-            status.show(StatusNote.plain("Ordner des Testprojekts wählen"));
-        }
+        Path start = remembered != null && !remembered.isBlank() ? Path.of(remembered)
+                : dataDirectory.get().resolve("proving-ground").resolve(DEFAULT_PROJECT);
+        folder.path(start);
+        open(start);
     }
 
     /** Die Perspektive mit dieser Arbeitsfläche. */
@@ -245,10 +263,10 @@ public final class ProvingGroundWorkspace extends JPanel {
             if (failure != null) {
                 show(null, "Testprojekt nicht lesbar: " + cause(failure), StatusNote.Tone.ERROR);
             } else if (read == null) {
-                show(null, "Kein Testprojekt in diesem Ordner – mit ＋ anlegen", StatusNote.Tone.WARNING);
+                show(null, NO_PROJECT, StatusNote.Tone.WARNING);
             } else {
                 List<String> problems = read.problems();
-                show(read, problems.isEmpty() ? read.name() + ": " + count(read) + " Testfälle"
+                show(read, problems.isEmpty() ? read.name() + ": " + Texts.count(count(read), "Testfall", "Testfälle")
                         : "Testprojekt fehlerhaft: " + String.join(" · ", problems),
                         problems.isEmpty() ? StatusNote.Tone.PLAIN : StatusNote.Tone.ERROR);
             }
@@ -257,7 +275,6 @@ public final class ProvingGroundWorkspace extends JPanel {
 
     private void show(TestProject read, String note, StatusNote.Tone tone) {
         project = read;
-        create.setVisible(directory != null);
         create.setToolTipText(read == null ? CREATE_TIP : SUITE_TIP);
         root.removeAllChildren();
         root.setUserObject(read == null ? "Kein Testprojekt" : new Node(read.name().isEmpty() ? "Testprojekt"
@@ -277,6 +294,45 @@ public final class ProvingGroundWorkspace extends JPanel {
         }
         tree.setSelectionRow(0);
         status.show(new StatusNote(note, tone, null, null));
+        if (read != null && read.suites().isEmpty() && tone == StatusNote.Tone.PLAIN) {
+            status.show(StatusNote.plain(NO_SUITE));
+        }
+        updateOffer();
+    }
+
+    /** Das Angebot in der Mitte führt Schritt für Schritt: Projekt anlegen, Suite anlegen, Testfall aufnehmen. */
+    private void updateOffer() {
+        Node node = selectedNode();
+        boolean busy = recording != null || !run.isEnabled();
+        if (directory == null || busy) {
+            offer.offer(false);
+        } else if (project == null) {
+            offer(OFFER_PROJECT, CREATE_TIP, this::createProject);
+        } else if (project.suites().isEmpty()) {
+            offer(OFFER_SUITE, SUITE_TIP, this::askSuite);
+        } else if (node != null && node.testCase() != null) {
+            offer.offer(false);
+        } else if (node != null && node.suite() != null && !node.suite().cases().isEmpty()) {
+            offer.offer(false);
+        } else if (node != null && node.suite() == null && count(project) > 0) {
+            offer.offer(false);
+        } else {
+            offer(OFFER_RECORD, RECORD_TIP, this::startRecording);
+        }
+    }
+
+    private void offer(String label, String tip, Runnable action) {
+        offer.button().setText(label);
+        offer.button().setToolTipText(tip);
+        offerAction = action;
+        offer.offer(true);
+    }
+
+    private void askSuite() {
+        String name = Dialogs.askText(this, "Neue Suite", "Name der Suite", "");
+        if (name != null && !name.isBlank()) {
+            createSuite(name.strip());
+        }
     }
 
     /** Wählt im Baum den Knoten des Testfalls oder der Suite. */
@@ -325,6 +381,7 @@ public final class ProvingGroundWorkspace extends JPanel {
         shownSuite = node == null ? null : node.suite();
         report.setText("");
         updateUsers();
+        updateOffer();
         if (node == null || node.testCase() == null || directory == null) {
             return;
         }
@@ -356,6 +413,12 @@ public final class ProvingGroundWorkspace extends JPanel {
     /** Führt aus, was im Baum gewählt ist. */
     void runSelection() {
         if (project == null || directory == null) {
+            status.show(new StatusNote(NO_PROJECT, StatusNote.Tone.WARNING, null, null));
+            return;
+        }
+        if (count(project) == 0) {
+            status.show(new StatusNote(project.suites().isEmpty() ? NO_SUITE : NO_CASES, StatusNote.Tone.WARNING,
+                    null, null));
             return;
         }
         Node node = selectedNode();
@@ -374,6 +437,7 @@ public final class ProvingGroundWorkspace extends JPanel {
         run.setEnabled(false);
         record.setEnabled(false);
         stop.setEnabled(true);
+        offer.offer(false);
         status.show(StatusNote.plain("Test läuft …"));
         TestProject current = project;
         Path base = directory;
@@ -399,7 +463,7 @@ public final class ProvingGroundWorkspace extends JPanel {
         finishedRun();
         result.cases().forEach(c -> results.put(c.reference(), c));
         long failed = result.cases().stream().filter(c -> !c.passed()).count();
-        status.show(new StatusNote(result.passed() ? "Bestanden: " + result.cases().size() + " Testfälle"
+        status.show(new StatusNote(result.passed() ? "Bestanden: " + Texts.count(result.cases().size(), "Testfall", "Testfälle")
                 : failed + " von " + result.cases().size() + " Testfällen fehlgeschlagen",
                 result.passed() ? StatusNote.Tone.PLAIN : StatusNote.Tone.ERROR, null, null));
         selected();
@@ -414,6 +478,7 @@ public final class ProvingGroundWorkspace extends JPanel {
         record.setEnabled(true);
         stop.setEnabled(false);
         pause.setEnabled(false);
+        updateOffer();
     }
 
     /** Die Benutzer des Projekts als Auswahl in der Spalte „Benutzer“ (leer = der des Testfalls). */
@@ -431,21 +496,25 @@ public final class ProvingGroundWorkspace extends JPanel {
     /** ● : in den gezeigten Testfall (anhängen) oder, bei gewählter Suite, in einen neuen Testfall. */
     void startRecording() {
         Node node = selectedNode();
-        if (project == null || directory == null || node == null || node.suite() == null) {
-            status.show(new StatusNote("Erst eine Suite oder einen Testfall wählen (neue Suite mit ＋)",
-                    StatusNote.Tone.WARNING, null, null));
+        if (project == null || directory == null) {
+            status.show(new StatusNote(NO_PROJECT, StatusNote.Tone.WARNING, null, null));
+            return;
+        }
+        if (node == null || node.suite() == null) {
+            // Projekt gewählt: in die erste Suite, oder in eine neue, wenn es noch keine gibt
+            TestSuite suite = project.suites().isEmpty()
+                    ? TestSuite.of(TestProject.newId(FIRST_SUITE, List.of()), FIRST_SUITE, List.of())
+                    : project.suites().get(0);
+            recordNew(suite);
             return;
         }
         if (node.testCase() != null) {
             if (shownCase == null) {
                 return;
             }
-            record(node.suite(), shownEntry, new TestCase(shownCase.name(), shownCase.steps()));
+            record(node.suite(), shownEntry, new TestCase(shownCase.name(), shownCase.steps()), null);
         } else {
-            String name = Dialogs.askText(this, "Neuer Testfall", "Name des Testfalls", "");
-            if (name != null) {
-                record(node.suite(), newCase(node.suite(), name), new TestCase(name));
-            }
+            recordNew(node.suite());
         }
     }
 
@@ -455,14 +524,33 @@ public final class ProvingGroundWorkspace extends JPanel {
         return TestCaseEntry.of(id, name, ProjectFile.defaultCaseFile(suite.id(), id));
     }
 
-    private void record(TestSuite suite, TestCaseEntry entry, TestCase target) {
+    /** Fragt Name und Startadresse des neuen Testfalls und nimmt auf. */
+    private void recordNew(TestSuite suite) {
+        String name = Dialogs.askText(this, "Neuer Testfall", "Name des Testfalls", "");
+        if (name == null || name.isBlank()) {
+            return;
+        }
+        String remembered = AppState.shared().get(START_URL_KEY);
+        String url = Dialogs.askText(this, "Neuer Testfall", "Startadresse – leer lassen, um sie im Browser einzugeben",
+                remembered == null ? "" : remembered);
+        if (url == null) {
+            return;
+        }
+        if (!url.isBlank()) {
+            AppState.shared().put(START_URL_KEY, url.strip());
+        }
+        record(suite, newCase(suite, name.strip()), new TestCase(name.strip()), url);
+    }
+
+    private void record(TestSuite suite, TestCaseEntry entry, TestCase target, String startUrl) {
         run.setEnabled(false);
         record.setEnabled(false);
         stop.setEnabled(true);
         pause.setEnabled(true);
         title.setText(entry.name() + " · Aufnahme");
-        status.show(StatusNote.plain("Aufnahme läuft – im Browser arbeiten, ■ beendet und speichert"));
-        recording = runs.record(target, this::setup,
+        offer.offer(false);
+        status.show(StatusNote.plain(RECORDING));
+        recording = runs.record(target, startUrl, this::setup,
                 live -> SwingUtilities.invokeLater(() -> steps.show(new TestCase(target.name(), live), entry, null)),
                 recorded -> SwingUtilities.invokeLater(() -> recorded(suite, entry, recorded)),
                 problem -> SwingUtilities.invokeLater(() -> {
@@ -482,7 +570,7 @@ public final class ProvingGroundWorkspace extends JPanel {
             status.show(StatusNote.plain("Aufnahme läuft"));
         } else {
             recording.pause();
-            status.show(StatusNote.plain("Aufnahme angehalten – ❚❚ setzt fort"));
+            status.show(StatusNote.plain(RECORDING_PAUSED));
         }
     }
 
@@ -491,7 +579,8 @@ public final class ProvingGroundWorkspace extends JPanel {
         recording = null;
         finishedRun();
         TestCase snapshot = new TestCase(recorded.name(), recorded.steps());
-        TestProject changed = project.withSuite(project.suite(suite.id()).withCase(entry));
+        TestSuite base = project.suite(suite.id()) != null ? project.suite(suite.id()) : suite;
+        TestProject changed = project.withSuite(base.withCase(entry));
         saveCase(entry, snapshot, changed, "Aufnahme gespeichert: " + snapshot.size() + " Schritte",
                 suite.id(), entry.id());
     }
@@ -603,7 +692,7 @@ public final class ProvingGroundWorkspace extends JPanel {
         try {
             TestProject read = ProjectFile.read(base);
             directory = base;
-            show(read, read.name() + ": " + count(read) + " Testfälle", StatusNote.Tone.PLAIN);
+            show(read, read.name() + ": " + Texts.count(count(read), "Testfall", "Testfälle"), StatusNote.Tone.PLAIN);
             select(suiteId, caseId);
         } catch (IOException broken) {
             status.show(new StatusNote("Testprojekt nicht lesbar: " + broken.getMessage(), StatusNote.Tone.ERROR,
@@ -628,6 +717,11 @@ public final class ProvingGroundWorkspace extends JPanel {
     /** Die Stand-Anzeige der Perspektive in der Statuszeile (für Tests). */
     JComponent statusLine() {
         return status;
+    }
+
+    /** Das Angebot in der Mitte (für Tests). */
+    CenterOffer offer() {
+        return offer;
     }
 
     StepsModel steps() {
@@ -683,7 +777,8 @@ public final class ProvingGroundWorkspace extends JPanel {
                     StepRole role = binding.role() != null ? binding.role() : StepRole.of(step);
                     String user = binding.user() != null ? binding.user()
                             : shownEntry.user() != null ? shownEntry.user() : "";
-                    String what = binding.description().isEmpty() ? step.describe() : binding.description();
+                    String what = !binding.description().isEmpty() ? binding.description()
+                            : step.code() != null ? step.code().strip() : step.describe();
                     String outcome = i < played.size() ? outcome(played.get(i)) : "";
                     rows.add(new Object[]{i + 1, label(role), user, what, outcome});
                 }

@@ -31,6 +31,10 @@ public final class TestStep {
 
     /** Field of the stable step id. */
     public static final String STEP_ID = "stepId";
+    /** Quotes like Playwright's code generators (a JSON string, no HTML escaping). */
+    private static final com.google.gson.Gson QUOTE = new com.google.gson.GsonBuilder().disableHtmlEscaping().create();
+    /** Playwright's generated code of the step (see {@link #code()}). */
+    public static final String CODE = "code";
 
     /** A step from Playwright's {@code ActionInContext} (copied); without a step id it gets a new one. */
     public static TestStep of(JsonObject actionInContext) {
@@ -98,6 +102,25 @@ public final class TestStep {
         action.addProperty("name", name);
         action.addProperty("selector", selector);
         return action;
+    }
+
+    /**
+     * The Java code Playwright's own generator wrote for this action while recording (language {@code java}),
+     * e.g. {@code page.getByRole(AriaRole.BUTTON, ...).click();}, or null for steps recorded before.
+     */
+    public String code() {
+        return string(json, CODE);
+    }
+
+    /** This step with Playwright's code for it (null removes it). */
+    public TestStep withCode(String code) {
+        JsonObject copy = json.deepCopy();
+        if (code == null || code.isBlank()) {
+            copy.remove(CODE);
+        } else {
+            copy.addProperty(CODE, code);
+        }
+        return new TestStep(copy);
     }
 
     /** The stable id of the step (survives edits, inserting, deleting and moving). */
@@ -172,8 +195,10 @@ public final class TestStep {
         return json.deepCopy();
     }
 
+    /** Another element: Playwright's code of the step no longer fits and is dropped (record the step again). */
     public TestStep withSelector(String selector) {
-        return withActionField("selector", selector);
+        TestStep changed = withActionField("selector", selector);
+        return java.util.Objects.equals(selector, selector()) ? changed : changed.withCode(null);
     }
 
     public TestStep withText(String text) {
@@ -188,9 +213,22 @@ public final class TestStep {
         return withActionField("value", value);
     }
 
-    /** The step with one field of the action set (or removed with {@code null}). */
+    /**
+     * The step with one field of the action set (or removed with {@code null}). Playwright's code follows a changed
+     * text, url or value: its quoted literal is replaced; if the old value is not found there, the code is dropped.
+     */
     public TestStep withActionField(String field, String value) {
+        String old = string(action(), field);
         JsonObject copy = json.deepCopy();
+        String code = code();
+        if (code != null && !java.util.Objects.equals(old, value) && !"selector".equals(field)) {
+            String quotedOld = old == null ? null : QUOTE.toJson(old);
+            if (quotedOld != null && value != null && code.contains(quotedOld)) {
+                copy.addProperty(CODE, code.replace(quotedOld, QUOTE.toJson(value)));
+            } else {
+                copy.remove(CODE);
+            }
+        }
         JsonObject action = copy.getAsJsonObject("action");
         if (value == null) {
             action.remove(field);
