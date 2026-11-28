@@ -817,6 +817,21 @@ class MainWindowTest {
                 assertThat(again.leftStack().shown().get(1)).isSameAs(
                         again.explorer().area(Explorer.FAVORITES_TAB));
 
+                // Am waagerechten Trenner gezogen: Auch links sind die Höhenanteile gemerkt.
+                int before = side.getHeight();
+                window.leftStack().pull(1, 60);
+                layoutAll(surface);
+                assertThat(side.getHeight()).isEqualTo(before + 60);
+                assertThat(AppState.shared().get(MainWindow.LEFT_SHARES_KEY)).isNotBlank();
+                MainWindow third = new MainWindow(context);
+                JPanel thirdSurface = third.content(() -> { }, () -> { });
+                thirdSurface.setSize(1400, 820);
+                layoutAll(thirdSurface);
+                assertThat(third.leftStack().shown().get(0).getHeight()).isCloseTo(side.getHeight(),
+                        org.assertj.core.data.Offset.offset(1));
+                assertThat(third.leftStack().shown().get(1).getHeight()).isCloseTo(favoritesArea.getHeight(),
+                        org.assertj.core.data.Offset.offset(1));
+
                 // An den rechten Rand gezogen, steht der Bereich in der rechten Leiste.
                 left.move(Explorer.FAVORITES_TAB, window.sidePearls(), 0);
                 layoutAll(surface);
@@ -857,6 +872,7 @@ class MainWindowTest {
                     window.leftPearls().home(tool);
                 }
                 AppState.shared().put(MainWindow.PEARLS_KEY + "." + harvester, (String) null);
+                AppState.shared().put(MainWindow.LEFT_SHARES_KEY, (String) null);
             }
         });
     }

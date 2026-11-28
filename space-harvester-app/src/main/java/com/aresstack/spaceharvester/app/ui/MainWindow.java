@@ -165,6 +165,8 @@ public final class MainWindow implements AppContext.Navigator {
      * der Knopfleiste, dann Chat, Aufträge und Analysen ({@link #SIDE_MODES}).
      */
     static final String SIDE_SHARES_KEY = "sidebar.right.shares";
+    /** Wie {@link #SIDE_SHARES_KEY} für die linke Leiste: der Explorer und die Bereiche der Kugeln am linken Rand. */
+    static final String LEFT_SHARES_KEY = "sidebar.left.shares";
     private static final int SHARE_SCALE = 1000;
     private String sideMode = SIDE_CHAT;
     /** Die Leiste über die ganze Arbeitsfläche („Groß anzeigen“); der Explorer bleibt. */
@@ -848,7 +850,8 @@ public final class MainWindow implements AppContext.Navigator {
             edges.revalidate();
             edges.repaint();
         });
-        sideStack.onShares(this::rememberShares);
+        sideStack.onShares(() -> rememberShares(sideStack, sideDeck, SIDE_SHARES_KEY));
+        leftStack.onShares(() -> rememberShares(leftStack, side, LEFT_SHARES_KEY));
         // Zur Seite zieht die Knopfleiste ihren Trenner, nach oben oder unten löst sich ein Symbol als Kugel.
         sidePearls.carrier(edges);
         sidePearls.sideways(rightRail::onDivider, rightRail::dragging);
@@ -882,7 +885,8 @@ public final class MainWindow implements AppContext.Navigator {
         chatLarge = WindowSizes.recallInt(CHAT_LARGE_KEY, 0) == 1;
         int recalled = WindowSizes.recallInt(SIDE_JOBS_KEY, 0);
         sideMode = recalled >= 0 && recalled < SIDE_MODES.size() ? SIDE_MODES.get(recalled) : SIDE_CHAT;
-        recallShares();
+        recallShares(sideStack, sideDeck, SIDE_SHARES_KEY);
+        recallShares(leftStack, side, LEFT_SHARES_KEY);
         placePearls();
         selectSideToggles();
         placeChat();
@@ -1360,34 +1364,43 @@ public final class MainWindow implements AppContext.Navigator {
         arrangedFor = perspective;
     }
 
-    /** Die Bereiche der rechten Leiste in der Reihenfolge von {@link #SIDE_SHARES_KEY}. */
-    private java.util.List<JComponent> shareAreas() {
+    /**
+     * Die Bereiche, die in einer Leiste untereinander stehen können, in der Reihenfolge der gemerkten Anteile
+     * ({@link #SIDE_SHARES_KEY}, {@link #LEFT_SHARES_KEY}): zuerst der eigene Inhalt der Leiste, dann die Bereiche
+     * der Kugeln beider Ränder. Neue kommen hinten an, damit Gemerktes lesbar bleibt.
+     */
+    private java.util.List<JComponent> shareAreas(JComponent own) {
         java.util.List<JComponent> areas = new java.util.ArrayList<>();
-        areas.add(sideDeck);
+        areas.add(own);
         for (String mode : SIDE_MODES) {
             areas.add(sideArea(mode));
+        }
+        for (String tab : explorer.standaloneTabs()) {
+            areas.add(explorer.area(tab));
         }
         return areas;
     }
 
-    private void rememberShares() {
+    private void rememberShares(com.aresstack.spaceharvester.app.ui.controls.AreaStack stack, JComponent own,
+                                String key) {
         StringBuilder text = new StringBuilder();
-        for (JComponent area : shareAreas()) {
-            text.append(text.length() > 0 ? "," : "").append(Math.round(sideStack.share(area) * SHARE_SCALE));
+        for (JComponent area : shareAreas(own)) {
+            text.append(text.length() > 0 ? "," : "").append(Math.round(stack.share(area) * SHARE_SCALE));
         }
-        AppState.shared().put(SIDE_SHARES_KEY, text.toString());
+        AppState.shared().put(key, text.toString());
     }
 
-    private void recallShares() {
-        String text = AppState.shared().get(SIDE_SHARES_KEY);
+    private void recallShares(com.aresstack.spaceharvester.app.ui.controls.AreaStack stack, JComponent own,
+                              String key) {
+        String text = AppState.shared().get(key);
         if (text == null || text.isBlank()) {
             return;
         }
         String[] parts = text.split(",");
-        java.util.List<JComponent> areas = shareAreas();
+        java.util.List<JComponent> areas = shareAreas(own);
         for (int index = 0; index < Math.min(parts.length, areas.size()); index++) {
             try {
-                sideStack.share(areas.get(index), Integer.parseInt(parts[index].trim()) / (double) SHARE_SCALE);
+                stack.share(areas.get(index), Integer.parseInt(parts[index].trim()) / (double) SHARE_SCALE);
             } catch (NumberFormatException unreadable) {
                 // Ein unlesbarer Anteil bleibt gleich groß wie die anderen.
             }
