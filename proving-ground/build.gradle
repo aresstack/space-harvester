@@ -54,4 +54,6 @@ tasks.register('liveTest', Test) {
         systemProperty 'playwright4j.driver.classpath', driverJars.files.join(File.pathSeparator)
     }
     outputs.upToDateWhen { false }
+    // Vorübergehend (wird mit FirefoxWindowsProbeLiveTest entfernt): Messzeilen ins CI-Log
+    onOutput { descriptor, event -> if (event.message.startsWith('PROBE')) logger.lifecycle(event.message.stripTrailing()) }
 }
