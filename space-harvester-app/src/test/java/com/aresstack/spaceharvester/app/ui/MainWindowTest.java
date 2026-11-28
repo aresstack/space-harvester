@@ -778,8 +778,11 @@ class MainWindowTest {
 
                 // Die Artefakte als Kugel: Ihr Bereich geht auf, die Mitte zeigt die Artefakte; eine Seite aus dem
                 // Baum holt die Seitenansicht nach vorn, ohne den Bereich zu schließen.
+                // Ein Titelfilter der Leiste wirkt in der herausgezogenen Liste nicht unsichtbar weiter.
+                explorer.artifactList().filter("entwurf");
                 left.detach(Explorer.ARTIFACTS_TAB, 2);
                 layoutAll(surface);
+                assertThat(explorer.artifactList().filter()).isEmpty();
                 javax.swing.JComponent artifactsArea = explorer.area(Explorer.ARTIFACTS_TAB);
                 assertThat(left.open(Explorer.ARTIFACTS_TAB)).isFalse();
                 assertThat(explorer.artifactsInFront()).isFalse();
@@ -819,6 +822,19 @@ class MainWindowTest {
                 layoutAll(surface);
                 assertThat(favoritesArea.getParent()).isSameAs(window.sideStack());
                 assertThat(window.sideStack().shown()).contains(favoritesArea);
+                assertThat(window.leftStack().shown()).containsExactly(side, artifactsArea);
+                // Auch am anderen Rand erfährt der Explorer, dass der Bereich seiner Kugel auf- und zugeht.
+                left.move(Explorer.ARTIFACTS_TAB, window.sidePearls(), 0);
+                explorer.showArtifacts(false);
+                window.sidePearls().open(Explorer.ARTIFACTS_TAB, false);
+                assertThat(explorer.artifactsInFront()).isFalse();
+                window.sidePearls().open(Explorer.ARTIFACTS_TAB, true);
+                assertThat(explorer.artifactsInFront()).as("rechts geöffnet zeigt die Mitte die Artefakte").isTrue();
+                window.sidePearls().open(Explorer.ARTIFACTS_TAB, false);
+                assertThat(explorer.artifactsInFront()).isFalse();
+                window.sidePearls().open(Explorer.ARTIFACTS_TAB, true);
+                window.sidePearls().move(Explorer.ARTIFACTS_TAB, left, 1);
+                layoutAll(surface);
                 assertThat(window.leftStack().shown()).containsExactly(side, artifactsArea);
 
                 // Zurück in der Leiste: Die offene Hälfte ist gewählt, Liste und Knopf stehen wieder im Explorer.

@@ -287,6 +287,14 @@ public final class PearlString {
     }
 
     private void changed() {
+        tell();
+        // Auch wer ein Werkzeug hierher verliehen hat, erfährt davon: Sein Bereich geht hier auf und zu.
+        for (PearlString origin : new LinkedHashSet<>(guests.values())) {
+            origin.tell();
+        }
+    }
+
+    private void tell() {
         column.rebuild();
         for (Runnable listener : List.copyOf(listeners)) {
             listener.run();

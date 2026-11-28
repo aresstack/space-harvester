@@ -3091,6 +3091,9 @@ public final class Explorer {
         private final JPanel body = new JPanel(new BorderLayout());
         private final JPanel tools = com.aresstack.spaceharvester.app.ui.controls.SideFoot.centered();
         private final JLabel hint = Comic.muted(" ");
+        /** Das Filterfeld des eigenen Bereichs hinter der Schleuse und was es filtert; ohne Filter {@code null}. */
+        private final PlaceholderField narrowed;
+        private final Consumer<String> narrow;
         private final FindBar foot = new FindBar(() -> body);
         private boolean out;
         /** Ob der eigene Bereich gerade offen ist. */
@@ -3102,11 +3105,13 @@ public final class Explorer {
             this.card = card;
             this.list = list;
             this.tool = tool;
+            this.narrow = narrow;
+            this.narrowed = narrow == null ? null : new PlaceholderField(14, "Titel filtern …");
             area.setOpaque(false);
             body.setOpaque(false);
             if (narrow != null) {
                 // Das Filterfeld steht hinter der Schleuse: Gefiltert wird über das Filtersymbol der Fußleiste.
-                PlaceholderField field = new PlaceholderField(14, "Titel filtern …");
+                PlaceholderField field = narrowed;
                 field.getDocument().addDocumentListener(SourceForm.changes(
                         () -> narrow.accept(field.getText().trim())));
                 body.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(field), BorderLayout.NORTH);
@@ -3134,6 +3139,10 @@ public final class Explorer {
                 list.setVisible(true);
                 body.add(list, BorderLayout.CENTER);
                 tools.add(tool);
+                if (narrow != null) {
+                    // Hier gilt das eigene Filterfeld, nicht mehr der Titelfilter der Leiste.
+                    narrow.accept(narrowed.getText().trim());
+                }
             } else {
                 body.remove(list);
                 deck.add(list, card);
