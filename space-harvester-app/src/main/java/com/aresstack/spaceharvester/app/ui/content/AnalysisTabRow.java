@@ -20,18 +20,18 @@ import java.util.Map;
  */
 final class AnalysisTabRow {
 
-    private final PillTabs row = new PillTabs();
+    private final PillTabs row;
     private final JComponent bar;
     private PillTabs level;
     private boolean syncing;
 
     /** @param icons alle bekannten Reiter in der Reihenfolge der Zeile, je mit ihrem Symbol */
     AnalysisTabRow(Map<String, Icon> icons) {
-        icons.keySet().forEach(name -> row.tab(name, new JPanel()));
-        row.icons(icons);
-        bar = row.detachBar();
-        // In der schmalen Leiste brechen die Reiter um, statt abgeschnitten zu werden (viele Reiter eines Programms).
-        bar.setLayout(new com.aresstack.spaceharvester.app.ui.controls.WrapLayout(java.awt.FlowLayout.CENTER, 4, 2));
+        // Dieselben Umschalter wie in jeder Fußleiste ({@link com.aresstack.spaceharvester.app.ui.FootTabs}): Die
+        // Leiste bleibt überall gleich hoch, Reiter ohne Platz stehen hinter dem Menü am Ende der Reihe.
+        com.aresstack.spaceharvester.app.ui.FootTabs foot = new com.aresstack.spaceharvester.app.ui.FootTabs(icons);
+        row = foot.tabs();
+        bar = foot.bar();
         row.onSelect(name -> {
             if (!syncing && level != null && level.button(name) != null && !name.equals(level.selected())) {
                 level.select(name);

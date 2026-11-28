@@ -17,7 +17,7 @@ import javax.swing.JPanel;
  * der Leiste mit der Lupe unter der Arbeitsfläche steht; jedes Element sitzt senkrecht mittig. Die Lupe gehört nicht
  * hierher, sondern unter die Arbeitsfläche. Nur auf dem EDT.
  */
-public final class SideFoot extends JPanel {
+public final class SideFoot extends FootBar {
 
     private static final int GAP = 6;
 
@@ -88,13 +88,14 @@ public final class SideFoot extends JPanel {
                     width += part.getPreferredSize().width + GAP;
                 }
             }
-            return new Dimension(width, Comic.FOOT_HEIGHT);
+            // Die Höhe legt allein die Basisklasse fest (FootBar), nicht dieses Layout.
+            return new Dimension(width, 0);
         }
 
         @Override
         public Dimension minimumLayoutSize(Container parent) {
             Insets in = parent.getInsets();
-            return new Dimension(in.left + in.right, Comic.FOOT_HEIGHT);
+            return new Dimension(in.left + in.right, 0);
         }
 
         @Override

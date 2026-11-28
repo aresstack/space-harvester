@@ -238,6 +238,16 @@ public class InputFrame extends JPanel {
         return null;
     }
 
+    /**
+     * Das Suchfeld der gezeigten Ansicht unter {@code root}, das hinter einer geschlossenen Schleuse steht: Die
+     * Fußleiste filtert darüber, statt es oben einzublenden (Angelo 28.11.2026). {@code null}, wenn die Ansicht keines
+     * hat oder es offen zu sehen ist.
+     */
+    public static InputFrame closed(Component root) {
+        InputFrame frame = gated(root);
+        return frame == null || frame.gateOpen() ? null : frame;
+    }
+
     private static boolean shownUpTo(Component component) {
         return component == null || component.isVisible();
     }

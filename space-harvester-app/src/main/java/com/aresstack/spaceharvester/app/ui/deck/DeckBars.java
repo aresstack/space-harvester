@@ -134,7 +134,8 @@ public final class DeckBars {
             // Die Kopfleiste ist überall dieselbe (HeadBar): Höhe und Linie stehen nur dort.
             bar = new com.aresstack.spaceharvester.app.ui.controls.HeadBar(new Row(main, east, height), SIDE, SIDE);
         } else {
-            bar = new JPanel(new Row(main, east, height));
+            // Auch diese Fußleiste ist eine FootBar: Die Höhe steht nur in der Basisklasse.
+            bar = new com.aresstack.spaceharvester.app.ui.controls.FootBar(new Row(main, east, height)) { };
             bar.setOpaque(false);
             bar.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
                     BorderFactory.createEmptyBorder(0, SIDE, 0, SIDE)));

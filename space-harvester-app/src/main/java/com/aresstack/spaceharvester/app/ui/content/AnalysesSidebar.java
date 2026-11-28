@@ -21,18 +21,10 @@ public final class AnalysesSidebar extends JPanel {
 
     public static final String TITLE = PageDetailPanel.ANALYSES;
     public static final String MORE = "Weitere Aktionen zu den Analysen";
-    public static final String FILTER = "Filtern: Suchfeld des gezeigten Reiters ein- oder ausblenden";
 
     private final PageDetailPanel detail;
     private final IconButton more = new IconButton(
             new com.aresstack.spaceharvester.app.ui.controls.DownTriangle(), MORE).compact();
-    /**
-     * Das Filtersymbol links neben dem Dreieck (Angelo 27.11.2026): In der Leiste hat ein Suchfeld je Reiter keinen
-     * Platz; es erscheint erst mit diesem Knopf und verschwindet mit ihm wieder, sein Text wird dabei geleert.
-     */
-    private final com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton filter =
-            new com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton(
-                    com.aresstack.spaceharvester.app.ui.Glyph.FILTER, null, FILTER);
     private final IconButton enlarge = new IconButton(ChatSidebar.enlargeIcon(false), ChatSidebar.ENLARGE);
     private Runnable collapse = () -> { };
     private final JPanel switchSlot = new JPanel(new java.awt.GridBagLayout());
@@ -51,9 +43,9 @@ public final class AnalysesSidebar extends JPanel {
                     moreMenu(), more);
             menu.show(more, more.getWidth() - menu.getPreferredSize().width, more.getHeight());
         });
-        filter.getAccessibleContext().setAccessibleName(FILTER);
+        // Kein Suchfeld oben in den Reitern (Angelo 28.11.2026): Gesucht und gefiltert wird unten in der Fußleiste,
+        // die Suchfelder der Reiter bleiben hinter der Schleuse und nehmen nur noch deren Text entgegen.
         com.aresstack.spaceharvester.app.ui.controls.InputFrame.gate(detail.analyses(), false);
-        filter.addActionListener(e -> filter(filter.isSelected()));
         // Links der Umschalter der Leiste; sein gewähltes Symbol sagt, dass hier die Analysen stehen.
         switchSlot.setOpaque(false);
         JPanel leading = new JPanel(new BorderLayout());
@@ -63,16 +55,12 @@ public final class AnalysesSidebar extends JPanel {
         head.add(leading, BorderLayout.CENTER);
         JPanel centered = new JPanel(new java.awt.GridBagLayout());
         centered.setOpaque(false);
-        centered.add(Comic.row(detail.analysesActions(), enlarge, filter, more));
+        centered.add(Comic.row(detail.analysesActions(), enlarge, more));
         head.add(centered, BorderLayout.EAST);
-        JPanel foot = new JPanel(new BorderLayout());
-        foot.setOpaque(false);
-        foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(4, 8, 4, 8)));
-        foot.add(detail.analysesFoot(), BorderLayout.CENTER);
         add(head, BorderLayout.NORTH);
         add(detail.analyses(), BorderLayout.CENTER);
-        add(foot, BorderLayout.SOUTH);
+        // Die Fußleiste ist die aller Bereiche (FindBar) und bringt Linie und Ränder selbst mit.
+        add(detail.analysesFoot(), BorderLayout.SOUTH);
         setMinimumSize(new Dimension(ChatSidebar.MIN_WIDTH, 0));
         setPreferredSize(new Dimension(ChatSidebar.DEFAULT_WIDTH, 0));
     }
@@ -86,25 +74,6 @@ public final class AnalysesSidebar extends JPanel {
             child.setVisible(shown);
         }
         detail.analysesShown(shown);
-    }
-
-    /** Blendet die Suchfelder der Analysen ein oder aus; eingeblendet steht die Schreibmarke im gezeigten Feld. */
-    public void filter(boolean shown) {
-        filter.setSelected(shown);
-        com.aresstack.spaceharvester.app.ui.controls.InputFrame.gate(detail.analyses(), shown);
-        detail.analyses().revalidate();
-        detail.analyses().repaint();
-        if (shown) {
-            com.aresstack.spaceharvester.app.ui.controls.InputFrame field =
-                    com.aresstack.spaceharvester.app.ui.controls.InputFrame.gated(detail.analyses());
-            if (field != null) {
-                field.field().requestFocusInWindow();
-            }
-        }
-    }
-
-    public javax.swing.AbstractButton filterButton() {
-        return filter;
     }
 
     /** Was „Seitenleiste einklappen“ im Menü tut; das bestimmt das Hauptfenster. */

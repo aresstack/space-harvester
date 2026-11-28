@@ -96,8 +96,10 @@ class ContentViewTest {
             window.add(page, java.awt.BorderLayout.CENTER);
             window.add(sidebar, java.awt.BorderLayout.EAST);
             AnalysisTabsScreenshotTest.write(window, Path.of(directory, "analysen-quelle-1280.png"), 640);
-            assertThat(sidebar.filterButton().isSelected()).isFalse();
-            sidebar.filter(true);
+            // Gefiltert wird unten: Lupe auf, Filtersymbol im Feld an, der Text geht an den gezeigten Reiter.
+            detail.analysisFoot().focus();
+            detail.analysisFoot().filtering(true);
+            window.doLayout();
             AnalysisTabsScreenshotTest.write(window, Path.of(directory, "analysen-quelle-filter-1280.png"), 640);
             return null;
         });
@@ -144,10 +146,13 @@ class ContentViewTest {
 
         assertThat(onEdt(() -> detail.folderSubfolders().isSelected())).isTrue();
         assertThat(onEdt(() -> detail.folderSubfolders().isEnabled())).isTrue();
-        // Unter „Analysen“ trägt die Leiste die Unterreiter des Stands (Angelo 24.11.2026), die Checkbox rechts daneben.
+        // Unter „Analysen“ trägt die Fußleiste die Unterreiter des Stands; die Checkbox steht als eigene Zeile darüber,
+        // damit die Leiste so hoch bleibt wie jede andere (Angelo 28.11.2026).
         assertThat(onEdt(() -> detail.analysesFoot().getComponent(0))).isSameAs(detail.analysisFoot());
-        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.analysisFoot())))
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.analysesFoot())))
                 .isTrue();
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.analysisFoot())))
+                .isFalse();
         assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.analysisRow().tabs().button("Aussagen"),
                 detail.analysisFoot()))).as("Reiterzeile unten, nicht mehr über dem Inhalt").isTrue();
         assertThat(onEdt(() -> detail.export().selection().roots(null)))
@@ -175,8 +180,8 @@ class ContentViewTest {
             return null;
         });
         assertThat(onEdt(() -> detail.analysesFoot().getComponent(0))).isSameAs(detail.analysisFoot());
-        // Rechts in der Ecke steht dann nur die ?-Hilfe des Reiters, nicht die Checkbox des Ordners.
-        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.analysisFoot())))
+        // Dann gibt es nur die Fußleiste mit der ?-Hilfe des Reiters, keine Checkbox des Ordners.
+        assertThat(onEdt(() -> SwingUtilities.isDescendingFrom(detail.folderSubfolders(), detail.analysesFoot())))
                 .isFalse();
         // Für den Fehlerfall, versteckt hinter dem Dreieck der Seitenleiste: die Kennzahlen des Knotens neu aufbauen.
         assertThat(onEdt(() -> detail.analysesMenu().stream().map(javax.swing.JMenuItem::getText).toList()))

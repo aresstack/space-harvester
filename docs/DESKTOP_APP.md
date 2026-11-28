@@ -257,6 +257,15 @@ Kugeln sind wie die Leiste leicht durchscheinend und unter der Maus voll deckend
 offenen Bereiche sind gemerkt (`sidebar.right.pearls`). Noch nicht gebaut: Kugeln an den linken Rand verschieben und die
 Symbole der linken Leiste herausziehen.
 
+Fußleisten (Angelo, 28.11.2026, `FootBar`): Jede Fußleiste der App leitet von `controls.FootBar` ab; nur diese
+Klasse legt die Höhe fest, darum stehen alle Fußleisten eines Fensters auf einer Linie. Die Leiste mit der Lupe
+(`FindBar`) steht unter jeder Arbeitsfläche und auch unter den Analysen der Seitenleiste: links die Lupe, mittig die
+Umschalter des Bereichs als Symbolknöpfe (`FootTabs`; Reiter der Analysen, Ansichten im Proving Ground), rechts die
+„?“-Hilfe auf der Höhe der Lupe. Umschalter ohne Platz stehen hinter dem Menü am Ende der Reihe, die Leiste wächst
+nicht. Über den Reitern der Analysen steht kein Suchfeld mehr: Hat der gezeigte Reiter ein Filterfeld, zeigt das
+Suchfeld der Fußleiste das Filtersymbol; damit wird abwechselnd gesucht (Treffer markieren) oder gefiltert (der
+Reiter zeigt nur Passendes, Enter geht an ihn weiter), nie beides.
+
 Aufbau des Hauptfensters (Angelo, 13.11.2026: der Baum links wählt, die Reiter oben entscheiden, wie die Mitte das
 Gewählte zeigt): oben die Icon-Leiste (nur Symbole, Name und Tastenkürzel Strg+1 bis Strg+5 im Tooltip): links die
 Suche und daneben die Reiter der Seitenansicht (Leseansicht, Text, Eigenschaften, Anhänge, Analysen, Erweitert) als
