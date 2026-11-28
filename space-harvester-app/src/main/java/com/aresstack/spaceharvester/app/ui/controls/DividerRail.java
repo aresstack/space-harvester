@@ -121,8 +121,17 @@ public final class DividerRail {
     /** Die Linie des sichtbaren Trenners in der Fläche {@code overlay}; {@code null} ohne sichtbaren Trenner. */
     private java.awt.Rectangle line() {
         Component divider = divider();
-        return center() == null || divider == null ? null
-                : SwingUtilities.convertRectangle(divider.getParent(), divider.getBounds(), overlay);
+        if (center() != null && divider != null) {
+            return SwingUtilities.convertRectangle(divider.getParent(), divider.getBounds(), overlay);
+        }
+        // Zugeklappt gibt es keinen Trenner: Der Platz steht am Fensterrand, aber über dieselbe Länge wie der
+        // Trenner, damit jedes Teil auf der Höhe bleibt, auf der es aufgeklappt sitzt (Angelo 28.11.2026).
+        if (!active || pane.getParent() == null || !pane.isVisible() || pane.getHeight() <= 0
+                || !SwingUtilities.isDescendingFrom(pane, overlay)) {
+            return null;
+        }
+        java.awt.Rectangle along = SwingUtilities.convertRectangle(pane.getParent(), pane.getBounds(), overlay);
+        return new java.awt.Rectangle(slot == overlay.left() ? 0 : overlay.getWidth(), along.y, 0, along.height);
     }
 
     /** Die Lücken der Linie neu bestimmen, nachdem sich etwas auf dem Platz bewegt hat. */

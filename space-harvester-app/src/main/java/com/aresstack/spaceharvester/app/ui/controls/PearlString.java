@@ -45,6 +45,8 @@ public final class PearlString {
     private final Map<String, Tool> tools = new LinkedHashMap<>();
     /** Kennung der Knopfleiste in der Reihenfolge der Gruppen ({@link #units}) und in {@link #placement}. */
     public static final String RAIL = "R";
+    /** Vor der Nummer einer Kugel in {@link #placement}: Das Werkzeug gehört der Kette des anderen Rands. */
+    public static final String GUEST = "*";
 
     /** Die Gruppen von oben nach unten: die Knopfleiste ({@link #RAIL}) und jede Kugel mit ihrem Namen. */
     private final List<String> units = new ArrayList<>(List.of(RAIL));
@@ -55,6 +57,87 @@ public final class PearlString {
     private EdgeOverlay overlay;
     private BooleanSupplier sideways = () -> false;
     private BooleanSupplier railBusy = () -> false;
+    /** Eigene Werkzeuge, die gerade als Kugel auf einer anderen Kette sitzen, und auf welcher. */
+    private final Map<String, PearlString> away = new HashMap<>();
+    /** Fremde Kugeln auf dieser Kette und die Kette, der ihr Werkzeug gehört. */
+    private final Map<String, PearlString> guests = new HashMap<>();
+    /** Welche Kette an einem Punkt der Tragfläche zuständig ist (links oder rechts); ohne Angabe diese. */
+    private java.util.function.Function<Point, PearlString> sideAt = point -> this;
+    private boolean railShown = true;
+    /**
+     * Je Gruppe die Höhe, auf der sie mit offenem Bereich zuletzt saß, als Anteil der Länge: Dort bleibt sie, wenn
+     * ihr Bereich zu ist oder die Leiste zugeklappt am Fensterrand steht.
+     */
+    private final Map<String, Integer> seats = new LinkedHashMap<>();
+    /** Ein Anteil der Länge in {@link #seats}: so fein, dass die Höhe auf das Pixel genau wiederkommt. */
+    private static final int SEAT_SCALE = 1_000_000;
+    private Runnable seatsChanged = () -> { };
+
+    /** Meldet, wenn eine Gruppe auf einer neuen Höhe sitzt (zum Merken, {@link #seats()}). */
+    public void onSeats(Runnable listener) {
+        this.seatsChanged = listener;
+    }
+
+    /**
+     * Die gemerkten Höhen zum Ablegen: je Gruppe ihre Kennung wie in {@link #placement} und ihr Anteil der Länge,
+     * etwa {@code "R=250000,*0=750000"}.
+     */
+    public String seats() {
+        StringBuilder text = new StringBuilder();
+        for (Map.Entry<String, Integer> seat : seats.entrySet()) {
+            String code = code(seat.getKey());
+            if (code != null) {
+                text.append(text.length() > 0 ? "," : "").append(code).append('=').append(seat.getValue());
+            }
+        }
+        return text.toString();
+    }
+
+    /**
+     * Setzt die Höhen aus {@link #seats()}: So sitzen Leiste und Kugeln schon beim Start zugeklappt dort, wo sie
+     * aufgeklappt saßen. {@code other} ist die Kette des anderen Rands (für ihre Gäste hier). Unlesbares entfällt.
+     */
+    public void seats(String text, PearlString other) {
+        seats.clear();
+        if (text != null) {
+            for (String part : text.split(",")) {
+                String[] fields = part.trim().split("=");
+                String unit = fields.length == 2 ? unit(fields[0], other) : null;
+                try {
+                    if (unit != null) {
+                        seats.put(unit, Math.max(0, Math.min(SEAT_SCALE, Integer.parseInt(fields[1]))));
+                    }
+                } catch (NumberFormatException unreadable) {
+                    // Ohne lesbare Höhe gilt die Verteilung nach der Reihenfolge.
+                }
+            }
+        }
+        column.revalidate();
+    }
+
+    /** Die Kennung einer Gruppe zum Merken: die Leiste, sonst die Nummer des Werkzeugs in seiner Kette. */
+    private String code(String unit) {
+        if (RAIL.equals(unit)) {
+            return RAIL;
+        }
+        int number = guests.getOrDefault(unit, this).tools().indexOf(unit);
+        return number < 0 ? null : (guests.containsKey(unit) ? GUEST : "") + number;
+    }
+
+    private String unit(String code, PearlString other) {
+        if (RAIL.equals(code)) {
+            return RAIL;
+        }
+        boolean guest = code.startsWith(GUEST);
+        PearlString origin = guest ? other : this;
+        try {
+            int number = Integer.parseInt(guest ? code.substring(GUEST.length()) : code);
+            return origin == null || number < 0 || number >= origin.tools().size() ? null
+                    : origin.tools().get(number);
+        } catch (NumberFormatException unreadable) {
+            return null;
+        }
+    }
     private boolean carrying;
     private java.util.function.Function<String, Integer> centre = name -> null;
     private Runnable laidOut = () -> { };
@@ -84,9 +167,35 @@ public final class PearlString {
         return this;
     }
 
+    /** Symbol und Tooltip eines Werkzeugs, gleich ob es dieser Kette gehört oder hier zu Gast ist. */
+    private Tool spec(String name) {
+        return guests.getOrDefault(name, this).tools.get(name);
+    }
+
+    /** Die Kette, auf der dieses eigene Werkzeug gerade steht: diese oder die, auf die es verschoben wurde. */
+    public PearlString host(String name) {
+        return away.getOrDefault(name, this);
+    }
+
+    /**
+     * Die Ketten der beiden Fensterränder: {@code sideAt} sagt für einen Punkt der Tragfläche ({@link #carrier}),
+     * welche dort zuständig ist. Eine Kugel, die auf der anderen Seite losgelassen wird, schnappt in deren Kette.
+     */
+    public void sides(java.util.function.Function<Point, PearlString> sideAt) {
+        this.sideAt = sideAt;
+    }
+
+    /** Ob die Knopfleiste dieser Kette zu sehen ist (etwa nur in der Perspektive, zu der sie gehört). */
+    public void rail(boolean shown) {
+        if (railShown != shown) {
+            railShown = shown;
+            column.rebuild();
+        }
+    }
+
     private void dress(SegmentedToggle holder, String name) {
         AbstractButton button = holder.button(name);
-        button.setToolTipText(tools.get(name).tip);
+        button.setToolTipText(spec(name).tip);
         Carry carry = new Carry(name);
         button.addMouseListener(carry);
         button.addMouseMotionListener(carry);
@@ -116,7 +225,7 @@ public final class PearlString {
      * Auf welcher Höhe der Spalte der Bereich eines Werkzeugs seine Mitte hat, oder {@code null}, wenn er nicht zu
      * sehen ist. Ist die Spalte über einen Trenner gestreckt, sitzt die Knopfleiste auf Höhe des Bereichs ihres
      * gewählten Symbols und jede offene Kugel auf Höhe ihres eigenen Bereichs: Man sieht, was wozu gehört. Was
-     * keinen offenen Bereich hat, steht oben, wo die Leiste auch zugeklappt steht.
+     * keinen offenen Bereich hat, bleibt auf der Höhe, auf der es offen zuletzt saß.
      */
     public void centres(java.util.function.Function<String, Integer> centre) {
         this.centre = centre;
@@ -151,7 +260,7 @@ public final class PearlString {
 
     /** Ob das Werkzeug als einzelne Kugel steht. */
     public boolean pearl(String name) {
-        return views.containsKey(name);
+        return views.containsKey(name) || away.containsKey(name);
     }
 
     /**
@@ -177,14 +286,18 @@ public final class PearlString {
         return result;
     }
 
-    /** Ob der Bereich dieser Kugel offen ist. */
+    /** Ob der Bereich dieser Kugel offen ist, gleich auf welcher Kette sie sitzt. */
     public boolean open(String name) {
-        return open.contains(name);
+        return host(name).open.contains(name);
     }
 
     /** Öffnet oder schließt den Bereich einer Kugel; für ein Werkzeug in der Leiste geschieht nichts. */
     public void open(String name, boolean shown) {
-        if (!pearl(name) || open.contains(name) == shown) {
+        if (host(name) != this) {
+            host(name).open(name, shown);
+            return;
+        }
+        if (!views.containsKey(name) || open.contains(name) == shown) {
             return;
         }
         if (shown) {
@@ -223,6 +336,7 @@ public final class PearlString {
             order(RAIL, index);
             return;
         }
+
         boolean wasOpen = name.equals(rail.selected());
         rail.remove(name);
         place(name, index, wasOpen);
@@ -231,7 +345,7 @@ public final class PearlString {
 
     private void place(String name, int index, boolean shown) {
         SegmentedToggle view = new SegmentedToggle();
-        view.segment(name, tools.get(name).icon);
+        view.segment(name, spec(name).icon);
         view.vertical(true);
         if (!shown) {
             view.clear();
@@ -251,7 +365,7 @@ public final class PearlString {
      * wechselt nur seinen Platz.
      */
     public void attach(String name, int index) {
-        if (!tools.containsKey(name)) {
+        if (!tools.containsKey(name) || away.containsKey(name)) {
             return;
         }
         if (!pearl(name)) {
@@ -290,13 +404,77 @@ public final class PearlString {
         }
     }
 
-    /** Der Knopf des Werkzeugs, in der Leiste oder als Kugel. */
+    /** Der Knopf des Werkzeugs, in der Leiste oder als Kugel, gleich auf welcher Kette. */
     public AbstractButton button(String name) {
         return holder(name).button(name);
     }
 
     private SegmentedToggle holder(String name) {
-        return views.getOrDefault(name, rail);
+        PearlString host = host(name);
+        return host.views.getOrDefault(name, rail);
+    }
+
+    /**
+     * Verschiebt ein Werkzeug von dieser Kette als Kugel an Platz {@code index} der Gruppen von {@code target}
+     * (Angelo 28.11.2026: eine Kugel wandert vom linken an den rechten Rand und umgekehrt). Ein offener Bereich
+     * bleibt offen und zieht mit um. Das letzte Symbol einer Knopfleiste bleibt in ihr.
+     */
+    public void move(String name, PearlString target, int index) {
+        if (target == this) {
+            if (views.containsKey(name)) {
+                order(name, index);
+            } else {
+                detach(name, index);
+            }
+            return;
+        }
+        PearlString origin = guests.getOrDefault(name, this);
+        boolean wasOpen;
+        if (views.containsKey(name)) {
+            wasOpen = open.remove(name);
+            units.remove(name);
+            views.remove(name);
+            guests.remove(name);
+        } else if (tools.containsKey(name) && rail.names().contains(name) && rail.names().size() > 1) {
+            wasOpen = name.equals(rail.selected());
+            rail.remove(name);
+        } else {
+            return;
+        }
+        if (target == origin) {
+            origin.away.remove(name);
+        } else {
+            origin.away.put(name, target);
+            target.guests.put(name, origin);
+        }
+        target.place(name, index, wasOpen);
+        changed();
+        target.changed();
+    }
+
+    /** Holt ein eigenes Werkzeug zurück in die Knopfleiste, von welcher Kette auch immer, an seinen alten Platz. */
+    public void home(String name) {
+        if (!tools.containsKey(name) || !pearl(name)) {
+            return;
+        }
+        if (away.containsKey(name)) {
+            away.get(name).move(name, this, units.size());
+        }
+        int index = 0;
+        for (String tool : tools.keySet()) {
+            if (tool.equals(name)) {
+                break;
+            }
+            if (rail.names().contains(tool)) {
+                index++;
+            }
+        }
+        attach(name, index);
+    }
+
+    /** Die eigenen Werkzeuge in der Reihenfolge ihrer Anmeldung. */
+    public List<String> tools() {
+        return List.copyOf(tools.keySet());
     }
 
     /** Tauscht das Symbol eines Werkzeugs, gleich wo es steht. */
@@ -313,7 +491,7 @@ public final class PearlString {
         Tool tool = tools.get(name);
         if (tool != null) {
             tool.tip = tip;
-            holder(name).button(name).setToolTipText(tip);
+            button(name).setToolTipText(tip);
         }
     }
 
@@ -326,7 +504,6 @@ public final class PearlString {
         if (views.isEmpty()) {
             return "";
         }
-        List<String> names = new ArrayList<>(tools.keySet());
         StringBuilder text = new StringBuilder();
         for (String unit : units) {
             if (text.length() > 0) {
@@ -335,7 +512,11 @@ public final class PearlString {
             if (RAIL.equals(unit)) {
                 text.append(RAIL);
             } else {
-                text.append(names.indexOf(unit)).append(':').append(open.contains(unit) ? 1 : 0);
+                // Gezählt wird in der Kette, der das Werkzeug gehört; ein Gast vom anderen Rand trägt das Zeichen
+                // davor, damit er nicht mit einem eigenen Werkzeug derselben Nummer verwechselt wird.
+                text.append(guests.containsKey(unit) ? GUEST : "")
+                        .append(guests.getOrDefault(unit, this).tools().indexOf(unit)).append(':')
+                        .append(open.contains(unit) ? 1 : 0);
             }
         }
         return text.toString();
@@ -343,10 +524,17 @@ public final class PearlString {
 
     /** Stellt gemerkte Plätze ({@link #placement}) wieder her; Unlesbares wird übergangen. Meldet eine Änderung. */
     public void restore(String placement) {
+        restore(placement, null);
+    }
+
+    /**
+     * Wie {@link #restore(String)}; Einträge mit {@link #GUEST} davor meinen Werkzeuge von {@code other}, der Kette
+     * des anderen Rands: Was dort noch in der Leiste steht, kommt als Kugel auf diese Kette.
+     */
+    public void restore(String placement, PearlString other) {
         if (placement == null || placement.isBlank()) {
             return;
         }
-        List<String> names = new ArrayList<>(tools.keySet());
         boolean railSeen = false;
         for (String part : placement.split(",")) {
             String[] fields = part.trim().split(":");
@@ -357,14 +545,22 @@ public final class PearlString {
                 railSeen = true;
                 continue;
             }
+            boolean guest = fields[0].startsWith(GUEST);
+            PearlString origin = guest ? other : this;
+            if (origin == null) {
+                continue;
+            }
+            List<String> names = origin.tools();
             try {
-                int number = Integer.parseInt(fields[0]);
+                int number = Integer.parseInt(guest ? fields[0].substring(GUEST.length()) : fields[0]);
                 // Das letzte Symbol bleibt in der Leiste.
-                if (number < 0 || number >= names.size() || pearl(names.get(number)) || rail.names().size() == 1) {
+                if (number < 0 || number >= names.size() || origin.pearl(names.get(number))
+                        || origin.rail.names().size() == 1) {
                     continue;
                 }
-                rail.remove(names.get(number));
-                place(names.get(number), units.size(), fields.length > 1 && "1".equals(fields[1]));
+                origin.move(names.get(number), this, units.size());
+                // Gemerkt ist, ob der Bereich offen war; die Auswahl in der Leiste zählt hier nicht.
+                open(names.get(number), fields.length > 1 && "1".equals(fields[1]));
             } catch (NumberFormatException unreadable) {
                 // Ein unlesbarer Eintrag bleibt in der Leiste.
             }
@@ -382,36 +578,51 @@ public final class PearlString {
      * anderen Gruppe losgelassen, tauscht es mit ihr den Platz.
      */
     void drop(String name, Point point) {
+        settle(this, name, point);
+    }
+
+    /**
+     * Wie {@link #drop}, für ein Symbol, das von der Kette {@code from} kommt (dieser oder der des anderen Rands):
+     * In die Knopfleiste schnappt nur ein Werkzeug, das dieser Kette gehört; alles andere wird hier eine Kugel.
+     */
+    void settle(PearlString from, String name, Point point) {
         Rectangle bar = rail.getBounds();
-        boolean alone = !pearl(name) && rail.names().size() == 1;
+        boolean here = from == this;
+        boolean inRail = here && !views.containsKey(name);
+        boolean alone = inRail && rail.names().size() == 1;
         boolean near = point.x >= -column.getWidth() && point.x <= 2 * column.getWidth();
-        if (!alone && near && point.y >= bar.y - GAP / 2 && point.y < bar.y + bar.height + GAP / 2) {
+        if (tools.containsKey(name) && railShown && !alone && near && point.y >= bar.y - GAP / 2
+                && point.y < bar.y + bar.height + GAP / 2) {
             int height = bar.height / Math.max(1, rail.getComponentCount());
             // Die nächste Fuge zwischen zwei Symbolen der Leiste.
             int index = height <= 0 ? 0 : Math.round((point.y - bar.y) / (float) height);
+            if (!here) {
+                from.move(name, this, units.size());
+            }
             attach(name, Math.max(0, index));
             return;
         }
-        Component own = pearl(name) ? views.get(name) : rail;
-        int from = own.getY() + own.getHeight() / 2;
-        String self = pearl(name) ? name : alone ? RAIL : null;
+        String self = !here ? null : views.containsKey(name) ? name : alone ? RAIL : null;
+        Component own = self == null ? null : RAIL.equals(self) ? rail : views.get(name);
+        int from0 = own == null ? 0 : own.getY() + own.getHeight() / 2;
         int index = 0;
         for (String unit : units) {
             if (unit.equals(self)) {
                 continue;
             }
             Component other = RAIL.equals(unit) ? rail : views.get(unit);
-            // Die Grenze zu einer anderen Gruppe liegt mittig zwischen ihr und dem alten Platz: bei gleich hohen
-            // Bereichen genau auf der Linie zwischen beiden.
             int middle = other.getY() + other.getHeight() / 2;
-            // Ein Symbol, das gerade erst aus der Leiste kommt, hat noch keinen eigenen Platz: Es ordnet sich nach
-            // den Mitten der anderen ein.
-            int border = self == null ? middle : (middle + from) / 2;
+            // Die Grenze zu einer anderen Gruppe liegt mittig zwischen ihr und dem alten Platz: bei gleich hohen
+            // Bereichen genau auf der Linie zwischen beiden. Ein Symbol, das gerade erst aus einer Leiste oder vom
+            // anderen Rand kommt, hat hier noch keinen Platz: Es ordnet sich nach den Mitten der anderen ein.
+            int border = own == null ? middle : (middle + from0) / 2;
             if (border < point.y) {
                 index++;
             }
         }
-        if (self != null) {
+        if (!here) {
+            from.move(name, this, index);
+        } else if (self != null) {
             order(self, index);
         } else {
             detach(name, index);
@@ -447,7 +658,7 @@ public final class PearlString {
                 }
                 carrying = true;
                 ghost = new SegmentedToggle();
-                ghost.segment(name, tools.get(name).icon);
+                ghost.segment(name, spec(name).icon);
                 ghost.vertical(true);
                 if (event.getComponent() instanceof AbstractButton button) {
                     button.getModel().setArmed(false);
@@ -471,7 +682,11 @@ public final class PearlString {
             if (overlay != null) {
                 overlay.drop();
             }
-            drop(name, SwingUtilities.convertPoint(event.getComponent(), event.getPoint(), column));
+            // Wo losgelassen wurde, entscheidet über den Rand: Die Kette dort nimmt das Symbol auf.
+            PearlString target = overlay == null ? PearlString.this
+                    : sideAt.apply(SwingUtilities.convertPoint(event.getComponent(), event.getPoint(), overlay));
+            target.settle(PearlString.this, name,
+                    SwingUtilities.convertPoint(event.getComponent(), event.getPoint(), target.column));
         }
     }
 
@@ -486,6 +701,16 @@ public final class PearlString {
             }
             rests.sort(java.util.Comparator.comparingInt(rest -> rest[0]));
             return rests;
+        }
+
+        /** Die Gruppe dieses Teils: die Knopfleiste oder der Name der Kugel. */
+        private String unitOf(Component part) {
+            for (String name : views.keySet()) {
+                if (views.get(name) == part) {
+                    return name;
+                }
+            }
+            return RAIL;
         }
 
         /** Das Werkzeug, dessen Bereich zu diesem Teil gehört: das gewählte der Leiste oder das der Kugel. */
@@ -518,7 +743,7 @@ public final class PearlString {
         private List<Component> parts() {
             List<Component> parts = new ArrayList<>();
             for (Component part : getComponents()) {
-                if (part != rail || rail.getComponentCount() > 0) {
+                if (part != rail || railShown && rail.getComponentCount() > 0) {
                     parts.add(part);
                 }
             }
@@ -541,19 +766,52 @@ public final class PearlString {
         @Override
         public void doLayout() {
             rail.setBounds(0, 0, 0, 0);
-            // Gestreckt über einen Trenner: Was offen ist, sitzt auf Höhe seines Bereichs; der Rest steht oben.
+            // Gestreckt über die Länge eines Trenners (oder zugeklappt über dieselbe Länge am Fensterrand).
             boolean stretched = getHeight() > getPreferredSize().height;
-            int y = stretched ? HeadBar.HEIGHT + EdgeOverlay.HEAD_GAP : 0;
-            for (Component part : parts()) {
-                Dimension size = part.getPreferredSize();
-                String tool = stretched ? toolOf(part) : null;
-                Integer middle = tool == null ? null : centre.apply(tool);
-                if (middle != null) {
-                    part.setBounds((getWidth() - size.width) / 2, middle - size.height / 2, size.width, size.height);
-                } else {
-                    part.setBounds((getWidth() - size.width) / 2, y, size.width, size.height);
+            List<Component> parts = parts();
+            if (!stretched) {
+                int y = 0;
+                for (Component part : parts) {
+                    Dimension size = part.getPreferredSize();
+                    part.setBounds((getWidth() - size.width + 1) / 2, y, size.width, size.height);
                     y += size.height + GAP;
                 }
+                laidOut.run();
+                return;
+            }
+            // Jedes Teil sitzt auf Höhe seines Bereichs. Ist der zu (oder die ganze Leiste zugeklappt, die Kette steht
+            // dann am Fensterrand), bleibt es auf der Höhe, auf der es offen zuletzt saß (Angelo 28.11.2026: zugeklappt
+            // genau dort, wo aufgeklappt). Was noch nie offen war, teilt sich die Länge in der Reihenfolge der Kette.
+            Map<Component, Integer> middles = new LinkedHashMap<>();
+            boolean moved = false;
+            for (int index = 0; index < parts.size(); index++) {
+                Component part = parts.get(index);
+                String unit = unitOf(part);
+                String tool = toolOf(part);
+                Integer middle = tool == null ? null : centre.apply(tool);
+                if (middle != null) {
+                    int seat = (int) Math.round(middle * (double) SEAT_SCALE / getHeight());
+                    Integer before = seats.put(unit, seat);
+                    moved |= before == null || before != seat;
+                } else if (seats.containsKey(unit)) {
+                    middle = (int) Math.round(seats.get(unit) * (double) getHeight() / SEAT_SCALE);
+                } else {
+                    middle = (2 * index + 1) * getHeight() / (2 * parts.size());
+                }
+                middles.put(part, middle);
+            }
+            // Von oben nach unten: Zwei Teile auf fast derselben Höhe rücken untereinander statt aufeinander.
+            List<Component> down = new ArrayList<>(parts);
+            down.sort(java.util.Comparator.comparingInt(middles::get));
+            int free = 0;
+            for (Component part : down) {
+                Dimension size = part.getPreferredSize();
+                int y = Math.max(free, middles.get(part) - size.height / 2);
+                part.setBounds((getWidth() - size.width + 1) / 2, y, size.width, size.height);
+                free = y + size.height + GAP;
+            }
+            if (moved) {
+                seatsChanged.run();
             }
             laidOut.run();
         }

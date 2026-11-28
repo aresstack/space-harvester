@@ -633,12 +633,18 @@ class MainWindowTest {
                 assertThat(window.jobsToggle().isSelected()).isTrue();
                 window.analysesToggle().doClick();
                 // Ein zweiter Klick auf das gewählte Symbol klappt die Leiste zu; zugeklappt steht der Umschalter
-                // ohne gewähltes Symbol senkrecht am rechten Fensterrand, direkt unter den Kopfleisten, und klappt
-                // von dort wieder auf; die Kopfleisten bleiben so breit, wie sie sind.
+                // ohne gewähltes Symbol senkrecht am rechten Fensterrand, auf genau der Höhe, auf der er aufgeklappt
+                // saß (Angelo 28.11.2026), und klappt von dort wieder auf; die Kopfleisten bleiben so breit, wie sie
+                // sind.
+                layoutAll(surface);
+                layoutAll(surface);
+                java.awt.Rectangle open = SwingUtilities.convertRectangle(window.sideSwitch().getParent(),
+                        window.sideSwitch().getBounds(), surface);
                 window.analysesToggle().doClick();
                 assertThat(window.analysesOpen()).isFalse();
                 assertThat(window.chatOpen()).isFalse();
                 assertThat(window.jobsOpen()).isFalse();
+                layoutAll(surface);
                 layoutAll(surface);
                 java.awt.Rectangle edge = SwingUtilities.convertRectangle(window.sideSwitch().getParent(),
                         window.sideSwitch().getBounds(), surface);
@@ -651,7 +657,8 @@ class MainWindowTest {
                 assertThat(edge.x + edge.width).as("ganz am rechten Fensterrand")
                         .isEqualTo(surface.getWidth() - frame);
                 assertThat(edge.height).as("senkrecht: Symbole untereinander").isGreaterThan(2 * edge.width);
-                assertThat(edge.y).as("direkt unter den Kopfleisten").isEqualTo(bar.y + bar.height
+                assertThat(edge.y).as("zugeklappt auf derselben Höhe wie aufgeklappt, nicht oben").isEqualTo(open.y);
+                assertThat(edge.y).isGreaterThan(bar.y + bar.height
                         + com.aresstack.spaceharvester.app.ui.controls.HeadBar.HEIGHT
                         + com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.HEAD_GAP);
                 assertThat(window.split().getWidth()).as("die Arbeitsfläche behält ihre Breite")
@@ -664,17 +671,22 @@ class MainWindowTest {
                 window.chatToggle().doClick();
                 assertThat(window.chatOpen()).isFalse();
                 // Links genauso: Der zweite Klick auf das gewählte Symbol klappt die Leiste zu, der Umschalter
-                // wandert ohne Wahl an den linken Rand unter das Logo und öffnet von dort wieder.
+                // wandert ohne Wahl an den linken Rand, auf der Höhe, auf der er aufgeklappt saß, und öffnet von dort
+                // wieder.
                 var view = window.explorer().view;
                 assertThat(view.selected()).isEqualTo(Explorer.SOURCES_TAB);
+                layoutAll(surface);
+                layoutAll(surface);
+                int leftOpen = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface).y;
                 view.button(Explorer.SOURCES_TAB).doClick();
                 assertThat(window.split().isLeftCollapsed()).isTrue();
                 assertThat(view.selected()).isNull();
                 layoutAll(surface);
+                layoutAll(surface);
                 java.awt.Rectangle left = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface);
                 assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isFalse();
                 assertThat(left.x).as("ganz am linken Fensterrand").isEqualTo(frame);
-                assertThat(left.y).as("auf derselben Höhe wie rechts").isEqualTo(edge.y);
+                assertThat(left.y).as("zugeklappt auf derselben Höhe wie aufgeklappt").isEqualTo(leftOpen);
                 assertThat(left.height).isGreaterThan(2 * left.width);
                 view.button(Explorer.FAVORITES_TAB).doClick();
                 assertThat(window.split().isLeftCollapsed()).isFalse();
@@ -711,6 +723,121 @@ class MainWindowTest {
      * eigenen Bereich neben dem der Leiste; beide teilen sich die Höhe. Zurück in der Leiste schaltet sie wieder um.
      */
     @Test
+    void aBallMovedToTheLeftEdgeShowsItsAreaInTheLeftSidebarAndEachPerspectiveKeepsItsOwnArrangement()
+            throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            String harvester = com.aresstack.spaceharvester.app.ui.perspective.Perspectives.HARVESTER;
+            String deck = com.aresstack.spaceharvester.app.ui.perspective.Perspectives.COMMAND_DECK;
+            try {
+                surface.setSize(1400, 820);
+                window.chatOpen(true);
+                layoutAll(surface);
+                com.aresstack.spaceharvester.app.ui.controls.PearlString right = window.sidePearls();
+                com.aresstack.spaceharvester.app.ui.controls.PearlString left = window.leftPearls();
+                String chat = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.TITLE;
+                Component chatArea = find(surface,
+                        com.aresstack.spaceharvester.app.ui.content.ChatSidebar.class).get(0);
+                int full = window.leftStack().getHeight();
+                assertThat(window.leftStack().shown()).hasSize(1);
+
+                // Der offene Chat wandert an den linken Rand: Sein Bereich steht unter dem Explorer, rechts ist zu.
+                right.move(chat, left, 1);
+                layoutAll(surface);
+                layoutAll(surface);
+                assertThat(chatArea.getParent()).isSameAs(window.leftStack());
+                assertThat(window.chatOpen()).isTrue();
+                List<Component> shown = window.leftStack().shown();
+                assertThat(shown).hasSize(2);
+                assertThat(shown.get(1)).isSameAs(chatArea);
+                assertThat(shown.get(0).getHeight() + shown.get(1).getHeight()
+                        + com.aresstack.spaceharvester.app.ui.controls.AreaStack.GAP).isEqualTo(full);
+                assertThat(window.chatSplit().getDividerSize()).as("rechts ist nichts mehr offen").isZero();
+                assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + harvester)).isEqualTo("L=R,*0:1;R=");
+                // Die Kugel sitzt auf dem linken Trenner, auf Höhe ihres Bereichs.
+                Component ballView = window.chatToggle().getParent();
+                java.awt.Rectangle ballAt = SwingUtilities.convertRectangle(ballView.getParent(),
+                        ballView.getBounds(), surface);
+                java.awt.Rectangle lower = SwingUtilities.convertRectangle(window.leftStack(),
+                        chatArea.getBounds(), surface);
+                Component line = ((javax.swing.plaf.basic.BasicSplitPaneUI) window.split().getUI()).getDivider();
+                java.awt.Rectangle lineAt = SwingUtilities.convertRectangle(line.getParent(), line.getBounds(),
+                        surface);
+                assertThat(ballAt.y + ballAt.height / 2).isCloseTo(lower.y + lower.height / 2,
+                        org.assertj.core.data.Offset.offset(1));
+                assertThat(ballAt.x + ballAt.width / 2).isEqualTo(lineAt.x + lineAt.width / 2);
+
+                // Groß wird nur die rechte Leiste: Am linken Rand bietet der Bereich das nicht an.
+                assertThat(((com.aresstack.spaceharvester.app.ui.content.ChatSidebar) chatArea).enlargeButton()
+                        .isVisible()).isFalse();
+                // Ein neues Fenster stellt die Anordnung samt Bereich wieder her, nicht nur die Kugel.
+                MainWindow again = new MainWindow(context);
+                JPanel againSurface = again.content(() -> { }, () -> { });
+                againSurface.setSize(1400, 820);
+                layoutAll(againSurface);
+                assertThat(again.leftPearls().pearls()).containsExactly(chat);
+                assertThat(again.leftStack().shown()).hasSize(2);
+                assertThat(again.leftStack().shown().get(1))
+                        .isInstanceOf(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.class);
+
+                // Der Explorer zugeklappt: Die Leiste bleibt für den Chat offen, er hat die ganze Höhe.
+                window.split().collapseLeft();
+                layoutAll(surface);
+                assertThat(window.split().isLeftCollapsed()).isTrue();
+                assertThat(window.leftStack().shown()).containsExactly(chatArea);
+                assertThat(window.leftStack().getWidth()).isGreaterThan(0);
+                assertThat(chatArea.getHeight()).isEqualTo(full);
+                // Auch die Kugel zu: Jetzt ist die linke Leiste wirklich zu.
+                window.chatToggle().doClick();
+                layoutAll(surface);
+                assertThat(window.chatOpen()).isFalse();
+                assertThat(window.leftStack().getWidth()).isZero();
+                window.chatToggle().doClick();
+                window.split().openLeft();
+                layoutAll(surface);
+                assertThat(window.leftStack().shown()).hasSize(2);
+
+                // Jede Perspektive hat ihre eigene Anordnung: Im Command Deck steht der Chat in seiner Leiste.
+                window.perspectives().select(deck);
+                layoutAll(surface);
+                assertThat(right.pearls()).isEmpty();
+                assertThat(left.pearls()).isEmpty();
+                assertThat(right.pearl(chat)).isFalse();
+                assertThat(chatArea.getParent()).isNotSameAs(window.leftStack());
+                assertThat(((com.aresstack.spaceharvester.app.ui.content.ChatSidebar) chatArea).enlargeButton()
+                        .isVisible()).as("rechts lässt sich der Bereich wieder groß stellen").isTrue();
+                right.detach(chat, 0);
+                assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + deck)).startsWith("L=;R=0:");
+                assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + harvester))
+                        .as("die andere Perspektive bleibt, wie sie war").startsWith("L=R,*0:");
+
+                // Zurück im Space Harvester steht der Chat wieder links.
+                window.perspectives().select(harvester);
+                layoutAll(surface);
+                assertThat(left.pearls()).containsExactly(chat);
+                assertThat(chatArea.getParent()).isSameAs(window.leftStack());
+            } finally {
+                for (String perspective : List.of(deck, harvester)) {
+                    window.perspectives().select(perspective);
+                    for (String tool : window.sidePearls().tools()) {
+                        window.sidePearls().home(tool);
+                    }
+                }
+                window.split().openLeft();
+                window.chatOpen(true);
+                window.chatOpen(false);
+            }
+        });
+    }
+
+    @Test
     void aToolOfTheRightRailBecomesABallWithItsOwnAreaThatSharesTheHeight() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, """
@@ -743,7 +870,8 @@ class MainWindowTest {
                 assertThat(chatArea.getHeight()).as("allein hat er die ganze Höhe").isEqualTo(full);
                 assertThat(window.chatSplit().getDividerSize())
                         .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.ComicDivider.THICKNESS);
-                assertThat(AppState.shared().get(MainWindow.SIDE_PEARLS_KEY)).isEqualTo("R,0:1");
+                assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + com.aresstack.spaceharvester.app.ui.perspective.Perspectives.HARVESTER))
+                        .isEqualTo("L=;R=R,0:1");
 
                 // Die Leiste schaltet daneben weiter um: Analysen und Chat teilen sich die Höhe.
                 window.analysesToggle().doClick();
@@ -843,11 +971,12 @@ class MainWindowTest {
                 assertThat(window.chatToggle().isSelected()).isTrue();
                 assertThat(chatArea.getParent()).isNotSameAs(window.sideStack());
                 assertThat(chatArea.getHeight()).isEqualTo(full);
-                assertThat(AppState.shared().get(MainWindow.SIDE_PEARLS_KEY)).isEmpty();
+                assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + com.aresstack.spaceharvester.app.ui.perspective.Perspectives.HARVESTER))
+                        .isEqualTo("L=;R=");
             } finally {
                 // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten ohne Kugeln, Chat zu.
-                for (String ball : window.sidePearls().pearls()) {
-                    window.sidePearls().attach(ball, 0);
+                for (String tool : window.sidePearls().tools()) {
+                    window.sidePearls().home(tool);
                 }
                 window.chatOpen(true);
                 window.chatOpen(false);
@@ -1009,6 +1138,121 @@ class MainWindowTest {
                 window.chatOpen(false);
                 WindowSizes.rememberInt(MainWindow.CHAT_WIDTH_KEY,
                         com.aresstack.spaceharvester.app.ui.content.ChatSidebar.DEFAULT_WIDTH);
+            }
+        });
+    }
+
+    /**
+     * Angelo 28.11.2026: Zugeklappt sitzen die Knopfleiste und jede Kugel auf genau der Höhe, auf der sie aufgeklappt
+     * sitzen, nur eben am Fensterrand; links wie rechts, auch eine Kugel, deren Bereich zu ist.
+     */
+    @Test
+    void collapsedRailsAndBallsKeepTheHeightTheyHaveWhenOpen() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            try {
+                surface.setSize(1400, 820);
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(surface);
+                }
+                int frame = com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.FRAME_LINE;
+                // Links: die Knopfleiste des Explorers.
+                Component leftRail = window.explorer().view;
+                java.awt.Rectangle leftOpen = SwingUtilities.convertRectangle(leftRail.getParent(),
+                        leftRail.getBounds(), surface);
+                window.toggleDrawer();
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(surface);
+                }
+                assertThat(window.split().isLeftCollapsed()).isTrue();
+                java.awt.Rectangle leftShut = SwingUtilities.convertRectangle(leftRail.getParent(),
+                        leftRail.getBounds(), surface);
+                assertThat(leftShut.y).as("links zugeklappt auf derselben Höhe").isEqualTo(leftOpen.y);
+                assertThat(leftShut.x).as("am linken Fensterrand").isLessThanOrEqualTo(frame + 1);
+                window.toggleDrawer();
+
+                // Rechts: Leiste (Analysen offen) oben, die Kugel des Chats mit offenem Bereich unten.
+                window.chatOpen(true);
+                window.sidePearls().detach(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.TITLE, 1);
+                window.analysesToggle().doClick();
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(surface);
+                }
+                Component rail = window.sideSwitch();
+                Component ball = window.chatToggle().getParent();
+                int railOpen = SwingUtilities.convertRectangle(rail.getParent(), rail.getBounds(), surface).y;
+                int ballOpen = SwingUtilities.convertRectangle(ball.getParent(), ball.getBounds(), surface).y;
+                assertThat(ballOpen).isGreaterThan(railOpen + rail.getHeight());
+
+                // Nur der Bereich der Kugel zu: Sie bleibt, wo sie saß, und rückt nicht nach oben.
+                window.chatToggle().doClick();
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(surface);
+                }
+                ball = window.chatToggle().getParent();
+                assertThat(SwingUtilities.convertRectangle(ball.getParent(), ball.getBounds(), surface).y)
+                        .as("eine Kugel mit geschlossenem Bereich bleibt auf ihrer Höhe").isEqualTo(ballOpen);
+                window.chatToggle().doClick();
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(surface);
+                }
+
+                // Alles zu: Leiste und Kugel stehen am rechten Fensterrand, jede auf ihrer Höhe.
+                window.chatToggle().doClick();
+                window.analysesToggle().doClick();
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(surface);
+                }
+                assertThat(window.rightRail().onDivider()).isFalse();
+                ball = window.chatToggle().getParent();
+                java.awt.Rectangle railShut = SwingUtilities.convertRectangle(rail.getParent(), rail.getBounds(),
+                        surface);
+                java.awt.Rectangle ballShut = SwingUtilities.convertRectangle(ball.getParent(), ball.getBounds(),
+                        surface);
+                assertThat(railShut.y).as("rechts zugeklappt auf derselben Höhe").isEqualTo(railOpen);
+                assertThat(ballShut.y).isEqualTo(ballOpen);
+                assertThat(railShut.x + railShut.width).as("am rechten Fensterrand")
+                        .isEqualTo(surface.getWidth() - frame);
+
+                // Auch beim Start mit zugeklappten Leisten: Die Höhen sind gemerkt, nichts wird gleichmäßig verteilt.
+                window.toggleDrawer();
+                MainWindow again = new MainWindow(context);
+                JPanel againSurface = again.content(() -> { }, () -> { });
+                againSurface.setSize(1400, 820);
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(againSurface);
+                }
+                assertThat(again.split().isLeftCollapsed()).isTrue();
+                assertThat(again.rightRail().onDivider()).isFalse();
+                Component againRail = again.sideSwitch();
+                Component againBall = again.chatToggle().getParent();
+                Component againLeft = again.explorer().view;
+                assertThat(againBall).isNotSameAs(againRail);
+                assertThat(SwingUtilities.convertRectangle(againRail.getParent(), againRail.getBounds(),
+                        againSurface).y).as("Start zugeklappt: Leiste rechts").isEqualTo(railOpen);
+                assertThat(SwingUtilities.convertRectangle(againBall.getParent(), againBall.getBounds(),
+                        againSurface).y).as("Start zugeklappt: Kugel rechts").isEqualTo(ballOpen);
+                assertThat(SwingUtilities.convertRectangle(againLeft.getParent(), againLeft.getBounds(),
+                        againSurface).y).as("Start zugeklappt: Leiste links").isEqualTo(leftOpen.y);
+            } finally {
+                for (String tool : window.sidePearls().tools()) {
+                    window.sidePearls().home(tool);
+                }
+                if (window.split().isLeftCollapsed()) {
+                    window.toggleDrawer();
+                }
+                window.chatOpen(true);
+                window.chatOpen(false);
+                AppState.shared().put(MainWindow.SIDE_SHARES_KEY, "");
+                AppState.shared().put(MainWindow.SEATS_KEY + "."
+                        + com.aresstack.spaceharvester.app.ui.perspective.Perspectives.HARVESTER, "");
             }
         });
     }
