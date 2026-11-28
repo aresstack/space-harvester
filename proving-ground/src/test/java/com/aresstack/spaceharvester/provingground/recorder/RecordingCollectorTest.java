@@ -6,6 +6,7 @@ import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 /** The recorder's events as Playwright 1.62 sends them (shape taken from a live recording). */
@@ -83,5 +84,24 @@ class RecordingCollectorTest {
         assertEquals(2, test.size());
         assertEquals("Angelo", test.step(0).text());
         assertEquals("Bonn", test.step(1).text());
+    }
+
+    /** Playwright's own Java code comes with each event and stays with the step; a password never reaches it. */
+    @Test
+    void playwrightsCodeIsKeptAndPasswordsAreMaskedInIt() {
+        TestCase test = new TestCase("t");
+        RecordingCollector collector = new RecordingCollector(test, true);
+        collector.apply(withCode("actionAdded", fill("Name", "Angelo"),
+                "page.getByLabel(\\\"Name\\\").fill(\\\"Angelo\\\");"), step -> false);
+        collector.apply(withCode("actionAdded", fill("Passwort", "geheim"),
+                "page.getByLabel(\\\"Passwort\\\").fill(\\\"geheim\\\");"), step -> true);
+        assertEquals("page.getByLabel(\"Name\").fill(\"Angelo\");", test.step(0).code());
+        assertEquals("page.getByLabel(\"Passwort\").fill(\"{{secret.Passwort}}\");", test.step(1).code());
+        assertFalse(test.step(1).toJson().toString().contains("geheim"));
+    }
+
+    private static JsonObject withCode(String kind, String data, String code) {
+        return JsonParser.parseString("{\"event\":\"" + kind + "\",\"data\":" + data + ",\"code\":\"" + code
+                + "\"}").getAsJsonObject();
     }
 }
