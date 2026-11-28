@@ -49,6 +49,12 @@ public record TestProject(String name, Scope scope, List<String> preconditions, 
         return suites.stream().filter(suite -> suite.id().equals(suiteId)).findFirst().orElse(null);
     }
 
+    /** The name of the user {@code step} of {@code entry} runs as: the step's, else the test case's, else the default. */
+    public String userName(TestCaseEntry entry, TestStep step) {
+        String own = step == null ? null : entry.binding(step.id()).user();
+        return own != null ? own : entry.user() != null ? entry.user() : defaultUser;
+    }
+
     public TestUser user(String userName) {
         return users.stream().filter(user -> user.name().equals(userName)).findFirst().orElse(null);
     }

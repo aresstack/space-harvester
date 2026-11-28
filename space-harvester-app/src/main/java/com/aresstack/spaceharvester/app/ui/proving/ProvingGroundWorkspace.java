@@ -63,7 +63,9 @@ import javax.swing.DefaultCellEditor;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JSplitPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
@@ -103,8 +105,8 @@ public final class ProvingGroundWorkspace extends JPanel {
     static final String DELETE_TIP = "Schritt löschen";
     static final String SCREENSHOT_TIP = "Bildvergleich der ganzen Seite nach dem gewählten Schritt einfügen"
             + " (wie toHaveScreenshot): der erste Lauf legt das Referenzbild an, jeder weitere vergleicht";
-    static final String EXPORT_TIP = "Als JUnit-Test exportieren: Playwright-Java-Code, läuft ohne Proving Ground;"
-            + " Werte in {{...}} kommen aus Umgebungsvariablen";
+    static final String EXPORT_TIP = "JUnit-Test (Playwright-Java-Code): speichern oder hier ausführen – Benutzer,"
+            + " Passwörter und Einmalcodes übergibt Space Harvester aus KeePass";
     static final String EXPORT_NO_CASE = "JUnit-Export: zuerst einen Testfall wählen";
     static final String SCREENSHOT_NO_STEP = "Bildvergleich: zuerst einen Testfall mit Schritten wählen";
     /** Ordner des Testprojekts, solange keiner gewählt ist (unter dem Datenordner der App). */
@@ -237,7 +239,14 @@ public final class ProvingGroundWorkspace extends JPanel {
             }
         });
         screenshot.addActionListener(event -> askScreenshotCheck());
-        export.addActionListener(event -> askExport());
+        JPopupMenu exportMenu = new JPopupMenu();
+        JMenuItem exportFile = new JMenuItem("Als JUnit-Test speichern …");
+        exportFile.addActionListener(event -> askExport());
+        JMenuItem exportRun = new JMenuItem("Als JUnit-Test ausführen (Werte aus KeePass)");
+        exportRun.addActionListener(event -> runShownCaseAsJUnit());
+        exportMenu.add(exportFile);
+        exportMenu.add(exportRun);
+        export.addActionListener(event -> exportMenu.show(export, 0, export.getHeight()));
         steps.onEdit(this::bindingEdited);
         table.getColumnModel().getColumn(0).setMaxWidth(48);
         table.getColumnModel().getColumn(1).setMaxWidth(110);
@@ -522,6 +531,10 @@ public final class ProvingGroundWorkspace extends JPanel {
             status.show(StatusNote.plain("Diese Suite hat keine Testfälle"));
             return;
         }
+        start(only, null);
+    }
+
+    private void start(List<String> only, JUnitExport.Launch junit) {
         Path output = dataDirectory.get().resolve("proving-ground")
                 .resolve(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")));
         run.setEnabled(false);
@@ -532,7 +545,7 @@ public final class ProvingGroundWorkspace extends JPanel {
         TestProject current = project;
         Path base = directory;
         runs.run(current, base, only, this::setup,
-                () -> new KeePassTestCredentials(keePass), output,
+                () -> new KeePassTestCredentials(keePass), output, junit,
                 result -> SwingUtilities.invokeLater(() -> finished(result, output)),
                 problem -> SwingUtilities.invokeLater(() -> {
                     finishedRun();
@@ -881,13 +894,35 @@ public final class ProvingGroundWorkspace extends JPanel {
         }
     }
 
-    /** Der gezeigte Testfall als JUnit-Test, mit dem Browser aus Einstellungen › Browser. */
+    /**
+     * Der gezeigte Testfall als JUnit-Test, mit dem Browser aus Einstellungen › Browser; Schritte anderer Benutzer
+     * laufen darin in deren eigenem Browser-Kontext.
+     */
     JUnitExport.Result exportShownCase() {
+        List<String> users = new ArrayList<>();
+        for (int i = 0; i < shownCase.size(); i++) {
+            users.add(project == null || shownEntry == null ? null : project.userName(shownEntry, shownCase.step(i)));
+        }
+        return JUnitExport.export(new TestCase(shownCase.name(), shownCase.steps()), users, junitLaunch());
+    }
+
+    private JUnitExport.Launch junitLaunch() {
         ProvingGroundRuns.Setup current = setup();
         BrowserChannel channel = BrowserChannel.of(current.channel());
-        return JUnitExport.export(new TestCase(shownCase.name(), shownCase.steps()), new JUnitExport.Launch(
-                channel.firefoxFamily(), channel.launchChannel(),
-                BrowserExecutables.effective(channel.id(), current.executable())));
+        return new JUnitExport.Launch(channel.firefoxFamily(), channel.launchChannel(),
+                BrowserExecutables.effective(channel.id(), current.executable()));
+    }
+
+    /**
+     * Führt den gezeigten Testfall als seinen exportierten JUnit-Test aus; Benutzer, Passwörter und Einmalcodes
+     * übergibt Space Harvester aus KeePass, der Test liest KeePass nie selbst.
+     */
+    void runShownCaseAsJUnit() {
+        if (shownCase == null || shownSuite == null || shownEntry == null) {
+            status.show(new StatusNote(EXPORT_NO_CASE, StatusNote.Tone.WARNING, null, null));
+            return;
+        }
+        start(List.of(TestProject.reference(shownSuite, shownEntry)), junitLaunch());
     }
 
     void writeExport(JUnitExport.Result result, Path target) {
