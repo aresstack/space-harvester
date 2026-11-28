@@ -3107,7 +3107,7 @@ public final class PageDetailPanel extends JPanel {
         editor.setEditable(false);
         editor.setText(source);
         editor.setCaretPosition(0);
-        fileContent.add(new org.fife.ui.rtextarea.RTextScrollPane(editor), BorderLayout.CENTER);
+        fileContent.add(Comic.comicBars(new org.fife.ui.rtextarea.RTextScrollPane(editor)), BorderLayout.CENTER);
         originalProgramShown = true;
         originalCards.show(originalContent, ORIGINAL_FILE_CARD);
         if (line > 0 && line <= editor.getLineCount()) {

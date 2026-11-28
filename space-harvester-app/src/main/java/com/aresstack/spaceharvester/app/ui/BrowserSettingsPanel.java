@@ -304,7 +304,7 @@ public final class BrowserSettingsPanel {
 
     private static JScrollPane scroll(JTextArea area, String name) {
         area.getAccessibleContext().setAccessibleName(name);
-        JScrollPane scroll = new JScrollPane(area);
+        JScrollPane scroll = Comic.comicBars(new JScrollPane(area));
         scroll.setBorder(BorderFactory.createLineBorder(Comic.MUTED));
         return scroll;
     }
