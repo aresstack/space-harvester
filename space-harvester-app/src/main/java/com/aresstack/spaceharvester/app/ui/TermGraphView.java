@@ -275,12 +275,8 @@ public final class TermGraphView {
             }
         });
         suggestions.addPopupMenuListener(closed);
-        start.addFocusListener(new java.awt.event.FocusAdapter() {
-            @Override
-            public void focusLost(java.awt.event.FocusEvent e) {
-                catchUp();
-            }
-        });
+        // Auch wenn unten in der Fußleiste für das Startfeld getippt wurde: Verlassen holt Aufgeschobenes nach.
+        startFrame.onLeft(this::catchUp);
         // Nach einem Neustart der Laufzeit an der neuen anmelden, auch wenn der Reiter sichtbar bleibt.
         if (context != null) {
             context.onChange(changed -> javax.swing.SwingUtilities.invokeLater(() -> {

@@ -254,8 +254,39 @@ public class InputFrame extends JPanel {
      * Schleuse, steht ihr eigenes Feld dafür ein; {@code null} nimmt es wieder weg.
      */
     public void standIn(JComponent typed) {
+        if (standIn != null) {
+            standIn.removeFocusListener(left);
+        }
         standIn = typed;
+        if (typed != null) {
+            typed.addFocusListener(left);
+        }
     }
+
+    /**
+     * Was geschieht, wenn der Nutzer das Feld verlässt, in dem er für dieses Suchfeld tippt: das Feld selbst oder
+     * das, das dafür einsteht ({@link #standIn}).
+     */
+    public void onLeft(Runnable listener) {
+        Runnable before = onLeft;
+        onLeft = () -> {
+            before.run();
+            listener.run();
+        };
+        if (!leftInstalled) {
+            leftInstalled = true;
+            field.addFocusListener(left);
+        }
+    }
+
+    private Runnable onLeft = () -> { };
+    private boolean leftInstalled;
+    private final java.awt.event.FocusListener left = new java.awt.event.FocusAdapter() {
+        @Override
+        public void focusLost(java.awt.event.FocusEvent event) {
+            onLeft.run();
+        }
+    };
 
     /**
      * Wo der Nutzer für {@code field} tippt: das Feld selbst oder, solange die Fußleiste dafür einsteht, deren Feld.

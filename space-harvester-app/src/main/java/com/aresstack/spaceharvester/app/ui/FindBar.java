@@ -384,6 +384,8 @@ public final class FindBar extends com.aresstack.spaceharvester.app.ui.controls.
                 .getAncestorOfClass(com.aresstack.spaceharvester.app.ui.controls.InputFrame.class, text);
     }
 
+    private boolean mirroring;
+
     /** Übernimmt Text, den die Ansicht selbst in ihr Filterfeld setzt, in das Feld dieser Leiste. */
     private final DocumentListener mirror = new DocumentListener() {
         @Override
@@ -405,7 +407,14 @@ public final class FindBar extends com.aresstack.spaceharvester.app.ui.controls.
             // Erst nach dem laufenden Ereignis: Ein Dokument lässt sich nicht aus seiner eigenen Meldung ändern.
             javax.swing.SwingUtilities.invokeLater(() -> {
                 if (source != null && source == filtered && !source.getText().equals(field.getText())) {
-                    field.setText(source.getText());
+                    // Nur übernehmen, nicht zurückschreiben: Sonst schriebe das Feld den Text noch einmal in das
+                    // Filterfeld, und die Ansicht hielte das für Tippen (Vorschläge gingen wieder auf).
+                    mirroring = true;
+                    try {
+                        field.setText(source.getText());
+                    } finally {
+                        mirroring = false;
+                    }
                 }
             });
         }
@@ -491,6 +500,9 @@ public final class FindBar extends com.aresstack.spaceharvester.app.ui.controls.
 
     /** Wie im Browser: Tippen sucht sofort. */
     private void live() {
+        if (mirroring) {
+            return;
+        }
         searched = null;
         step(true);
     }
