@@ -152,6 +152,116 @@ class PearlStringTest {
     }
 
     @Test
+    void aBallMovesToTheStringOfTheOtherEdgeAndBack() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            threeTools();
+            SegmentedToggle leftRail = new SegmentedToggle();
+            leftRail.segment("Quellen", Glyph.STAR);
+            leftRail.vertical(true);
+            PearlString left = new PearlString(leftRail);
+            rail.show(JOBS);
+
+            // Aus der rechten Leiste an den linken Rand: Dort ist es eine Kugel, rechts fehlt es, offen bleibt offen.
+            dock.move(JOBS, left, 1);
+
+            assertThat(rail.names()).containsExactly(CHAT, ANALYSES);
+            assertThat(left.units()).containsExactly(PearlString.RAIL, JOBS);
+            assertThat(left.pearls()).containsExactly(JOBS);
+            assertThat(dock.pearls()).as("am eigenen Rand steht sie nicht mehr").isEmpty();
+            assertThat(dock.pearl(JOBS)).as("für ihre Kette ist sie trotzdem eine Kugel").isTrue();
+            assertThat(dock.host(JOBS)).isSameAs(left);
+            assertThat(dock.open(JOBS)).as("der offene Bereich zieht mit um").isTrue();
+            assertThat(left.openPearls()).containsExactly(JOBS);
+            assertThat(left.placement()).as("gezählt wird in der Kette, der das Werkzeug gehört").isEqualTo("R,2:1");
+            assertThat(dock.placement()).isEmpty();
+            assertThat(dock.button(JOBS)).as("der Knopf ist der der Kugel am anderen Rand")
+                    .isSameAs(left.button(JOBS));
+
+            // Gemerkt und wiederhergestellt: Die Kugel steht wieder am linken Rand.
+            SegmentedToggle otherRail = new SegmentedToggle();
+            PearlString other = new PearlString(otherRail);
+            other.tool(CHAT, Glyph.STAR, "").tool(ANALYSES, Glyph.TABLE, "").tool(JOBS, Glyph.CROSSHAIR, "");
+            PearlString otherLeft = new PearlString(new SegmentedToggle());
+            otherLeft.restore("R,2:1", other);
+            assertThat(otherLeft.pearls()).containsExactly(JOBS);
+            assertThat(other.host(JOBS)).isSameAs(otherLeft);
+            assertThat(otherRail.names()).containsExactly(CHAT, ANALYSES);
+
+            // Zurück an den rechten Rand bleibt sie eine Kugel; nach Hause geholt steht sie an ihrem alten Platz.
+            left.move(JOBS, dock, 0);
+            assertThat(left.pearls()).isEmpty();
+            assertThat(dock.units()).containsExactly(JOBS, PearlString.RAIL);
+            assertThat(dock.host(JOBS)).isSameAs(dock);
+            dock.move(JOBS, left, 0);
+            dock.home(JOBS);
+            assertThat(left.pearls()).isEmpty();
+            assertThat(dock.pearls()).isEmpty();
+            assertThat(rail.names()).containsExactly(CHAT, ANALYSES, JOBS);
+        });
+    }
+
+    @Test
+    void aBallReleasedAtTheOtherEdgeSnapsIntoTheStringThere() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            threeTools();
+            SegmentedToggle leftRail = new SegmentedToggle();
+            leftRail.segment("Quellen", Glyph.STAR);
+            leftRail.vertical(true);
+            PearlString left = new PearlString(leftRail);
+            EdgeOverlay overlay = new EdgeOverlay();
+            overlay.setSize(400, 600);
+            overlay.place(overlay.right(), dock.column());
+            overlay.place(overlay.left(), left.column());
+            dock.carrier(overlay);
+            left.carrier(overlay);
+            java.util.function.Function<Point, PearlString> sides =
+                    point -> point.x < overlay.getWidth() / 2 ? left : dock;
+            dock.sides(sides);
+            left.sides(sides);
+            overlay.right().setBounds(380, 100, dock.column().getPreferredSize().width,
+                    dock.column().getPreferredSize().height);
+            overlay.left().setBounds(0, 100, left.column().getPreferredSize().width,
+                    left.column().getPreferredSize().height);
+            layoutAll(overlay);
+
+            // Quer durch das Fenster getragen und in der linken Hälfte unter der Leiste losgelassen.
+            AbstractButton jobs = dock.button(JOBS);
+            Point there = SwingUtilities.convertPoint(overlay, new Point(60, 400), jobs);
+            press(jobs, 5, 5);
+            drag(jobs, there.x, there.y);
+            assertThat(dock.carrying()).isTrue();
+            release(jobs, there.x, there.y);
+
+            assertThat(left.pearls()).containsExactly(JOBS);
+            assertThat(left.units()).containsExactly(PearlString.RAIL, JOBS);
+            assertThat(rail.names()).containsExactly(CHAT, ANALYSES);
+            overlay.left().setSize(left.column().getPreferredSize());
+            layoutAll(overlay);
+
+            // Von dort zurück auf die Knopfleiste am rechten Rand: Sie schnappt wieder in ihre Leiste.
+            AbstractButton ball = left.button(JOBS);
+            Point home = SwingUtilities.convertPoint(dock.column(),
+                    new Point(5, rail.getY() + rail.getHeight() - 1), ball);
+            press(ball, 5, 5);
+            drag(ball, home.x, home.y);
+            release(ball, home.x, home.y);
+            assertThat(left.pearls()).isEmpty();
+            assertThat(dock.pearls()).isEmpty();
+            assertThat(rail.names()).containsExactly(CHAT, ANALYSES, JOBS);
+
+            // Ein fremdes Werkzeug schnappt nie in die Leiste des anderen Rands: Dort bleibt es eine Kugel.
+            jobs = dock.button(JOBS);
+            Point onLeftRail = SwingUtilities.convertPoint(left.column(),
+                    new Point(5, leftRail.getY() + leftRail.getHeight() / 2 + 1), jobs);
+            press(jobs, 5, 5);
+            drag(jobs, onLeftRail.x, onLeftRail.y);
+            release(jobs, onLeftRail.x, onLeftRail.y);
+            assertThat(leftRail.names()).containsExactly("Quellen");
+            assertThat(left.pearls()).containsExactly(JOBS);
+        });
+    }
+
+    @Test
     void draggingAnIconOutOfTheRailMakesItABallAndDraggingItBackReturnsIt() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             threeTools();

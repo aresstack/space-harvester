@@ -42,14 +42,62 @@ public final class LeftSidebarPane extends ComicSplitPane {
     /** Zugeklappt, ohne dass der Mensch es wollte (eine Perspektive ohne Leiste, das Ende der Einstellungen). */
     @Override
     public void collapseLeft() {
-        super.collapseLeft();
+        if (extras) {
+            // Weitere Bereiche halten die Leiste offen: Zu ist dann nur ihr eigentlicher Inhalt.
+            primaryHidden = true;
+        } else {
+            super.collapseLeft();
+        }
         hiddenByUser = false;
+        primaryChanged.run();
     }
 
     @Override
     public void openLeft() {
-        super.openLeft();
+        primaryHidden = false;
+        if (super.isLeftCollapsed() || !extras) {
+            super.openLeft();
+        }
         hiddenByUser = false;
+        primaryChanged.run();
+    }
+
+    /** Ob der eigentliche Inhalt der Leiste zu ist; weitere Bereiche ({@link #extras}) können sie trotzdem offen halten. */
+    @Override
+    public boolean isLeftCollapsed() {
+        return extras ? primaryHidden : super.isLeftCollapsed();
+    }
+
+    private boolean extras;
+    private boolean primaryHidden;
+    private Runnable primaryChanged = () -> { };
+
+    /**
+     * Ob neben dem eigentlichen Inhalt weitere Bereiche in der Leiste offen sind (Angelo 28.11.2026: Kugeln, die an
+     * den linken Rand verschoben wurden, öffnen ihren Bereich in dieser Leiste). Solange es welche gibt, bleibt die
+     * Leiste offen, auch wenn ihr eigentlicher Inhalt zugeklappt ist; ohne sie klappt sie dann ganz zu.
+     */
+    public void extras(boolean any) {
+        if (extras == any) {
+            return;
+        }
+        if (any) {
+            primaryHidden = super.isLeftCollapsed();
+            extras = true;
+            if (primaryHidden) {
+                super.openLeft();
+            }
+        } else {
+            extras = false;
+            if (primaryHidden) {
+                super.collapseLeft();
+            }
+        }
+    }
+
+    /** Meldet, wenn der eigentliche Inhalt auf- oder zugeklappt wurde. */
+    public void onPrimary(Runnable listener) {
+        this.primaryChanged = listener;
     }
 
     public boolean hiddenByUser() {

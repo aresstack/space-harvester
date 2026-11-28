@@ -638,6 +638,106 @@ class MainWindowTest {
      * eigenen Bereich neben dem der Leiste; beide teilen sich die Höhe. Zurück in der Leiste schaltet sie wieder um.
      */
     @Test
+    void aBallMovedToTheLeftEdgeShowsItsAreaInTheLeftSidebarAndEachPerspectiveKeepsItsOwnArrangement()
+            throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            String harvester = com.aresstack.spaceharvester.app.ui.perspective.Perspectives.HARVESTER;
+            String deck = com.aresstack.spaceharvester.app.ui.perspective.Perspectives.COMMAND_DECK;
+            try {
+                surface.setSize(1400, 820);
+                window.chatOpen(true);
+                layoutAll(surface);
+                com.aresstack.spaceharvester.app.ui.controls.PearlString right = window.sidePearls();
+                com.aresstack.spaceharvester.app.ui.controls.PearlString left = window.leftPearls();
+                String chat = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.TITLE;
+                Component chatArea = find(surface,
+                        com.aresstack.spaceharvester.app.ui.content.ChatSidebar.class).get(0);
+                int full = window.leftStack().getHeight();
+                assertThat(window.leftStack().shown()).hasSize(1);
+
+                // Der offene Chat wandert an den linken Rand: Sein Bereich steht unter dem Explorer, rechts ist zu.
+                right.move(chat, left, 1);
+                layoutAll(surface);
+                layoutAll(surface);
+                assertThat(chatArea.getParent()).isSameAs(window.leftStack());
+                assertThat(window.chatOpen()).isTrue();
+                List<Component> shown = window.leftStack().shown();
+                assertThat(shown).hasSize(2);
+                assertThat(shown.get(1)).isSameAs(chatArea);
+                assertThat(shown.get(0).getHeight() + shown.get(1).getHeight()
+                        + com.aresstack.spaceharvester.app.ui.controls.AreaStack.GAP).isEqualTo(full);
+                assertThat(window.chatSplit().getDividerSize()).as("rechts ist nichts mehr offen").isZero();
+                assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + harvester)).isEqualTo("L=R,0:1;R=");
+                // Die Kugel sitzt auf dem linken Trenner, auf Höhe ihres Bereichs.
+                Component ballView = window.chatToggle().getParent();
+                java.awt.Rectangle ballAt = SwingUtilities.convertRectangle(ballView.getParent(),
+                        ballView.getBounds(), surface);
+                java.awt.Rectangle lower = SwingUtilities.convertRectangle(window.leftStack(),
+                        chatArea.getBounds(), surface);
+                Component line = ((javax.swing.plaf.basic.BasicSplitPaneUI) window.split().getUI()).getDivider();
+                java.awt.Rectangle lineAt = SwingUtilities.convertRectangle(line.getParent(), line.getBounds(),
+                        surface);
+                assertThat(ballAt.y + ballAt.height / 2).isCloseTo(lower.y + lower.height / 2,
+                        org.assertj.core.data.Offset.offset(1));
+                assertThat(ballAt.x + ballAt.width / 2).isEqualTo(lineAt.x + lineAt.width / 2);
+
+                // Der Explorer zugeklappt: Die Leiste bleibt für den Chat offen, er hat die ganze Höhe.
+                window.split().collapseLeft();
+                layoutAll(surface);
+                assertThat(window.split().isLeftCollapsed()).isTrue();
+                assertThat(window.leftStack().shown()).containsExactly(chatArea);
+                assertThat(window.leftStack().getWidth()).isGreaterThan(0);
+                assertThat(chatArea.getHeight()).isEqualTo(full);
+                // Auch die Kugel zu: Jetzt ist die linke Leiste wirklich zu.
+                window.chatToggle().doClick();
+                layoutAll(surface);
+                assertThat(window.chatOpen()).isFalse();
+                assertThat(window.leftStack().getWidth()).isZero();
+                window.chatToggle().doClick();
+                window.split().openLeft();
+                layoutAll(surface);
+                assertThat(window.leftStack().shown()).hasSize(2);
+
+                // Jede Perspektive hat ihre eigene Anordnung: Im Command Deck steht der Chat in seiner Leiste.
+                window.perspectives().select(deck);
+                layoutAll(surface);
+                assertThat(right.pearls()).isEmpty();
+                assertThat(left.pearls()).isEmpty();
+                assertThat(right.pearl(chat)).isFalse();
+                assertThat(chatArea.getParent()).isNotSameAs(window.leftStack());
+                right.detach(chat, 0);
+                assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + deck)).startsWith("L=;R=0:");
+                assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + harvester))
+                        .as("die andere Perspektive bleibt, wie sie war").startsWith("L=R,0:");
+
+                // Zurück im Space Harvester steht der Chat wieder links.
+                window.perspectives().select(harvester);
+                layoutAll(surface);
+                assertThat(left.pearls()).containsExactly(chat);
+                assertThat(chatArea.getParent()).isSameAs(window.leftStack());
+            } finally {
+                for (String perspective : List.of(deck, harvester)) {
+                    window.perspectives().select(perspective);
+                    for (String tool : window.sidePearls().tools()) {
+                        window.sidePearls().home(tool);
+                    }
+                }
+                window.split().openLeft();
+                window.chatOpen(true);
+                window.chatOpen(false);
+            }
+        });
+    }
+
+    @Test
     void aToolOfTheRightRailBecomesABallWithItsOwnAreaThatSharesTheHeight() throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, """
@@ -670,7 +770,8 @@ class MainWindowTest {
                 assertThat(chatArea.getHeight()).as("allein hat er die ganze Höhe").isEqualTo(full);
                 assertThat(window.chatSplit().getDividerSize())
                         .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.ComicDivider.THICKNESS);
-                assertThat(AppState.shared().get(MainWindow.SIDE_PEARLS_KEY)).isEqualTo("R,0:1");
+                assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + com.aresstack.spaceharvester.app.ui.perspective.Perspectives.HARVESTER))
+                        .isEqualTo("L=;R=R,0:1");
 
                 // Die Leiste schaltet daneben weiter um: Analysen und Chat teilen sich die Höhe.
                 window.analysesToggle().doClick();
@@ -770,11 +871,12 @@ class MainWindowTest {
                 assertThat(window.chatToggle().isSelected()).isTrue();
                 assertThat(chatArea.getParent()).isNotSameAs(window.sideStack());
                 assertThat(chatArea.getHeight()).isEqualTo(full);
-                assertThat(AppState.shared().get(MainWindow.SIDE_PEARLS_KEY)).isEmpty();
+                assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + com.aresstack.spaceharvester.app.ui.perspective.Perspectives.HARVESTER))
+                        .isEqualTo("L=;R=");
             } finally {
                 // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten ohne Kugeln, Chat zu.
-                for (String ball : window.sidePearls().pearls()) {
-                    window.sidePearls().attach(ball, 0);
+                for (String tool : window.sidePearls().tools()) {
+                    window.sidePearls().home(tool);
                 }
                 window.chatOpen(true);
                 window.chatOpen(false);
