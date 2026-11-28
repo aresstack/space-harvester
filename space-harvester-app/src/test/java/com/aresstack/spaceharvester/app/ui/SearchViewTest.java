@@ -211,6 +211,9 @@ class SearchViewTest {
                 .isEqualTo(hits.rows.get(table.convertRowIndexToModel(0)).title());
         assertThat(opened).isEmpty();
         assertThat(AppState.shared().getBoolean(SearchView.STATE_PREVIEW, false)).isTrue();
+        // Eine geleerte Trefferliste (neue Suche) leert auch die Vorschau.
+        SwingUtilities.invokeAndWait(() -> hits.set(List.of()));
+        assertThat(view[0].previewPane().titleText()).isBlank();
         SwingUtilities.invokeAndWait(() -> view[0].previewToggle().doClick());
         assertThat(view[0].previewOpen()).isFalse();
         assertThat(view[0].previewPane().isVisible()).isFalse();

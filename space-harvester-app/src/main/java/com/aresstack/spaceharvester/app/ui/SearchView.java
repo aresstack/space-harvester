@@ -640,6 +640,18 @@ public final class SearchView implements View {
                         Math.round(100f * (height - previewSplit.getDividerLocation()) / height));
             }
         });
+        // Eine neue Suche leert die Liste; dann gehört die gezeigte Seite zu keinem Treffer mehr, und eine noch
+        // ladende Vorschau der alten Suche verfällt.
+        model.addTableModelListener(e -> {
+            if (model.getRowCount() == 0) {
+                preview.clear();
+            }
+        });
+        wordsPanel.model.addTableModelListener(e -> {
+            if (wordsPanel.model.getRowCount() == 0) {
+                preview.clear();
+            }
+        });
         previewToggle.getAccessibleContext().setAccessibleName(PREVIEW_SHOW);
         previewToggle.addActionListener(e -> preview(!previewOpen));
         preview(AppState.shared().getBoolean(STATE_PREVIEW, false));
