@@ -689,6 +689,19 @@ class MainWindowTest {
                         org.assertj.core.data.Offset.offset(1));
                 assertThat(ballAt.x + ballAt.width / 2).isEqualTo(lineAt.x + lineAt.width / 2);
 
+                // Groß wird nur die rechte Leiste: Am linken Rand bietet der Bereich das nicht an.
+                assertThat(((com.aresstack.spaceharvester.app.ui.content.ChatSidebar) chatArea).enlargeButton()
+                        .isVisible()).isFalse();
+                // Ein neues Fenster stellt die Anordnung samt Bereich wieder her, nicht nur die Kugel.
+                MainWindow again = new MainWindow(context);
+                JPanel againSurface = again.content(() -> { }, () -> { });
+                againSurface.setSize(1400, 820);
+                layoutAll(againSurface);
+                assertThat(again.leftPearls().pearls()).containsExactly(chat);
+                assertThat(again.leftStack().shown()).hasSize(2);
+                assertThat(again.leftStack().shown().get(1))
+                        .isInstanceOf(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.class);
+
                 // Der Explorer zugeklappt: Die Leiste bleibt für den Chat offen, er hat die ganze Höhe.
                 window.split().collapseLeft();
                 layoutAll(surface);
@@ -713,6 +726,8 @@ class MainWindowTest {
                 assertThat(left.pearls()).isEmpty();
                 assertThat(right.pearl(chat)).isFalse();
                 assertThat(chatArea.getParent()).isNotSameAs(window.leftStack());
+                assertThat(((com.aresstack.spaceharvester.app.ui.content.ChatSidebar) chatArea).enlargeButton()
+                        .isVisible()).as("rechts lässt sich der Bereich wieder groß stellen").isTrue();
                 right.detach(chat, 0);
                 assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + deck)).startsWith("L=;R=0:");
                 assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + harvester))

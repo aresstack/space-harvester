@@ -908,6 +908,10 @@ public final class MainWindow implements AppContext.Navigator {
         });
         split.onPrimary(this::placeLeft);
         arrange(perspectives.current() == null ? null : perspectives.current().id());
+        // Die wiederhergestellte Anordnung gilt auch für die Bereiche: Jeder steht in der Leiste seines Rands.
+        placePearls();
+        selectSideToggles();
+        placeChat();
         // Erst jetzt hören: Das Wiederherstellen der gemerkten Kugeln ist keine Änderung des Benutzers.
         sidePearls.onChange(this::sideChanged);
         leftPearls.onChange(this::sideChanged);
@@ -1129,6 +1133,15 @@ public final class MainWindow implements AppContext.Navigator {
         return SIDE_JOBS.equals(mode) ? SWITCH_JOBS : SIDE_ANALYSES.equals(mode) ? SWITCH_ANALYSES : SWITCH_CHAT;
     }
 
+    private javax.swing.AbstractButton enlargeOf(String mode) {
+        return SIDE_JOBS.equals(mode) ? activities.enlarge
+                : SIDE_ANALYSES.equals(mode) ? analysesSidebar.enlargeButton() : chatSidebar.enlargeButton();
+    }
+
+    private boolean onTheRight(String mode) {
+        return sidePearls.host(switchOf(mode)) == sidePearls;
+    }
+
     private JComponent sideArea(String mode) {
         return SIDE_JOBS.equals(mode) ? activities.component()
                 : SIDE_ANALYSES.equals(mode) ? analysesSidebar : chatSidebar;
@@ -1167,6 +1180,8 @@ public final class MainWindow implements AppContext.Navigator {
                     home.add(area);
                 }
             }
+            // Groß wird nur die rechte Leiste (die Arbeitsfläche weicht ihr); am linken Rand gibt es das nicht.
+            enlargeOf(mode).setVisible(home != leftStack);
         }
         if (chatOpen && sidePearls.pearl(switchOf(sideMode))) {
             chatOpen = false;
@@ -1479,9 +1494,9 @@ public final class MainWindow implements AppContext.Navigator {
             activities.sidebarShown(jobsOpen());
             analysesSidebar.shown(analysesOpen());
             boolean large = shown && chatLarge;
-            chatSidebar.large(large);
-            analysesSidebar.large(large);
-            activities.large(large);
+            chatSidebar.large(large && onTheRight(SIDE_CHAT));
+            analysesSidebar.large(large && onTheRight(SIDE_ANALYSES));
+            activities.large(large && onTheRight(SIDE_JOBS));
             // Groß: die Arbeitsfläche weicht ganz, die Teilung gibt der Leiste dann allen Platz und zeigt keinen Teiler.
             chatSplit.getLeftComponent().setVisible(!large);
             // Zugeklappt oder groß gibt es keinen Teiler (Angelo 28.11.2026: kein Griff, der sich nicht bewegen lässt);
