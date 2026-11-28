@@ -40,6 +40,7 @@ class DiagramLabelsTest {
         assertThat(requests).hasSize(1);
         assertThat(requests.get(0).model()).isEqualTo("gemma4:12b");
         assertThat(requests.get(0).reasoningEffort()).isEqualTo("none");
+        assertThat(requests.get(0).maxTokens()).as("ohne Budget die Einstellung des Dienstes").isNull();
         assertThat(requests.get(0).messages().get(0).text()).isEqualTo(DiagramLabels.SYSTEM_PROMPT);
 
         // zweites Mal aus dem Zwischenspeicher, kein neuer Aufruf
@@ -124,5 +125,22 @@ class DiagramLabelsTest {
         AppState.shared().put(DiagramLabels.ENABLED_KEY, true);
         assertThat(new DiagramLabels(() -> null).enabled()).isFalse();
         assertThat(new DiagramLabels(() -> new DiagramLabels.Target(null, "m", null, null)).enabled()).isFalse();
+    }
+
+    @Test
+    void theOutputLimitOfTheSourceCodeRowGoesIntoEveryRequest() {
+        List<AiChat.Request> requests = new ArrayList<>();
+        AiChat chat = (request, listener) -> {
+            requests.add(request);
+            listener.completed("Prüft den Kunden.");
+            return () -> { };
+        };
+        AppState.shared().put(DiagramLabels.ENABLED_KEY, true);
+        DiagramLabels labels = new DiagramLabels(() -> new DiagramLabels.Target(chat, "m", null,
+                new com.aresstack.spaceharvester.app.runtime.ModelBudget(32_000, 2048), 2048));
+
+        labels.explain("IF #KUNDE = ' '\n  ESCAPE ROUTINE\nEND-IF", 60, "Zweck");
+
+        assertThat(requests).singleElement().satisfies(r -> assertThat(r.maxTokens()).isEqualTo(2048));
     }
 }
