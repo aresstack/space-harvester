@@ -469,20 +469,28 @@ class ActivitiesActionsTest {
         assertThat(head.getPreferredSize().width).isEqualTo(190 + ActivitiesView.HeadLayout.GAP + 600);
     }
 
-    /** Unten stehen Auf- und Zuklappen links, „Alle anhalten“ und „Alle abbrechen“ mittig im eigenen Platz. */
+    /**
+     * Unten stehen Auf- und Zuklappen links, „Alle anhalten“ und „Alle abbrechen“ mittig im eigenen Platz und die
+     * Hilfe rechts in der Ecke.
+     */
     @Test
     void theToolsPutFoldingLeftAndTheGlobalActionsInTheMiddle() {
         JPanel west = fixed(60);
         JPanel center = fixed(260);
-        JPanel tools = new JPanel(new ActivitiesView.ToolsLayout(west, center));
+        JPanel east = fixed(24);
+        JPanel tools = new JPanel(new ActivitiesView.ToolsLayout(west, center, east));
         tools.add(west);
         tools.add(center);
+        tools.add(east);
         layout(tools, 900);
         assertThat(west.getBounds()).isEqualTo(new Rectangle(0, 0, 60, 28));
         assertThat(center.getBounds()).isEqualTo(new Rectangle(320, 0, 260, 28));
+        assertThat(east.getBounds()).as("die Hilfe steht rechts in der Ecke").isEqualTo(new Rectangle(876, 0, 24, 28));
         layout(tools, 340);
         assertThat(center.getX()).as("eng: neben der linken Gruppe, nicht darüber")
                 .isEqualTo(60 + ActivitiesView.ToolsLayout.GAP);
+        assertThat(east.getWidth()).as("eng: die Hilfe weicht, die Aktionen bleiben ganz").isZero();
+        assertThat(center.getWidth()).isEqualTo(260);
     }
 
     private static void layout(JPanel head, int width) {
@@ -560,6 +568,51 @@ class ActivitiesActionsTest {
         assertThat(ActivitiesView.space(whole)).isEqualTo("DEV, OPS");
         assertThat(ActivitiesView.where(whole)).isEqualTo("wiki / DEV, OPS");
         assertThat(ActivitiesView.space(job(JobType.EXPORT, JobState.RUNNING, false))).isEqualTo("OPS");
+    }
+
+    /**
+     * Angelo 27.11.2026: Fehlerfrei fertige Aufträge räumt die Liste nach der eingestellten Frist selbst weg; alles mit
+     * Mängeln, Downloads mit ihrem Datenbestand, der gewählte und ein erwarteter Vorgänger bleiben.
+     */
+    @Test
+    void onlyFlawlessFinishedJobsAreCleanedUp() {
+        Instant end = Instant.EPOCH.plusSeconds(60);
+        JobStatus clean = finished("clean", JobType.UPDATE_SUMMARY, new JobProgress(3, 3, 3, 0), false, Map.of(), end);
+        JobStatus failed = finished("failed", JobType.UPDATE_SUMMARY, new JobProgress(3, 3, 2, 1), false, Map.of(), end);
+        JobStatus incomplete = finished("incomplete", JobType.UPDATE_SUMMARY, new JobProgress(3, 3, 3, 0), true,
+                Map.of(), end);
+        JobStatus skipped = finished("skipped", JobType.ASSETS, new JobProgress(4, 4, 3, 0), false, Map.of(), end);
+        JobStatus export = finished("export", JobType.EXPORT, new JobProgress(3, 3, 3, 0), false, Map.of(), end);
+        JobStatus selected = finished("selected", JobType.GLOSSARY, new JobProgress(1, 1, 1, 0), false, Map.of(), end);
+        JobStatus awaited = finished("awaited", JobType.BACKGROUND, new JobProgress(1, 1, 1, 0), false, Map.of(), end);
+        JobStatus follower = new JobStatus("follower", JobType.BACKGROUND, "wiki", "OPS", "local", JobState.QUEUED,
+                new JobProgress(0, 0, 0, 0), null, false, Instant.EPOCH, null, null, null, null,
+                Map.of(com.aresstack.spaceharvester.application.jobs.Jobs.AFTER, "awaited"), false, false, null);
+        JobStatus anchor = finished("anchor", JobType.VIDEO_TRANSCRIPT, new JobProgress(1, 1, 1, 0), false, Map.of(),
+                end);
+        JobStatus successor = new JobStatus("successor", JobType.TRANSCRIPT_CORRECTION, "wiki", "OPS", "local",
+                JobState.QUEUED, new JobProgress(0, 0, 0, 0), null, false, Instant.EPOCH, null, null, null, null,
+                Map.of(com.aresstack.spaceharvester.application.jobs.Jobs.AWAITS, "anchor"), false, false, null);
+        JobStatus running = job(JobType.UPDATE_SUMMARY, JobState.RUNNING, false);
+
+        assertThat(ActivitiesView.expendable(List.of(clean, failed, incomplete, skipped, export, selected, awaited,
+                follower, anchor, successor, running), "selected")).extracting(JobStatus::id).containsExactly("clean");
+
+        // Eine gewählte Gruppenzeile hält alle ihre Teile.
+        JobStatus member = finished("member", JobType.BACKGROUND, new JobProgress(1, 1, 1, 0), false,
+                Map.of(com.aresstack.spaceharvester.application.background.BackgroundJobs.GROUP, "g1"), end);
+        assertThat(ActivitiesView.expendable(List.of(clean, member), ActivitiesView.GROUP_PREFIX + "g1"))
+                .extracting(JobStatus::id).containsExactly("clean");
+        assertThat(ActivitiesView.expendable(List.of(clean, member), null)).extracting(JobStatus::id)
+                .containsExactly("clean", "member");
+        assertThat(AppTimeouts.Value.FINISHED_JOBS.defaultValue()).as("Vorgabe 5 Minuten").isEqualTo(300);
+        assertThat(AppTimeouts.Value.FINISHED_JOBS.accepts(0)).as("0 schaltet ab").isTrue();
+    }
+
+    private static JobStatus finished(String id, JobType type, JobProgress progress, boolean incomplete,
+                                      Map<String, String> parameters, Instant end) {
+        return new JobStatus(id, type, "wiki", "OPS", "local", JobState.COMPLETED, progress, null, false,
+                Instant.EPOCH, Instant.EPOCH, end, null, null, parameters, incomplete, false, null);
     }
 
     private static JobStatus job(JobType type, JobState state, boolean pausing) {

@@ -47,8 +47,6 @@ class AreaSummaryViewTest {
         AreaSummaryView.Target folder = AreaSummaryView.Target.subtree("bscw", "ablage", "ordner");
         assertThat(folder.core().roots()).containsExactly(
                 com.aresstack.spaceharvester.application.holdings.Selection.Root.subtree("bscw", "ablage", "ordner"));
-        assertThat(folder.automatic()).isFalse();
-        assertThat(AreaSummaryView.Target.area("bscw", "ablage").automatic()).isTrue();
         assertThat(folder.identity()).isNotEqualTo(AreaSummaryView.Target.area("bscw", "ablage").identity());
     }
 
@@ -84,12 +82,18 @@ class AreaSummaryViewTest {
     }
 
     @Test
-    void aMissingOverviewIsCreatedOnceOnOpeningAsAnOrdinaryJob() throws Exception {
+    void aMissingOverviewIsCreatedOnlyOnClickNeverOnOpening() throws Exception {
+        // Angelo 28.11.2026: Der Überblick startete beim Öffnen jedes Bereichs von selbst und dauerte; jetzt nur per Klick.
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
 
         view.area("wiki-neu", null);
 
-        assertThat(actions.summarized).containsExactly("wiki-neu|null|false");
+        assertThat(actions.summarized).isEmpty();
+        assertThat(view.texts()).contains(AreaSummaryView.NO_SUMMARY);
+        assertThat(view.summarizeOffered()).isTrue();
+
+        view.clickSummarize();
+        assertThat(actions.summarized).containsExactly("wiki-neu|null|true");
         assertThat(view.busy()).isTrue();
 
         shared.jobNow = JobState.COMPLETED;
@@ -101,7 +105,7 @@ class AreaSummaryViewTest {
         assertThat(view.busy()).isFalse();
         assertThat(view.summary()).isEqualTo(actions.stored);
 
-        // Wieder geöffnet: nicht noch einmal von selbst, auch ohne Überblick.
+        // Wieder geöffnet: nichts von selbst, auch ohne Überblick.
         actions.stored = null;
         view.area(null, null);
         view.area("wiki-neu", null);
@@ -127,6 +131,7 @@ class AreaSummaryViewTest {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
 
         view.area("wiki-leer", "LEER");
+        view.clickSummarize();
 
         assertThat(view.texts()).contains(AreaSummaryView.EMPTY);
         assertThat(view.summarizeOffered()).isFalse();
@@ -172,10 +177,26 @@ class AreaSummaryViewTest {
     }
 
     @Test
-    void aNeverSummarizedFolderStartsOnceInTheBackgroundAndAClickIsInteractive() {
+    void aNeverSummarizedFolderStartsOnlyOnClick() {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
         view.folder(folder("ordner-c", Root.space("wiki", "BAU")));
-        assertThat(actions.summarized).containsExactly("ordner:ordner-c|null|false");
+        assertThat(actions.summarized).isEmpty();
+        view.clickSummarize();
+        assertThat(actions.summarized).containsExactly("ordner:ordner-c|null|true");
+    }
+
+    @Test
+    void aSummaryTheUserDeletedNeverStartsByItselfAgainOnlyAClickBringsItBack() {
+        // ADR 0047 §5a: „Löschen“ unter „Aus dieser Seite erzeugt“; gilt über Neustarts (Zustand der Anwendung).
+        ExportPanel.Selection.Collection folder = folder("ordner-geloescht", Root.space("wiki", "BAU"));
+        AreaSummaryView.deletedByUser(folder, true);
+        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+        view.folder(folder);
+        assertThat(actions.summarized).isEmpty();
+        assertThat(view.summarizeOffered()).isTrue();
+
+        AreaSummaryView.deletedByUser(folder, false);
+        assertThat(AreaSummaryView.deletedByUser(AreaSummaryView.Target.of(folder))).isFalse();
     }
 
     /**
@@ -188,7 +209,8 @@ class AreaSummaryViewTest {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
         ExportPanel.Selection.Collection folder = folder("ordner-lauf", Root.space("wiki", "BAU"));
         view.folder(folder);
-        assertThat(actions.summarized).containsExactly("ordner:ordner-lauf|null|false");
+        view.clickSummarize();
+        assertThat(actions.summarized).containsExactly("ordner:ordner-lauf|null|true");
         assertThat(view.busy()).isTrue();
 
         view.area(null, null);
@@ -218,6 +240,7 @@ class AreaSummaryViewTest {
     void finishedPartsShowAtOnceWithoutTheVeilAndTheEndReplacesThem() throws Exception {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
         view.folder(folder("ordner-teile", Root.space("wiki", "BAU")));
+        view.clickSummarize();
         assertThat(view.busy()).isTrue();
 
         actions.partialNow = overview("selection-teile");
@@ -236,104 +259,50 @@ class AreaSummaryViewTest {
     }
 
     @Test
-    void aFolderWithABookShowsItsNewestEditionInsteadOfTheOverviewAndNeverStartsTheModel() throws Exception {
-        // Die Markdown-Darstellung des Chats verlangt den Swing-Thread, wie in der App.
-        javax.swing.SwingUtilities.invokeAndWait(this::showsTheBook);
-    }
+    void theReadingViewShowsTheOverviewEvenForAFolderWithABook() throws Exception {
+        // Das Buch steht als Artefakt unter „Artefakte“ (ADR 0047, Nachtrag ADR 0044); die Leseansicht zeigt den
+        // Überblick und startet ihn nur per Klick, auch wenn am Ordner „Buch“ gewählt ist.
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+            view.zone(java.time.ZoneId.of("Europe/Berlin"));
+            com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
+                    new com.aresstack.spaceharvester.app.research.BookEditions.Edition(2, AT, "# Erfundenes Buch",
+                            "Bericht", List.of());
+            view.books(id -> edition);
+            AreaSummaryView.chooseBook("ordner-wahl", true);
 
-    private void showsTheBook() {
-        AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
-        view.zone(java.time.ZoneId.of("Europe/Berlin"));
-        com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
-                new com.aresstack.spaceharvester.app.research.BookEditions.Edition(2, AT, "# Erfundenes Buch\n\nText.",
-                        "Bericht", List.of(new com.aresstack.spaceharvester.app.research.BookEditions.Source("wiki",
-                        "1", "v1")));
-        view.books(id -> "ordner-buch".equals(id) ? edition : null);
+            view.folder(folder("ordner-wahl", Root.space("wiki", "BAU")));
 
-        view.folder(folder("ordner-buch", Root.space("wiki", "BAU")));
-
-        assertThat(view.edition()).isEqualTo(edition);
-        assertThat(view.texts()).contains("Buch, 2. Auflage vom 24.11.2026, 10:00, aus 1 Seite");
-        assertThat(view.copyText()).contains("# Erfundenes Buch");
-        assertThat(actions.summarized).isEmpty();
-        assertThat(view.summarizeOffered()).isFalse();
+            assertThat(view.bookShown()).isFalse();
+            assertThat(view.texts()).contains(AreaSummaryView.NO_SUMMARY);
+            assertThat(view.texts()).noneMatch(text -> text.startsWith("Buch, "));
+            assertThat(view.summarizeOffered()).isTrue();
+            assertThat(actions.summarized).isEmpty();
+        });
     }
 
     @Test
-    void changedPagesMarkTheBookAndOfferANewEditionThatStartsOnlyOnAClick() throws Exception {
+    void changedPagesMarkTheBookInThePodcast() throws Exception {
         javax.swing.SwingUtilities.invokeAndWait(() -> {
-            AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
+            AreaSummaryView view = view(AreaSummaryView.Mode.LISTEN, true);
             com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
                     new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, "# Buch", "",
                             List.of(new com.aresstack.spaceharvester.app.research.BookEditions.Source("wiki", "1",
                                     "v1")));
             boolean[] changed = {false};
-            List<String> started = new java.util.ArrayList<>();
             view.books(id -> edition);
             view.staleness((folderId, shown) -> changed[0]);
-            view.onNewEdition(started::add);
 
             view.folder(folder("ordner-buch", Root.space("wiki", "BAU")));
 
+            assertThat(view.bookShown()).isTrue();
             assertThat(view.bookStale()).isFalse();
-            assertThat(view.newEditionOffered()).isTrue();
-            assertThat(view.texts()).noneMatch(text -> text.contains(com.aresstack.spaceharvester.app.ui.Texts
-                    .BOOK_STALE));
 
             changed[0] = true;
             view.reload();
 
             assertThat(view.bookStale()).isTrue();
-            assertThat(view.texts()).anyMatch(text -> text.contains(com.aresstack.spaceharvester.app.ui.Texts
-                    .BOOK_STALE));
-            assertThat(started).isEmpty();
             assertThat(actions.summarized).isEmpty();
-
-            view.clickNewEdition();
-
-            assertThat(started).containsExactly("ordner-buch");
-        });
-    }
-
-    @Test
-    void aFolderWithoutFavoritesStillShowsItsBook() throws Exception {
-        javax.swing.SwingUtilities.invokeAndWait(() -> {
-            AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
-            com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
-                    new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, "# Buch", "", List.of());
-            view.books(id -> edition);
-
-            view.folder(folder("ordner-leer"));
-
-            assertThat(view.edition()).isEqualTo(edition);
-            assertThat(view.texts()).doesNotContain(AreaSummaryView.NO_FAVORITES);
-            assertThat(actions.summarized).isEmpty();
-        });
-    }
-
-    @Test
-    void underAreaTheBookFolderShowsTheOverviewAndStartsItOnlyOnAClick() throws Exception {
-        javax.swing.SwingUtilities.invokeAndWait(() -> {
-            AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
-            com.aresstack.spaceharvester.app.research.BookEditions.Edition edition =
-                    new com.aresstack.spaceharvester.app.research.BookEditions.Edition(1, AT, "# Buch", "", List.of());
-            view.books(id -> edition);
-            AreaSummaryView.chooseBook("ordner-wahl", false);
-            try {
-                view.folder(folder("ordner-wahl", Root.space("wiki", "BAU")));
-
-                assertThat(view.bookShown()).isFalse();
-                assertThat(view.texts()).contains(AreaSummaryView.NO_SUMMARY);
-                assertThat(actions.summarized).isEmpty();
-                assertThat(view.summarizeOffered()).isTrue();
-
-                AreaSummaryView.chooseBook("ordner-wahl", true);
-                view.bookChanged();
-                assertThat(view.bookShown()).isTrue();
-                assertThat(view.summarizeOffered()).isFalse();
-            } finally {
-                AreaSummaryView.chooseBook("ordner-wahl", true);
-            }
         });
     }
 
@@ -422,6 +391,7 @@ class AreaSummaryViewTest {
                 "wiki-ungeladen");
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
         view.area("wiki-ungeladen", "BAU");
+        view.clickSummarize();
         assertThat(view.texts()).contains("Von diesem Bereich ist noch keine Seite geladen; erst laden, dann "
                 + "zusammenfassen.", AreaSummaryView.NO_SUMMARY);
         assertThat(view.busy()).isFalse();
@@ -431,6 +401,7 @@ class AreaSummaryViewTest {
     void aFailedRunShowsItsReasonInTheViewUntilTheNextStart() throws Exception {
         AreaSummaryView view = view(AreaSummaryView.Mode.READ, true);
         view.area("wiki-fehler", null);
+        view.clickSummarize();
         assertThat(view.busy()).isTrue();
 
         com.aresstack.spaceharvester.application.jobs.JobStatus failed = SourceUpdatesViewTest.FakeActions.job(

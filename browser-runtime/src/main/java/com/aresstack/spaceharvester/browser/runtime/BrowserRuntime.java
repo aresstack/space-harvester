@@ -47,6 +47,23 @@ public final class BrowserRuntime {
     /** Playwright's channel for a Firefox driven over WebDriver BiDi (installed Firefox and Camoufox). */
     static final String FIREFOX_BIDI_CHANNEL = BrowserChannel.FIREFOX_BIDI_CHANNEL;
 
+    /**
+     * One browser launch at a time in this process. A launch is measured against the start limit
+     * ({@link BrowserRuntimeConfig#startTimeout}); two launches side by side (the chat's browser and the search browser
+     * of one round) share the machine, so each counted the other's work against its own limit and both failed where
+     * either alone starts in time. Fair: the starts run in the order they were asked for.
+     */
+    private static final java.util.concurrent.locks.ReentrantLock LAUNCHING =
+            new java.util.concurrent.locks.ReentrantLock(true);
+    /** How many launches ran at once at most (the live test checks that it stays one). */
+    private static final java.util.concurrent.atomic.AtomicInteger LAUNCHES_RUNNING =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicInteger MOST_LAUNCHES_AT_ONCE =
+            new java.util.concurrent.atomic.AtomicInteger();
+    /** How many browser processes this process launched; a live test checks that one page opens one browser. */
+    private static final java.util.concurrent.atomic.AtomicInteger LAUNCHES =
+            new java.util.concurrent.atomic.AtomicInteger();
+
     private final BrowserRuntimeConfig config;
     private final BrowserProbe probe;
 
@@ -99,9 +116,9 @@ public final class BrowserRuntime {
     public RunningBrowser persistent(String profileKey, boolean headless, BrowserAddon addon)
             throws BrowserStartException {
         if (profileKey == null || profileKey.isBlank()) {
-            return start(true, null, headless, addon);
+            return start(true, null, headless, addon, true);
         }
-        return start(true, ProfileLease.keyedFolder(config.profilesDirectory(), profileKey), headless, addon);
+        return start(true, ProfileLease.keyedFolder(config.profilesDirectory(), profileKey), headless, addon, true);
     }
 
     /**
@@ -110,16 +127,26 @@ public final class BrowserRuntime {
      */
     public RunningBrowser persistentIn(Path profileFolder, boolean headless, BrowserAddon addon)
             throws BrowserStartException {
-        return start(true, profileFolder.toAbsolutePath().normalize(), headless, addon);
+        return start(true, profileFolder.toAbsolutePath().normalize(), headless, addon, true);
     }
 
     /** A browser with a throw-away profile (Playwright deletes it on close); the caller creates its contexts. */
     public RunningBrowser ephemeral(boolean headless, BrowserAddon addon) throws BrowserStartException {
-        return start(false, null, headless, addon);
+        return start(false, null, headless, addon, true);
     }
 
-    private RunningBrowser start(boolean persistent, Path profileFolder, boolean headless, BrowserAddon addon)
+    /**
+     * As {@link #ephemeral(boolean, BrowserAddon)}; with {@code acceptRepost = false} Firefox and Camoufox do not
+     * accept the "resend data" prompt on their own ({@link FirefoxSessionPrefs}), so a test never re-submits a form
+     * unasked. Chrome and Edge are not affected.
+     */
+    public RunningBrowser ephemeral(boolean headless, BrowserAddon addon, boolean acceptRepost)
             throws BrowserStartException {
+        return start(false, null, headless, addon, acceptRepost);
+    }
+
+    private RunningBrowser start(boolean persistent, Path profileFolder, boolean headless, BrowserAddon addon,
+                                 boolean acceptRepost) throws BrowserStartException {
         BrowserChannel channel = config.channel();
         Playwright playwright = null;
         BrowserContext context = null;
@@ -189,47 +216,63 @@ public final class BrowserRuntime {
                 }
             }
 
-            stage = "BROWSER_LAUNCH";
-            if (persistent) {
-                Path directory = profile.directory();
-                context = switch (channel) {
-                    case CAMOUFOX -> playwright.firefox().launchPersistentContext(directory,
-                            withStartTimeout(camoufoxPersistentOptions(executable, camoufox, headless)));
-                    case FIREFOX -> playwright.firefox().launchPersistentContext(directory,
-                            withStartTimeout(firefoxPersistentOptions(executable, headless)));
-                    case CHROME, EDGE -> playwright.chromium().launchPersistentContext(directory,
-                            withStartTimeout(chromiumPersistentOptions(channel, headless, extension != null)));
-                };
-                browser = context.browser();
-                if (extension != null) {
+            stage = "BROWSER_LAUNCH_QUEUE";
+            LAUNCHING.lockInterruptibly();
+            MOST_LAUNCHES_AT_ONCE.accumulateAndGet(LAUNCHES_RUNNING.incrementAndGet(), Math::max);
+            LAUNCHES.incrementAndGet();
+            try {
+                stage = "BROWSER_LAUNCH";
+                long launchStarted = System.nanoTime();
+                LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " starting"
+                        + (persistent ? " on a lasting profile" : " (ephemeral)"));
+                if (persistent) {
+                    Path directory = profile.directory();
+                    context = switch (channel) {
+                        case CAMOUFOX -> playwright.firefox().launchPersistentContext(directory,
+                                withStartTimeout(camoufoxPersistentOptions(executable, camoufox, headless)));
+                        case FIREFOX -> playwright.firefox().launchPersistentContext(directory,
+                                withStartTimeout(firefoxPersistentOptions(executable, headless)));
+                        case CHROME, EDGE -> playwright.chromium().launchPersistentContext(directory,
+                                withStartTimeout(chromiumPersistentOptions(channel, headless, extension != null)));
+                    };
+                    browser = context.browser();
+                    if (extension != null) {
+                        stage = "ADDON_LOAD";
+                        try {
+                            ChromeExtension.load(browser, extension, addon.chromiumExtensionId());
+                            addonLoaded = true;
+                        } catch (RuntimeException loadFailed) {
+                            addonFailure = "extension not loaded: " + firstLine(loadFailed);
+                        }
+                    }
+                } else {
+                    BrowserType.LaunchOptions options = switch (channel) {
+                        case CAMOUFOX -> camoufoxLaunchOptions(executable, camoufox, headless, acceptRepost);
+                        case FIREFOX -> firefoxLaunchOptions(executable, headless, acceptRepost);
+                        case CHROME, EDGE -> chromiumLaunchOptions(channel, headless);
+                    };
+                    options.setTimeout(startTimeoutMillis());
+                    browser = channel.firefoxFamily() ? playwright.firefox().launch(options)
+                            : playwright.chromium().launch(options);
+                }
+                LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " started after "
+                        + millisSince(launchStarted) + " ms");
+                if (firefoxAddon != null) {
                     stage = "ADDON_LOAD";
+                    long addonStarted = System.nanoTime();
+                    LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " installing its add-on");
                     try {
-                        ChromeExtension.load(browser, extension, addon.chromiumExtensionId());
+                        FirefoxAddon.install(context, browser, firefoxAddon);
                         addonLoaded = true;
+                        LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " add-on installed after "
+                                + millisSince(addonStarted) + " ms");
                     } catch (RuntimeException loadFailed) {
-                        addonFailure = "extension not loaded: " + firstLine(loadFailed);
+                        addonFailure = "add-on not loaded: " + firstLine(loadFailed);
                     }
                 }
-            } else {
-                BrowserType.LaunchOptions options = switch (channel) {
-                    case CAMOUFOX -> camoufoxLaunchOptions(executable, camoufox, headless);
-                    case FIREFOX -> firefoxLaunchOptions(executable, headless);
-                    case CHROME, EDGE -> chromiumLaunchOptions(channel, headless);
-                };
-                if (config.startTimeout().toMillis() > 0) {
-                    options.setTimeout(config.startTimeout().toMillis());
-                }
-                browser = channel.firefoxFamily() ? playwright.firefox().launch(options)
-                        : playwright.chromium().launch(options);
-            }
-            if (firefoxAddon != null) {
-                stage = "ADDON_LOAD";
-                try {
-                    FirefoxAddon.install(context, browser, firefoxAddon);
-                    addonLoaded = true;
-                } catch (RuntimeException loadFailed) {
-                    addonFailure = "add-on not loaded: " + firstLine(loadFailed);
-                }
+            } finally {
+                LAUNCHES_RUNNING.decrementAndGet();
+                LAUNCHING.unlock();
             }
             if (addonFailure != null) {
                 LOG.log(System.Logger.Level.WARNING, "browser " + channel.id() + " runs without its add-on: "
@@ -237,7 +280,10 @@ public final class BrowserRuntime {
             }
             return new RunningBrowser(channel, playwright, browser, context, profile, temporaryFiles, addonLoaded,
                     addonFailure);
-        } catch (IOException | RuntimeException failed) {
+        } catch (IOException | RuntimeException | InterruptedException failed) {
+            if (failed instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             long elapsedMillis = (System.nanoTime() - startedNanos) / 1_000_000L;
             RunningBrowser.closeQuietly(context, browser, playwright);
             if (profile != null) {
@@ -252,6 +298,16 @@ public final class BrowserRuntime {
                     + ", after " + elapsedMillis + " ms): " + firstLine(failed)
                     + (report == null ? "" : " (full report: " + report + ")"), stage, failed);
         }
+    }
+
+    /** How many browser launches ran at once at most in this process (one: they run one after another). */
+    static int mostLaunchesAtOnce() {
+        return MOST_LAUNCHES_AT_ONCE.get();
+    }
+
+    /** How many browser processes this process has launched so far, every channel and profile together. */
+    public static int launches() {
+        return LAUNCHES.get();
     }
 
     /** The driver JARs of the host package, then the pathing JAR for a long class path. */
@@ -284,10 +340,17 @@ public final class BrowserRuntime {
 
     private BrowserType.LaunchPersistentContextOptions withStartTimeout(
             BrowserType.LaunchPersistentContextOptions options) {
-        if (config.startTimeout().toMillis() > 0) {
-            options.setTimeout(config.startTimeout().toMillis());
-        }
+        options.setTimeout(startTimeoutMillis());
         return options;
+    }
+
+    /**
+     * The start limit for Playwright; 0 is Playwright's "no limit". The first start of a browser on a machine can take
+     * longer than any fixed wait (measured in CI: 20 s until Firefox listened, 10 s more for the session, the second
+     * start under 2 s); a limit there closed a browser in the middle of its start.
+     */
+    private double startTimeoutMillis() {
+        return Math.max(0L, config.startTimeout().toMillis());
     }
 
     /** The installed Firefox on its own profile: a real window (no viewport emulation), no downloads. */
@@ -302,11 +365,15 @@ public final class BrowserRuntime {
     }
 
     static BrowserType.LaunchOptions firefoxLaunchOptions(Path executable, boolean headless) {
+        return firefoxLaunchOptions(executable, headless, true);
+    }
+
+    static BrowserType.LaunchOptions firefoxLaunchOptions(Path executable, boolean headless, boolean acceptRepost) {
         return new BrowserType.LaunchOptions()
                 .setChannel(FIREFOX_BIDI_CHANNEL)
                 .setExecutablePath(executable)
                 .setHeadless(headless)
-                .setFirefoxUserPrefs(FirefoxSessionPrefs.apply(new LinkedHashMap<>()));
+                .setFirefoxUserPrefs(FirefoxSessionPrefs.apply(new LinkedHashMap<>(), acceptRepost));
     }
 
     /**
@@ -327,7 +394,7 @@ public final class BrowserRuntime {
                 .setReducedMotion(null)
                 .setForcedColors(null)
                 .setContrast(null)
-                .setFirefoxUserPrefs(camoufoxPrefs(launch));
+                .setFirefoxUserPrefs(camoufoxPrefs(launch, true));
         if (!launch.args().isEmpty()) {
             options.setArgs(launch.args());
         }
@@ -335,12 +402,17 @@ public final class BrowserRuntime {
     }
 
     static BrowserType.LaunchOptions camoufoxLaunchOptions(Path executable, CamoufoxLaunch launch, boolean headless) {
+        return camoufoxLaunchOptions(executable, launch, headless, true);
+    }
+
+    static BrowserType.LaunchOptions camoufoxLaunchOptions(Path executable, CamoufoxLaunch launch, boolean headless,
+                                                           boolean acceptRepost) {
         BrowserType.LaunchOptions options = new BrowserType.LaunchOptions()
                 .setChannel(FIREFOX_BIDI_CHANNEL)
                 .setExecutablePath(executable)
                 .setHeadless(headless)
                 .setEnv(camoufoxEnvironment(launch))
-                .setFirefoxUserPrefs(camoufoxPrefs(launch));
+                .setFirefoxUserPrefs(camoufoxPrefs(launch, acceptRepost));
         if (!launch.args().isEmpty()) {
             options.setArgs(launch.args());
         }
@@ -353,9 +425,9 @@ public final class BrowserRuntime {
         return environment;
     }
 
-    private static Map<String, Object> camoufoxPrefs(CamoufoxLaunch launch) {
+    private static Map<String, Object> camoufoxPrefs(CamoufoxLaunch launch, boolean acceptRepost) {
         // no bfcache + no blocking "resend data" prompt, on top of the fingerprint prefs
-        return FirefoxSessionPrefs.apply(new LinkedHashMap<>(launch.prefs()));
+        return FirefoxSessionPrefs.apply(new LinkedHashMap<>(launch.prefs()), acceptRepost);
     }
 
     private BrowserType.LaunchPersistentContextOptions chromiumPersistentOptions(BrowserChannel channel,
@@ -388,5 +460,9 @@ public final class BrowserRuntime {
         String message = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
         int newline = message.indexOf('\n');
         return newline > 0 ? message.substring(0, newline) : message;
+    }
+
+    private static long millisSince(long nanoTime) {
+        return (System.nanoTime() - nanoTime) / 1_000_000L;
     }
 }

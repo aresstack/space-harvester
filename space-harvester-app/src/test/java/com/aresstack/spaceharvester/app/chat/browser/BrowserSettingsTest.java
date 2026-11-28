@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.chat.browser;
 
+import com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog;
+import com.aresstack.askai.browser.search.engine.BrowserSearchEngineSelection;
 import com.aresstack.enterpriseai.proasteion.application.config.BrowserAccessConfig;
 import com.aresstack.enterpriseai.proasteion.application.config.BrowserProfile;
 import org.junit.jupiter.api.Test;
@@ -54,11 +56,73 @@ class BrowserSettingsTest {
     }
 
     @Test
-    void theProfileRuleNamesTheProfileAndItsSearchUrls() {
-        assertThat(BrowserRules.browserProfile("Extern", List.of(BrowserSettings.DEFAULT_EXTERNAL_SEARCH), true))
-                .contains("Aktives Browserprofil: Extern").contains(BrowserSettings.DEFAULT_EXTERNAL_SEARCH)
+    void theProfileRuleNamesTheProfileAndSearchesInTheSearchBrowser() {
+        assertThat(BrowserRules.browserProfile(BrowserProfile.EXTERNAL)).contains("Aktives Browserprofil: Extern")
                 .contains("browser_navigate").contains("browser_search");
-        assertThat(BrowserRules.browserProfile("Intern", List.of(), false)).contains("keine Such-URLs")
-                .doesNotContain("browser_search");
+    }
+
+    @Test
+    void theInternRuleSearchesTheIntranetWithoutAnAddress() {
+        // Angelo 28.11.: ohne Adresse suchte das Modell eine Intranet-Adresse und gab auf.
+        assertThat(BrowserRules.browserProfile(BrowserProfile.INTERNAL)).contains("Aktives Browserprofil: Intern")
+                .contains("Nennt die Aufgabe keine Adresse, suche mit browser_search")
+                .contains("die Suchseiten des Hauses, also das Intranet")
+                .contains("eine Intranet-Adresse oder Zugangsdaten brauchst du dafür nicht");
+    }
+
+    @Test
+    void aNamedAddressComesFirstInBothProfiles() {
+        // Angelo 28.11.: „suche nach reisekosten in https://…“ – die Suchseite ist keine Pflicht, die Adresse gilt.
+        for (BrowserProfile profile : BrowserProfile.values()) {
+            String rule = BrowserRules.browserProfile(profile);
+            assertThat(rule).as(profile.label())
+                    .contains("Nennt die Aufgabe eine Adresse, hat sie Vorrang: öffne sie mit browser_navigate und "
+                            + "suche mit der Suche dieser Website")
+                    .doesNotContain("immer zuerst");
+            assertThat(rule.indexOf("hat sie Vorrang")).as(profile.label() + ": die Adresse kommt vor der Suche")
+                    .isLessThan(rule.indexOf("browser_search"));
+        }
+    }
+
+    @Test
+    void withoutAStoredListExternSearchesStartpageAndDuckDuckGoAndInternNothing() {
+        BrowserSearchEngineSelection external = settings.engines(BrowserProfile.EXTERNAL);
+        assertThat(external.getEntries()).filteredOn(BrowserSearchEngineSelection.Entry::isEnabled)
+                .extracting(BrowserSearchEngineSelection.Entry::getEngineId)
+                .containsExactlyInAnyOrder(BrowserSearchEngineCatalog.STARTPAGE, BrowserSearchEngineCatalog.DUCKDUCKGO);
+        assertThat(settings.engines(BrowserProfile.INTERNAL).getEntries()).isEmpty();
+    }
+
+    @Test
+    void anEarlierSearchUrlOfTheProfileBecomesASearchPage() {
+        values.put("browser.search.internal.urls", "https://suche.intra/?q={query}");
+
+        assertThat(settings.engines(BrowserProfile.INTERNAL).getEntries())
+                .extracting(BrowserSearchEngineSelection.Entry::getEngineId)
+                .containsExactly("https://suche.intra/?q={query}");
+    }
+
+    @Test
+    void searchPagesAreAddedOnceWithTheFirstPriorityAndComeBack() {
+        settings.addSearchPage(BrowserProfile.INTERNAL, "https://portal.example/suche?q={query}&a=1,2");
+        settings.addSearchPage(BrowserProfile.INTERNAL, "https://wiki.example/find?text={query}");
+        settings.addSearchPage(BrowserProfile.INTERNAL, "https://portal.example/suche?q={query}&a=1,2");
+
+        BrowserSearchEngineSelection internal = settings.engines(BrowserProfile.INTERNAL);
+        assertThat(internal.getEntries()).extracting(BrowserSearchEngineSelection.Entry::getEngineId)
+                .containsExactly("https://portal.example/suche?q={query}&a=1,2",
+                        "https://wiki.example/find?text={query}");
+        assertThat(internal.getEntries()).extracting(BrowserSearchEngineSelection.Entry::getPriority)
+                .containsOnly(0);
+        assertThat(settings.engines(BrowserProfile.EXTERNAL).getEntries())
+                .extracting(BrowserSearchEngineSelection.Entry::getEngineId)
+                .doesNotContain("https://wiki.example/find?text={query}");
+    }
+
+    @Test
+    void theSearchWindowIsShownUntilSwitchedOff() {
+        assertThat(settings.searchWindowShown()).isTrue();
+        settings.saveSearchWindowShown(false);
+        assertThat(settings.searchWindowShown()).isFalse();
     }
 }

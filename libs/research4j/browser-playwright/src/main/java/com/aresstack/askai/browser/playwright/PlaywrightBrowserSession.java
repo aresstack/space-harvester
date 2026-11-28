@@ -32,6 +32,8 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
     private final String searchUrlTemplate;
     private WebSearchProvider searchProvider;
     private List<BrowserLink> currentLinks = Collections.emptyList();
+    /** {@link PlaywrightDriver#pageGeneration()} when {@link #currentLinks} were listed. */
+    private long linksGeneration;
     private boolean hasPage;
     /** Reads the PDF documents the browser reaches but cannot read as pages. */
     private final PdfPageReader documents;
@@ -46,8 +48,11 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
     /** Monotonic per navigation — the stale-reference guard of every rendered-page snapshot. */
     private long snapshotGeneration;
 
-    /** The typed configuration contract; defaults come ONLY from LegacyBrowserSearchDefaults. */
-    private final com.aresstack.askai.browser.search.LegacyBrowserSearchSettings settings;
+    /**
+     * The typed configuration contract; defaults come ONLY from LegacyBrowserSearchDefaults. A host that searches in a
+     * browser it also uses otherwise (the chat's) hands in the engine table of each search ({@link #useSearchSettings}).
+     */
+    private volatile com.aresstack.askai.browser.search.LegacyBrowserSearchSettings settings;
 
     /** Public-suffix aware domain families; tests may inject a fake (e.g. host:port for local worlds). */
     private com.aresstack.askai.browser.domain.DomainKeyResolver domainKeys =
@@ -194,7 +199,10 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
         java.util.List<com.aresstack.askai.browser.search.engine.BrowserSearchEngine> selected =
                 new ArrayList<com.aresstack.askai.browser.search.engine.BrowserSearchEngine>();
         for (String raw : engineIds) {
-            String id = raw == null ? "" : raw.trim().toLowerCase(java.util.Locale.ROOT);
+            String trimmed = raw == null ? "" : raw.trim();
+            // A search page's URL is taken as it is (paths and parameters may be case-sensitive); catalog ids not.
+            String id = com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog.isSearchPage(trimmed)
+                    ? trimmed : trimmed.toLowerCase(java.util.Locale.ROOT);
             com.aresstack.askai.browser.search.engine.BrowserSearchEngine engine =
                     com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog.byId(id);
             if (engine == null) {
@@ -341,18 +349,30 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
             throw refused;
         }
         List<BrowserLink> linksBefore = currentLinks;
+        long linksGenerationBefore = linksGeneration;
         boolean hadPage = hasPage;
+        PlaywrightPageState documentBefore = currentDocument; // a downloaded PDF lives only here, not in the tab
         searchTabsUsed = false;
+        boolean ownTab = searchInOwnTab;
+        if (ownTab) {
+            driver.beginSearchTab(); // a browser shared with a chat: not even a URL-template engine touches its tab
+            searchTabsUsed = true;
+        }
         try {
             return navigateAndCapture(query, consumer);
         } finally {
             searchTabs = null;
             driver.closeSearchTabs(); // a parked challenge tab stays open; the session returns to its own page
+            if (ownTab) {
+                driver.endSearchTab();
+            }
             if (searchTabsUsed) {
-                // The result pages were read in the tabs that are gone now: links and "has a page" are again those
+                // The result pages were read in the tabs that are gone now: links, "has a page" and the read document are again those
                 // of the page the session is back on, so a follow_link never resolves an id of a closed tab.
                 currentLinks = linksBefore;
+                linksGeneration = linksGenerationBefore;
                 hasPage = hadPage;
+                currentDocument = documentBefore;
             }
         }
     }
@@ -366,6 +386,32 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
      * is evaluated. Null outside a search, or when the driver has no tabs.
      */
     private SearchTabs searchTabs;
+    /**
+     * Per search page that names only its page (an intranet portal): the result URL its own search field led to,
+     * with {@code {query}} for the words, so the next search opens it directly. A result URL that cannot be opened or
+     * delivers nothing is forgotten and found again through the field.
+     */
+    /** Whether every search runs in a tab of its own: the browser is shared with a chat's tabs. */
+    private volatile boolean searchInOwnTab;
+
+    private volatile java.util.Map<String, SearchUrl> derivedSearchUrls =
+            new java.util.concurrent.ConcurrentHashMap<String, SearchUrl>();
+
+    /**
+     * The settings of the next searches (the chat's engine table with its pages and pauses) and where the result URLs
+     * of search pages are remembered: in a browser that comes and goes with the chat, the host keeps them, so a page
+     * learnt once is not asked through its field again in the next browser.
+     */
+    void useSearchSettings(com.aresstack.askai.browser.search.LegacyBrowserSearchSettings next,
+                           SearchUrlMemory memory) {
+        searchInOwnTab = true; // the browser is the chat's: every search runs in a tab of its own
+        if (next != null) {
+            settings = next;
+        }
+        if (memory != null) {
+            derivedSearchUrls = memory.urls;
+        }
+    }
 
     /** Per engine id: its tab, the start page's load problem (null = loaded) and what typing the query did. */
     private static final class SearchTabs {
@@ -381,8 +427,9 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
 
     /**
      * Opens the start page of every form engine in a tab of its own (one parallel fan-out) and types the query into
-     * all of them at the same time, Enter in each. Engines asked by URL template (the dev/test override) are not part
-     * of it. Null when there is no form engine or the driver has no tabs.
+     * all of them at the same time, Enter in each. A search page with a remembered result URL gets that URL in its tab
+     * and is not typed into. Engines asked by URL template (the dev/test override) are not part of it. Null when there
+     * is no form engine or the driver has no tabs.
      */
     private SearchTabs openAndTypeSearchTabs(
             java.util.List<com.aresstack.askai.browser.search.engine.BrowserSearchEngine> formEngines, String query)
@@ -391,17 +438,27 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
             return null;
         }
         java.util.List<String> homes = new ArrayList<String>();
+        java.util.List<Boolean> remembered = new ArrayList<Boolean>();
         for (com.aresstack.askai.browser.search.engine.BrowserSearchEngine engine : formEngines) {
-            homes.add(engine.formOf(0).getHomeUrl());
+            SearchUrl derived = derivedSearchUrls.get(engine.getId());
+            homes.add(derived != null ? derived.forQuery(query) : engine.formOf(0).getHomeUrl());
+            remembered.add(derived != null);
         }
         searchTabsUsed = true;
         try {
             java.util.List<String> loaded = driver.openSearchTabs(homes);
             java.util.List<java.util.List<String>> fields = new ArrayList<java.util.List<String>>();
             for (int i = 0; i < formEngines.size(); i++) {
-                fields.add(loaded.get(i) == null ? formEngines.get(i).formOf(0).getSearchBoxSelectors() : null);
+                fields.add(loaded.get(i) == null && !remembered.get(i)
+                        ? formEngines.get(i).formOf(0).getSearchBoxSelectors() : null);
             }
-            SearchTabs tabs = new SearchTabs(loaded, new ArrayList<String>(driver.submitSearchInTabs(fields, query)));
+            java.util.List<String> typed = new ArrayList<String>();
+            if (fields.stream().anyMatch(java.util.Objects::nonNull)) {
+                typed.addAll(driver.submitSearchInTabs(fields, query));
+            } else {
+                typed.addAll(java.util.Collections.nCopies(fields.size(), "skipped")); // nothing to type into
+            }
+            SearchTabs tabs = new SearchTabs(loaded, typed);
             for (int i = 0; i < formEngines.size(); i++) {
                 tabs.tabOf.put(formEngines.get(i).getId(), i);
             }
@@ -453,13 +510,14 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
      * the other engines), or its fallback start page loaded in the same tab and typed into alone. A start page whose
      * field is covered gets one consent dismissal and one more try. A start page that shows a challenge is returned
      * as it is, so the challenge handling below sees it. Null (with the attempt recorded) when the field could not be
-     * used: never a result URL instead.
+     * used: never a result URL instead. {@code again}: the tab showed a remembered result URL that failed; its start
+     * page is loaded there and typed into now.
      */
     private BrowserPageSnapshot firstResultPageThroughForm(
             com.aresstack.askai.browser.search.engine.BrowserSearchEngine engine, int endpointIndex,
             com.aresstack.askai.browser.search.engine.BrowserSearchEngine.SearchForm form, String query,
-            String engineHost, List<com.aresstack.askai.browser.LegacySearchEngineAttemptResult> attempts)
-            throws BrowserException {
+            String engineHost, List<com.aresstack.askai.browser.LegacySearchEngineAttemptResult> attempts,
+            boolean again) throws BrowserException {
         Integer tab = searchTabs == null ? null : searchTabs.tabOf.get(engine.getId());
         if (tab == null && endpointIndex == 0) {
             // Not typed together with the others (FIRST_USABLE asks the next engine only now): its own tab, typed alone.
@@ -477,7 +535,7 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
             return null;
         }
         String typed;
-        if (endpointIndex == 0) {
+        if (endpointIndex == 0 && !again) {
             String loadProblem = searchTabs.loadProblems.get(tab);
             if (loadProblem != null) {
                 attempts.add(attempt(engineHost,
@@ -505,6 +563,30 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
         attempts.add(attempt(engineHost,
                 com.aresstack.askai.browser.LegacySearchAttemptOutcome.SEARCH_BOX_UNAVAILABLE, typed));
         return null;
+    }
+
+    /**
+     * Result page 1 of a search page with a remembered result URL: its tab, which opened that URL for this query (its
+     * own tab now when it was not opened with the others). Fails like a navigation when the URL did not load, so the
+     * caller forgets it and asks the field.
+     */
+    private BrowserPageSnapshot rememberedResultPage(
+            com.aresstack.askai.browser.search.engine.BrowserSearchEngine engine, String query)
+            throws BrowserException {
+        Integer tab = searchTabs == null ? null : searchTabs.tabOf.get(engine.getId());
+        if (tab == null) {
+            SearchTabs own = openAndTypeSearchTabs(java.util.Collections.singletonList(engine), query);
+            if (own == null) {
+                throw new BrowserException("no tab for the remembered result page");
+            }
+            searchTabs = own;
+            tab = own.tabOf.get(engine.getId());
+        }
+        String loadProblem = searchTabs.loadProblems.get(tab);
+        if (loadProblem != null) {
+            throw new BrowserException("remembered result page not loaded: " + loadProblem);
+        }
+        return checkedSnapshot(driver.useSearchTab(tab));
     }
 
     /** Types the query into ONE search tab (a fallback endpoint or a retry after a consent banner). */
@@ -601,6 +683,10 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
                 // nothing new) is never read and counted again as a further page. Judged by its results, not by its
                 // address: DuckDuckGo's HTML and Lite endpoints page by POST under one address.
                 java.util.Set<java.util.Set<String>> resultPagesRead = new java.util.HashSet<java.util.Set<String>>();
+                // A search page of the user's own: its derived result URL first, the field again when that fails.
+                boolean housePage = form != null && com.aresstack.askai.browser.search.engine
+                        .BrowserSearchEngineCatalog.isSearchPage(engine.getId());
+                boolean derivedOpened = false;
                 for (int resultPage = 1; resultPage <= resultPages; resultPage++) {
                     String pageUrl = form != null ? null : engine.pageUrl(endpointIndex, encoded, resultPage);
                     if (form == null && pageUrl == null) {
@@ -614,13 +700,18 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
                     }
                     engineRequestedBefore = true;
                     BrowserPageSnapshot page;
+                    SearchUrl derived = housePage && resultPage == 1 && !derivedOpened
+                            ? derivedSearchUrls.get(engine.getId()) : null;
                     try {
                         if (form == null) {
                             page = open(pageUrl);
+                        } else if (derived != null) {
+                            derivedOpened = true;
+                            page = rememberedResultPage(engine, query.trim());
                         } else if (resultPage == 1) {
                             // Asked like a person: the query typed into the start page's field, never a result URL.
                             page = firstResultPageThroughForm(engine, endpointIndex, form, query.trim(), engineHost,
-                                    attempts);
+                                    attempts, derivedOpened);
                             if (page == null) {
                                 anyEngineReached = true;
                                 break;
@@ -636,6 +727,11 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
                             // The USER closed the window: no other engine can help, and degrading
                             // their stop into an ATTEMPT line would launder it into a technical end.
                             throw engineUnreachable;
+                        }
+                        if (derived != null && derivedSearchUrls.remove(engine.getId()) != null) {
+                            resultPage--; // the remembered result URL cannot be opened: through the field again
+                            resultPagesRead.clear();
+                            continue;
                         }
                         lastFailure = engineUnreachable;
                         attempts.add(attempt(engineHost,
@@ -703,6 +799,18 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
                     // An ununderstood layout does NOT: the user configured N pages, and downstream
                     // rescue (AI layout repair, link harvest) works per captured page.
                     CapturedPageVerdict verdict = consumer.accept(document, host, attempts);
+                    if (housePage && resultPage == 1) {
+                        if (verdict == CapturedPageVerdict.DELIVERED) {
+                            SearchUrl searchUrl = deriveSearchUrl(page.getUrl(), query.trim());
+                            if (searchUrl != null) {
+                                derivedSearchUrls.put(engine.getId(), searchUrl);
+                            }
+                        } else if (derivedOpened && derivedSearchUrls.remove(engine.getId()) != null) {
+                            resultPage--; // the remembered result URL no longer works: through the field again
+                            resultPagesRead.clear(); // the field's page may show the same links, now readable
+                            continue;
+                        }
+                    }
                     if (verdict == CapturedPageVerdict.DELIVERED) {
                         engineDelivered = true;
                     } else if (verdict == CapturedPageVerdict.EMPTY) {
@@ -795,6 +903,67 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
                 diagnostic == null ? "" : diagnostic);
     }
 
+    /**
+     * The chat uses {@code tab}: the session's current page is that tab from now on (one current page for chat and
+     * research). The chat may change the page: link ids listed before are no longer this page's
+     * ({@link PlaywrightDriver#pageGeneration()}), and a document read before is read anew. Owner thread, between
+     * calls.
+     */
+    void useChatTab(com.microsoft.playwright.Page tab) {
+        if (playwright().useChatTab(tab)) {
+            currentDocument = null; // a document read in the other tab
+        }
+        hasPage = true;
+    }
+
+    /**
+     * The chat's load of the current tab reached a document instead of a page: a PDF in the viewer
+     * ({@code response}), or, with {@code response} null, a download of {@code url} while the tab kept its page. The
+     * session reads it as {@code web_open} would; false when the response is a page after all.
+     */
+    boolean chatReachedDocument(String url, com.microsoft.playwright.Response response) throws BrowserException {
+        PlaywrightPageState state = response == null
+                ? PlaywrightPageState.downloadedDocument(url, driver.currentUrl())
+                : playwright().chatViewedDocument(response);
+        if (state == null) {
+            currentDocument = null; // the load reached a page: a document read before is not what the tab shows
+            return false;
+        }
+        checkedSnapshot(readDocument(state));
+        return true;
+    }
+
+    /**
+     * The document the current tab still shows, read, or null when it shows a page. A PDF the tab's viewer shows is
+     * read anew when the session's read copy belonged to another tab.
+     */
+    BrowserPageSnapshot chatDocument() throws BrowserException {
+        PlaywrightPageState document = shownDocument();
+        if (document != null) {
+            return checkedSnapshot(document);
+        }
+        PlaywrightPageState viewed = playwright().viewedDocumentOfCurrentTab();
+        return viewed == null ? null : checkedSnapshot(readDocument(viewed));
+    }
+
+    /** The chat loaded pages in several tabs at once: link ids listed before may be stale. */
+    void chatChangedPages() {
+        playwright().chatChangedPages();
+        currentDocument = null;
+    }
+
+    /** Whether the current page shows a challenge widget ({@link Playwright4jDriver#challengeShown()}). */
+    boolean challengeShown() {
+        return playwright().challengeShown();
+    }
+
+    private Playwright4jDriver playwright() {
+        if (!(driver instanceof Playwright4jDriver)) {
+            throw new IllegalStateException("chat tabs need the Playwright driver");
+        }
+        return (Playwright4jDriver) driver;
+    }
+
     public BrowserPageSnapshot open(String url) throws BrowserException {
         checkPolicy(url);
         currentDocument = null; // superseded by this navigation, whatever it brings
@@ -864,12 +1033,17 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
 
     public List<BrowserLink> links() throws BrowserException {
         requirePage();
+        if (linksGeneration != driver.pageGeneration()) {
+            checkedSnapshot(current()); // the page changed outside the session: list its links as they are now
+        }
         return currentLinks;
     }
 
     public BrowserPageSnapshot follow(String linkId) throws BrowserException {
         requirePage();
-        for (BrowserLink link : currentLinks) {
+        List<BrowserLink> listed = linksGeneration == driver.pageGeneration() ? currentLinks
+                : Collections.<BrowserLink>emptyList(); // ids of a page that changed outside the session
+        for (BrowserLink link : listed) {
             if (link.getId().equals(linkId)) {
                 return open(link.getUrl());
             }
@@ -1034,6 +1208,7 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
             links.add(new BrowserLink("link-" + id, anchor.text, anchor.href));
         }
         currentLinks = Collections.unmodifiableList(links);
+        linksGeneration = driver.pageGeneration();
         hasPage = true;
         currentDocument = state.isDocument() ? state : null;
         return new BrowserPageSnapshot(state.url, state.title, text, truncated);
@@ -1068,6 +1243,104 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
     private void requirePage() throws BrowserException {
         if (!hasPage) {
             throw new BrowserException("No page is open yet — call web_open or web_search first.");
+        }
+    }
+
+    /**
+     * The result URL a search page's own field led to, with {@code {query}} where the search words stood, and how the
+     * page wrote them there: form encoding ({@code +} for a space) or percent encoding.
+     */
+    static final class SearchUrl {
+        final String template;
+        final boolean formEncoded;
+
+        SearchUrl(String template, boolean formEncoded) {
+            this.template = template;
+            this.formEncoded = formEncoded;
+        }
+
+        /** The result URL for {@code query}, written the way the page wrote its own search words. */
+        String forQuery(String query) throws BrowserException {
+            String written = formEncoded ? encode(query) : encode(query).replace("+", "%20");
+            return template.replace(
+                    com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog.QUERY, written);
+        }
+    }
+
+    /**
+     * The result URL a search page's own field led to as a {@link SearchUrl}: the URL part that carries the search
+     * words, whole, replaced by {@code {query}}. Looked for first among the values of the URL's own parameters (form
+     * encoded), then in its hash route (its parameter values, then its segments) and last in its path segments; a word
+     * that only happens to occur in a path, a parameter name or the host is never taken for the search words.
+     * {@code null} when the URL does not carry them (a page that searches by POST or in its own script).
+     */
+    static SearchUrl deriveSearchUrl(String resultUrl, String query) {
+        if (resultUrl == null || query == null || query.trim().isEmpty()) {
+            return null;
+        }
+        String wanted = query.trim();
+        int scheme = resultUrl.indexOf("//");
+        int path = scheme < 0 ? -1 : resultUrl.indexOf('/', scheme + 2);
+        if (path < 0) {
+            return null;
+        }
+        int hash = resultUrl.indexOf('#', path);
+        int beforeHash = hash < 0 ? resultUrl.length() : hash;
+        int parameters = resultUrl.indexOf('?', path);
+        if (parameters >= beforeHash) {
+            parameters = -1;
+        }
+        SearchUrl found = null;
+        if (parameters >= 0) {
+            found = searchWordsIn(resultUrl, parameters + 1, beforeHash, wanted, true, true);
+        }
+        if (found == null && hash >= 0) {
+            found = searchWordsIn(resultUrl, hash + 1, resultUrl.length(), wanted, true, false);
+            if (found == null) {
+                found = searchWordsIn(resultUrl, hash + 1, resultUrl.length(), wanted, false, false);
+            }
+        }
+        if (found == null) {
+            found = searchWordsIn(resultUrl, path + 1, parameters >= 0 ? parameters : beforeHash, wanted, false,
+                    false);
+        }
+        return found;
+    }
+
+    /**
+     * The part of {@code url} between {@code from} and {@code to}, cut at {@code / ? & = ;}, that reads as the search
+     * words: a parameter value only ({@code valuesOnly}) or any part; {@code formPart}: the URL's own parameters, which
+     * the browser always form-encodes; elsewhere percent encoding unless only the {@code +}-for-space reading fits.
+     */
+    private static SearchUrl searchWordsIn(String url, int from, int to, String wanted, boolean valuesOnly,
+                                           boolean formPart) {
+        int start = from;
+        char before = from > 0 ? url.charAt(from - 1) : '/';
+        for (int i = from; i <= to; i++) {
+            char c = i < to ? url.charAt(i) : '/';
+            if (c != '/' && c != '?' && c != '&' && c != '=' && c != ';') {
+                continue;
+            }
+            if (i > start && (!valuesOnly || before == '=')) {
+                String part = url.substring(start, i);
+                boolean percent = !formPart && wanted.equalsIgnoreCase(decoded(part.replace("+", "%2B")));
+                if (percent || wanted.equalsIgnoreCase(decoded(part))) {
+                    return new SearchUrl(url.substring(0, start)
+                            + com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog.QUERY
+                            + url.substring(i), !percent);
+                }
+            }
+            before = c;
+            start = i + 1;
+        }
+        return null;
+    }
+
+    private static String decoded(String part) {
+        try {
+            return java.net.URLDecoder.decode(part, "UTF-8").trim();
+        } catch (UnsupportedEncodingException | IllegalArgumentException notEncoded) {
+            return part;
         }
     }
 

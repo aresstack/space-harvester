@@ -133,6 +133,7 @@ final class FakeEngine implements BrowserEngine {
             this.process = process;
         }
 
+
         private void check() throws BrowserException {
             if (!process.alive) {
                 open = false;

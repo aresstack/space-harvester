@@ -49,8 +49,11 @@ final class TermsTab extends JPanel {
     static final String NOT_YET = "–";
     /** Kennzahl einer Auswahl, solange der Core die Gesamtzahl noch nicht geliefert hat. */
     static final String COUNTING = "…";
-    /** So viele Begriffe bzw. Beziehungen lädt ein Schritt beim Scrollen. */
-    static final int STEP = 120;
+    /** So viele Begriffe bzw. Beziehungen lädt ein Schritt beim Scrollen; einstellbar ({@code ListSteps}). */
+    static int step() {
+        return com.aresstack.spaceharvester.app.ui.ListSteps.shared()
+                .get(com.aresstack.spaceharvester.app.ui.ListSteps.Value.TERMS);
+    }
     static final String NO_TERMS = "In der Auswahl wurden keine Begriffe erkannt.";
     static final String NO_MATCH = "Kein Begriff passt zum Filter.";
 
@@ -695,13 +698,14 @@ final class TermsTab extends JPanel {
         relationTitle.setVisible(false);
         hint.setText(" ");
         sections.clear();
-        sections.add(new Section<>(current.acronyms(q), terms -> append(chips, acronymTitle, terms)));
-        sections.add(new Section<>(current.identifiers(q), terms -> append(identifierChips, identifierTitle, terms)));
+        sections.add(new Section<>(ACRONYMS, current.acronyms(q), terms -> append(chips, acronymTitle, terms)));
+        sections.add(new Section<>(IDENTIFIERS, current.identifiers(q),
+                terms -> append(identifierChips, identifierTitle, terms)));
         Pager<VerbQueries.Verb> verbs = current.verbs(q);
         if (verbs != null) {
-            sections.add(new Section<>(verbs, this::appendVerbs));
+            sections.add(new Section<>(VERBS, verbs, this::appendVerbs));
         }
-        sections.add(new Section<>(current.relations(q), this::appendRelations));
+        sections.add(new Section<>(RELATIONS, current.relations(q), this::appendRelations));
         for (JPanel list : List.of(chips, identifierChips, verbChips, relationLines)) {
             list.revalidate();
             list.repaint();
@@ -709,13 +713,18 @@ final class TermsTab extends JPanel {
         more();
     }
 
-    /** Lädt den nächsten Schritt des ersten Abschnitts, der noch etwas hat; nie zwei Schritte zugleich. */
+    /**
+     * Lädt den nächsten Schritt; nie zwei Schritte zugleich. Ohne gewählten Abschnitt ist der erste dran, der noch
+     * etwas hat. Mit gewähltem Abschnitt nur dieser: Sonst müssten erst alle Akronyme und Bezeichner der Auswahl
+     * geladen sein, bevor „Verben“ oder „Beziehungen“ ihre erste Zeile zeigen, und weil unsichtbare Abschnitte die
+     * Fläche nicht füllen, kam dieser Punkt bei großen Auswahlen nie (Angelo 27.11.2026).
+     */
     void more() {
         if (loading || selection == null) {
             return;
         }
         for (Section<?> section : sections) {
-            if (section.pager.hasMore()) {
+            if (shows(section.kind) && section.pager.hasMore()) {
                 load(section);
                 return;
             }
@@ -726,7 +735,7 @@ final class TermsTab extends JPanel {
     private <T> void load(Section<T> section) {
         int mine = request;
         loading = true;
-        runner.run(() -> section.pager.next(STEP), items -> {
+        runner.run(() -> section.pager.next(step()), items -> {
             if (mine != request) {
                 return;
             }
@@ -1025,10 +1034,13 @@ final class TermsTab extends JPanel {
 
     /** Ein Abschnitt der Auswahl mit eigenem Pager. */
     private static final class Section<T> {
+        /** Der Abschnitt aus {@link #KINDS}, zu dem diese Abfrage gehört. */
+        final String kind;
         final Pager<T> pager;
         final Consumer<List<T>> append;
 
-        Section(Pager<T> pager, Consumer<List<T>> append) {
+        Section(String kind, Pager<T> pager, Consumer<List<T>> append) {
+            this.kind = Objects.requireNonNull(kind, "kind");
             this.pager = Objects.requireNonNull(pager, "pager");
             this.append = Objects.requireNonNull(append, "append");
         }
@@ -1155,7 +1167,7 @@ final class TermsTab extends JPanel {
     static String stateText(PageAcronyms.State state) {
         return switch (state) {
             case CURRENT -> "Aktuell";
-            case STALE -> "Veraltet";
+            case STALE -> TabHeader.STALE;
             case FAILED -> "Fehlgeschlagen";
             case MISSING -> "Nicht durchgeführt";
         };
@@ -1375,8 +1387,12 @@ final class TermsTab extends JPanel {
         // Filter und Hinweis beziehen sich immer auf den gewählten Abschnitt.
         if (selection == null) {
             fill();
-        } else if (!loading && sections.stream().noneMatch(section -> section.pager.hasMore())) {
-            finished();
+            moreBelow();
+        } else {
+            // Der gewählte Abschnitt lädt jetzt selbst; ist er schon vollständig, setzt more() nur den Hinweis.
+            // Der Hinweis des vorigen Abschnitts („keine Akronyme erkannt“) gilt nicht mehr, solange noch geladen wird.
+            hint.setText(" ");
+            more();
         }
         revalidate();
         repaint();
@@ -1695,13 +1711,13 @@ final class TermsTab extends JPanel {
             belowChips.revalidate();
             belowChips.repaint();
         };
-        belowSections.add(new Section<>(terms.acronyms(q), appendTerms.apply(ACRONYMS)));
-        belowSections.add(new Section<>(terms.identifiers(q), appendTerms.apply(IDENTIFIERS)));
+        belowSections.add(new Section<>(ACRONYMS, terms.acronyms(q), appendTerms.apply(ACRONYMS)));
+        belowSections.add(new Section<>(IDENTIFIERS, terms.identifiers(q), appendTerms.apply(IDENTIFIERS)));
         Pager<VerbQueries.Verb> belowVerbs = terms.verbs(q);
         if (belowVerbs != null) {
             java.util.Set<String> ownVerbs = ownVerbs();
             int mine = belowRequest;
-            belowSections.add(new Section<>(belowVerbs, found -> {
+            belowSections.add(new Section<>(VERBS, belowVerbs, found -> {
                 for (VerbQueries.Verb verb : found) {
                     if (verb.fromText() || !ownVerbs.contains(verb.lemma())) {
                         FindablePill chip = textForm(chip(verb.lemma(), belowVerbTooltip(verb), List.of()), verb);
@@ -1717,7 +1733,7 @@ final class TermsTab extends JPanel {
                 belowChips.repaint();
             }));
         }
-        belowSections.add(new Section<>(terms.relations(q), found -> {
+        belowSections.add(new Section<>(RELATIONS, terms.relations(q), found -> {
             for (Relation relation : found) {
                 if (!ownRelationLines.contains(relation.line())) {
                     JLabel line = Comic.text(relation.line());
@@ -1732,13 +1748,13 @@ final class TermsTab extends JPanel {
         moreBelow();
     }
 
-    /** Lädt den nächsten Schritt des Abschnitts „Aus Unterseiten“; nie zwei zugleich. */
+    /** Lädt den nächsten Schritt des Abschnitts „Aus Unterseiten“; nie zwei zugleich. Wie {@link #more()}. */
     void moreBelow() {
         if (belowLoading || below == null || selection != null) {
             return;
         }
         for (Section<?> section : belowSections) {
-            if (section.pager.hasMore()) {
+            if (shows(section.kind) && section.pager.hasMore()) {
                 loadBelow(section);
                 return;
             }
@@ -1749,7 +1765,7 @@ final class TermsTab extends JPanel {
     private <T> void loadBelow(Section<T> section) {
         int mine = belowRequest;
         belowLoading = true;
-        runner.run(() -> section.pager.next(STEP), items -> {
+        runner.run(() -> section.pager.next(step()), items -> {
             if (mine != belowRequest) {
                 return;
             }

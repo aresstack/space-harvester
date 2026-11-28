@@ -38,4 +38,28 @@ class PillTabsTest {
             assertThat(bar.getHeight()).as("mehr als eine Zeile").isGreaterThan(40);
         });
     }
+
+    @Test
+    void aSecondClickOnTheShownTabGoesToItsReceiverAndOtherClicksSelect() throws Exception {
+        // Angelo 27.11.2026: Der zweite Klick auf den gewählten, dunkel gezeigten Reiter wählt ihn ab (der Besitzer
+        // entscheidet, was dann kommt). Zeigt die Leiste ihre Auswahl nicht, wählt der Klick den Reiter wieder.
+        SwingUtilities.invokeAndWait(() -> {
+            PillTabs tabs = new PillTabs();
+            tabs.tab("Eins", new JPanel()).tab("Zwei", new JPanel());
+            java.util.List<String> events = new java.util.ArrayList<>();
+            tabs.alsoOnClick(name -> events.add("klick " + name));
+            tabs.onAgain(name -> events.add("nochmal " + name));
+            java.util.List<javax.swing.AbstractButton> buttons = SourceFormLayoutTest.find(tabs,
+                    javax.swing.AbstractButton.class);
+
+            buttons.get(1).doClick();
+            buttons.get(1).doClick();
+            tabs.select("Eins");
+            tabs.showSelection(false);
+            buttons.get(0).doClick();
+
+            assertThat(events).containsExactly("klick Zwei", "nochmal Zwei", "klick Eins");
+            assertThat(tabs.selected()).isEqualTo("Eins");
+        });
+    }
 }

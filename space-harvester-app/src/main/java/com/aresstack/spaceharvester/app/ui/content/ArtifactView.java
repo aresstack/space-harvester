@@ -145,7 +145,7 @@ final class ArtifactView extends JPanel {
             return;
         }
         if (!artifactId.equals(event.artifact().id())) {
-            // Eine eingebundene Grafik wurde geändert: das Dokument zeigt sie neu (Verweis, keine Kopie).
+            // Eine eingebundene Grafik wurde geändert oder gelöscht: das Dokument zeigt sie neu (Verweis, keine Kopie).
             ChatArtifact current = shown;
             if (current != null && current.kind() == ChatArtifact.Kind.DOCUMENT
                     && com.aresstack.spaceharvester.app.chat.artifact.GraphicReferences.ids(current.content())
@@ -156,6 +156,9 @@ final class ArtifactView extends JPanel {
                     }
                 });
             }
+            return;
+        }
+        if (event.deleted()) {
             return;
         }
         Runnable update = () -> {

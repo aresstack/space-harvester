@@ -749,6 +749,59 @@ public final class ChangeLog implements AutoCloseable {
     }
 
     /**
+     * Löscht die Bereichszusammenfassung einer Auswahl, wie der Aufrufer sie abgelegt hat (ADR 0047: lokales Artefakt,
+     * nur dieses eine). Seiten, KI-Freigabe und andere Ergebnisse bleiben; die Ansichten erfahren es über
+     * {@link #subscribe} jeder Quelle der Auswahl. Danach entsteht nichts von selbst neu.
+     *
+     * @return ob eine Zusammenfassung abgelegt war
+     * @throws IllegalStateException  während sie entsteht ({@link #areaSummaryDeletable})
+     * @throws UnknownSourceException wenn die erste Quelle der Auswahl nicht konfiguriert ist
+     */
+    public boolean deleteAreaSummary(AccessContext caller,
+                                     com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(selection, "selection");
+        requireReadable(caller, selection.roots().getFirst().sourceId());
+        SummaryScope.Selected scope = SummaryScope.selection(caller, selection);
+        boolean removed;
+        synchronized (summarizing) {
+            if (summarizingArea(scope)) {
+                throw new IllegalStateException("Die Zusammenfassung entsteht gerade; löschen geht, sobald sie fertig "
+                        + "ist oder abgebrochen wurde");
+            }
+            removed = store.summary(scope).isPresent();
+            if (removed) {
+                store.deleteSummary(scope);
+            }
+        }
+        if (removed) {
+            selection.roots().stream().map(com.aresstack.spaceharvester.application.holdings.Selection.Root::sourceId)
+                    .distinct().forEach(coalescer::mark);
+        }
+        return removed;
+    }
+
+    /** Ob {@link #deleteAreaSummary} jetzt geht: kein „Zusammenfassen“ dieser Auswahl, das noch nicht geendet hat. */
+    public boolean areaSummaryDeletable(AccessContext caller,
+                                        com.aresstack.spaceharvester.application.holdings.Selection selection) {
+        Objects.requireNonNull(caller, "caller");
+        Objects.requireNonNull(selection, "selection");
+        return !summarizingArea(SummaryScope.selection(caller, selection));
+    }
+
+    private boolean summarizingArea(SummaryScope.Selected scope) {
+        if (summaries == null) {
+            return false;
+        }
+        for (JobStatus open : summaries.jobs().listAll(JobType.UPDATE_SUMMARY)) {
+            if (!open.state().terminal() && scope.key().equals(open.parameters().get(AREA_PARAMETER))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Der vorläufige Stand eines laufenden „Zusammenfassen“ dieser Auswahl: die Themen der schon fertigen Teile, noch
      * nicht zusammengeführt und ohne Überblickstext; leer, wenn keiner läuft, noch kein Teil fertig ist oder der
      * Aufrufer nicht alle eingegangenen Seiten sehen darf. Jeder fertige Teil meldet {@link #subscribe} für jede Quelle

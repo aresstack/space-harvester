@@ -89,16 +89,4 @@ public interface BrowserConnection {
 
     /** Closes the connection only; the browser keeps running. */
     void disconnect();
-
-    /**
-     * Searches {@code query} with the engine's search engines in tab {@code contextId} (the tab shows the result page
-     * afterwards) and answers the hits as text, one block per hit: {@code id: title — address} and the snippet.
-     * {@code engines} names catalog ids of the engine for this one call, {@code null} for its configured ones. Engines
-     * without search engine support refuse.
-     */
-    default String search(String contextId, String query, java.util.List<String> engines) throws BrowserException {
-        throw new BrowserException(BrowserException.Kind.INVALID_REQUEST,
-                "Dieser Browser kann keine Suchmaschine bedienen; die Suchseite der Website über "
-                        + "browser_controls und browser_act nutzen");
-    }
 }

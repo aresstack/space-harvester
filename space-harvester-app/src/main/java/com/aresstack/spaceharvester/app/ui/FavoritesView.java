@@ -157,6 +157,12 @@ final class FavoritesView {
             write.addActionListener(e -> book.start(id));
             menu.add(write);
             if (com.aresstack.spaceharvester.app.research.BookEditions.exists(BookFlow.dataDirectory(context), id)) {
+                if (context.navigator() != null && context.navigator().opensArtifacts()) {
+                    javax.swing.JMenuItem openBook = new javax.swing.JMenuItem(Texts.OPEN_BOOK);
+                    openBook.setToolTipText(Texts.OPEN_BOOK_TIP);
+                    openBook.addActionListener(e -> book.openBook(id));
+                    menu.add(openBook);
+                }
                 javax.swing.JMenuItem again = new javax.swing.JMenuItem(Texts.NEW_EDITION);
                 again.setToolTipText(Texts.NEW_EDITION_TIP);
                 again.addActionListener(e -> book.newEdition(id));
@@ -177,6 +183,16 @@ final class FavoritesView {
 
     JComponent component() {
         return component;
+    }
+
+    /** „Buch öffnen“ für den Ordner, etwa aus „Weitere Aktionen zur Seite“. */
+    void openBook(String folderId) {
+        book.openBook(folderId);
+    }
+
+    /** Wählt den Ordner im Baum (etwa „Ordner in den Wissensquellen zeigen“ am Buch). */
+    void select(String folderId) {
+        tree.select(List.of(folderId));
     }
 
     /** „Neue Auflage erzeugen“ für den Ordner, etwa aus der Leseansicht. */

@@ -57,7 +57,7 @@ class EnrichmentsTest {
                 .containsExactly(
                         org.assertj.core.groups.Tuple.tuple("acronyms", "4;sentences=splitter", "3", Enrichment.Status.OK,
                                 CLOCK.instant()),
-                        org.assertj.core.groups.Tuple.tuple("outline", "1", "3", Enrichment.Status.OK,
+                        org.assertj.core.groups.Tuple.tuple("outline", "3", "3", Enrichment.Status.OK,
                                 CLOCK.instant()));
         assertThat(store.find(page.key()).get(0).payloadJson()).contains("\"expansion\":\"Application Programming"
                 + " Interface\"");

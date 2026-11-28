@@ -142,12 +142,13 @@ public final class ProjectStore {
     }
 
     /**
-     * Der Ordner der Artefakte eines Projekts (F3); {@code null} für das Standardprojekt, in dem die Chats ihre
-     * Artefakte selbst besitzen, und für ein unbekanntes oder gelöschtes Projekt.
+     * Der Ordner der Artefakte eines Projekts (F3, ADR 0047), auch des Standardprojekts; ein unbekanntes oder
+     * gelöschtes Projekt ist das Standardprojekt. {@code null} ohne Datenordner.
      */
     public Path artifacts(String projectId) {
         Project project = resolve(projectId);
-        Path folder = project.isDefault() ? null : folder(project.id());
+        // Auch das Standardprojekt besitzt seine Artefakte (ADR 0047); sein Ordner enthält sonst nichts.
+        Path folder = folder(project.id());
         return folder == null ? null : folder.resolve(ARTIFACTS);
     }
 
@@ -183,6 +184,21 @@ public final class ProjectStore {
         write(relinked);
         changed();
         return relinked;
+    }
+
+    /**
+     * Übernimmt die Projekteinstellungen: Ziel ({@code null} entfernt es) und Speicherort für Exporte und Downloads.
+     * Beim Standardprojekt unverändert.
+     */
+    public synchronized Project configure(String projectId, ProjectTarget target, ProjectOutput output) {
+        Project project = existing(projectId);
+        if (project == null || project.isDefault()) {
+            return project;
+        }
+        Project configured = project.withTarget(target).withOutput(output);
+        write(configured);
+        changed();
+        return configured;
     }
 
     /**
@@ -441,6 +457,8 @@ public final class ProjectStore {
             content.put("targetKind", project.target().kind().key());
             content.put("target", project.target().value());
         }
+        content.put("saveHere", project.output().saveHere());
+        content.put("subfolder", project.output().subfolder());
         try {
             ProfileFiles.writeAtomic(folder.resolve(FILE), JSON.writeValueAsString(content));
         } catch (IOException | RuntimeException e) {
@@ -462,8 +480,14 @@ public final class ProjectStore {
             JsonNode name = json.get("name");
             ProjectTarget.Kind kind = ProjectTarget.Kind.of(text(json, "targetKind"));
             String target = text(json, "target");
+            // Ältere Dateien ohne die Felder: Vorgabe (Haken gesetzt, Unterordner „Downloads“).
+            JsonNode saveHere = json.get("saveHere");
+            String subfolder = text(json, "subfolder");
+            ProjectOutput output = new ProjectOutput(saveHere == null || saveHere.isNull() || saveHere.asBoolean(),
+                    subfolder == null ? ProjectOutput.DEFAULT_SUBFOLDER : subfolder);
             return new Project(id, text(json, "name"),
-                    kind == null || target == null || target.isBlank() ? null : new ProjectTarget(kind, target));
+                    kind == null || target == null || target.isBlank() ? null : new ProjectTarget(kind, target),
+                    output);
         } catch (IOException | RuntimeException e) {
             quarantine(file, e);
             return null;

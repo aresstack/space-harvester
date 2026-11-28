@@ -653,8 +653,11 @@ public final class Harvester implements AutoCloseable {
                     ExtractionStore.DEFAULT_SECTION_CHARS);
             DocumentExtractions structuredDocuments = new DocumentExtractions(documentStructure,
                     new FileSystemExtractionStore(builder.assetDirectory()), builder.extractionLimits);
-            PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
-                    new LocalFilesTextProjector(documentText), new KnowledgeDocumentTextProjector(),
+            // Projektoren der App (etwa die Gliederung von Großrechner-Quelltext) vor den eingebauten.
+            List<PageTextProjector> textProjectors = new ArrayList<>(builder.additionalProjectors);
+            textProjectors.addAll(List.of(new ConfluenceStorageTextProjector(),
+                    new LocalFilesTextProjector(documentText), new KnowledgeDocumentTextProjector()));
+            PageTextProjector projector = PageTextProjector.firstOf(List.of(PageTextProjector.firstOf(textProjectors),
                     new com.aresstack.spaceharvester.source.LocalReferenceTextProjector(structuredDocuments),
                     // Angelo 20.11.2026: Videoseiten ohne Text lesen ihr Transkript, die letzte Korrektur zuerst; die
                     // Ablage entsteht erst weiter unten.
@@ -738,8 +741,7 @@ public final class Harvester implements AutoCloseable {
             // #180: Volltext über den Cache, abgeleitet und neu aufbaubar.
             LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
             opened.add(textIndex);
-            PageTextIndexing texts = new PageTextIndexing(List.of(new ConfluenceStorageTextProjector(),
-                    new LocalFilesTextProjector(documentText), new KnowledgeDocumentTextProjector()), textIndex,
+            PageTextIndexing texts = new PageTextIndexing(textProjectors, textIndex,
                     new com.aresstack.spaceharvester.application.query.LocalPageSections(structuredDocuments));
 
             this.access = new AccessGuard(builder.accessPolicy);
@@ -3706,6 +3708,7 @@ public final class Harvester implements AutoCloseable {
         private int chunkOverlapSentences = KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES;
         private final List<SourceAdapter> sourceAdapters = new ArrayList<>();
         private final List<EnrichmentProcessor> additionalProcessors = new ArrayList<>();
+        private final List<PageTextProjector> additionalProjectors = new ArrayList<>();
         private final List<java.util.function.Function<java.util.function.Function<PageKey, Optional<PageSnapshot>>, EnrichmentProcessor>> snapshotProcessors = new ArrayList<>();
         private SourceSecrets secretProvider;
         private EmbeddingProvider embeddingProvider;
@@ -4082,6 +4085,15 @@ public final class Harvester implements AutoCloseable {
 
         public Builder enrichmentProcessor(EnrichmentProcessor processor) {
             additionalProcessors.add(java.util.Objects.requireNonNull(processor));
+            return this;
+        }
+
+        /**
+         * Ein Projektor, der vor den eingebauten gefragt wird, für Volltextindex und Anreicherungen gleich; etwa die
+         * Gliederung von Großrechner-Quelltext aus der App.
+         */
+        public Builder textProjector(PageTextProjector projector) {
+            additionalProjectors.add(java.util.Objects.requireNonNull(projector));
             return this;
         }
 

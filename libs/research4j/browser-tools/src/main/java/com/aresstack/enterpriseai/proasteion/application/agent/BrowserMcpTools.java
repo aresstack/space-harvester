@@ -285,15 +285,14 @@ public final class BrowserMcpTools {
 
     private static McpToolContribution search(McpToolHandler handler) {
         return McpToolContribution.of(SEARCH,
-                "Search the web with the search engines of this chat's browser and return the hits: id: title — "
-                        + "address, then the snippet. The tab shows the result page afterwards. Open hits with "
+                "Search the web with the search engines of this chat (in a search browser of its own; your tabs "
+                        + "stay as they are) and return the hits: id: title — address, then the snippet. Open hits with "
                         + NAVIGATE + " or several at once with " + OPEN_MANY + ". For a search inside one website "
                         + "use that site's own search field (" + CONTROLS + ", " + ACT + ").",
                 handler,
                 McpToolParameter.string(PARAM_QUERY, true, "The search terms."),
                 McpToolParameter.stringArray(PARAM_ENGINES, false, "Search engine ids for this search only; "
-                        + "default the configured engines."),
-                McpToolParameter.string(PARAM_TAB, false, "Tab id; default the current tab."));
+                        + "default the configured engines."));
     }
 
     static McpToolResult search(ChatBrowser browser, WebExplorationRun run, McpToolCall call) {
@@ -303,8 +302,7 @@ public final class BrowserMcpTools {
         }
         List<String> engines = call.getStrings(PARAM_ENGINES);
         try {
-            String hits = browser.search(blankToNull(call.getString(PARAM_TAB)), query,
-                    engines == null || engines.isEmpty() ? null : engines);
+            String hits = browser.search(query, engines == null || engines.isEmpty() ? null : engines);
             run.acted("Websuche: " + query);
             return McpToolResult.ok(hits);
         } catch (BrowserException e) {

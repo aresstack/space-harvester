@@ -358,6 +358,37 @@ public final class UpdatePodcasts {
         production.parallel(texts, pictures);
     }
 
+    /**
+     * Löscht den Podcast einer Zusammenfassung (ADR 0047: lokales Artefakt, nur dieses eine): Plan, Texte, Audio und
+     * Bilder fallen weg, die Zusammenfassung bleibt. Beobachter erfahren es über {@link #subscribe}; danach entsteht
+     * nichts von selbst neu. Solange ein Auftrag dieses Podcasts nicht geendet hat, geht das nicht ({@link #deletable}).
+     *
+     * @return ob ein Podcast abgelegt war
+     * @throws IllegalStateException während der Podcast entsteht
+     */
+    public boolean delete(UpdateSummary summary) {
+        return delete(jobs, store, production, starting, key(Objects.requireNonNull(summary, "summary")));
+    }
+
+    /** Ob {@link #delete} jetzt geht: kein Auftrag dieses Podcasts, der noch nicht geendet hat. */
+    public boolean deletable(UpdateSummary summary) {
+        return !unfinished(jobs, key(Objects.requireNonNull(summary, "summary")));
+    }
+
+    /** Löscht die Ablage eines Podcasts und meldet es; gemeinsam für Zusammenfassungs- und Seiten-Podcasts. */
+    static boolean delete(Jobs jobs, PodcastStore store, PodcastProduction production, Object starting, String key) {
+        boolean removed;
+        synchronized (starting) {
+            if (unfinished(jobs, key)) {
+                throw new IllegalStateException("Der Podcast entsteht gerade; löschen geht, sobald er fertig ist oder "
+                        + "abgebrochen wurde");
+            }
+            removed = store.delete(meta -> meta.key().equals(key)) > 0;
+        }
+        production.notify(key);
+        return removed;
+    }
+
     /** Meldet jede abgelegte Stufe dieses Podcasts. */
     public Subscription subscribe(String key, Runnable listener) {
         return production.subscribe(key, listener);
@@ -392,10 +423,14 @@ public final class UpdatePodcasts {
         return open(jobs, key);
     }
 
-    /** Ob ein Auftrag dieses Podcasts noch nicht geendet hat, auch einer, dessen Abbruch erst angefordert ist. */
+    /**
+     * Ob ein Auftrag dieses Podcasts noch nicht geendet hat, auch einer, dessen Abbruch erst angefordert ist, oder einer,
+     * dessen abgekoppelte Arbeit nach dem Abbruch noch läuft und noch ablegen könnte ({@link Jobs#lingering}).
+     */
     static boolean unfinished(Jobs jobs, String key) {
         for (JobStatus status : jobs.listAll(JobType.UPDATE_PODCAST)) {
-            if (!status.state().terminal() && key.equals(status.parameters().get(PODCAST_PARAMETER))) {
+            if (key.equals(status.parameters().get(PODCAST_PARAMETER))
+                    && (!status.state().terminal() || jobs.lingering(status.id()))) {
                 return true;
             }
         }

@@ -88,6 +88,10 @@ import java.util.Set;
  *                                  {@code null} heißt überall die Vorgabe
  * @param speech                    Sprachausgabe: Modell und Stimmen des Podcasts und, getrennt davon, des Vorlesens
  *                                  (Chat, Leseansicht); {@code null} heißt überall die automatische Wahl
+ * @param sourceCodeUse             Zeile „Quellcode“ (Angelo 28.11.2026): Modell, Tokenlänge und Nachdenken der
+ *                                  Quellcode-Analysen (Beschreibung der Diagramme von Natural, COBOL, JCL);
+ *                                  {@code null} heißt: die Zeile des Text-Modells (Chat) vollständig
+ *                                  ({@link #sourceCodeUse(ModelUse)})
  */
 public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
                                 Integer embeddingDimensions, Duration timeout, String trustBundle,
@@ -98,7 +102,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                                 String imageModel, Integer imageMaxTokens, String visionThinking,
                                 String imageThinking, ModelUse summaryUse, ModelUse podcastUse,
                                 ModelUse summaryPlanUse, ModelUse imagePlanUse,
-                                ModelUse deadlineUse, Speech speech, Diagnosis diagnosis, Timeouts timeouts) {
+                                ModelUse deadlineUse, Speech speech, Diagnosis diagnosis, Timeouts timeouts,
+                                ModelUse sourceCodeUse) {
 
     /** Präfix der Properties im Server und in der Konfigurationsdatei der App. */
     public static final String PREFIX = "space-harvester.ai.";
@@ -141,6 +146,9 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     public static final String DEADLINE_MODEL = "deadline-model";
     public static final String DEADLINE_MAX_TOKENS = "deadline-max-tokens";
     public static final String DEADLINE_THINKING = "deadline-thinking";
+    public static final String SOURCE_CODE_MODEL = "source-code-model";
+    public static final String SOURCE_CODE_MAX_TOKENS = "source-code-max-tokens";
+    public static final String SOURCE_CODE_THINKING = "source-code-thinking";
     public static final String DIAGNOSIS_MODEL = "diagnosis-model";
     public static final String DIAGNOSIS_MAX_TOKENS = "diagnosis-max-tokens";
     public static final String DIAGNOSIS_THINKING = "diagnosis-thinking";
@@ -222,6 +230,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     /** Tokenlänge der Fristenextraktion (ADR 0035): JSON mit Zitaten je Sachverhalt; Nachdenken standardmäßig aus. */
     public static final int DEFAULT_DEADLINE_MAX_TOKENS = 8192;
     public static final String DEFAULT_DEADLINE_THINKING = "none";
+    /** Tokenlänge der Quellcode-Analysen: kurze Beschreibungen je Block, Verzweigung oder Aufruf. */
+    public static final int DEFAULT_SOURCE_CODE_MAX_TOKENS = DEFAULT_CHAT_MAX_TOKENS;
     /** Vorbelegung des Modells der Diagnose (Angelo 26.11.2026: „vorbelegen, GPT OSS“); änderbar. */
     public static final String DEFAULT_DIAGNOSIS_MODEL = "gpt-oss-120b";
 
@@ -573,6 +583,24 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         speech = speech == null ? new Speech(null, null, null, null, null, null, null, null, null, null) : speech;
         diagnosis = diagnosis == null ? Diagnosis.DEFAULT : diagnosis;
         timeouts = timeouts == null ? Timeouts.DEFAULT : timeouts;
+        sourceCodeUse = sourceCodeUse == null ? ModelUse.DEFAULT : sourceCodeUse;
+    }
+
+    /** Ohne eigene Zeile „Quellcode“: es gilt das Chat-Modell. */
+    public AiServiceSettings(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
+                             Integer embeddingDimensions, Duration timeout, String trustBundle,
+                             Set<String> externalProcessingSources, String rerankModel, String visionModel,
+                             Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                             Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking,
+                             Integer parallel, Integer visionMaxTokens, String imageModel, Integer imageMaxTokens,
+                             String visionThinking, String imageThinking, ModelUse summaryUse, ModelUse podcastUse,
+                             ModelUse summaryPlanUse, ModelUse imagePlanUse, ModelUse deadlineUse, Speech speech,
+                             Diagnosis diagnosis, Timeouts timeouts) {
+        this(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens,
+                loadTimeout, retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel,
+                imageMaxTokens, visionThinking, imageThinking, summaryUse, podcastUse, summaryPlanUse, imagePlanUse,
+                deadlineUse, speech, diagnosis, timeouts, null);
     }
 
     /** Ohne eigene Zeile der Diagnose: es gilt {@link #DEFAULT_DIAGNOSIS_MODEL}. */
@@ -882,7 +910,8 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 new Diagnosis(flag(properties, DIAGNOSIS_ENABLED),
                         use(properties, DIAGNOSIS_MODEL, DIAGNOSIS_MAX_TOKENS, DIAGNOSIS_THINKING)),
                 new Timeouts(taskTimeout(properties, SUMMARY_TIMEOUT), taskTimeout(properties, LABEL_TIMEOUT),
-                        taskTimeout(properties, EXPANSION_TIMEOUT)));
+                        taskTimeout(properties, EXPANSION_TIMEOUT)),
+                use(properties, SOURCE_CODE_MODEL, SOURCE_CODE_MAX_TOKENS, SOURCE_CODE_THINKING));
     }
 
     /** Dieselben Einstellungen für eine andere Art von Dienst. */
@@ -891,7 +920,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit anderer Kontextlänge bei Ollama; {@code null} heißt Standard. */
@@ -900,7 +929,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit anderer Ladefrist bei Ollama; {@code null} heißt Standard. */
@@ -910,7 +939,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit anderer Zahl an Wiederholungen; {@code null} heißt Standard. */
@@ -920,7 +949,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit anderer Zahl gleichzeitiger Anfragen; {@code null} heißt Standard. */
@@ -930,7 +959,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit anderem Nachdenken bei Analyseschritten; {@code null} heißt Standard. */
@@ -940,7 +969,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit anderem Abstand der Frage nach dem Laden; {@code null} heißt Standard. */
@@ -950,7 +979,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /**
@@ -1018,7 +1047,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit anderem Embedding-Modell und anderer Dimension. */
@@ -1027,7 +1056,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit anderem Rerank-Modell (#181). */
@@ -1036,7 +1065,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, model, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit anderem Vision-Modell (ADR 0021). */
@@ -1045,7 +1074,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, model, chatMaxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit anderem Ausgabelimit des Chat-Modells; {@code null} heißt Standard. */
@@ -1054,7 +1083,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, maxTokens, provider, contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel,
                 visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit anderem Ausgabelimit des Vision-Modells; {@code null} heißt Standard. */
@@ -1063,7 +1092,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, maxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /**
@@ -1075,7 +1104,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, model, maxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /**
@@ -1087,7 +1116,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens, vision,
                 image, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /**
@@ -1110,7 +1139,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, limit, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, level, parallel, visionMaxTokens, imageModel, imageMaxTokens, visionThinking,
                 imageThinking, summaryUse, podcastUse, summaryPlanUse,
-                imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /**
@@ -1135,7 +1164,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
-                visionThinking, imageThinking, summary, podcast, summaryPlanUse, imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                visionThinking, imageThinking, summary, podcast, summaryPlanUse, imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /**
@@ -1154,7 +1183,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
-                visionThinking, imageThinking, summaryUse, podcastUse, summaryPlanUse, plan, deadlineUse, speech, diagnosis, timeouts);
+                visionThinking, imageThinking, summaryUse, podcastUse, summaryPlanUse, plan, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /**
@@ -1176,7 +1205,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
                 visionThinking, imageThinking, summaryUse, podcastUse, summaryPlanUse, imagePlanUse, deadlineUse,
-                speech, diagnosis, timeouts);
+                speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit eigener Zeile der Fristenextraktion; {@code null} heißt Standard. */
@@ -1184,7 +1213,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
-                visionThinking, imageThinking, summaryUse, podcastUse, summaryPlanUse, imagePlanUse, use, speech, diagnosis, timeouts);
+                visionThinking, imageThinking, summaryUse, podcastUse, summaryPlanUse, imagePlanUse, use, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /**
@@ -1198,13 +1227,47 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 : deadlineUse.thinking());
     }
 
+    /** Dieselben Einstellungen mit eigener Zeile „Quellcode“; {@code null} heißt Standard. */
+    public AiServiceSettings withSourceCode(ModelUse use) {
+        return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
+                retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
+                visionThinking, imageThinking, summaryUse, podcastUse, summaryPlanUse, imagePlanUse, deadlineUse, speech,
+                diagnosis, timeouts, use);
+    }
+
+    /**
+     * Die Einstellungen der Quellcode-Analysen als Chat (Zeile „Quellcode“), siehe {@link #sourceCodeUse(ModelUse)}.
+     * Derselbe Weg wie jede Modellzeile des Chats ({@link #forChat(String, Integer, String)}): „aus“ schickt bei einem
+     * OpenAI-kompatiblen Dienst kein {@code reasoning_effort}, bei Ollama {@code think: false}.
+     */
+    public AiServiceSettings sourceCode() {
+        ModelUse use = sourceCodeUse(sourceCodeUse);
+        return forChat(use.model(), use.maxTokens(), use.thinking());
+    }
+
+    /**
+     * Die wirksame Zeile „Quellcode“ (Angelo 28.11.2026): Ist ein eigenes Modell gesetzt, gilt die Zeile, ohne eigene
+     * Tokenlänge {@value #DEFAULT_SOURCE_CODE_MAX_TOKENS}. Ohne eigenes Modell wird die Zeile des Text-Modells (Chat)
+     * vollständig übernommen: Modell, Tokenlänge und Nachdenken genau wie im Chat; nur was in der Zeile selbst steht,
+     * gilt zusätzlich. Leere Felder bleiben {@code null} und kommen in {@link #forChat(String, Integer, String)} vom
+     * Text-Modell.
+     */
+    public static ModelUse sourceCodeUse(ModelUse row) {
+        if (row == null || row.model() == null || row.model().isBlank()) {
+            return row == null ? ModelUse.DEFAULT : new ModelUse(null, row.maxTokens(), row.thinking());
+        }
+        return new ModelUse(row.model(), row.maxTokens() == null ? DEFAULT_SOURCE_CODE_MAX_TOKENS : row.maxTokens(),
+                row.thinking());
+    }
+
     /** Dieselben Einstellungen mit eigener Zeile der Diagnose; {@code null} heißt Vorbelegung. */
     public AiServiceSettings withDiagnosis(Diagnosis use) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
                 visionThinking, imageThinking, summaryUse, podcastUse, summaryPlanUse, imagePlanUse, deadlineUse, speech,
-                use, timeouts);
+                use, timeouts, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit anderen Fristen der Aufgaben; {@code null} heißt Vorgabe. */
@@ -1213,7 +1276,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
                 visionThinking, imageThinking, summaryUse, podcastUse, summaryPlanUse, imagePlanUse, deadlineUse, speech,
-                diagnosis, own);
+                diagnosis, own, sourceCodeUse);
     }
 
     /** Dieselben Einstellungen mit eigenem Plan der Zusammenfassung; {@code null} heißt Standard. */
@@ -1221,7 +1284,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
                 externalProcessingSources, rerankModel, visionModel, chatMaxTokens, provider, contextTokens, loadTimeout,
                 retries, loadPollInterval, stepThinking, parallel, visionMaxTokens, imageModel, imageMaxTokens,
-                visionThinking, imageThinking, summaryUse, podcastUse, plan, imagePlanUse, deadlineUse, speech, diagnosis, timeouts);
+                visionThinking, imageThinking, summaryUse, podcastUse, plan, imagePlanUse, deadlineUse, speech, diagnosis, timeouts, sourceCodeUse);
     }
 
     /**
@@ -1279,6 +1342,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         parts.add("podcastUse=" + podcastUse);
         parts.add("summaryPlanUse=" + summaryPlanUse);
         parts.add("imagePlanUse=" + imagePlanUse);
+        parts.add("sourceCodeUse=" + sourceCodeUse);
         parts.add("deadlineUse=" + deadlineUse);
         parts.add("speech=" + speech);
         return "AiServiceSettings[" + String.join(", ", parts) + "]";

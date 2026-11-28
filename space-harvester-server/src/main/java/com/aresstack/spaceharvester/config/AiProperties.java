@@ -66,6 +66,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param summaryTimeout      Frist je Anfrage der Update-Zusammenfassung; leer: 5 Minuten
  * @param labelTimeout        Frist je Anfrage der Abschnittsbenennung; leer: 60 Sekunden
  * @param expansionTimeout    Frist je Anfrage der Akronymauflösung; leer: 90 Sekunden
+ * @param sourceCodeModel     Modell der Quellcode-Analysen (Diagramme); leer: das Chat-Modell
+ * @param sourceCodeMaxTokens Tokenlänge der Quellcode-Analysen; leer: 4096
+ * @param sourceCodeThinking  Nachdenken der Quellcode-Analysen; leer: none
  */
 @ConfigurationProperties("space-harvester.ai")
 public record AiProperties(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
@@ -89,7 +92,8 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                            Integer podcastSpeechWorkers, Integer podcastSectionChars, Integer podcastSections,
                            Boolean diagnosisEnabled, String diagnosisModel,
                            Integer diagnosisMaxTokens, String diagnosisThinking, Duration summaryTimeout,
-                           Duration labelTimeout, Duration expansionTimeout) {
+                           Duration labelTimeout, Duration expansionTimeout, String sourceCodeModel,
+                           Integer sourceCodeMaxTokens, String sourceCodeThinking) {
 
     AiServiceSettings toSettings() {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout,
@@ -106,7 +110,8 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                         podcastSpeechWorkers, podcastSectionChars, podcastSections),
                 new AiServiceSettings.Diagnosis(diagnosisEnabled,
                         new AiServiceSettings.ModelUse(diagnosisModel, diagnosisMaxTokens, diagnosisThinking)),
-                new AiServiceSettings.Timeouts(summaryTimeout, labelTimeout, expansionTimeout));
+                new AiServiceSettings.Timeouts(summaryTimeout, labelTimeout, expansionTimeout),
+                new AiServiceSettings.ModelUse(sourceCodeModel, sourceCodeMaxTokens, sourceCodeThinking));
     }
 
     /** Ohne API-Key. */

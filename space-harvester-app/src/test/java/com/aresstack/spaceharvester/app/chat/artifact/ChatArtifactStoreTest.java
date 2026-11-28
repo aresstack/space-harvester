@@ -80,6 +80,226 @@ class ChatArtifactStoreTest {
     }
 
     @Test
+    void anArtifactWrittenBeforeChatAndEditionExistedStaysReadableAndMovesOver() throws Exception {
+        // Dateien von vor #1675 haben weder „chatId“ noch „edition“; sie müssen in Liste, Verweis und Umzug erscheinen.
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        Path project = home.resolve("projekte").resolve("standard").resolve("artefakte");
+        ChatRecord chat = chat(chats);
+        Path old = chats.artifacts(folder, chat.id());
+        Files.createDirectories(old);
+        Files.writeString(old.resolve("D3" + ChatArtifactStore.SUFFIX), "{\"id\":\"D3\",\"kind\":\"DOCUMENT\","
+                + "\"title\":\"Flyer\",\"createdAt\":1000,\"revisions\":[{\"number\":1,\"parent\":0,\"at\":1000,"
+                + "\"origin\":\"AI\",\"note\":\"angelegt\",\"changed\":[\"a1\"],\"document\":{\"sections\":[{\"id\":"
+                + "\"a1\",\"level\":1,\"heading\":\"Flyer\",\"text\":\"Text\"}],\"nextId\":2},\"svg\":\"\"}]}");
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.projects(id -> project);
+
+        assertThat(store.adoptAll()).isEqualTo(1);
+        assertThat(store.listInProject(null)).extracting(ChatArtifact::id, ChatArtifact::title)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("D1", "Flyer"));
+        assertThat(store.read(folder, chat.id(), "D1").current().edition()).isZero();
+    }
+
+    @Test
+    void theStandardProjectOwnsItsArtifactsAndOldOnesMoveOverOnce() throws Exception {
+        // ADR 0047: das Projekt besitzt immer, auch „AresStack“; ein neuer Chat sieht die Artefakte älterer Chats.
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        ChatRecord old = chat(chats);
+        ChatRecord other = ChatRecord.fresh(2_000).plus(ChatRecord.Message.user("Noch was", 2_000), 2_000);
+        chats.save(node, other);
+        // Ablage wie vor ADR 0047: jeder Chat des Standardprojekts besitzt seine Artefakte selbst.
+        ChatArtifactStore before = new ChatArtifactStore(chats);
+        ChatArtifact graphic = before.createGraphic(folder, old.id(), "Beet", "<svg/>", ChatArtifact.Origin.AI);
+        before.createDocument(folder, old.id(), "Gartenfibel", "# Gartenfibel\n\n"
+                + GraphicReferences.reference(graphic), ChatArtifact.Origin.AI);
+        before.rememberTabs(folder, old.id(), List.of("D1"));
+        before.createDocument(folder, other.id(), "Brief", "# Brief\n\nHallo.", ChatArtifact.Origin.AI);
+        chats.save(folder, old.plus(ChatRecord.Message.assistant("Fertig: [Gartenfibel](artefakt:D1)", false, 3_000),
+                3_000));
+
+        Path standard = home.resolve("projekte").resolve("standard").resolve("artefakte");
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.projects(id -> "standard".equals(id) ? standard : null);
+        assertThat(store.owner(folder, old.id())).isEqualTo(standard).isEqualTo(store.owner(folder, other.id()));
+
+        assertThat(store.adoptAll()).isEqualTo(3);
+        assertThat(store.adoptAll()).as("einmalig: danach liegt nichts mehr beim Chat").isZero();
+        ChatRecord fresh = ChatRecord.fresh(4_000);
+        assertThat(store.list(folder, fresh.id())).as("ein neuer Chat sieht alles").extracting(ChatArtifact::title)
+                .containsExactlyInAnyOrder("Beet", "Gartenfibel", "Brief");
+        ChatArtifact fibel = store.list(folder, fresh.id()).stream()
+                .filter(artifact -> artifact.title().equals("Gartenfibel")).findFirst().orElseThrow();
+        ChatArtifact beet = store.list(folder, fresh.id()).stream()
+                .filter(artifact -> artifact.title().equals("Beet")).findFirst().orElseThrow();
+        assertThat(GraphicReferences.ids(fibel.content())).as("der Verweis bleibt gültig").containsExactly(beet.id());
+        assertThat(store.openTabs(folder, old.id())).containsExactly(fibel.id());
+        assertThat(chats.load(folder, old.id()).messages().get(1).text())
+                .as("der Verlauf folgt den neuen Kennungen").contains("artefakt:" + fibel.id());
+        assertThat(ChatArtifactStore.listIn(chats.artifacts(folder, old.id()))).isEmpty();
+    }
+
+    @Test
+    void theMoveWaitsForTheDataFolderAndAnOpenedOldChatFollows() {
+        // Die Einstellungen kommen nach dem Fenster: ohne Datenordner zieht nichts um, und es wird später nachgeholt.
+        java.util.concurrent.atomic.AtomicReference<Path> root = new java.util.concurrent.atomic.AtomicReference<>();
+        ChatStore unset = new ChatStore(root::get);
+        ChatArtifactStore early = new ChatArtifactStore(unset);
+        assertThat(early.adoptOnce()).isEmpty();
+
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        ChatRecord old = chat(chats);
+        new ChatArtifactStore(chats).createDocument(folder, old.id(), "Plan", "# Plan\n\nSäen.",
+                ChatArtifact.Origin.AI);
+        root.set(home.resolve("chats"));
+        Path standard = home.resolve("projekte").resolve("standard").resolve("artefakte");
+        early.projects(id -> "standard".equals(id) ? standard : null);
+        assertThat(early.adoptOnce()).as("jetzt mit Datenordner, je Chat die neuen Kennungen")
+                .containsOnlyKeys(old.id());
+        assertThat(early.adoptOnce()).as("einmal je Datenordner").isEmpty();
+        assertThat(ChatArtifactStore.listIn(standard)).extracting(ChatArtifact::title).containsExactly("Plan");
+
+        // Ein Chat ohne Projektangabe (Standardprojekt) zieht beim Öffnen ebenfalls ins Standardprojekt.
+        ChatRecord later = chat(chats);
+        new ChatArtifactStore(chats).createDocument(folder, later.id(), "Brief", "", ChatArtifact.Origin.AI);
+        assertThat(early.moveToProject(folder, later.id(), null)).containsOnlyKeys("D1");
+        assertThat(ChatArtifactStore.listIn(standard)).hasSize(2);
+    }
+
+    @Test
+    void anArtifactKnowsItsChatAndMovesWithItWhileOthersStay() {
+        // ADR 0047: das Projekt besitzt; wechselt ein Chat das Projekt, ziehen nur die von ihm erzeugten Artefakte mit.
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        Path standard = home.resolve("projekte").resolve("standard").resolve("artefakte");
+        Path p1 = home.resolve("projekte").resolve("p1").resolve("artefakte");
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.projects(id -> "p1".equals(id) ? p1 : "standard".equals(id) ? standard : null);
+        ChatRecord moving = chat(chats);
+        ChatRecord staying = ChatRecord.fresh(2_000).plus(ChatRecord.Message.user("Bleib", 2_000), 2_000);
+        chats.save(node, staying);
+        store.chatProject(moving.id(), null);
+        store.chatProject(staying.id(), null);
+        ChatArtifact mine = store.createDocument(folder, moving.id(), "Meins", "# Meins", ChatArtifact.Origin.AI);
+        store.createDocument(folder, staying.id(), "Deins", "# Deins", ChatArtifact.Origin.AI);
+        assertThat(mine.chatId()).isEqualTo(moving.id());
+
+        List<ChatArtifactStore.Event> events = new ArrayList<>();
+        store.addListener(events::add);
+        java.util.Map<String, String> renamed = store.moveToProject(folder, moving.id(), "p1");
+        assertThat(renamed).containsOnly(java.util.Map.entry("D1", "D1"));
+        // Beide Besitzer erfahren es: fort im alten Projekt, neu im neuen (etwa die Liste „Artefakte“ links).
+        assertThat(events).extracting(ChatArtifactStore.Event::owner, ChatArtifactStore.Event::deleted)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(standard, true),
+                        org.assertj.core.groups.Tuple.tuple(p1, false));
+        // Ein neuer, noch nicht gespeicherter Chat ohne Artefakte bleibt trotzdem im gewählten Projekt.
+        store.moveToProject(folder, "neu", "p1");
+        assertThat(store.owner(folder, "neu")).isEqualTo(p1);
+        assertThat(ChatArtifactStore.listIn(p1)).extracting(ChatArtifact::title).containsExactly("Meins");
+        assertThat(ChatArtifactStore.listIn(standard)).extracting(ChatArtifact::title).containsExactly("Deins");
+    }
+
+    @Test
+    void aJustDeletedArtifactStaysInTheTrashAndItsIdIsNeverGivenAgain() {
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        ChatRecord chat = chat(chats);
+        store.createDocument(folder, chat.id(), "Notiz", "# Notiz", ChatArtifact.Origin.AI);
+        store.createDocument(folder, chat.id(), "Brief", "# Brief", ChatArtifact.Origin.AI);
+        // Ohne vorheriges Auflisten gelöscht: der Papierkorb des letzten Laufs nimmt es nicht mit.
+        assertThat(store.delete(folder, chat.id(), "D2").success()).isTrue();
+        assertThat(store.deleted(folder, chat.id())).extracting(ChatArtifact::id).containsExactly("D2");
+
+        // Nach dem Neustart ist es endgültig weg, seine Kennung bleibt vergeben.
+        ChatArtifactStore.newRun();
+        assertThat(store.list(folder, chat.id())).extracting(ChatArtifact::id).containsExactly("D1");
+        assertThat(store.deleted(folder, chat.id())).isEmpty();
+        assertThat(store.createDocument(folder, chat.id(), "Neu", "", ChatArtifact.Origin.AI).id()).isEqualTo("D3");
+    }
+
+    @Test
+    void anEmbeddedGraphicOfAnotherChatIsCopiedAlongAndAFailedMoveCanBeRetried() throws Exception {
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        Path standard = home.resolve("projekte").resolve("standard").resolve("artefakte");
+        Path p1 = home.resolve("projekte").resolve("p1").resolve("artefakte");
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.projects(id -> "p1".equals(id) ? p1 : "standard".equals(id) ? standard : null);
+        ChatRecord moving = chat(chats);
+        ChatRecord drawing = ChatRecord.fresh(2_000).plus(ChatRecord.Message.user("Mal", 2_000), 2_000);
+        chats.save(node, drawing);
+        store.chatProject(moving.id(), null);
+        store.chatProject(drawing.id(), null);
+        // Erfunden: Chat B zeichnet den Grundriss, Chat A bettet ihn in seinen Bericht ein.
+        store.createDocument(folder, drawing.id(), "Platzhalter", "# Platz", ChatArtifact.Origin.AI);
+        ChatArtifact plan = store.createGraphic(folder, drawing.id(), "Grundriss",
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"4\" height=\"2\"/></svg>",
+                ChatArtifact.Origin.AI);
+        store.createDocument(folder, moving.id(), "Bericht", "# Bericht\n\n![Grundriss](artefakt:" + plan.id()
+                + ")", ChatArtifact.Origin.AI);
+
+        // Das Ziel ist nicht beschreibbar: nichts zieht um, und der Chat bleibt beim bisherigen Besitzer.
+        java.nio.file.Files.createDirectories(p1.getParent());
+        java.nio.file.Files.writeString(p1, "keine Ablage");
+        assertThat(store.moveToProject(folder, moving.id(), "p1")).isEmpty();
+        assertThat(store.owner(folder, moving.id())).isEqualTo(standard);
+
+        // Neuer Versuch, nun beschreibbar: das Dokument zieht um, die Grafik kommt als Kopie mit.
+        java.nio.file.Files.delete(p1);
+        store.moveToProject(folder, moving.id(), "p1");
+        List<ChatArtifact> moved = ChatArtifactStore.listIn(p1);
+        assertThat(moved).extracting(ChatArtifact::title).containsExactlyInAnyOrder("Bericht", "Grundriss");
+        ChatArtifact report = moved.stream().filter(a -> a.title().equals("Bericht")).findFirst().orElseThrow();
+        ChatArtifact copy = moved.stream().filter(a -> a.title().equals("Grundriss")).findFirst().orElseThrow();
+        assertThat(report.content()).contains("artefakt:" + copy.id());
+        assertThat(ChatArtifactStore.listIn(standard)).extracting(ChatArtifact::title)
+                .as("das Original bleibt bei seinem Chat").containsExactlyInAnyOrder("Platzhalter", "Grundriss");
+    }
+
+    @Test
+    void aBookIsADocumentOfTheProjectAndEveryEditionStaysReadable() {
+        // ADR 0047 (Angelo 27.11.): ein Buch je Ordner, Kennung B…, ohne Chat; jede Auflage bleibt ansehbar.
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        Path standard = home.resolve("projekte").resolve("standard").resolve("artefakte");
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.projects(id -> "standard".equals(id) ? standard : null);
+        List<ChatArtifactStore.Event> events = new ArrayList<>();
+        store.addListener(events::add);
+
+        ChatArtifact book = store.createBook(null, "Garten", "# Boden\n\nLocker.");
+        assertThat(book.id()).isEqualTo("B1");
+        assertThat(book.chatId()).isNull();
+        assertThat(events.get(0).owner()).isEqualTo(standard);
+        ChatRecord chat = chat(chats);
+        assertThat(store.list(folder, chat.id())).as("jeder Chat des Projekts sieht es").extracting(ChatArtifact::id)
+                .containsExactly("B1");
+        // Nachbearbeitung im Chat gehört zur ersten Auflage.
+        String section = book.document().sections().get(0).id();
+        store.edit(folder, chat.id(), "B1", ChatArtifactStore.ANY, ChatArtifact.Origin.AI, "nachgebessert",
+                document -> document.replaceText(section, "Locker und humos."));
+        ChatArtifactStore.WriteResult edition = store.newEdition(null, "b1", "# Boden\n\nTief lockern.",
+                "Neue Auflage");
+        assertThat(edition.success()).as(edition.reason()).isTrue();
+        ChatArtifact now = store.readInProject(null, "B1");
+        assertThat(now.content()).contains("Tief lockern.");
+        assertThat(store.list(folder, chat.id())).as("ein Artefakt, kein zweites").hasSize(1);
+        assertThat(now.editions()).extracting(ChatArtifact.Edition::number, ChatArtifact.Edition::current)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(1, false),
+                        org.assertj.core.groups.Tuple.tuple(2, true));
+        assertThat(now.edition(1).document().markdown()).as("die erste Auflage samt Nachbearbeitung")
+                .contains("Locker und humos.");
+        assertThat(now.undoable()).as("Rückgängig führt nicht in die alte Auflage").isFalse();
+        // Kennungen werden auch über Auflagen nie wieder vergeben: der alte Abschnitt trifft keinen neuen.
+        assertThat(now.document().sections()).extracting(SectionDocument.Section::id).doesNotContain(section);
+        assertThat(store.edit(folder, chat.id(), "B1", ChatArtifactStore.ANY, ChatArtifact.Origin.AI, "alt",
+                document -> document.replaceText(section, "Falsch.")).success()).isFalse();
+    }
+
+    @Test
     void documentsAreKeptWithAllRevisionsAndListedInCreationOrder() {
         ChatStore chats = chats();
         ChatRecord chat = chat(chats);

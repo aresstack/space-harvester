@@ -90,7 +90,7 @@ import java.util.function.Supplier;
 final class StandingTab extends JPanel {
 
     /** Die Begriffe der Auswahl, vorn in derselben Reiterzeile wie auf der Seite (BG2a, AT 17.11.2026). */
-    static final String TERMS = "Begriffe";
+    static final String TERMS = "Statistik";
     static final String GLOSSARY = "Fachglossar";
     static final String GRAPH = "Graph";
     static final String STATEMENTS = "Aussagen";
@@ -111,6 +111,21 @@ final class StandingTab extends JPanel {
     static final String CLEAR_QUESTION = "Wirklich die Entscheidung von Hand löschen? Danach gilt wieder der "
             + "berechnete Stand.";
     static final String NO_STATEMENTS = "Keine analysierten Aussagen in der Auswahl";
+    /**
+     * Wie die Analyse startet, als zweiter Satz in der leeren Liste (Angelo 27.11.2026: „ich weiß nicht, wie ich die
+     * Analyse starte“): Der Eintrag steht im Rechtsklick-Menü des Baums, von hier aus war er nicht zu finden.
+     */
+    static final String HOW_TO_ANALYZE = "Die Analyse startet per Rechtsklick auf die Auswahl im Baum links, "
+            + "Eintrag „Analysieren“.";
+    /**
+     * Der Knopf mitten in der leeren Fläche (Angelo 28.11.2026): Wo ein Reiter die Aussagenanalyse braucht und die
+     * Auswahl noch keine hat, steht er dort, damit niemand ratlos vor der leeren Seite steht.
+     */
+    static final String ANALYZE_NOW = "Jetzt analysieren";
+    static final String ANALYZE_NOW_TIP = "Aussagen der Auswahl links analysieren; vor dem Start nennt eine Rückfrage "
+            + "den Umfang";
+    /** Die Reiter, die ohne Aussagenanalyse leer bleiben. */
+    static final java.util.Set<String> NEEDS_ANALYSIS = java.util.Set.of(STATEMENTS, READING, CONFLICTS);
     static final String NO_MATCH = "Keine Treffer";
     static final String STALE_WORD = "veraltet";
     static final String DELETE_ANALYSES_TITLE = "Aussagen-Analysen löschen?";
@@ -349,6 +364,8 @@ final class StandingTab extends JPanel {
     private final JTextField search = new JTextField(9);
     private final DefaultListModel<Row> model = new DefaultListModel<>();
     private final PlaceholderList<Row> list = new PlaceholderList<>(model);
+    private com.aresstack.spaceharvester.app.ui.controls.CenterOffer analyzeOffer;
+    private Runnable onAnalyze = () -> { };
     private final JScrollPane scroll;
     private final DefaultListModel<Row> conflictModel = new DefaultListModel<>();
     private final PlaceholderList<Row> conflictList = new PlaceholderList<>(conflictModel);
@@ -544,6 +561,7 @@ final class StandingTab extends JPanel {
             foreignTools.forEach((tab, tools) -> tools.forEach(tool -> tool.setVisible(tab.equals(name))));
             popup.setVisible(false);
             reading.shown(shown && READING.equals(name));
+            offerAnalysis();
             tellForeign(name);
             if (foreign.containsKey(name)) {
                 onStatus.accept(" ");
@@ -556,7 +574,27 @@ final class StandingTab extends JPanel {
                 status();
             }
         });
-        add(tabs, BorderLayout.CENTER);
+        analyzeOffer = new com.aresstack.spaceharvester.app.ui.controls.CenterOffer(tabs, ANALYZE_NOW,
+                ANALYZE_NOW_TIP).onAccept(() -> onAnalyze.run());
+        add(analyzeOffer, BorderLayout.CENTER);
+    }
+
+    /** Was „Jetzt analysieren“ tut: derselbe Ablauf wie „Analysieren“ im Baum, für die Auswahl links. */
+    void onAnalyze(Runnable action) {
+        onAnalyze = Objects.requireNonNull(action, "action");
+    }
+
+    /** Das Angebot steht nur, wenn der gewählte Reiter die Analyse braucht und die gelesene Auswahl keine hat. */
+    private void offerAnalysis() {
+        if (analyzeOffer != null) {
+            analyzeOffer.offer(view != null && view.entries().isEmpty()
+                    && NEEDS_ANALYSIS.contains(tabs.selected()));
+        }
+    }
+
+    /** Für Tests: das Angebot in der Mitte. */
+    com.aresstack.spaceharvester.app.ui.controls.CenterOffer analyzeOffer() {
+        return analyzeOffer;
     }
 
     /**
@@ -623,6 +661,7 @@ final class StandingTab extends JPanel {
             generation++;
             view = null;
             busy.setBusy(false);
+            offerAnalysis();
             show(List.of());
             counts(null);
             onStatus.accept(" ");
@@ -677,6 +716,7 @@ final class StandingTab extends JPanel {
         ExportPanel.Selection chosen = selection;
         Filter filter = filter();
         busy.setBusy(true);
+        analyzeOffer.offer(false);
         runner.run(() -> {
             StatusQuoView read = current.view(chosen, stop::get);
             StatementConflicts found = StatementConflicts.of(read);
@@ -698,6 +738,7 @@ final class StandingTab extends JPanel {
             conflictLabel();
             fetchSentences(conflictList, conflictModel);
             status();
+            offerAnalysis();
         }, failure -> {
             if (request != generation) {
                 return;
@@ -895,7 +936,8 @@ final class StandingTab extends JPanel {
         boolean staleShown = staleChip.isSelected();
         int all = view.entries().size() - (staleShown ? 0 : stale);
         int pages = view.pages().size();
-        list.placeholder(empty(view.entries().size(), stale, staleShown));
+        list.placeholder(view.entries().isEmpty() ? NO_STATEMENTS + ". " + HOW_TO_ANALYZE
+                : empty(view.entries().size(), stale, staleShown));
         String text = all == 0 ? empty(view.entries().size(), stale, staleShown)
                 : (shownLines == all ? Texts.count(all, "Aussage", "Aussagen")
                 : shownLines + " von " + Texts.count(all, "Aussage", "Aussagen"))
@@ -1104,7 +1146,15 @@ final class StandingTab extends JPanel {
         javax.swing.AbstractButton pill = tabs.button(CONFLICTS);
         pill.setText(found == 0 ? CONFLICTS : CONFLICTS + " · " + found);
         pill.revalidate();
+        onConflicts.accept(found);
     }
+
+    /** Bekommt die Zahl der möglichen Widersprüche, etwa für die Marke am Reiter der gemeinsamen Reiterzeile. */
+    void onConflicts(java.util.function.IntConsumer listener) {
+        onConflicts = Objects.requireNonNull(listener, "listener");
+    }
+
+    private java.util.function.IntConsumer onConflicts = found -> { };
 
     private Point clamp(Point position) {
         int max = Math.max(0, list.getPreferredSize().height - scroll.getViewport().getExtentSize().height);

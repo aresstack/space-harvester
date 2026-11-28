@@ -63,9 +63,11 @@ public final class AppContext {
         /**
          * Ob der Bereich einen eigenen Knopf in der Icon-Leiste hat. Inhalte hat keinen: Die Reiter der Seitenansicht
          * (Leseansicht, Text, …) stehen selbst in der Leiste und schalten die Mitte um; Status führt zur Diagnose.
+         * Die Suche hat auch keinen (Angelo, 27.11.2026): Sie ist die Mitte, solange kein Knopf gewählt ist; ein zweiter
+         * Klick auf den gewählten Knopf oder Enter im Suchfeld führt dorthin.
          */
         public boolean button() {
-            return toolbar() && this != CONTENT;
+            return toolbar() && this != CONTENT && this != SEARCH && this != ACTIVITIES;
         }
 
         /**
@@ -132,6 +134,22 @@ public final class AppContext {
          * eigene Umsetzung nichts.
          */
         default void newBookEdition(String folderId) {
+        }
+
+        /**
+         * Öffnet ein globales Artefakt eines Projekts in der Mitte (ADR 0047 §5), etwa das Buch eines Ordners; ohne
+         * eigene Umsetzung nichts.
+         */
+        default void openArtifact(String projectId, String artifactId) {
+        }
+
+        /** Ob {@link #openArtifact} etwas öffnet; ohne Ziel zeigt die App „Buch öffnen“ nicht an. */
+        default boolean opensArtifacts() {
+            return false;
+        }
+
+        /** „Buch öffnen“ am Favoritenordner (ADR 0044 Nachtrag N5); ohne eigene Umsetzung nichts. */
+        default void openBook(String folderId) {
         }
 
         /** Zeigt eine Quelle unter Quellen zum Bearbeiten; ohne eigene Umsetzung nur die Quellen. */
@@ -300,11 +318,11 @@ public final class AppContext {
         this.configFile = configFile;
         this.version = version;
         this.vault = vault;
-        // Speichern-Dialoge öffnen im eingestellten Ausgabeordner, Vorgabe Downloads (Angelo 20.11.2026).
-        com.aresstack.spaceharvester.app.ui.controls.SaveChooser.directory(() -> {
-            AppSettings current = settings;
-            return current == null ? null : current.outputDirectory();
-        });
+        // Speichern-Dialoge öffnen im eingestellten Ausgabeordner, Vorgabe Downloads (Angelo 20.11.2026), bzw. im
+        // Projektordner, wenn das aktive Projekt „Alles hier speichern“ hat (Angelo 27.11.2026).
+        com.aresstack.spaceharvester.app.ui.controls.SaveChooser.directory(this::exportDirectory);
+        projects.addListener(() -> SwingUtilities.invokeLater(this::prepareExportDirectory));
+        onChange(ignored -> prepareExportDirectory());
     }
 
     public SecretVault vault() {
@@ -755,6 +773,13 @@ public final class AppContext {
         return aiKey;
     }
 
+    /** Der Datenordner der App (Einstellungen › Speicher), ohne Einstellungen neben der Konfigurationsdatei. */
+    public Path dataDirectory() {
+        AppSettings current = settings();
+        return current == null || current.storage() == null ? configFile.toAbsolutePath().getParent()
+                : current.storage().dataDirectory();
+    }
+
     /**
      * Der Browser der Websuche im Chat (Research4j über Playwright, ADR 0046; Edge, Chrome oder Camoufox nach
      * Einstellungen › Browser), beim ersten Gebrauch angelegt; {@code null}, wenn der gewählte Browser fehlt. Die
@@ -763,10 +788,7 @@ public final class AppContext {
     public synchronized com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser webBrowser() {
         if (!webBrowserLocated) {
             webBrowserLocated = true;
-            AppSettings current = settings();
-            Path data = current == null || current.storage() == null ? configFile.toAbsolutePath().getParent()
-                    : current.storage().dataDirectory();
-            webBrowser = com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser.start(data,
+            webBrowser = com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser.start(dataDirectory(),
                     com.aresstack.spaceharvester.app.chat.browser.BrowserSettings.shared());
         }
         return webBrowser;
@@ -958,6 +980,147 @@ public final class AppContext {
 
     public com.aresstack.spaceharvester.app.project.ProjectStore projects() {
         return projects;
+    }
+
+    /**
+     * Wohin Exporte und Downloads jetzt gehen (Angelo, 27.11.2026): in den Projektordner des aktiven Projekts, wenn
+     * dort „Alles hier speichern“ gesetzt ist (samt Unterordner, still angelegt), sonst und beim Standardprojekt
+     * „AresStack“ in den Ausgabeordner der Einstellungen ({@link AppSettings#outputDirectory()}, Vorgabe Downloads).
+     * {@code null}, solange keine Einstellungen geladen sind.
+     */
+    public Path exportDirectory() {
+        AppSettings current = settings;
+        if (current == null) {
+            return null;
+        }
+        com.aresstack.spaceharvester.app.project.Project active = projects.active();
+        PreparedOutput prepared = preparedOutput;
+        if (prepared == null || prepared.failed() || !prepared.project().equals(active)) {
+            // Selten: noch nicht im Hintergrund vorbereitet (gleich nach dem Start oder einem Wechsel) oder das
+            // Anlegen schlug zuletzt fehl (etwa Netzlaufwerk kurz weg): dann jetzt erneut versuchen.
+            prepared = PreparedOutput.of(active);
+            preparedOutput = prepared;
+            publishExportDirectory(prepared.directory());
+        }
+        return prepared.directory() == null ? current.outputDirectory() : prepared.directory();
+    }
+
+    /**
+     * Meldet, wenn sich der Ordner aus {@link #exportDirectory()} ändert, weil ein anderes Projekt aktiv ist oder sein
+     * Speicherort geändert wurde; auf dem EDT.
+     */
+    public com.aresstack.spaceharvester.application.observe.Subscription onExportDirectoryChange(Runnable listener) {
+        outputListeners.add(listener);
+        return () -> outputListeners.remove(listener);
+    }
+
+    /**
+     * Bereitet den Projektordner im Hintergrund vor (Dateizugriffe, auch auf langsamen Netzlaufwerken, nie auf dem
+     * EDT), sobald Projekt oder Speicherort wechseln, und meldet einen geänderten Ordner.
+     */
+    private void prepareExportDirectory() {
+        if (settings == null) {
+            return;
+        }
+        com.aresstack.spaceharvester.app.project.Project active = projects.active();
+        PreparedOutput known = preparedOutput;
+        if (known != null && !known.failed() && known.project().equals(active)) {
+            return;
+        }
+        Background.run(() -> PreparedOutput.of(active), done -> {
+            preparedOutput = done;
+            publishExportDirectory(done.directory());
+        }, error -> { });
+    }
+
+    /**
+     * Meldet den Beobachtern einen anderen Ordner als zuletzt gemeldet, egal ob er im Hintergrund oder beim ersten
+     * Gebrauch vorbereitet wurde; der erste Stand gilt als Ausgangslage.
+     */
+    private void publishExportDirectory(Path directory) {
+        Path[] before = notifiedDirectory;
+        notifiedDirectory = new Path[] {directory};
+        if (before != null && !java.util.Objects.equals(before[0], directory)) {
+            SwingUtilities.invokeLater(() -> new ArrayList<>(outputListeners).forEach(Runnable::run));
+        }
+    }
+
+    /**
+     * Der vorbereitete Projektordner zum Stand des Projekts.
+     *
+     * @param directory {@code null} = Ausgabeordner der Einstellungen
+     * @param failed    der Projektordner gilt, ließ sich aber nicht anlegen; der nächste Gebrauch versucht es erneut
+     */
+    private record PreparedOutput(com.aresstack.spaceharvester.app.project.Project project, Path directory,
+                                  boolean failed) {
+
+        static PreparedOutput of(com.aresstack.spaceharvester.app.project.Project project) {
+            Path wanted = com.aresstack.spaceharvester.app.project.ProjectOutput.directory(project);
+            Path ready = wanted == null ? null
+                    : com.aresstack.spaceharvester.app.project.ProjectOutput.prepare(project);
+            return new PreparedOutput(project, ready, wanted != null && ready == null);
+        }
+    }
+
+    private volatile PreparedOutput preparedOutput;
+    /** Der zuletzt gemeldete Ordner, in einer Hülle, weil {@code null} (Ausgabeordner) ein gültiger Stand ist. */
+    private volatile Path[] notifiedDirectory;
+    private final List<Runnable> outputListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * Die Bücher der Favoritenordner als Artefakte der Projekte (ADR 0044 Nachtrag, ADR 0047): Ordner zum Artefakt,
+     * Artefakt zum Ordner, „veraltet“. Dieselben Seiten wie „Buch schreiben“ (der Ordner samt Unterordnern), derselbe
+     * Stand wie in der Ablage.
+     */
+    private final com.aresstack.spaceharvester.app.research.BookArtifacts bookArtifacts =
+            new com.aresstack.spaceharvester.app.research.BookArtifacts(
+                    () -> settings() == null || settings().storage() == null ? null
+                            : settings().storage().dataDirectory(),
+                    projectId -> projects().artifacts(projectId),
+                    folderId -> {
+                        java.util.List<com.aresstack.spaceharvester.app.research.BookEditions.Source> pages =
+                                new java.util.ArrayList<>();
+                        for (Favorites.Favorite favorite : favorites().favoritesIn(folderId, true)) {
+                            if (favorite.pageId() != null) {
+                                pages.add(new com.aresstack.spaceharvester.app.research.BookEditions.Source(
+                                        favorite.sourceId(), favorite.pageId(), null));
+                            }
+                        }
+                        return pages;
+                    },
+                    source -> {
+                        AppRuntime current = runtime();
+                        return current == null ? null
+                                : new com.aresstack.spaceharvester.app.research.WorkspacePageStock(
+                                        current.workspace(), null).version(
+                                        new com.aresstack.spaceharvester.application.snapshot.PageKey(
+                                                source.sourceId(), source.pageId()));
+                    }, this::chatArtifacts);
+
+    public com.aresstack.spaceharvester.app.research.BookArtifacts bookArtifacts() {
+        return bookArtifacts;
+    }
+
+    /**
+     * Der eine Artefakt-Speicher der App (ADR 0047): Chat und Buch schreiben über ihn, damit seine Meldungen jede offene
+     * Ansicht erreichen. Artefakte gehören immer dem Projekt, auch dem Standardprojekt.
+     */
+    private volatile com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore chatArtifacts;
+
+    public com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore chatArtifacts() {
+        com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore store = chatArtifacts;
+        if (store == null) {
+            synchronized (this) {
+                store = chatArtifacts;
+                if (store == null) {
+                    store = new com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore(
+                            new com.aresstack.spaceharvester.app.chat.ChatStore(this::chatsDirectory));
+                    store.projects(projects()::artifacts);
+                    chatArtifacts = store;
+                }
+            }
+        }
+        return store;
     }
 
     /** Der Ordner aller Chats im Datenordner der App; {@code null} ohne Einstellungen. */

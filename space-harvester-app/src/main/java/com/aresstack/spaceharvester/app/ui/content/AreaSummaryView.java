@@ -48,8 +48,8 @@ import java.util.function.Supplier;
  * die Podcast-Ansicht einen Erklär-Podcast auf ihrer Grundlage mit eigener Textdarstellung: je Thema die ausführliche
  * Erklärung direkt im Text, gelb, was gerade erzählt wird, die Bilder des Podcasts daneben, nichts in Rot und Grün.
  * Gezeichnet wird mit demselben Baustein wie die Update-Zusammenfassung ({@link SummaryReport}), ohne Wolkenleiste.
- * Fehlt die Zusammenfassung, entsteht sie beim Öffnen einmal von selbst; „Zusammenfassen“ erstellt sie neu. Eine
- * Änderung am Bereich startet nie von selbst einen KI-Lauf, sie zeigt nur „veraltet“.
+ * Die Zusammenfassung entsteht nur per Klick auf „Zusammenfassen“, nie von selbst beim Öffnen (Angelo 28.11.2026: der
+ * Lauf dauert, beim Durchklicken der Bereiche störte er). Eine Änderung am Bereich zeigt nur „veraltet“.
  */
 final class AreaSummaryView extends JPanel {
 
@@ -67,7 +67,7 @@ final class AreaSummaryView extends JPanel {
     static final String PARTIAL = "Vorläufig: die Themen der schon fertigen Teile; am Ende werden sie zusammengeführt.";
     static final String EMPTY = "Dieser Bereich hat noch keine geladene Seite, die sich zusammenfassen lässt.";
     static final String NO_MODEL = "Für den Überblick ist kein Chat-Modell eingestellt. Unter Einstellungen › "
-            + "Modelle wählen; danach entsteht er beim Öffnen von selbst.";
+            + "Modelle wählen; danach erstellt „Zusammenfassen“ ihn.";
     static final String NOT_RUNNING = "Der Überblick erscheint, sobald der Dienst läuft.";
     static final String STALE = "Der Bereich hat sich seither geändert; „Neu zusammenfassen“ erstellt den Überblick "
             + "neu.";
@@ -75,19 +75,13 @@ final class AreaSummaryView extends JPanel {
     static final String FAILURE_HINT = "Einzelheiten stehen unter Aufträge.";
     static final String RESUMMARIZE_TIP = "Überblick neu erstellen";
     static final String HELP = "„Bereich“ fasst den ganzen gewählten Bereich zusammen, nicht nur die Änderungen: "
-            + "worum es geht, wie er aufgebaut ist und wo man anfängt, zum Einstieg für Neue. Fehlt der Überblick, "
-            + "erstellt das eingestellte Chat-Modell ihn beim Öffnen von selbst; „Zusammenfassen“ erstellt ihn neu. "
+            + "worum es geht, wie er aufgebaut ist und wo man anfängt, zum Einstieg für Neue. „Zusammenfassen“ "
+            + "lässt das eingestellte Chat-Modell ihn erstellen; von selbst startet nichts. "
             + "Es liest alle geladenen Seiten mit KI-Freigabe, in Teilen nebeneinander, und führt die Teile danach "
             + "zusammen.\n\n"
             + "In der Podcast-Ansicht erklärt ein Podcast denselben Überblick; der Text darunter zeigt je Thema die "
             + "ausführliche Erklärung, gelb, was gerade erzählt wird.";
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm", Locale.GERMAN);
-    /**
-     * Bereiche, die schon einmal sichtbar geladen wurden (je Sitzung, für beide Ansichten): nur beim ersten Mal entsteht
-     * ein fehlender Überblick von selbst. Ein Ordner zählt nach seiner ID, so startet eine Änderung an ihm (andere
-     * Favoriten, „mit Unterseiten“) nie von selbst einen KI-Lauf (ADR 0034 §7).
-     */
-    private static final Set<String> AUTO_CONSIDERED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /**
      * Der laufende Überblick-Auftrag je Bereich ({@link Target#identity()}), für beide Ansichten (Lese- und
      * Podcast-Ansicht) und über einen Wechsel der Auswahl hinweg (Angelo 27.11.2026: der Ring verschwand, der Auftrag
@@ -131,20 +125,21 @@ final class AreaSummaryView extends JPanel {
             return new Target(null, null, null, Objects.requireNonNull(folder, "folder"));
         }
 
+        /** Das Ziel der Auswahl links: ein Ordner, sonst Quelle, Space oder Teilbaum; {@code null} für „Wissensquellen“. */
+        static Target of(ExportPanel.Selection selection) {
+            if (selection instanceof ExportPanel.Selection.Collection folder) {
+                return folder(folder);
+            }
+            return selection == null || selection.sourceId() == null ? null
+                    : subtree(selection.sourceId(), selection.spaceKey(), selection.pageId());
+        }
+
         /** Die Auswahl für den Core: die aufgelösten Wurzeln des Ordners, sonst Quelle, Space oder Teilbaum. */
         com.aresstack.spaceharvester.application.holdings.Selection core() {
             return folder != null ? new com.aresstack.spaceharvester.application.holdings.Selection(folder.roots())
                     : com.aresstack.spaceharvester.application.holdings.Selection.of(
                     new com.aresstack.spaceharvester.application.holdings.Selection.Root(sourceId, spaceKey,
                             rootPageId));
-        }
-
-        /**
-         * Ob ein fehlender Überblick beim ersten Öffnen von selbst entsteht. Für einen Ordner im Baum nie: Man klickt
-         * sich durch viele davon, der Lauf startet nur per Klick auf „Zusammenfassen“ (Angelo 26.11.2026).
-         */
-        boolean automatic() {
-            return rootPageId == null;
         }
 
         /** Die Quellen, deren Meldungen die Ansicht hört (der Core meldet nach dem Ablegen jede Quelle der Auswahl). */
@@ -377,10 +372,6 @@ final class AreaSummaryView extends JPanel {
     private final com.aresstack.spaceharvester.app.ui.IconButton summarize =
             new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.SUMMARIZE,
                     SUMMARIZE_TIP);
-    /** „Neue Auflage erzeugen“, solange die Leseansicht ein Buch zeigt (Architekt 27.11.2026). */
-    private final com.aresstack.spaceharvester.app.ui.IconButton newEdition =
-            new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.SUMMARIZE,
-                    com.aresstack.spaceharvester.app.ui.Texts.NEW_EDITION_TIP);
     private final JLabel summarizeEntry = new JLabel(SourceUpdatesView.SUMMARIZE,
             com.aresstack.spaceharvester.app.ui.Glyph.SUMMARIZE, JLabel.LEFT);
     private final ScrollColumn report = new ScrollColumn(new BorderLayout());
@@ -412,7 +403,6 @@ final class AreaSummaryView extends JPanel {
     /** Ob sich Seiten der gezeigten Auflage seither geändert haben. */
     private boolean bookStale;
     /** Startet „Neue Auflage erzeugen“ für die Ordner-ID. */
-    private Consumer<String> onNewEdition = folderId -> { };
     /** Meldet, wenn sich ändert, ob der gezeigte Ordner ein Buch hat (für den Umschalter „Buch | Bereich“). */
     private Runnable onBook = () -> { };
     /**
@@ -464,17 +454,9 @@ final class AreaSummaryView extends JPanel {
         tools.setOpaque(false);
         if (mode == Mode.READ) {
             tools.add(summarize);
-            tools.add(newEdition);
-            newEdition.getAccessibleContext().setAccessibleName(com.aresstack.spaceharvester.app.ui.Texts.NEW_EDITION);
-            newEdition.setVisible(false);
-            newEdition.addActionListener(e -> {
-                if (target != null && target.folder() != null) {
-                    onNewEdition.accept(target.folder().folderId());
-                }
-            });
         }
         tools.add(new com.aresstack.spaceharvester.app.ui.controls.CopyButton(this::copyText));
-        tools.add(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Bereich", HELP));
+        // Die Hilfe steht nicht mehr bei den Werkzeugen im Kopf, sondern unten rechts in der Leiste ({@link #help()}).
         summarize.addActionListener(e -> summarize(true));
         summarizeEntry.setFont(Comic.semiBold(13f));
         summarizeEntry.setForeground(Comic.BLUE);
@@ -541,6 +523,14 @@ final class AreaSummaryView extends JPanel {
         toggle.select(areaChosen() ? AREA : CHANGES);
         return toggle;
     }
+
+    /** Die „?“-Hilfe dieser Ansicht für die Ecke unten rechts in der Werkzeugleiste. */
+    JComponent help() {
+        return help;
+    }
+
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton help =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Bereich", HELP);
 
     JComponent tools() {
         return tools;
@@ -766,7 +756,6 @@ final class AreaSummaryView extends JPanel {
             if (!same || interimChanged) {
                 render();
             }
-            autoSummarize();
             offer();
         }, failure -> {
             if (mine == generation) {
@@ -842,20 +831,6 @@ final class AreaSummaryView extends JPanel {
         throw new IllegalArgumentException("kein Buchteil " + number);
     }
 
-    /** Ob „Neue Auflage erzeugen“ zu sehen ist (für Tests). */
-    boolean newEditionOffered() {
-        return newEdition.isVisible() && newEdition.isEnabled();
-    }
-
-    /** Klickt „Neue Auflage erzeugen“ (für Tests). */
-    void clickNewEdition() {
-        newEdition.doClick();
-    }
-
-    /** Wer „Neue Auflage erzeugen“ ausführt; bekommt die Ordner-ID. */
-    void onNewEdition(Consumer<String> listener) {
-        onNewEdition = Objects.requireNonNull(listener, "listener");
-    }
 
     /** Die gezeigte Auflage des Buchs, {@code null} ohne. */
     BookEditions.Edition edition() {
@@ -890,9 +865,12 @@ final class AreaSummaryView extends JPanel {
         return toggle;
     }
 
-    /** Ob gerade das Buch gezeigt wird: der Ordner hat eins und „Buch“ ist gewählt. */
+    /**
+     * Ob gerade das Buch gezeigt wird: nur im Podcast, wenn der Ordner eins hat und „Buch“ gewählt ist. Die Leseansicht
+     * zeigt immer den Überblick; das Buch selbst steht als Artefakt unter „Artefakte“ (ADR 0047, Nachtrag ADR 0044).
+     */
     boolean bookShown() {
-        return edition != null && bookChosen(target == null || target.folder() == null ? null
+        return mode == Mode.LISTEN && edition != null && bookChosen(target == null || target.folder() == null ? null
                 : target.folder().folderId());
     }
 
@@ -914,10 +892,6 @@ final class AreaSummaryView extends JPanel {
             offer();
             render();
             watch(current, running, target);
-            return;
-        }
-        if (autoSummarize()) {
-            render();
         }
     }
 
@@ -941,30 +915,35 @@ final class AreaSummaryView extends JPanel {
         }
     }
 
-    /**
-     * Fehlt der Überblick beim ersten sichtbaren Öffnen des Bereichs, entsteht er einmal von selbst (ADR 0034 §7), mit
-     * dem Vorrang der offenen Ansicht; nur mit Chat-Modell. Wer den Bereich schon einmal gesehen hat, bekommt bei einer
-     * Änderung nur „veraltet“, nie einen KI-Lauf von selbst. {@code true}, wenn gestartet.
-     */
-    private boolean autoSummarize() {
-        if (!startsByItself()) {
-            return false;
-        }
-        summarize(false);
-        return true;
-    }
+    /** Gemerkt, wo der Benutzer den Überblick gelöscht hat (über Neustarts, im Zustand der Anwendung). */
+    static final String DELETED_KEY = "areaSummary.deleted.";
 
     /**
-     * Die einzige Stelle, die entscheidet, ob der Überblick beim Öffnen von selbst startet (weitere Bedingungen gehören
-     * hierher, etwa „der Knoten hat ein Buch“). Merkt sich den Bereich, wenn ja, so startet er je Sitzung höchstens
-     * einmal von selbst.
+     * Merkt, dass der Benutzer den Überblick der Auswahl gelöscht hat (ADR 0047 §5a: danach entsteht nichts von selbst
+     * neu), oder vergisst es, sobald er ihn ausdrücklich wieder erzeugt.
      */
-    private boolean startsByItself() {
-        // Den ersten sichtbaren Besuch merken, auch wenn schon ein Überblick da ist: Ändert sich danach der Ordner,
-        // zeigt er nur „veraltet“ bzw. bietet den Klick an, statt von selbst zu starten.
-        // Hat der Ordner ein Buch, zeigt die Leseansicht das Buch; der Überblick startet nur per Klick (Architekt).
-        return loaded && available && runningJob == null && target != null && target.automatic() && edition == null
-                && showing.getAsBoolean() && AUTO_CONSIDERED.add(target.identity()) && summary == null && !empty;
+    static void deletedByUser(ExportPanel.Selection selection, boolean deleted) {
+        Target target = Target.of(selection);
+        if (target != null) {
+            deletedByUser(target, deleted);
+        }
+    }
+
+    private static void deletedByUser(Target target, boolean deleted) {
+        String key = deletedKey(target);
+        if (deleted) {
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(key, true);
+        } else if (com.aresstack.spaceharvester.app.ui.AppState.shared().getBoolean(key, false)) {
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(key, false);
+        }
+    }
+
+    static boolean deletedByUser(Target target) {
+        return com.aresstack.spaceharvester.app.ui.AppState.shared().getBoolean(deletedKey(target), false);
+    }
+
+    private static String deletedKey(Target target) {
+        return DELETED_KEY + target.identity().replace('\u0000', '/');
     }
 
     private void summarize(boolean interactive) {
@@ -978,6 +957,8 @@ final class AreaSummaryView extends JPanel {
         offer();
         render();
         if (interactive) {
+            // Ausdrücklich wieder erzeugt: ab jetzt gilt der Überblick wieder als gewünscht.
+            deletedByUser(of, false);
             onStatus.accept(SUMMARIZING);
         }
         String priority = enterView();
@@ -1110,11 +1091,7 @@ final class AreaSummaryView extends JPanel {
     /** Knopf „Zusammenfassen“, Einstieg und Ring nach dem Stand. */
     private void offer() {
         boolean possible = target != null && available && !empty && runningJob == null;
-        // Zeigt die Leseansicht das Buch, ist „Zusammenfassen“ weg; unter „Bereich“ startet es den Überblick.
-        summarize.setVisible(mode == Mode.READ && target != null && !bookShown());
-        newEdition.setVisible(mode == Mode.READ && target != null && bookShown());
-        newEdition.setToolTipText(bookStale() ? com.aresstack.spaceharvester.app.ui.Texts.BOOK_STALE + "; " + com.aresstack.spaceharvester.app.ui.Texts.NEW_EDITION_TIP.substring(0, 1)
-                .toLowerCase(java.util.Locale.ROOT) + com.aresstack.spaceharvester.app.ui.Texts.NEW_EDITION_TIP.substring(1) : com.aresstack.spaceharvester.app.ui.Texts.NEW_EDITION_TIP);
+        summarize.setVisible(mode == Mode.READ && target != null);
         summarize.setEnabled(possible);
         summarize.setToolTipText(summary == null ? SUMMARIZE_TIP : RESUMMARIZE_TIP);
         summarize.getAccessibleContext().setAccessibleName(summary == null ? SourceUpdatesView.SUMMARIZE
@@ -1253,7 +1230,7 @@ final class AreaSummaryView extends JPanel {
                 + (shown.createdAt() == null ? "" : " vom " + WHEN.format(shown.createdAt().atZone(zone)))
                 + ", aus " + shown.sources().size() + (shown.sources().size() == 1 ? " Seite" : " Seiten")
                 + (bookStale && shown == edition ? ". " + com.aresstack.spaceharvester.app.ui.Texts.BOOK_STALE + "; „" + com.aresstack.spaceharvester.app.ui.Texts.NEW_EDITION
-                        + "“ oben rechts schreibt es neu." : "");
+                        + "“ an der Buchzeile unter „Artefakte“ schreibt es neu." : "");
     }
 
     private void message(String text) {
@@ -1383,6 +1360,11 @@ final class AreaSummaryView extends JPanel {
     }
 
     // ---- für Tests
+
+    /** Wie ein Klick auf „Zusammenfassen“: der einzige Weg, auf dem ein Überblick entsteht (Angelo 28.11.2026). */
+    void clickSummarize() {
+        summarize(true);
+    }
 
     boolean summarizeOffered() {
         return summarize.isVisible() && summarize.isEnabled();

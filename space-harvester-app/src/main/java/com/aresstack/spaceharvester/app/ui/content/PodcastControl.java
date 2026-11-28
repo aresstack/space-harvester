@@ -902,6 +902,20 @@ final class PodcastControl<S> {
         });
     }
 
+    /** Der gezeigte Podcast ist nicht mehr da: anhalten, vergessen, Zustand wie ohne Podcast. */
+    private void gone() {
+        stop();
+        forget();
+        coverAll(null);
+        transcriptCopy.setVisible(false);
+        runningPicture = null;
+        loaded.clear();
+        resumeAt = 0;
+        retrying = false;
+        orb.setState(PodcastOrb.State.PLAY);
+        orb.setToolTipText(labels.missing());
+    }
+
     private void stop() {
         wanted = false;
         player.stop();
@@ -986,7 +1000,14 @@ final class PodcastControl<S> {
     }
 
     private void apply(Podcast podcast) {
+        Podcast before = last;
         last = podcast;
+        if (podcast == null && before != null) {
+            // Gelöscht (ADR 0047 §5a, „Aus dieser Seite erzeugt“): die Wiedergabe hält an, der Knopf steht wie bei
+            // einer Seite ohne Podcast; nichts entsteht von selbst neu.
+            gone();
+            return;
+        }
         coverAll(podcast);
         // Text gibt es, sobald Abschnitte geplant sind; ob schon einer geschrieben ist, zeigt erst das Lesen.
         transcriptCopy.setVisible(podcast != null && podcast.parts().stream().anyMatch(part -> part.segment() >= 0));

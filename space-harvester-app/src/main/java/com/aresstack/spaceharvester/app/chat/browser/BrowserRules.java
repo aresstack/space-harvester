@@ -1,16 +1,13 @@
 package com.aresstack.spaceharvester.app.chat.browser;
 
 import com.aresstack.enterpriseai.proasteion.application.agent.BrowserMcpTools;
-
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
+import com.aresstack.enterpriseai.proasteion.application.config.BrowserProfile;
 
 /**
- * Die Browser-Regeln des Systemhinweises wortgleich aus {@code ToolUsePolicy} des Enterprise AI Client: wie der
- * Browser mehrere Seiten liest ({@link #BROWSER}) und welches Profil mit welchen Such-URLs gilt
- * ({@link #browserProfile}). Der Rest von {@code ToolUsePolicy} (Antwortplan, Programmhilfe, Recherche) gehört nicht
- * hierher; die interne Suche hat ihre eigene Regel ohne Vorab-Entscheidung.
+ * Die Browser-Regeln des Systemhinweises aus {@code ToolUsePolicy} des Enterprise AI Client: wie der Browser mehrere
+ * Seiten liest ({@link #BROWSER}) und welches Profil gilt ({@link #browserProfile}). Der Rest von
+ * {@code ToolUsePolicy} (Antwortplan, Programmhilfe, Recherche) gehört nicht hierher; die interne Suche hat ihre
+ * eigene Regel ohne Vorab-Entscheidung.
  */
 public final class BrowserRules {
 
@@ -27,43 +24,24 @@ public final class BrowserRules {
     }
 
     /**
-     * Die Regel des Browserprofils eines Chats: nennt das Profil und seine Such-URL-Vorlagen für eine freie
-     * Websuche.
-     *
-     * @param profile    Name des aktiven Profils (Intern oder Extern)
-     * @param searchUrls Such-URL-Vorlagen mit {@code {query}}, in Reihenfolge; leer gibt eine Regel ohne Such-URLs
-     * @param webSearch  ob der Chat {@code browser_search} hat (Profil Extern, ADR 0046)
+     * Die Regel des Browserprofils eines Chats: nennt das Profil; gesucht wird mit {@link BrowserMcpTools#SEARCH} in
+     * den Suchmaschinen dieses Profils, die Treffer öffnet der Browser des Chats. Intern sind diese Suchmaschinen die
+     * Suchseiten des Hauses: Das Modell braucht dafür keine Adresse des Intranets, die Suchseite fragt das Programm
+     * selbst beim Benutzer ab, wenn noch keine eingestellt ist. Eine Adresse in der Aufgabe hat in beiden Profilen
+     * Vorrang: Sie wird geöffnet und dort gesucht, die Suchmaschinen gelten nur ohne Adresse. Ohne den Intern-Satz las
+     * das Modell „im Intranet suchen“ nicht als Websuche, suchte eine Intranet-Adresse und gab ohne Suche auf.
      */
-    public static String browserProfile(String profile, Collection<String> searchUrls, boolean webSearch) {
-        StringBuilder text = new StringBuilder("[Browserprofil] Aktives Browserprofil: ").append(profile)
-                .append(". Die Freigaben (Whitelist/Blacklist) dieses Profils gelten für jede Adresse.");
-        List<String> urls = new ArrayList<>();
-        if (searchUrls != null) {
-            for (String url : searchUrls) {
-                if (url != null && !url.trim().isEmpty()) {
-                    urls.add(url.trim());
-                }
-            }
+    public static String browserProfile(BrowserProfile profile) {
+        String rules = "[Browserprofil] Aktives Browserprofil: " + profile.label() + ". Die Freigaben "
+                + "(Whitelist/Blacklist) dieses Profils gelten für jede Adresse. Nennt die Aufgabe eine Adresse, hat "
+                + "sie Vorrang: öffne sie mit " + BrowserMcpTools.NAVIGATE + " und suche mit der Suche dieser Website. ";
+        if (profile == BrowserProfile.INTERNAL) {
+            return rules + "Nennt die Aufgabe keine Adresse, suche mit " + BrowserMcpTools.SEARCH + ": Es durchsucht "
+                    + "in diesem Profil die Suchseiten des Hauses, also das Intranet; eine Intranet-Adresse oder "
+                    + "Zugangsdaten brauchst du dafür nicht (ist noch keine Suchseite eingestellt, fragt das Programm "
+                    + "den Benutzer selbst danach). Öffne die passenden Treffer: Sie sind Seiten des Intranets.";
         }
-        if (webSearch) {
-            text.append(" Braucht die Aufgabe eine freie Websuche und nennt keine Einstiegsseite, suche mit "
-                    + BrowserMcpTools.SEARCH + " und öffne die passenden Treffer. Nennt die Aufgabe eine Adresse, "
-                    + "öffne sie mit " + BrowserMcpTools.NAVIGATE + " und nutze die Suche dieser Website.");
-        }
-        if (urls.isEmpty()) {
-            text.append(webSearch ? "" : " Für dieses Profil sind keine Such-URLs eingestellt: nutze die Adresse aus "
-                    + "der Aufgabe und die Suche der Website.");
-            return text.toString();
-        }
-        text.append(" Such-URLs dieses Profils:");
-        for (String url : urls) {
-            text.append(' ').append(url);
-        }
-        text.append(webSearch ? ". Diese URLs nutzt du, wenn " + BrowserMcpTools.SEARCH + " nichts Passendes findet: "
-                + "öffne sie mit " + BrowserMcpTools.NAVIGATE + " und ersetze {query} durch die URL-kodierten "
-                + "Suchbegriffe." : ". Braucht die Aufgabe eine freie Websuche und nennt keine Einstiegsseite, öffne "
-                + "eine dieser URLs mit " + BrowserMcpTools.NAVIGATE + " und ersetze {query} durch die URL-kodierten "
-                + "Suchbegriffe; die erste ist die bevorzugte. Kennst du die Website schon, nutze deren eigene Suche.");
-        return text.toString();
+        return rules + "Braucht die Aufgabe eine freie Websuche und nennt keine Adresse, suche mit "
+                + BrowserMcpTools.SEARCH + " (die Suchmaschinen dieses Profils) und öffne die passenden Treffer.";
     }
 }

@@ -227,6 +227,13 @@ final class AiSettingsPanel {
             AiServiceSettings.DEFAULT_DEADLINE_MAX_TOKENS);
     final ThinkingBox deadlineThinking = new ThinkingBox();
     final ComposerButton pickDeadline = Comic.button("▾", "Modell für die Fristen aus der Liste des Dienstes wählen");
+    /** Quellcode-Analysen (Angelo 28.11.2026): beschreibt Diagramme von Natural, COBOL und JCL in einfachen Worten. */
+    final JTextField sourceCodeModel = Comic.field(24);
+    final TokenLengthBox sourceCodeMaxTokens = new TokenLengthBox(AiServiceSettings.TOKEN_CHOICES,
+            AiServiceSettings.DEFAULT_SOURCE_CODE_MAX_TOKENS);
+    final ThinkingBox sourceCodeThinking = new ThinkingBox();
+    final ComposerButton pickSourceCode = Comic.button("▾", "Modell für Quellcode-Analysen aus der Liste des Dienstes "
+            + "wählen");
     /**
      * Diagnose per KI (Angelo 26.11.2026): Schalter für alle KI-Erweiterungen der Fehler- und Datenanalyse (etwa
      * „Binärdiagnose …“ im FTP-Kontextmenü und ihre Werkzeuge im Chat) und das Modell dafür, in einer Zeile.
@@ -639,6 +646,8 @@ final class AiSettingsPanel {
                 visionThinking, "Vision-Modell", VISION_MAX_TOKENS_HELP), null);
         modelRows.add(DEADLINE_LABEL, modelRow(Comic.fieldWithButton(deadlineModel, pickDeadline),
                 deadlineMaxTokens, deadlineThinking, DEADLINE_LABEL, DEADLINE_HELP), null);
+        modelRows.add(SOURCE_CODE_LABEL, modelRow(Comic.fieldWithButton(sourceCodeModel, pickSourceCode),
+                sourceCodeMaxTokens, sourceCodeThinking, SOURCE_CODE_LABEL, SOURCE_CODE_HELP), null);
         diagnosisEnabled.setToolTipText(DIAGNOSIS_TIP);
         modelRows.add(DIAGNOSIS_LABEL, leading(diagnosisEnabled, modelRow(Comic.fieldWithButton(diagnosisModel,
                 pickDiagnosis), diagnosisMaxTokens, diagnosisThinking, DIAGNOSIS_LABEL, DIAGNOSIS_HELP)), null);
@@ -762,6 +771,7 @@ final class AiSettingsPanel {
         pickPodcast.setEnabled(false);
         pickImagePlan.setEnabled(false);
         pickDeadline.setEnabled(false);
+        pickSourceCode.setEnabled(false);
         pickDiagnosis.setEnabled(false);
         pickPodcastSpeech.setEnabled(false);
         pickReadAloud.setEnabled(false);
@@ -779,6 +789,7 @@ final class AiSettingsPanel {
         pickPodcast.addActionListener(e -> pick(pickPodcast, podcastModel, AiModel.CHAT));
         pickImagePlan.addActionListener(e -> pick(pickImagePlan, imagePlanModel, AiModel.CHAT));
         pickDeadline.addActionListener(e -> pick(pickDeadline, deadlineModel, AiModel.CHAT));
+        pickSourceCode.addActionListener(e -> pick(pickSourceCode, sourceCodeModel, AiModel.CHAT));
         pickDiagnosis.addActionListener(e -> pick(pickDiagnosis, diagnosisModel, AiModel.CHAT));
         pickPodcastSpeech.addActionListener(e -> pick(pickPodcastSpeech, podcastSpeechModel, AiModel.TTS));
         pickReadAloud.addActionListener(e -> pick(pickReadAloud, readAloudModel, AiModel.TTS));
@@ -841,6 +852,7 @@ final class AiSettingsPanel {
         showUse(current.podcast(), podcastModel, podcastMaxTokens, podcastThinking);
         showUse(current.imagePlan(), imagePlanModel, imagePlanMaxTokens, imagePlanThinking);
         showUse(current.deadline(), deadlineModel, deadlineMaxTokens, deadlineThinking);
+        showUse(current.sourceCode(), sourceCodeModel, sourceCodeMaxTokens, sourceCodeThinking);
         showUse(current.diagnosis(), diagnosisModel, diagnosisMaxTokens, diagnosisThinking);
         // Die Vorbelegung steht sichtbar im Feld (Angelo 26.11.2026: „vorbelegen, GPT OSS“).
         diagnosisModel.setText(current.diagnosisSettings().model());
@@ -1188,7 +1200,8 @@ final class AiSettingsPanel {
                 diagnosisEnabled.isSelected(), new AiServiceSettings.Timeouts(
                         own(summaryTimeout, AiServiceSettings.Timeouts.DEFAULT_SUMMARY),
                         own(labelTimeout, AiServiceSettings.Timeouts.DEFAULT_LABEL),
-                        own(expansionTimeout, AiServiceSettings.Timeouts.DEFAULT_EXPANSION)));
+                        own(expansionTimeout, AiServiceSettings.Timeouts.DEFAULT_EXPANSION)),
+                new AiDraft.Use(sourceCodeModel.getText(), sourceCodeMaxTokens.text(), sourceCodeThinking.level()));
     }
 
     /** Die Frist eines Felds; die Vorgabe oder 0 heißt nichts eingestellt ({@code null}), dann gilt die des Core. */
@@ -2038,6 +2051,14 @@ final class AiSettingsPanel {
             + "Text-Modell.\n\n" + TOKENS_HELP_TAIL + "\n\nStandard " + AiServiceSettings.DEFAULT_IMAGE_PLAN_MAX_TOKENS
             + " Tokens, denkt nicht. Schlüssel in der Konfigurationsdatei: space-harvester.ai.image-plan-model, "
             + ".image-plan-max-tokens und .image-plan-thinking.";
+    static final String SOURCE_CODE_LABEL = "Quellcode";
+    static final String SOURCE_CODE_HELP = "Dieses Modell beschreibt Quelltexte (Natural, COBOL, JCL) für Menschen, "
+            + "die die Sprache nicht kennen: in der Diagramm-Ansicht jeden zusammengefassten Block, jede Verzweigung "
+            + "als Frage und jedes aufgerufene Programm mit seinem Zweck. Leer: Modell, Tokenlänge und Nachdenken genau "
+            + "wie beim Text-Modell (Chat)."
+            + "\n\n" + TOKENS_HELP_TAIL + "\n\nMit eigenem Modell Standard "
+            + AiServiceSettings.DEFAULT_SOURCE_CODE_MAX_TOKENS + " Tokens, Nachdenken wie beim Text-Modell. Schlüssel in der Konfigurationsdatei: space-harvester.ai.source-code-model, "
+            + ".source-code-max-tokens und .source-code-thinking.";
     static final String DEADLINE_LABEL = "Fristen";
     static final String DEADLINE_HELP = "Dieses Modell liest Erlasse und Verfügungen für die Fristenprüfung: Konten, "
             + "Fristaussagen, Ausnahmen, Antrag oder Genehmigung, jeweils mit wörtlichem Zitat. Leer: das Text-Modell."
@@ -2305,6 +2326,7 @@ final class AiSettingsPanel {
         pickPodcast.setEnabled(false);
         pickImagePlan.setEnabled(false);
         pickDeadline.setEnabled(false);
+        pickSourceCode.setEnabled(false);
         pickDiagnosis.setEnabled(false);
         pickPodcastSpeech.setEnabled(false);
         pickReadAloud.setEnabled(false);
@@ -2436,6 +2458,7 @@ final class AiSettingsPanel {
         pickPodcast.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickImagePlan.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickDeadline.setEnabled(!choices(AiModel.CHAT).isEmpty());
+        pickSourceCode.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickDiagnosis.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickPodcastSpeech.setEnabled(!choices(AiModel.TTS).isEmpty());
         pickReadAloud.setEnabled(!choices(AiModel.TTS).isEmpty());

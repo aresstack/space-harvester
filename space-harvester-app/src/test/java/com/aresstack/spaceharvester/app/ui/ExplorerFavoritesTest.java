@@ -69,12 +69,13 @@ class ExplorerFavoritesTest {
             explorer[0].toggleFavorite(item);
             assertThat(explorer[0].isFavorite(item)).isTrue();
             assertThat(labels(explorer[0].menu(item))).contains(Explorer.UNFAVORITE);
-            // Unten rechts der Umschalter: Umriss = Baum, gefüllt = nur Favoriten mit Pfad.
-            assertThat(explorer[0].favoritesButton().getIcon()).isSameAs(Glyph.STAR);
-            assertThat(explorer[0].favoritesButton().getToolTipText()).isEqualTo(Explorer.ONLY_FAVORITES);
+            // Oben im Umschalter die Hälfte mit dem Stern (Angelo 27.11.2026, früher der Stern unten rechts): nur
+            // Favoriten mit Pfad. Das Bestandszeichen „alles aktualisieren“ gehört nur zu den Wissensquellen.
+            assertThat(explorer[0].favoritesButton().getToolTipText()).isEqualTo(Explorer.FAVORITES_TIP);
+            assertThat(explorer[0].allBadge().isVisible()).isTrue();
             explorer[0].favoritesButton().doClick();
             assertThat(explorer[0].onlyFavorites()).isTrue();
-            assertThat(explorer[0].favoritesButton().getIcon()).isSameAs(Glyph.STAR_FILLED);
+            assertThat(explorer[0].allBadge().isVisible()).isFalse();
             assertThat(explorer[0].favoriteView().component().getParent()).isNotNull();
             assertThat(explorer[0].favoriteView().tree().component().getRowCount()).isEqualTo(1);
             assertThat(explorer[0].favoriteView().shown()).singleElement()
@@ -113,8 +114,16 @@ class ExplorerFavoritesTest {
         SwingUtilities.invokeAndWait(() -> {
             assertThat(marked[0].spaceKey()).isEqualTo(space);
             assertThat(marked[0].pageId()).isNull();
-            explorer[0].favoritesButton().doClick();
+            explorer[0].view.button(Explorer.SOURCES_TAB).doClick();
             assertThat(explorer[0].onlyFavorites()).isFalse();
+            assertThat(explorer[0].allBadge().isVisible()).isTrue();
+            // Von den Artefakten zurück steht wieder, was davor stand.
+            explorer[0].showOnlyFavorites(true);
+            explorer[0].showArtifacts(true);
+            assertThat(explorer[0].artifactsShown()).isTrue();
+            explorer[0].showArtifacts(false);
+            assertThat(explorer[0].onlyFavorites()).isTrue();
+            explorer[0].showOnlyFavorites(false);
             // Farbige Gruppe (Angelo 27.11.2026): im Rechtsklick-Menü „Gruppe zuordnen“, am Stern nur die Gruppen.
             Explorer.SpaceItem item = new Explorer.SpaceItem("handbuch", space, space);
             assertThat(labels(explorer[0].menu(item))).contains(GroupMenu.ASSIGN);
@@ -160,7 +169,7 @@ class ExplorerFavoritesTest {
             javax.swing.JComponent newFolder = view.newFolderButton();
             assertThat(SwingUtilities.isDescendingFrom(newFolder, view.component())).isFalse();
             assertThat(SwingUtilities.getAncestorOfClass(
-                    com.aresstack.spaceharvester.app.ui.controls.SideFoot.class, newFolder)).isNotNull();
+                    FindBar.class, newFolder)).isNotNull();
             assertThat(newFolder.isVisible()).isFalse();
             explorer.showOnlyFavorites(true);
             assertThat(newFolder.isVisible()).isTrue();

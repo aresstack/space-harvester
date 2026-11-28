@@ -55,14 +55,39 @@ public final class VisualAction {
         DiagramLabels next = new DiagramLabels(target);
         labels = next;
         com.aresstack.spaceharvester.mainframe.diagram.OutlineToMermaidConverter.blockLabelSummarizer(next);
+        com.aresstack.spaceharvester.mainframe.diagram.OutlineToMermaidConverter.labelLayout(DiagramLabels::layout);
         SystemFunctionsStore store = SystemFunctionsStore.shared();
         com.aresstack.spaceharvester.mainframe.diagram.OutlineToMermaidConverter.systemFunctions(store::names);
+    }
+
+    /** Ob die KI-Beschreibung an Diagrammen mitschreiben kann (Schalter an und Modell eingerichtet). */
+    static boolean aiAvailable() {
+        DiagramLabels current = labels;
+        return current != null && current.enabled();
     }
 
     /** Grund, warum die KI-Kurzbeschriftung zuletzt ausblieb, einmalig; {@code null} ohne Problem. */
     static String takeLabelProblem() {
         DiagramLabels current = labels;
         return current == null ? null : current.takeProblem();
+    }
+
+    /** Frage an den Chat des Bereichs: Frage, zitierter Ausschnitt und woher er stammt; {@code true} = gesendet. */
+    public interface ChatQuestion {
+        boolean ask(String question, String excerpt, String reference);
+    }
+
+    private static volatile ChatQuestion chat;
+
+    /** Schließt den Chat an (beim Start des Hauptfensters). */
+    public static void chat(ChatQuestion question) {
+        chat = question;
+    }
+
+    /** Fragt im Chat des Bereichs; {@code false}, wenn kein Chat da ist oder er gerade antwortet. */
+    static boolean askInChat(String question, String excerpt, String reference) {
+        ChatQuestion current = chat;
+        return current != null && current.ask(question, excerpt, reference);
     }
 
     /** Hängt den Knopf an einen Editor (auch für Tests). */

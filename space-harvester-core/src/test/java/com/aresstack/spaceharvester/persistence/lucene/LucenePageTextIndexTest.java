@@ -69,6 +69,78 @@ class LucenePageTextIndexTest {
     }
 
     @Test
+    void aHeadingThatIsExactlyTheQueryPutsItsPageOnTopWithTheWindowAtTheHeading() {
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            // Häufiger im Text, aber ohne passende Überschrift: rangiert nach BM25 sonst vorn.
+            index.put(entry("wiki", "1", "DEV", "Notfallplan Ablauf", "Notfallplan Ablauf. Notfallplan Ablauf."));
+            // Die Wortfolge steht schon in der Einleitung; der Auszug soll trotzdem an der Überschrift stehen.
+            String text = "Einleitung zum Notfallplan Ablauf. " + "Füllwort ".repeat(80)
+                    + "\nNotfallplan – Ablauf\nErst melden, dann handeln. " + "Füllwort ".repeat(80);
+            index.put(new PageTextIndex.Entry(new PageKey("wiki", "2"), "DEV", "Betrieb", text, "s2", "", 0,
+                    java.util.List.of(new PageTextIndex.Heading("Einleitung", 0),
+                            new PageTextIndex.Heading("Notfallplan – Ablauf", text.indexOf("\nNotfallplan") + 1))));
+            index.put(new PageTextIndex.Entry(new PageKey("wiki", "3"), "DEV", "Sonstiges",
+                    "Ablauf im Notfallplan. " + "Füllwort ".repeat(20), "s3", "", 0,
+                    java.util.List.of(new PageTextIndex.Heading("Notfallplan Ablauf und Fristen", 0))));
+
+            var matches = index.search("notfallplan ablauf", Set.of("wiki"), SearchSpaces.all(), 10);
+
+            assertThat(matches).extracting(PageTextIndex.Match::pageId).startsWith("2");
+            assertThat(matches.get(0).snippet()).contains("Notfallplan – Ablauf Erst melden")
+                    .doesNotContain("Einleitung");
+        }
+    }
+
+    @Test
+    void headingsOnlySearchesPageTitlesAndHeadingsButNeitherProseNorAttachments() {
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            String filler = "Füllwort ".repeat(60);
+            index.put(entry("wiki", "1", "DEV", "Betrieb", "Die Rufbereitschaft steht im Fließtext."));
+            String text = "Rufbereitschaft am Rand. " + filler + "\nRufbereitschaft regeln\nWer wann. " + filler;
+            index.put(new PageTextIndex.Entry(new PageKey("wiki", "2"), "DEV", "Handbuch", text, "s2", "", 0,
+                    java.util.List.of(new PageTextIndex.Heading("Rufbereitschaft regeln",
+                            text.indexOf("\nRufbereitschaft regeln") + 1))));
+            index.put(entry("wiki", "3", "DEV", "Rufbereitschaft", "Nichts weiter."));
+            index.put(entry("wiki", "4", "DEV", "Sonstiges", "Nichts."));
+            index.putAttachment(new PageTextIndex.AttachmentEntry(new PageKey("wiki", "4"), "DEV", "a1",
+                    "rufbereitschaft.txt", "Rufbereitschaft im Anhang", "a", "", "", 0, ""));
+
+            var matches = index.search("rufbereitschaft", Set.of("wiki"), SearchSpaces.all(), null, Set.of(),
+                    PageTextIndex.Fields.HEADINGS, 10);
+
+            assertThat(matches).extracting(PageTextIndex.Match::pageId).containsExactlyInAnyOrder("2", "3");
+            assertThat(matches).filteredOn(match -> match.pageId().equals("2")).singleElement()
+                    .extracting(PageTextIndex.Match::snippet).asString().contains("Rufbereitschaft regeln Wer wann")
+                    .doesNotContain("am Rand");
+        }
+    }
+
+    @Test
+    void headingWordsWeighLikeTheTitle() {
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            String filler = "Füllwort ".repeat(40);
+            index.put(entry("wiki", "1", "DEV", "Betrieb", filler + "Rufbereitschaft " + filler));
+            index.put(new PageTextIndex.Entry(new PageKey("wiki", "2"), "DEV", "Betrieb",
+                    filler + "Rufbereitschaft und Vertretung " + filler, "s2", "", 0,
+                    java.util.List.of(new PageTextIndex.Heading("Rufbereitschaft und Vertretung", 0))));
+
+            var matches = index.search("Rufbereitschaft", Set.of("wiki"), SearchSpaces.all(), 10);
+
+            assertThat(matches).extracting(PageTextIndex.Match::pageId).containsExactly("2", "1");
+        }
+    }
+
+    @Test
+    void headingsAreKnownOnlyForEntriesWrittenWithThem() {
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            PageKey key = new PageKey("wiki", "1");
+            assertThat(index.headingsKnown(key)).isFalse();
+            index.put(entry("wiki", "1", "DEV", "Betrieb", "Text"));
+            assertThat(index.headingsKnown(key)).isTrue();
+        }
+    }
+
+    @Test
     void eachMatchNamesTheWordsThatHitInTitleAndText() {
         // R1: genau die Wörter, die im Index trafen, je Feld; nichts aus dem Auszug erschlossen.
         try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {

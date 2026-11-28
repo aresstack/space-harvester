@@ -360,6 +360,8 @@ public final class ExportPanel extends JPanel {
     final ComposerButton toggleNotices = Comic.button("Hinweise anzeigen", "Was in der Datei fehlt oder vereinfacht ist");
     final JTextArea noticeList = Comic.note("");
     private final JComponent outputPlate;
+    /** Über der Ausgabe, nur auf der Seite ohne Reiter: „Aus dieser Seite erzeugt“ ({@link #extra}). */
+    private final JPanel extraSlot = new JPanel(new BorderLayout());
     /**
      * Für eine Quelle, „Wissensquellen“ und eine Sammlung statt {@link #files}: je Space bzw. Favorit eine Zeile mit
      * ihren laufenden Aufträgen und fertigen Dateien; die jüngste Datei öffnet ein Knopf in der Zeile.
@@ -414,6 +416,7 @@ public final class ExportPanel extends JPanel {
     private final Map<String, Pending> sourceJobs = new LinkedHashMap<>();
     /** Die Anmeldung bei {@link AppContext#onChange}; ein geschlossener Export-Reiter meldet sich damit ab. */
     private final Subscription contextSubscription;
+    private final Subscription outputSubscription;
     /** Ein Export aus der Quelle, dessen Auftrag gerade erst angefordert wird. */
     private Pending sourceStarting;
     /** Zählt Abfragen; nur das Ergebnis der jüngsten wird gezeigt. */
@@ -425,7 +428,7 @@ public final class ExportPanel extends JPanel {
         setOpaque(false);
         openOutput.addActionListener(e -> {
             if (context.settings() != null) {
-                SettingsView.open(context.settings().outputDirectory(), feedback);
+                SettingsView.open(context.exportDirectory(), feedback);
             }
         });
         toggleNotices.addActionListener(e -> {
@@ -488,13 +491,20 @@ public final class ExportPanel extends JPanel {
             }
         });
         add(feedback, BorderLayout.NORTH);
-        add(Comic.column(outputPlate), BorderLayout.CENTER);
+        extraSlot.setOpaque(false);
+        add(Comic.column(extraSlot, outputPlate), BorderLayout.CENTER);
         toggleNotices.setVisible(false);
         noticeList.setVisible(false);
         render(Data.NONE);
         contextSubscription = context.onChange(ignored -> {
             if (!disposed) {
                 subscribe();
+                refresh();
+            }
+        });
+        // Wechselt das Projekt oder sein Speicherort, zeigt die Liste die Dateien des neuen Ordners.
+        outputSubscription = context.onExportDirectoryChange(() -> {
+            if (!disposed) {
                 refresh();
             }
         });
@@ -555,6 +565,7 @@ public final class ExportPanel extends JPanel {
     void dispose() {
         disposed = true;
         contextSubscription.close();
+        outputSubscription.close();
         if (subscription != null) {
             subscription.close();
             subscription = null;
@@ -576,6 +587,17 @@ public final class ExportPanel extends JPanel {
 
     Selection selection() {
         return selection;
+    }
+
+    /** Setzt den Abschnitt über der Ausgabe (die lokalen Artefakte der Auswahl, ADR 0047 §5a). */
+    void extra(JComponent extra) {
+        extraSlot.removeAll();
+        if (extra != null) {
+            extra.setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 8, 0));
+            extraSlot.add(extra, BorderLayout.CENTER);
+        }
+        extraSlot.revalidate();
+        extraSlot.repaint();
     }
 
     /** Für Tests: ersetzt die Rückfrage vor einem Start für „Wissensquellen“. */
@@ -738,7 +760,7 @@ public final class ExportPanel extends JPanel {
             }
             return;
         }
-        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
+        Path directory = context.exportDirectory();
         Map<Selection, String> preferred = Map.copyOf(lastOutput);
         Map<com.aresstack.spaceharvester.application.holdings.Selection.Root, String> names = favoriteNames();
         Background.run(() -> gather(runtime, current, directory, watchedJobs, watchedSource, preferred, names),
@@ -808,14 +830,15 @@ public final class ExportPanel extends JPanel {
             int notLoaded = (int) rows.stream().filter(row -> !loaded.contains(row.part().sourceId() + "\u0000"
                     + row.part().spaceKey())).count();
             return new Data(selection, null, running(jobs, selection), null, List.of(), rows, holdings,
-                    conversion(jobs, selection), finished, finishedSource, produced, restQueries, notLoaded);
+                    conversion(jobs, selection), finished, finishedSource, produced, restQueries, notLoaded,
+                    directory);
         }
         JobStatus newest = newest(jobs, selection, preferred.get(selection.normalized()));
         ExportDatasetInfo dataset = newest == null ? null
                 : runtime.workspace().exportDataset(newest.id()).orElse(null);
         List<String> files = dataset == null ? List.of() : outputFiles(directory, dataset.exportId());
         return new Data(selection, newest, running(jobs, selection), dataset, files, List.of(), holdings,
-                conversion(jobs, selection), finished, finishedSource, produced, restQueries, 0);
+                conversion(jobs, selection), finished, finishedSource, produced, restQueries, 0, directory);
     }
 
     /** Die Quellen der Auswahl: alle bei „Wissensquellen“, die eine eines Knotens, die der Favoriten einer Sammlung. */
@@ -938,7 +961,7 @@ public final class ExportPanel extends JPanel {
             }
         }
         return new Data(null, null, null, null, List.of(), List.of(), null, null, finished, finishedSource, produced,
-                false, 0);
+                false, 0, null);
     }
 
     /** Meldet die beendeten Aufträge aus {@code data}: Datei oder Grund in die Statuszeile, Knöpfe neu. */
@@ -956,9 +979,10 @@ public final class ExportPanel extends JPanel {
     record Data(Selection selection, JobStatus newest, JobStatus running, ExportDatasetInfo dataset,
                 List<String> files, List<SpaceRow> spaces, PageSelection holdings, JobStatus conversion,
                 List<JobStatus> finished, List<JobStatus> finishedSource,
-                Map<String, ExportConversions.ConvertedFile> produced, boolean restQueries, int notLoaded) {
+                Map<String, ExportConversions.ConvertedFile> produced, boolean restQueries, int notLoaded,
+                Path directory) {
         static final Data NONE = new Data(null, null, null, null, List.of(), List.of(), null, null, List.of(),
-                List.of(), Map.of(), false, 0);
+                List.of(), Map.of(), false, 0, null);
     }
 
     /**
@@ -1083,7 +1107,8 @@ public final class ExportPanel extends JPanel {
 
     private void renderOutput(Data data) {
         ExportDatasetInfo dataset = data.dataset();
-        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
+        // Der Ordner, aus dem die Dateien gelesen wurden; ein Projektwechsel dazwischen löst sie nicht falsch auf.
+        Path directory = data.directory() != null ? data.directory() : context.exportDirectory();
         outputFiles = data.files();
         boolean other = dataset == null || shownDataset == null
                 || !shownDataset.exportId().equals(dataset.exportId());
@@ -1238,7 +1263,7 @@ public final class ExportPanel extends JPanel {
                 || !confirmed(allQuestion(Format.title(format)))) {
             return;
         }
-        Path directory = context.settings().outputDirectory();
+        Path directory = context.exportDirectory();
         starting = current;
         startingFormat = format;
         exportStatus(Format.title(format) + " wird eingeplant …", Severity.INFO, false);
@@ -1411,7 +1436,7 @@ public final class ExportPanel extends JPanel {
                 || !confirmed(allQuestion(sourceTitle(kind)))) {
             return;
         }
-        Path directory = context.settings().outputDirectory();
+        Path directory = context.exportDirectory();
         com.aresstack.spaceharvester.application.metadata.AnalyticsQueries queries =
                 context.settings().analytics().toQueries();
         sourceStarting = new Pending(current, kind);
@@ -1445,7 +1470,9 @@ public final class ExportPanel extends JPanel {
         if (export == null) {
             return;
         }
-        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
+        // Der Ordner, in den der Auftrag geschrieben hat, nicht der des inzwischen vielleicht anderen Projekts.
+        String written = job.parameters().get(SourceQueryExports.DIRECTORY);
+        Path directory = written == null || written.isBlank() ? context.exportDirectory() : Path.of(written);
         String file = SourceQueryExports.fileName(job.type(), job.partitionKey(), job.rootPageId(), job.id());
         long open = sourceJobs.values().stream().filter(export::equals).count();
         if (job.state() == JobState.COMPLETED) {
@@ -1484,7 +1511,7 @@ public final class ExportPanel extends JPanel {
         if (runtime == null || context.settings() == null || current == null) {
             return;
         }
-        Path directory = context.settings().outputDirectory();
+        Path directory = context.exportDirectory();
         starting = current;
         startingFormat = format;
         exportStatus(Format.title(format) + " wird eingeplant …", Severity.INFO, false);

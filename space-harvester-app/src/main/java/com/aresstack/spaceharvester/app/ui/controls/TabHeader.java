@@ -189,6 +189,14 @@ public final class TabHeader extends JPanel {
         return status.getToolTipText();
     }
 
+    /** Der Stand „Veraltet“ der Analysen, überall gleich (auch am Buch in der Liste „Artefakte“). */
+    public static final String STALE = "Veraltet";
+
+    /** Das Abzeichen „Veraltet“ wie im Analysebereich; dort wie am Buch zugleich der Knopf zum Neuberechnen. */
+    public static JLabel staleBadge() {
+        return statusBadge(STALE, Comic.ORANGE);
+    }
+
     /** Ein Abzeichen im Stil des Stands: Text in Farbe mit feinem Rahmen derselben Farbe. */
     public static JLabel statusBadge(String text, Color tone) {
         JLabel label = new JLabel(text);

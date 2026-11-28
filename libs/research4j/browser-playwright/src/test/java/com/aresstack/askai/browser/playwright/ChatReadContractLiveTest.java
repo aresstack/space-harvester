@@ -29,7 +29,8 @@ import static org.junit.Assume.assumeTrue;
  * Step 5 of the one implementation: the chat's reading (B, {@link PageOperations} behind the chat tools'
  * browser_read, browser_links, browser_follow) and the research session's reading (A, {@link PlaywrightBrowserSession}
  * behind web_read, web_links, web_follow) answer the same for the same tab. Both run on one browser and one owner
- * thread since the chat engine starts the research driver; this test reads one page through both.
+ * thread since the chat engine starts the research driver, and they share one current page (the tab the chat used
+ * last); this test reads one page through both.
  */
 public class ChatReadContractLiveTest {
 
@@ -63,8 +64,10 @@ public class ChatReadContractLiveTest {
         try {
             BrowserConnection chat = instance.connect();
             String tab = chat.tabs().get(0).contextId();
-            // The research session opens the page in its tab, the chat's first tab; both then read that tab.
-            BrowserPageSnapshot a = instance.actor.call(session -> session.open(base + "/start"));
+            // The chat opens the page in its tab; that tab is the research session's current page as well, so
+            // web_read (currentPage) reads it without opening anything.
+            chat.navigate(tab, base + "/start");
+            BrowserPageSnapshot a = instance.actor.call(session -> session.currentPage());
 
             // Lesen: the same address, title and visible text.
             RawPage b = chat.read(tab);
@@ -85,6 +88,24 @@ public class ChatReadContractLiveTest {
                 aTargets.add(link.getUrl());
             }
             assertEquals(bTargets, aTargets);
+
+            // One current page: a second chat tab becomes the research session's page when the chat uses it, and
+            // the first tab again when the chat reads that one.
+            String other = chat.createTab();
+            chat.navigate(other, base + "/a");
+            assertEquals(base + "/a", instance.actor.call(session -> session.currentPage()).getUrl());
+            chat.read(tab);
+            assertEquals(base + "/start", instance.actor.call(session -> session.currentPage()).getUrl());
+            // Links the session listed belong to their page: after the chat moved the tab on, and after the
+            // session's tab closed and the first one took over, web_links lists the page as it is now.
+            chat.navigate(other, base + "/b");
+            assertTrue(instance.actor.call(session -> session.links()).isEmpty()); // /b has no links
+            chat.navigate(other, base + "/start");
+            assertEquals(aTargets(instance), bTargets);
+            chat.navigate(other, base + "/b");
+            instance.actor.call(session -> session.links());
+            chat.close(other);
+            assertEquals(aTargets(instance), bTargets);
 
             // Folgen: the chat's browser_follow (ChatBrowserRuntime: link snapshot, then navigate) and the research
             // session's web_follow each follow the link to /b from /start and reach the same page.
@@ -119,6 +140,92 @@ public class ChatReadContractLiveTest {
             instance.stop();
             server.stop(0);
         }
+    }
+
+    /**
+     * A PDF the chat opens is read as the research reads it (web_open), not as the viewer's page: the chat's read and
+     * the session's current page both answer the document's text. Firefox shows a PDF in its viewer; headless Chromium
+     * aborts such a load ({@code net::ERR_ABORTED}, which the research does not take for a download either).
+     */
+    @Test
+    public void aPdfTheChatOpensIsReadAsTheResearchReadsIt() throws Exception {
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        String readiness = launcher.readiness().render();
+        assumeTrue("SKIPPED (environment-gated live test): " + readiness, readiness.startsWith("READY"));
+        assumeTrue("SKIPPED (a Firefox shows PDFs in its viewer; Chromium headless aborts the load)",
+                "firefox".equalsIgnoreCase(System.getenv(TestBrowserLauncher.CHANNEL_ENV)));
+
+        byte[] pdf = TestPdfs.withText("Merkblatt", "Inhalt des Dokuments zum Vertrag");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/doc.pdf", exchange -> {
+            exchange.getResponseHeaders().add("Content-Type", "application/pdf");
+            exchange.sendResponseHeaders(200, pdf.length);
+            exchange.getResponseBody().write(pdf);
+            exchange.close();
+        });
+        server.start();
+        String base = "http://127.0.0.1:" + server.getAddress().getPort();
+        PlaywrightChatEngine.Instance instance = (PlaywrightChatEngine.Instance)
+                new PlaywrightChatEngine(launcher, true, 30000L).start(Files.createTempDirectory("contract-pdf"));
+        try {
+            BrowserConnection chat = instance.connect();
+            String tab = chat.tabs().get(0).contextId();
+            chat.navigate(tab, base + "/doc.pdf");
+            RawPage read = chat.read(tab);
+            assertTrue(read.text(), read.text().contains("Inhalt des Dokuments zum Vertrag"));
+            BrowserPageSnapshot research = instance.actor.call(session -> session.currentPage());
+            assertEquals(lines(read.text()), lines(research.getText()));
+            // Another tab in between: the PDF tab still reads as the document.
+            String other = chat.createTab();
+            chat.read(other);
+            assertTrue(chat.read(tab).text().contains("Inhalt des Dokuments zum Vertrag"));
+        } finally {
+            instance.stop();
+            server.stop(0);
+        }
+    }
+
+    /**
+     * One challenge detection: the chat's page check reports a challenge widget the research's configured detection
+     * sees ({@code SearchPageGuards}), and a plain page as clear.
+     */
+    @Test
+    public void theChatsPageCheckUsesTheResearchChallengeDetection() throws Exception {
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        String readiness = launcher.readiness().render();
+        assumeTrue("SKIPPED (environment-gated live test): " + readiness, readiness.startsWith("READY"));
+
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/plain", exchange -> respond(exchange,
+                "<html><head><title>Ruhig</title></head><body><p>Nur Text.</p></body></html>"));
+        server.createContext("/gate", exchange -> respond(exchange, "<html><head><title>Bitte warten</title></head>"
+                + "<body><p>Bitte bestätigen.</p><iframe src='/captcha-frame' style='width:320px;height:90px'>"
+                + "</iframe></body></html>"));
+        server.createContext("/captcha-frame", exchange -> respond(exchange, "<html><body>Widget</body></html>"));
+        server.start();
+        String base = "http://127.0.0.1:" + server.getAddress().getPort();
+        PlaywrightChatEngine.Instance instance = (PlaywrightChatEngine.Instance)
+                new PlaywrightChatEngine(launcher, true, 30000L).start(Files.createTempDirectory("contract-probe"));
+        try {
+            BrowserConnection chat = instance.connect();
+            String tab = chat.tabs().get(0).contextId();
+            chat.navigate(tab, base + "/plain");
+            assertEquals("", chat.probe(tab).challenge());
+            chat.navigate(tab, base + "/gate");
+            assertEquals(com.aresstack.enterpriseai.browser.api.BrowserProbe.CAPTCHA, chat.probe(tab).challenge());
+        } finally {
+            instance.stop();
+            server.stop(0);
+        }
+    }
+
+    /** The link targets the research session lists for its current page. */
+    private static Set<String> aTargets(PlaywrightChatEngine.Instance instance) throws Exception {
+        Set<String> targets = new LinkedHashSet<>();
+        for (BrowserLink link : instance.actor.call(session -> session.links())) {
+            targets.add(link.getUrl());
+        }
+        return targets;
     }
 
     /** The text as the model reads it: non-empty lines with collapsed white space. */

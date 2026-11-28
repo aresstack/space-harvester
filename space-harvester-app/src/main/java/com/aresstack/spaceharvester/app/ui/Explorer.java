@@ -81,9 +81,17 @@ public final class Explorer {
     private static final String TREE = "tree";
     private static final String MATCHES = "matches";
     private static final String FAVORITES = "favorites";
+    private static final String ARTIFACTS = "artifacts";
+    /** Die Hälften der Wippe im Kopf (ADR 0047 §5, Angelo 27.11.2026). */
+    static final String SOURCES_TAB = "Wissensquellen";
+    static final String ARTIFACTS_TAB = "Artefakte";
+    static final String ARTIFACTS_TIP = "Artefakte: die Dokumente, Grafiken und Bücher des aktiven Projekts";
+    /** Die mittlere Hälfte des Umschalters (Angelo 27.11.2026): die Favoriten als Liste, bisher der Stern unten. */
+    static final String FAVORITES_TAB = "Favoriten";
+    static final String SOURCES_TIP = "Wissensquellen · ein weiterer Klick wählt alle";
+    static final String FAVORITES_TIP = "Favoriten: nur die markierten Quellen, Spaces und Seiten";
     static final String FAVORITE = "Favorit";
     static final String UNFAVORITE = "Favorit entfernen";
-    static final String ONLY_FAVORITES = "Nur Favoriten zeigen";
     static final String STAR_TIP = "Favorit setzen oder entfernen · Rechtsklick: Gruppe zuordnen";
     /** Am Zustandspunkt (Angelo, 16.11.2026): beim Darüberfahren Kreispfeile, der Klick holt den Knoten samt Teilbaum nach. */
     static final String REFRESH_TIP = "Klick: Änderungen aus der Quelle nachholen";
@@ -91,7 +99,6 @@ public final class Explorer {
     static final String REFRESH_ALL_TITLE = "Alles aktualisieren?";
     static final String REFRESH_ALL_QUESTION = "Wirklich alle Wissensquellen aktualisieren? Für jeden Space jeder "
             + "Wissensquelle startet sofort ein eigener Auftrag, der die Änderungen nachholt.";
-    static final String ALL_NODES = "Alle Knoten zeigen";
     private static final int MATCH_LIMIT = 50;
     private static final int BATCH = 100;
     private static final int ACTION_WIDTH = 30;
@@ -542,7 +549,17 @@ public final class Explorer {
     private final com.aresstack.spaceharvester.app.ui.controls.SideHead head =
             new com.aresstack.spaceharvester.app.ui.controls.SideHead("Wissensquellen", filter);
     private final JLabel heading = head.heading();
-    /** Rechts neben der Überschrift, tut dasselbe wie der Klick auf sie: zeigt, dass man hier wählen kann. */
+    /**
+     * Die Wippe „Wissensquellen | Artefakte“ ist zugleich die Überschrift der Leiste, wie „Aufträge | Hintergrund“ in
+     * den Aufträgen (Angelo 27.11.2026). Unter „Artefakte“ steht statt des Baums die Liste der globalen Artefakte.
+     */
+    final com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle view =
+            new com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle();
+    private final ArtifactList artifacts;
+    /** Wer erfährt, ob links die Artefakte stehen: die Mitte folgt der Wippe (ADR 0047 §5). */
+    private Consumer<Boolean> artifactsListener = shown -> { };
+    /** Rechts neben den Kopfknöpfen: die Spalte der Sterne bleibt frei. */
+    /** Links in der Zeile des Umschalters: wählt alle Wissensquellen. */
     private final IconButton selectAll = new IconButton(Glyph.SELECT_ALL, ALL_TIP);
     /** Rechts von „Alles auswählen“: das Bestandszeichen über alle Quellen, in der Spalte der Zeilen. */
     private final JLabel allBadge = new JLabel();
@@ -561,7 +578,115 @@ public final class Explorer {
     private boolean global;
     private List<Scope> externalScopes = List.of();
     private final DefaultTreeModel model = new DefaultTreeModel(top);
-    private final JTree tree = new JTree(model);
+    private final JTree tree = new FindableTree();
+
+    /** Überschrift und Text der „?“-Hilfe unten rechts in der Fußleiste. */
+    static final String HELP_HEADING = "Wissensquellen";
+    static final String HELP = "Oben schaltest du zwischen Wissensquellen, Favoriten und Artefakten um; ein zweiter "
+            + "Klick auf das gewählte Symbol klappt die Leiste zu. „Titel filtern“ zeigt nur passende Einträge. Die "
+            + "Lupe unten links filtert nicht: Sie markiert die Titel im Baum, die den Suchtext enthalten, und "
+            + "springt mit Enter von Treffer zu Treffer. Gesucht wird in dem, was im Baum schon geladen ist. In der "
+            + "Mitte unten klappst du alles zu oder zeigst das geöffnete Dokument im Baum. Das Zeichen rechts zeigt "
+            + "den Stand aller Quellen; ein Klick darauf aktualisiert alle.";
+
+    /** Die Titel, die die Suche der Fußleiste gerade markiert, in der Reihenfolge des Baums. */
+    private List<Node> findHits = List.of();
+    private Set<Node> findMarked = Set.of();
+    private int findAt = -1;
+
+    /**
+     * Der Baum sucht mit der Lupe der Fußleiste selbst (Angelo 27.11.2026): Er markiert die Titel mit dem Suchtext
+     * und springt von Treffer zu Treffer, filtert aber nicht und ändert die Auswahl nicht. Gesucht wird in den
+     * geladenen Knoten; nachladen würde die Quelle fragen, und das geschieht nur auf Klick.
+     */
+    private final class FindableTree extends JTree implements FindBar.Own {
+
+        FindableTree() {
+            super(model);
+        }
+
+        @Override
+        public boolean ownsFind() {
+            return true;
+        }
+
+        @Override
+        public void find(String query) {
+            String wanted = query == null ? "" : query.trim().toLowerCase(java.util.Locale.ROOT);
+            List<Node> hits = new ArrayList<>();
+            if (!wanted.isEmpty()) {
+                java.util.Enumeration<javax.swing.tree.TreeNode> all = top.preorderEnumeration();
+                while (all.hasMoreElements()) {
+                    if (all.nextElement() instanceof Node node && node.item() instanceof KnowledgeNode
+                            && String.valueOf(node).toLowerCase(java.util.Locale.ROOT).contains(wanted)) {
+                        hits.add(node);
+                    }
+                }
+            }
+            findHits = hits;
+            findMarked = new java.util.HashSet<>(hits);
+            findAt = hits.isEmpty() ? -1 : 0;
+            showFindHit();
+        }
+
+        @Override
+        public void findStep(int direction) {
+            if (!findHits.isEmpty()) {
+                findAt = Math.floorMod(findAt + direction, findHits.size());
+                showFindHit();
+            }
+        }
+
+        @Override
+        public String findCounter() {
+            return findHits.isEmpty() ? "Keine Treffer" : (findAt + 1) + " / " + findHits.size();
+        }
+
+        @Override
+        public boolean canFold() {
+            return false;
+        }
+
+        @Override
+        public boolean folding() {
+            return false;
+        }
+
+        @Override
+        public void folding(boolean on) {
+            // Die Suche im Baum filtert nicht; dafür gibt es „Titel filtern“.
+        }
+
+        @Override
+        public javax.swing.Icon foldIcon() {
+            return null;
+        }
+
+        @Override
+        public JComponent findCorner() {
+            return allBadge;
+        }
+    }
+
+    /** Rollt zum aktuellen Treffer der Suche im Baum; die Auswahl bleibt, wie sie ist. */
+    private void showFindHit() {
+        if (findAt >= 0 && findAt < findHits.size() && findHits.get(findAt).getParent() != null) {
+            tree.scrollPathToVisible(new TreePath(findHits.get(findAt).getPath()));
+        }
+        tree.repaint();
+    }
+
+    /** Die Treffer der Suche im Baum (für Tests). */
+    List<Node> findHits() {
+        return findHits;
+    }
+
+    /** Die Fußleiste mit Lupe, Aktionen, Bestandszeichen und Hilfe (für Tests). */
+    FindBar footBar() {
+        return footBar;
+    }
+
+    private FindBar footBar;
     /** Die Bestandszeichen je Zeile (Angelo, 13.11.2026): aus dem Core gemeldet, nie abgefragt. */
     private final TreeStates states;
     private final DefaultListModel<Match> matchModel = new DefaultListModel<>();
@@ -571,8 +696,9 @@ public final class Explorer {
     private final JLabel note = Comic.muted(" ");
     private final IconButton collapseAll = new IconButton(Glyph.COLLAPSE_ALL, "Alles zuklappen");
     private final IconButton showCurrent = new IconButton(Glyph.CROSSHAIR, "Aktuelles Dokument im Baum zeigen");
-    /** Unten rechts (Angelo, 13.11.2026): Umriss = alle Knoten, gefüllt = nur die Favoriten als Liste mit Pfad. */
-    private final IconButton favoritesOnly = new IconButton(Glyph.STAR, ONLY_FAVORITES);
+    /** Unten unter „Artefakte“: nach Art gruppieren (Angelo 27.11.2026), global gemerkt. */
+    private final IconButton groupByKind = new IconButton(Glyph.TABLE, ArtifactList.GROUP_BY_KIND);
+    /** Ob die Hälfte „Favoriten“ gilt: nur die Favoriten als Liste mit Pfad; bleibt unter „Artefakte“ gemerkt. */
     private boolean onlyFavorites;
     /** Die Favoritenansicht an Stelle des Baums (ADR 0034, 2a); im Konstruktor angelegt, sie fragt den Baum. */
     private final FavoritesView favorites;
@@ -725,6 +851,11 @@ public final class Explorer {
         }
     }
 
+    /** „Buch öffnen“ am Favoritenordner. */
+    public void openBook(String folderId) {
+        favorites.openBook(folderId);
+    }
+
     /** „Neue Auflage erzeugen“ des Buchs am Favoritenordner. */
     public void newBookEdition(String folderId) {
         favorites.newEdition(folderId);
@@ -733,6 +864,7 @@ public final class Explorer {
     public Explorer(AppContext context) {
         this.context = context;
         this.favorites = new FavoritesView(context, this::selectedItem, sourceId -> reveal(sourceId, null));
+        this.artifacts = new ArtifactList(context);
         this.states = new TreeStates(context, this::statesChanged);
         states.onSpaceChanged(this::spaceStructureChanged);
         tree.setRootVisible(false);
@@ -924,6 +1056,9 @@ public final class Explorer {
 
         JScrollPane treeScroll = Comic.scroll(tree);
         treeScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        // Durchsichtig bis zur Fläche darunter: „Alles auswählen“ färbt Kopf und Baum gemeinsam (SelectionGlow).
+        treeScroll.setOpaque(false);
+        treeScroll.getViewport().setOpaque(false);
         // Jede Zeile ist genau so breit wie der sichtbare Bereich: Bestandszeichen und Stern stehen
         // in festen Spalten ganz rechts, ein zu langer Titel wird davor mit „…“ gekürzt. Bei neuer Breite neu
         // vermessen (auch beim Verschieben des Teilers).
@@ -938,14 +1073,14 @@ public final class Explorer {
         deck.add(treeScroll, TREE);
         deck.add(matchScroll, MATCHES);
         deck.add(favorites.component(), FAVORITES);
+        deck.add(artifacts.component(), ARTIFACTS);
         context.favorites().onChange(() -> javax.swing.SwingUtilities.invokeLater(this::favoritesChanged));
         root.setOpaque(false);
         // Kopf wie in der Quellenverwaltung: Comic-Überschrift, darunter das Filterfeld.
         // Die Überschrift ist anklickbar: sie wählt alle Wissensquellen; dann ist der ganze Kopf samt Filterfeld
         // gelb hinterlegt, als ein Feld (Angelo, 16.11.2026).
         JPanel title = head.title();
-        // Rechtsbündig wie die Symbole der Zeilen (Angelo, 16.11.2026): „Alles auswählen“, dann das Bestandszeichen
-        // über der Spalte der Bestandszeichen; rechts davon bleibt die Spalte der Sterne frei.
+        // Das Bestandszeichen aller Quellen steht unten rechts in der Fußleiste (Angelo, 27.11.2026).
         allBadge.setHorizontalAlignment(JLabel.CENTER);
         allBadge.setPreferredSize(new java.awt.Dimension(BADGE_WIDTH, RoundHover.SIZE));
         // Beim Darüberfahren Kreispfeile; der Klick aktualisiert nach Rückfrage alle Quellen (Angelo, 16.11.2026).
@@ -970,8 +1105,6 @@ public final class Explorer {
                 }
             }
         });
-        head.actions(selectAll, allBadge,
-                javax.swing.Box.createRigidArea(new java.awt.Dimension(ACTION_WIDTH, RoundHover.SIZE)));
         selectAll.addActionListener(e -> selectAll());
         heading.setToolTipText(ALL_TIP);
         Cursors.set(heading, java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
@@ -995,22 +1128,83 @@ public final class Explorer {
         };
         heading.addMouseListener(chooseAll);
         title.addMouseListener(chooseAll);
+        // Die Wippe steht an Stelle der Überschrift; ein Klick auf das schon gewählte „Wissensquellen“ wählt wie
+        // bisher die Überschrift alle Wissensquellen.
+        // Drei Hälften nur mit Symbolen (Angelo 27.11.2026): der Kolben für das Wissen, der Stern für die Favoriten
+        // (bisher unten rechts) und der Würfel für die Artefakte; der Name steht im Tooltip.
+        view.segment(SOURCES_TAB, com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.flask())
+                .segment(FAVORITES_TAB, Glyph.STAR).segment(ARTIFACTS_TAB, SwitchIcons.artifacts());
+        view.button(SOURCES_TAB).setToolTipText(SOURCES_TIP);
+        view.button(FAVORITES_TAB).setToolTipText(FAVORITES_TIP);
+        view.button(ARTIFACTS_TAB).setToolTipText(ARTIFACTS_TIP);
+        view.onSelect(this::showView);
+        // Eine eigene Zeile über den Kopfknöpfen. Der Umschalter steht rechtsbündig, zur Mitte des Fensters hin wie
+        // der der Aufträge auf der anderen Seite (Angelo 27.11.2026): Man schaltet oft um.
+        title.remove(heading);
+        // Neben der Überschrift stehen keine Symbole mehr: „Alles auswählen“ steht links in dieser Zeile, das
+        // Bestandszeichen („alles aktualisieren“) unten rechts, wo früher der Stern war.
+        JPanel viewRow = new JPanel(new BorderLayout());
+        viewRow.setOpaque(false);
+        viewRow.add(selectAll, BorderLayout.WEST);
+        // Senkrecht mittig in der Kopfleiste, in seiner eigenen Höhe.
+        viewHolder.setOpaque(false);
+        viewHolder.add(view);
+        viewRow.add(viewHolder, BorderLayout.EAST);
+        title.add(viewRow, BorderLayout.CENTER);
+        artifacts.onNote(text -> {
+            if (artifactsShown()) {
+                note.setText(text);
+            }
+        });
         head.addMouseListener(chooseAll);
-        root.add(head, BorderLayout.NORTH);
-        root.add(deck, BorderLayout.CENTER);
+        // „Alles auswählen“ färbt Kopf und Baum als eine Fläche (Angelo 28.11.2026), bis unter die letzte Zeile.
+        ((BorderLayout) allGlow.getLayout()).setVgap(6);
+        allGlow.add(head, BorderLayout.NORTH);
+        allGlow.add(deck, BorderLayout.CENTER);
+        allGlow.extent(this::allGlowExtent);
+        tree.addTreeExpansionListener(new javax.swing.event.TreeExpansionListener() {
+            @Override
+            public void treeExpanded(javax.swing.event.TreeExpansionEvent event) {
+                allGlow.repaint();
+            }
+
+            @Override
+            public void treeCollapsed(javax.swing.event.TreeExpansionEvent event) {
+                allGlow.repaint();
+            }
+        });
+        root.add(allGlow, BorderLayout.CENTER);
         collapseAll.addActionListener(e -> collapseAll());
         showCurrent.setEnabled(false);
         showCurrent.addActionListener(e -> showCurrent());
         // Hinweise nur beim Titelfilter und bei Fehlern; die Anzahl der Wissensquellen sieht man im Baum.
         note.setBorder(BorderFactory.createEmptyBorder(2, 6, 0, 0));
-        favoritesOnly.addActionListener(e -> showOnlyFavorites(!onlyFavorites));
+        groupByKind.setVisible(false);
+        groupByKind.setSelected(artifacts.grouped());
+        groupByKind.addActionListener(e -> {
+            artifacts.grouped(!artifacts.grouped());
+            groupByKind.setSelected(artifacts.grouped());
+        });
         // „Neuer Ordner“ nur, solange die Favoriten gezeigt werden (Angelo 24.11.2026: unten in der Fußleiste).
         favorites.newFolderButton().setVisible(false);
         // Die gemeinsame Fußleiste aller Seitenleisten, so hoch wie die Leiste mit der Lupe daneben.
-        root.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(
-                com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, showCurrent,
-                        favorites.newFolderButton()), note,
-                favoritesOnly), BorderLayout.SOUTH);
+        // Dieselbe Leiste wie unter der Arbeitsfläche und unter den Aufträgen (Angelo 27.11.2026): links die Lupe
+        // (markiert Titel im Baum), mittig die Aktionen, rechts das Bestandszeichen und in der Ecke die Hilfe.
+        footBar = new FindBar(() -> deck);
+        footBar.tools(com.aresstack.spaceharvester.app.ui.controls.SideFoot.centered(collapseAll, showCurrent,
+                favorites.newFolderButton(), groupByKind));
+        footBar.help(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, HELP_HEADING, HELP));
+        footBar.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
+                BorderFactory.createEmptyBorder(4, 2, 4, 2)));
+        // Der Hinweis der Leiste steht über der Fußleiste und nimmt nur Platz, solange er etwas sagt.
+        note.setVisible(false);
+        note.addPropertyChangeListener("text", event -> note.setVisible(!note.getText().isBlank()));
+        JPanel south = new JPanel(new BorderLayout());
+        south.setOpaque(false);
+        south.add(note, BorderLayout.NORTH);
+        south.add(footBar, BorderLayout.SOUTH);
+        root.add(south, BorderLayout.SOUTH);
+        footBar.viewChanged();
         context.onChange(ignored -> refreshSources());
         refreshSources();
     }
@@ -1043,6 +1237,7 @@ public final class Explorer {
         if (target == null) {
             return;
         }
+        view.select(SOURCES_TAB);
         cards.show(deck, TREE);
         // Fehler bis 23.11.2026: Beim Zuklappen wanderte die Auswahl auf den zugeklappten Vorfahren; der
         // Auswahl-Listener (nur der Umfang war stumm) zeigte dessen Ansicht in der Mitte, die meldete keine Seite mehr,
@@ -1191,9 +1386,35 @@ public final class Explorer {
         return global;
     }
 
+    /** Kopf und Baum der Wissensquellen; gelb, solange alle Quellen gewählt sind. */
+    private final com.aresstack.spaceharvester.app.ui.controls.SelectionGlow allGlow =
+            new com.aresstack.spaceharvester.app.ui.controls.SelectionGlow();
+    /** Luft unter der letzten Zeile des Baums, bevor das Gelb endet. */
+    private static final int GLOW_BELOW = 8;
+
+    /** Ob „alles gewählt“ gerade gezeigt wird (für Tests). */
+    boolean allShown() {
+        return allGlow.on();
+    }
+
+    /** Die Fläche aus Kopf und Baum (für Tests). */
+    com.aresstack.spaceharvester.app.ui.controls.SelectionGlow allGlow() {
+        return allGlow;
+    }
+
+    /** Das Gelb reicht bis unter die letzte Zeile des Baums, auch der aufgeklappten; höchstens bis zum Fuß. */
+    private int allGlowExtent() {
+        if (!tree.isShowing() && tree.getParent() != null && !tree.getParent().getParent().isVisible()) {
+            return allGlow.getHeight();
+        }
+        int rows = tree.getRowCount();
+        java.awt.Rectangle last = rows == 0 ? null : tree.getRowBounds(rows - 1);
+        int below = last == null ? 0 : last.y + last.height + GLOW_BELOW;
+        return Math.min(allGlow.getHeight(), deck.getY() + below);
+    }
+
     private void paintHead() {
-        head.setOpaque(global);
-        head.setBackground(Comic.YELLOW);
+        allGlow.on(global && !artifactsShown());
         heading.setForeground(global ? Comic.INK : Comic.MUTED);
         head.repaint();
     }
@@ -2202,6 +2423,10 @@ public final class Explorer {
     private void runFilter() {
         String text = filter.getText().trim();
         int id = ++filterRequest;
+        if (artifactsShown()) {
+            artifacts.filter(text);
+            return;
+        }
         if (text.isEmpty()) {
             cards.show(deck, onlyFavorites ? FAVORITES : TREE);
             note.setText(" ");
@@ -2413,6 +2638,9 @@ public final class Explorer {
 
         /** Ob die Zeile der hervorgehobene Suchtreffer ist ({@link #hint}). */
         private boolean hinted;
+        /** Ob die Lupe der Fußleiste diesen Titel markiert, und ob er ihr aktueller Treffer ist. */
+        private boolean found;
+        private boolean foundCurrent;
 
         /** Breite von Symbol und Titel, ohne die Spalten rechts. */
         private int getPreferredSizeOfText() {
@@ -2464,6 +2692,8 @@ public final class Explorer {
             badge = badge(item);
             this.row = row;
             hinted = value != null && value == hint;
+            found = value != null && findMarked.contains(value);
+            foundCurrent = found && findAt >= 0 && findAt < findHits.size() && findHits.get(findAt) == value;
             int depth = value instanceof Node node ? node.getLevel() : 1;
             // Die Spalten rechts liegen im rechten Rand des Labels: der Titel endet davor und wird nötigenfalls
             // mit „…“ gekürzt, statt die Symbole aus dem sichtbaren Bereich zu schieben.
@@ -2484,6 +2714,19 @@ public final class Explorer {
 
         @Override
         public void paint(java.awt.Graphics graphics) {
+            if (found) {
+                // Treffer der Lupe unten links: gelb unterlegt wie die Treffer im Lesetext, der aktuelle mit Rand.
+                java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                int textEnd = Math.min(getWidth() - 1, getPreferredSizeOfText());
+                g.setColor(Comic.YELLOW);
+                g.fillRoundRect(1, 1, textEnd - 2, getHeight() - 3, 8, 8);
+                if (foundCurrent) {
+                    g.setColor(Comic.INK);
+                    g.drawRoundRect(1, 1, textEnd - 2, getHeight() - 3, 8, 8);
+                }
+                g.dispose();
+            }
             super.paint(graphics);
             if (hinted) {
                 // Treffer der Suche: blauer Rahmen um den Titel, keine Auswahl (der Filter bleibt, Angelo 23.11.2026).
@@ -2750,17 +2993,149 @@ public final class Explorer {
         return where(sourceId, null);
     }
 
-    /** Umschalter unten rechts: nur die Favoriten als Liste (Stern gefüllt) oder der ganze Baum (Umriss). */
+    /**
+     * Wechselt zwischen dem Baum der Wissensquellen (oder den Favoriten) und der Liste der Artefakte (ADR 0047 §5).
+     * Zurück von den Artefakten steht wieder, was davor stand.
+     */
+    void showArtifacts(boolean shown) {
+        if (shown != artifactsShown()) {
+            view.select(shown ? ARTIFACTS_TAB : onlyFavorites ? FAVORITES_TAB : SOURCES_TAB);
+        }
+    }
+
+    /**
+     * Die gewählte Hälfte des Umschalters. Unter „Artefakte“ gelten Filterfeld und Fußleiste der Liste; die Knöpfe des
+     * Baums sind dann ausgeblendet.
+     */
+    private void showView(String tab) {
+        shownTab = tab;
+        boolean shown = ARTIFACTS_TAB.equals(tab);
+        if (!shown) {
+            onlyFavorites = FAVORITES_TAB.equals(tab);
+        }
+        for (JComponent part : new JComponent[] {selectAll, collapseAll, showCurrent}) {
+            part.setVisible(!shown);
+        }
+        // „Alles aktualisieren“ gehört zum Baum der Wissensquellen, nicht zu Favoriten oder Artefakten.
+        allBadge.setVisible(SOURCES_TAB.equals(tab));
+        groupByKind.setVisible(shown);
+        favorites.newFolderButton().setVisible(!shown && onlyFavorites);
+        allGlow.on(!shown && global);
+        if (shown != artifactsFront) {
+            artifactsFront = shown;
+            artifactsListener.accept(shown);
+        }
+        note.setText(" ");
+        if (shown) {
+            cards.show(deck, ARTIFACTS);
+            artifacts.reload();
+            artifacts.filter(filter.getText().trim());
+        } else {
+            runFilter();
+            favoritesShown();
+        }
+        if (footBar != null) {
+            // Lupe und Ecke der Fußleiste folgen der gezeigten Ansicht (Baum oder Artefakte).
+            footBar.viewChanged();
+        }
+    }
+
+    /** Was die Leiste zeigt, auch solange der Umschalter zugeklappt ohne Wahl am Fensterrand steht. */
+    private String shownTab = SOURCES_TAB;
+    private final JPanel viewHolder = new JPanel(new java.awt.GridBagLayout());
+
+    /** Die Leiste klappt zu: Der Umschalter zeigt keine Wahl und kann an den Fensterrand gestellt werden. */
+    void switchAway() {
+        view.clear();
+        view.vertical(true);
+    }
+
+    /** Die Leiste ist offen: Der Umschalter steht in ihrem Kopf und zeigt, was sie zeigt. */
+    void switchHome() {
+        if (view.getParent() != viewHolder) {
+            view.vertical(false);
+            viewHolder.add(view);
+            viewHolder.revalidate();
+            viewHolder.repaint();
+        }
+        view.show(shownTab);
+    }
+
+    /** Ob der Beobachter ({@link #onArtifactsShown}) die Artefakte zuletzt als gezeigt gemeldet bekam. */
+    private boolean artifactsFront;
+
+    /** Ob links gerade die Artefakte stehen. */
+    boolean artifactsShown() {
+        return ARTIFACTS_TAB.equals(shownTab);
+    }
+
+    /**
+     * Verbindet die Liste der Artefakte mit dem Speicher des Chats (derselbe, damit jede Änderung ankommt) und mit dem,
+     * was ein Klick öffnet: das Artefakt in der Mitte.
+     */
+    public void artifacts(com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore store,
+                          Consumer<String> open,
+                          java.util.function.BiConsumer<String, com.aresstack.spaceharvester.app.chat.ChatExport.Format>
+                                  export) {
+        artifacts.connect(store, open, export);
+        artifacts.books(this::newBookEdition, this::showFavoriteFolder);
+    }
+
+    /** „Ordner in den Wissensquellen zeigen“ am Buch: links die Favoriten, der Ordner gewählt. */
+    void showFavoriteFolder(String folderId) {
+        if (folderId == null) {
+            return;
+        }
+        // Ein Titelfilter zeigte die Treffer statt des Baums; der Ordner soll sichtbar werden.
+        filter.setText("");
+        showArtifacts(false);
+        showOnlyFavorites(true);
+        favorites.select(folderId);
+    }
+
+    /** Öffnet ein Artefakt des Projekts über den Navigator: links „Artefakte“, die Liste frisch gelesen. */
+    void revealArtifacts() {
+        showArtifacts(true);
+        artifacts.reload();
+    }
+
+    /** Meldet jeden Wechsel der Wippe: {@code true} heißt, links stehen die Artefakte. */
+    public void onArtifactsShown(Consumer<Boolean> listener) {
+        artifactsListener = listener == null ? shown -> { } : listener;
+    }
+
+    /**
+     * Die Zahl am Chip der Hälfte „Artefakte“ (Entwurf UX 27.11.2026): wie viele Artefakte die KI seit dem letzten Blick
+     * angelegt oder geändert hat; 0 ohne Chip.
+     */
+    public void unseenArtifacts(int count) {
+        view.count(ARTIFACTS_TAB, count, Comic.PETROL, Texts.count(count, "Artefakt neu oder geändert",
+                "Artefakte neu oder geändert"), ARTIFACTS_TIP);
+    }
+
+    /** Für Tests: der Schalter „Nach Art gruppieren“. */
+    IconButton groupByKindButton() {
+        return groupByKind;
+    }
+
+    /** Für Tests: die Liste der Artefakte. */
+    ArtifactList artifactList() {
+        return artifacts;
+    }
+
+    /** Die Hälfte „Favoriten“ (nur die Favoriten als Liste) oder „Wissensquellen“ (der ganze Baum). */
     void showOnlyFavorites(boolean only) {
-        onlyFavorites = only;
-        favoritesOnly.setIcon(only ? Glyph.STAR_FILLED : Glyph.STAR);
-        favoritesOnly.setToolTipText(only ? ALL_NODES : ONLY_FAVORITES);
-        favoritesOnly.getAccessibleContext().setAccessibleName(only ? ALL_NODES : ONLY_FAVORITES);
-        favorites.newFolderButton().setVisible(only);
+        view.select(only ? FAVORITES_TAB : SOURCES_TAB);
+    }
+
+    /** Zeigt Baum oder Favoriten nach {@link #onlyFavorites}; ein Titelfilter behält seine Trefferliste. */
+    private void favoritesShown() {
+        favorites.newFolderButton().setVisible(onlyFavorites);
         favoritesChanged();
         if (filter.getText().trim().isEmpty()) {
-            cards.show(deck, only ? FAVORITES : TREE);
-            note.setText(only && favorites.isEmpty() ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
+            cards.show(deck, onlyFavorites ? FAVORITES : TREE);
+            note.setText(onlyFavorites && favorites.isEmpty()
+                    ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
         }
     }
 
@@ -2770,7 +3145,7 @@ public final class Explorer {
 
     private void favoritesChanged() {
         boolean empty = favorites.reload();
-        if (onlyFavorites && filter.getText().trim().isEmpty()) {
+        if (onlyFavorites && filter.getText().trim().isEmpty() && !artifactsShown()) {
             note.setText(empty ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
         }
         tree.repaint();
@@ -2795,8 +3170,9 @@ public final class Explorer {
         return favorites;
     }
 
-    IconButton favoritesButton() {
-        return favoritesOnly;
+    /** Für Tests: die Hälfte „Favoriten“ des Umschalters. */
+    javax.swing.JToggleButton favoritesButton() {
+        return view.button(FAVORITES_TAB);
     }
 
     private void popup(MouseEvent event) {
@@ -2926,13 +3302,47 @@ public final class Explorer {
         if (scope == null) {
             return;
         }
+        analyze(scope, analysisWhere(item));
+    }
+
+    /**
+     * „Analysieren“ für Bereiche, etwa den der Wortsuche (Angelo 27.11.2026: fehlen dort Verben, fragt die Suche, ob
+     * analysiert werden soll): derselbe Ablauf wie im Kontextmenü, je Bereich einmal; leer heißt jede Quelle.
+     */
+    public void analyze(List<Scope> scopes) {
+        List<Scope> area = scopes.isEmpty() && context.runtime() != null
+                ? context.runtime().workspace().sources().stream().map(source -> new Scope(source.id(), null)).toList()
+                : scopes;
+        for (Scope scope : area) {
+            if (scope.sourceId() == null) {
+                continue;
+            }
+            StatementAnalysisJobs.Scope analysis = scope.pageId() != null
+                    ? new StatementAnalysisJobs.Scope.Subtree(scope.sourceId(), scope.spaceKey(), scope.pageId())
+                    : scope.spaceKey() != null ? new StatementAnalysisJobs.Scope.Space(scope.sourceId(),
+                    scope.spaceKey()) : new StatementAnalysisJobs.Scope.Source(scope.sourceId());
+            analyze(analysis, analysisWhere(scope));
+        }
+    }
+
+    /** Wo analysiert wird, für einen Bereich ohne Knoten im Baum. */
+    static String analysisWhere(Scope scope) {
+        if (scope.pageId() != null) {
+            return "Seite „" + (scope.pageTitle() == null ? scope.pageId() : scope.pageTitle())
+                    + "“ samt allen Unterseiten (Quelle " + scope.sourceId()
+                    + (scope.spaceKey() == null ? "" : " · Space " + scope.spaceKey()) + ")";
+        }
+        return scope.spaceKey() != null ? "Space " + scope.spaceKey() + " der Quelle " + scope.sourceId()
+                + " mit allen Seiten" : "Quelle " + scope.sourceId() + " mit allen Spaces und Seiten";
+    }
+
+    private void analyze(StatementAnalysisJobs.Scope scope, String where) {
         if (scope instanceof StatementAnalysisJobs.Scope.SinglePage) {
             startAnalysis(scope, new StatementAnalysisJobs.Options(false, StatementAnalysisJobs.Options.DEFAULT
                     .maxPages(), null, analyzerSetting()));
             return;
         }
         notice("Umfang der Analyse wird ermittelt …", Severity.INFO);
-        String where = analysisWhere(item);
         Background.run(() -> analyses.estimate(scope, ANALYSIS_LIMIT), estimate -> {
             if (estimate.exact() && estimate.pages() == 0) {
                 notice("Keine Seiten zum Analysieren", Severity.INFO);

@@ -25,4 +25,10 @@ public final class DelegatingBrowserAccessGuard implements BrowserAccessGuard {
         }
         current.admit(chat, url);
     }
+
+    @Override
+    public boolean refuses(ChatConversationId chat, String url) {
+        BrowserAccessGuard current = delegate;
+        return current == null || current.refuses(chat, url);
+    }
 }

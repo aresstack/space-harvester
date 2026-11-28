@@ -54,6 +54,12 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class ChatTurn {
 
+    /**
+     * Beginn und Dauer jedes Werkzeugs im App-Log (Browser, NDV, Wissen …), damit ein hängender Schritt dort sichtbar
+     * ist: „beginnt“ ohne „fertig“ heißt, das Werkzeug wartet noch; steht „fertig“ da, arbeitet das Modell.
+     */
+    private static final System.Logger TOOL_LOG = System.getLogger(ChatTurn.class.getName() + ".tools");
+
     /** Bis so viele Seiten gehen die Seiten ganz mit, statt zu suchen. */
     static final int WHOLE_PAGES = 3;
     /** Längstens so lange wartet der Turn auf die Suche; danach zählen die bis dahin bewerteten Treffer. */
@@ -1126,13 +1132,29 @@ public final class ChatTurn {
                     }
                     String what = toolset.describe(call);
                     String key = round + ":" + index + ":" + call.id();
+                    // Browser-Schritte zeigt die Karte „Browserrecherche“, nicht die Karte des Wissens.
+                    boolean browser = browserCall(call);
                     onUi(() -> {
-                        listener.using(what);
+                        if (!browser) {
+                            listener.using(what);
+                        }
                         listener.toolStarted(key, call.name(), what);
                     });
+                    long started = System.nanoTime();
+                    String kind = browser ? "Browser-Werkzeug " : "Werkzeug ";
+                    TOOL_LOG.log(System.Logger.Level.INFO, kind + call.name() + " beginnt");
                     try {
-                        results[index] = ChatRoom.within(room, () -> toolset.run(call));
+                        // Zwischenstände (etwa Fundzahl einer NDV-Suche) laufen in die Statuszeile der Blase.
+                        results[index] = ToolProgress.within(
+                                now -> onUi(() -> {
+                                    if (!browser) {
+                                        listener.using(now);
+                                    }
+                                }),
+                                () -> ChatRoom.within(room, () -> toolset.run(call)));
                     } finally {
+                        TOOL_LOG.log(System.Logger.Level.INFO, kind + call.name()
+                                + " fertig nach " + (System.nanoTime() - started) / 1_000_000L + " ms");
                         onUi(() -> listener.toolFinished(key));
                     }
                 };

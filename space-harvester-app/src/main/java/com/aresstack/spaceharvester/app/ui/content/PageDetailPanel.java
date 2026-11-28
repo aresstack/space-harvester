@@ -113,12 +113,12 @@ public final class PageDetailPanel extends JPanel {
     private static final String PROPERTIES = "Eigenschaften";
     private static final String ATTACHMENTS = "Anhänge";
     private static final String REFERENCES = "Verweise";
-    private static final String TERMS = "Begriffe";
+    private static final String TERMS = "Statistik";
     private static final String PASSAGES = "Absätze";
     private static final String IMAGES = "Bilder";
     private static final String IMAGES_WORD = "Bilder";
     private static final String STATEMENTS_WORD = "Aussagen";
-    private static final String ANALYSES = "Analysen";
+    static final String ANALYSES = "Analysen";
     private static final String STATEMENTS = "Aussagen";
     static final String STATEMENTS_PLACEHOLDER = "Noch keine Aussagen – Analyse folgt";
     private static final String GRAPH = "Graph";
@@ -162,6 +162,8 @@ public final class PageDetailPanel extends JPanel {
     private final ExportPanel export;
     /** Die Artefakte des Chats in der Export-Ansicht; {@code null}, solange keine eingesetzt sind. */
     private ArtifactTabs artifactTabs;
+    /** „Aus dieser Seite erzeugt“: auf der Seite von „Export“ und im ▾-Menü dieselben Einträge. */
+    private final LocalArtifacts localArtifacts;
     /**
      * Die untere Leiste von „Export“: mittig die Knöpfe der Ausgabe (Angelo 27.11.2026), je nach Reiter die der
      * Export-Fläche, eines Export-Reiters oder nur die Formate des gewählten Artefakts (ADR 0045 §5).
@@ -380,6 +382,14 @@ public final class PageDetailPanel extends JPanel {
     private final ComposerButton saveAsset = Comic.button("Anhang speichern …", "Datei des gewählten Anhangs");
     private final ComposerButton previewAsset = Comic.button("Vorschau",
             "Zeigt den gewählten Anhang im Anhang-Viewer (auch per Doppelklick)");
+    /**
+     * „Bilder anzeigen“ rechts in der Leiste der Anhänge (Angelo 27.11.2026): Bilder sieht man sich im Editor an, in der
+     * Liste verwirren sie. Vorgabe aus; die Wahl gilt global und wird im Application State gemerkt.
+     */
+    private final JCheckBox showImages = Comic.checkBox("Bilder anzeigen");
+    static final String SHOW_IMAGES_KEY = "attachments.images.shown";
+    /** Die Leiste mit der Lupe unter „Anhänge“: Vorschau, Ablegen, Speichern links, „Bilder anzeigen“ rechts. */
+    private final JPanel attachmentsFoot = footRow();
     /** Reiter „Anhänge“: Liste unten, der Anhang-Viewer als Comic-Overlay darüber (wie im Enterprise AI Client). */
     private final JLayeredPane attachmentLayers = new JLayeredPane();
     private ComicOverlayPanel attachmentOverlay;
@@ -431,8 +441,32 @@ public final class PageDetailPanel extends JPanel {
      * eines Videos der Transkript-Knopf (Angelo, 19.11.2026: eine Leiste, die je nach Ansicht wechselt).
      */
     private final JPanel footTools = new JPanel(new BorderLayout());
-    /** Die Unterreiter von „Analysen“ einer Seite mit „mit Unterseiten“ rechts, in der unteren Leiste. */
-    private final TabFoot analysisFoot;
+    /**
+     * Die Analysen stehen nicht mehr als Reiter in der Mitte, sondern in der rechten Seitenleiste zwischen Chat und
+     * Aufträgen (Angelo 27.11.2026). Sie richten sich weiter nach der Auswahl links bzw. der offenen Seite: die
+     * Analysen der Seite, die der Auswahl ({@link #standing}) oder ein Hinweis. Das Hauptfenster stellt die Fläche in
+     * die Leiste und meldet über {@link #analysesShown(boolean)}, ob sie zu sehen ist.
+     */
+    private final java.awt.CardLayout analysesCards = new java.awt.CardLayout();
+    private final JPanel analyses = new JPanel(analysesCards);
+    /** Die Reiter der gezeigten Analysen unten in der Seitenleiste ({@link #analysisFoot}). */
+    private final JPanel analysesFoot = new JPanel(new BorderLayout());
+    /** Die eine Reiterzeile der Analysen für Seite und obere Knoten; die Ebene liefert nur ihre Ansichten. */
+    private AnalysisTabRow analysisRow;
+    private boolean analysesOpen;
+    /** Klappt die Seitenleiste mit den Analysen auf; ohne Hauptfenster (Tests) gelten sie sofort als gezeigt. */
+    private Runnable openAnalyses = () -> analysesShown(true);
+    /** Ein Sprung aus den Analysen in die Mitte (Fundstelle, Seite): die groß gezeigte Leiste gibt die Mitte frei. */
+    private Runnable revealMiddle = () -> { };
+    private static final String ANALYSES_PAGE = "page";
+    private static final String ANALYSES_NONE = "none";
+    static final String NO_ANALYSES = "Wähle links eine Seite oder einen Bereich, um die Analysen dazu zu sehen.";
+    /**
+     * Die Reiter der Analysen jeder Ebene in der unteren Leiste der Seitenleiste, rechts die ?-Hilfe des gewählten
+     * Reiters, darunter rechts „mit Unterseiten“. Die Reiter brechen um, wenn die Leiste zu schmal ist (viele Reiter
+     * eines Programms), statt abgeschnitten zu werden.
+     */
+    private JPanel analysisFoot;
     /** Die Unterreiter von „Begriffe“ (Akronyme, Bezeichner, Verben, Beziehungen) neben denen von „Analysen“. */
     /** Die Unterreiter von „Erweitert“ einer Seite bzw. ohne Seite, in der unteren Leiste. */
     private final TabFoot advancedFoot;
@@ -444,12 +478,8 @@ public final class PageDetailPanel extends JPanel {
      */
     private final JCheckBox folderSubfolders = Subpages.checkBox();
     private final TabFoot folderFoot = new TabFoot(javax.swing.Box.createHorizontalBox(), folderSubfolders);
-    /**
-     * Die Unterreiter von „Analysen“ ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner) in der unteren Leiste, wie
-     * auf einer Seite (Angelo 24.11.2026); rechts steht am Ordner „mit Unterseiten“.
-     */
-    private TabFoot standingFoot;
-    private final JPanel standingTrailing = new JPanel(new BorderLayout());
+    /** Unten rechts in {@link #analysisFoot}: „mit Unterseiten“ der Seite oder des Ordners. */
+    private final JPanel standingTrailing = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
     /** Der gewählte Ordner, sonst {@code null}; seine Stellung zeigt {@link #folderSubfolders}. */
     private ExportPanel.Selection.Collection folder;
     /** Bekommt die Stellung, die der Benutzer an {@link #folderSubfolders} wählt. */
@@ -484,19 +514,22 @@ public final class PageDetailPanel extends JPanel {
      * Ein Umschalter „Änderungen | Bereich“ mittig in seiner Leiste (Angelo 24.11.2026, wie „Aufträge | Hintergrund“);
      * die Wahl gilt global für alle Seiten, alle Umschalter folgen ihr.
      */
-    private JComponent scopeRow() {
+    private JComponent scopeRow(boolean withBook) {
         com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle toggle = AreaSummaryView.scopeToggle();
         scopeToggles.add(toggle);
         toggle.onSelect(this::scopeChosen);
-        // An einem Ordner mit Buch an derselben Stelle „Buch | Bereich“ (Architekt 27.11.2026), Wahl je Ordner.
-        com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle book = AreaSummaryView.bookToggle();
-        bookToggles.add(book);
-        book.onSelect(this::bookChosen);
-        book.setVisible(false);
         JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
         row.setOpaque(false);
         row.add(toggle);
-        row.add(book);
+        // Nur die Podcast-Ansicht eines Ordners mit Buch hat an derselben Stelle „Buch | Bereich“ (Architekt
+        // 27.11.2026), Wahl je Ordner. Die Leseansicht zeigt den Überblick; das Buch steht unter „Artefakte“ (ADR 0047).
+        if (withBook) {
+            com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle book = AreaSummaryView.bookToggle();
+            bookToggles.add(book);
+            book.onSelect(this::bookChosen);
+            book.setVisible(false);
+            row.add(book);
+        }
         scopeRows.add(row);
         return row;
     }
@@ -512,7 +545,7 @@ public final class PageDetailPanel extends JPanel {
         showDeck();
     }
 
-    /** Ob der gezeigte Ordner ein Buch hat: dann steht unten „Buch | Bereich“. */
+    /** Ob der gezeigte Ordner ein Buch hat: dann steht unten im Podcast „Buch | Bereich“. */
     private boolean bookAtFolder() {
         return folderShown() && areaView.edition() != null;
     }
@@ -698,28 +731,8 @@ public final class PageDetailPanel extends JPanel {
         areaPodcast.books(latest);
         // Geänderte Seiten seit der Auflage: gemerkter Stand gegen den jetzigen in der Ablage (kein Abfragen; die
         // Ansicht prüft nur, wenn eine Quelle eine Änderung meldet oder der Ordner neu gezeigt wird).
-        areaView.staleness((folderId, shown) -> {
-            var runtime = context.runtime();
-            if (runtime == null) {
-                return false;
-            }
-            // Dieselben Seiten, aus denen „Buch schreiben“ liest (FavoritesBasket: der Ordner samt Unterordnern).
-            List<com.aresstack.spaceharvester.app.research.BookEditions.Source> members = new java.util.ArrayList<>();
-            for (var favorite : context.favorites().favoritesIn(folderId, true)) {
-                if (favorite.pageId() != null) {
-                    members.add(new com.aresstack.spaceharvester.app.research.BookEditions.Source(favorite.sourceId(),
-                            favorite.pageId(), null));
-                }
-            }
-            var stock = new com.aresstack.spaceharvester.app.research.WorkspacePageStock(runtime.workspace(), null);
-            return com.aresstack.spaceharvester.app.research.BookEditions.stale(shown, members, source -> stock.version(
-                    new com.aresstack.spaceharvester.application.snapshot.PageKey(source.sourceId(), source.pageId())));
-        });
-        areaView.onNewEdition(folderId -> {
-            if (context.navigator() != null) {
-                context.navigator().newBookEdition(folderId);
-            }
-        });
+        // Die Leseansicht zeigt kein Buch mehr; „Neue Auflage“ steht an der Buchzeile unter „Artefakte“ (ADR 0047).
+        areaPodcast.staleness((folderId, shown) -> context.bookArtifacts().stale(folderId, shown));
         this.sourceProperties = new SourcePropertiesView(() -> context.runtime() == null ? null
                 : context.runtime().workspace(), context::settings);
         sourceProperties.secretState((current, entry) -> com.aresstack.spaceharvester.app.ui.SecretState.of(current,
@@ -733,6 +746,10 @@ public final class PageDetailPanel extends JPanel {
         this.graphView = new KnowledgeGraphTab(() -> context.runtime() == null ? null
                 : context.runtime().workspace());
         this.export = new ExportPanel(context);
+        // Die lokalen Artefakte der Auswahl auf der leeren Seite von „Export“ (ADR 0047 §5a).
+        this.localArtifacts = new LocalArtifacts(context);
+        localArtifacts.onOpen(() -> tabs.select(READING), () -> tabs.select(READ));
+        export.extra(localArtifacts.component());
         this.chat = new ChatPanel(context);
         footTools.setOpaque(false);
         this.standing = new StandingTab(context::runtime);
@@ -800,8 +817,8 @@ public final class PageDetailPanel extends JPanel {
         pageFoot.add(pagePodcast.footTools(), BorderLayout.EAST);
         sourceFoot.add(Comic.row(sourceChanges.podcast().transcriptCopy()), BorderLayout.WEST);
         sourceFoot.add(sourceChanges.podcast().footTools(), BorderLayout.EAST);
-        sourceFoot.add(scopeRow(), BorderLayout.CENTER);
-        readingSourceFoot.add(scopeRow(), BorderLayout.CENTER);
+        sourceFoot.add(scopeRow(false), BorderLayout.CENTER);
+        readingSourceFoot.add(scopeRow(false), BorderLayout.CENTER);
         areaFoot.add(Comic.row(areaPodcast.podcast().transcriptCopy()), BorderLayout.WEST);
         // „mit Unterseiten“ eines Ordners steht in jeder Ansicht an derselben Stelle: ganz rechts in der Ecke, wie in
         // der Ordnerleiste und unter „Analysen“ (TabFoot); früher hier mittig, so sprang sie (Angelo 27.11.2026).
@@ -811,7 +828,7 @@ public final class PageDetailPanel extends JPanel {
         areaFolderSlot.setOpaque(false);
         areaEast.add(areaFolderSlot, BorderLayout.EAST);
         areaFoot.add(areaEast, BorderLayout.EAST);
-        areaFoot.add(scopeRow(), BorderLayout.CENTER);
+        areaFoot.add(scopeRow(true), BorderLayout.CENTER);
         readerPage.setOrb(pagePodcast.orb());
         // Der Chat liest mit derselben Sprachausgabe vor; sein Knopf steht auf der Höhe dieser Knöpfe (Angelo 23.11.2026).
         chat.useReadAloud(this::readAloudBinding);
@@ -839,7 +856,19 @@ public final class PageDetailPanel extends JPanel {
         assetsBusy.setHighlight(Comic.BLUE);
         assetsBusy.setVeilColor(Comic.SURFACE);
         attachmentList.add(assetsBusy, BorderLayout.CENTER);
-        attachmentList.add(Comic.row(previewAsset, harvest, saveAsset), BorderLayout.SOUTH);
+        // Die Knöpfe stehen in der Leiste mit der Lupe, nicht in einer eigenen Zeile darüber (Angelo 27.11.2026).
+        attachmentsFoot.add(Comic.row(previewAsset, harvest, saveAsset), BorderLayout.WEST);
+        attachmentsFoot.add(showImages, BorderLayout.EAST);
+        showImages.setToolTipText("Bilder und SVG-Grafiken in der Liste zeigen; gilt für alle Seiten");
+        showImages.setSelected(com.aresstack.spaceharvester.app.ui.WindowSizes.recallInt(SHOW_IMAGES_KEY, 0) == 1);
+        assetsModel.showImages(showImages.isSelected());
+        showImages.addActionListener(e -> {
+            com.aresstack.spaceharvester.app.ui.WindowSizes.rememberInt(SHOW_IMAGES_KEY,
+                    showImages.isSelected() ? 1 : 0);
+            assetsModel.showImages(showImages.isSelected());
+            updateAssetsHint();
+            updatePreviewEnabled();
+        });
         attachmentLayers.setLayout(new FillLayout());
         attachmentLayers.add(attachmentList, JLayeredPane.DEFAULT_LAYER);
         JPanel attachmentsPanel = new JPanel(new BorderLayout());
@@ -923,17 +952,21 @@ public final class PageDetailPanel extends JPanel {
         analysisActions.add(storeField);
         analysisActions.add(analysisView.proposeIcon());
         analysisActions.add(analysisView.createIcon());
-        analysisFoot = new TabFoot(analysisTabs.detachBar(), subpages.box());
+        analysisTabs.detachBar();
         terms.selectableKinds();
         storeField.onChange(this::switchStore);
         originalContent.setOpaque(false);
         fileContent.setOpaque(false);
         originalContent.add(readingPane, ORIGINAL_PAGE_CARD);
         originalContent.add(fileContent, ORIGINAL_FILE_CARD);
+        storeBusy = new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(analysisTabs);
+        analyses.setOpaque(false);
+        analysesFoot.setOpaque(false);
+        analyses.add(placeholder(NO_ANALYSES), ANALYSES_NONE);
+        analyses.add(storeBusy, ANALYSES_PAGE);
         tabs.tab(READING, originalContent)
                 .tab(READ, readerPanel)
                 .tab(ATTACHMENTS, attachmentsPanel)
-                .tab(ANALYSES, storeBusy = new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(analysisTabs))
                 .tab(ADVANCED, advanced)
                 // Der Export hängt nicht an der gezeigten Seite, sondern an der Auswahl links; er liegt deshalb als
                 // eigene Karte neben Seite und Hinweis, der Reiter hält nur den Platz.
@@ -944,7 +977,6 @@ public final class PageDetailPanel extends JPanel {
         icons.put(READING, PageTabIcons.reading());
         icons.put(READ, PageTabIcons.text());
         icons.put(ATTACHMENTS, PageTabIcons.attachments());
-        icons.put(ANALYSES, PageTabIcons.analyses());
         icons.put(ADVANCED, PageTabIcons.properties());
         icons.put(EXPORT, PageTabIcons.export());
         tabIcons = tabs.iconBar(icons);
@@ -960,7 +992,7 @@ public final class PageDetailPanel extends JPanel {
             }
             loadBelowSection(name);
             showRelations();
-            if (ANALYSES.equals(tabs.selected())) {
+            if (analysesOpen) {
                 loadVisible();
                 showTabStatus();
             }
@@ -1037,6 +1069,11 @@ public final class PageDetailPanel extends JPanel {
             loadVerbs();
         });
         graphView.onDeleted(statementsView::reload);
+        // Der leere Graph bietet die Analyse an; sie läuft unter „Aussagen“, wo auch ihr Fortschritt steht.
+        graphView.onAnalyze(() -> {
+            analysisTabs.select(STATEMENTS);
+            statementsView.analyzeNow();
+        });
         knowledgeGraphTab(graphView);
         images.onDescribe(() -> describeImages(false));
         images.onDescribeOne(this::describeImage);
@@ -1163,9 +1200,37 @@ public final class PageDetailPanel extends JPanel {
         glossaryHelp.setVisible(false);
         graphHelp.setVisible(false);
         standingTrailing.setOpaque(false);
-        standingTrailing.setVisible(false);
-        standingFoot = new TabFoot(standing.tabs().detachBar(), standingTrailing);
-        deck.add(standing, STAND_CARD);
+        // Die ?-Hilfe der Reiter steht unten rechts in der Ecke der Leiste, wie bei den Aufträgen (Angelo 27.11.2026).
+        standingTrailing.add(subpages.box());
+        // Eine Reiterzeile für jede Ebene (Angelo 27.11.2026): alle Reiter in einer Reihenfolge, je Name ein Symbol,
+        // der Name im Tooltip. Gleiche Reiter stehen an derselben Stelle, ob Seite oder oberer Knoten; Reiter eines
+        // Programms (Kontrollfluss …) kommen dahinter und behalten ihren Text.
+        java.util.Map<String, Icon> analysisIcons = new java.util.LinkedHashMap<>();
+        analysisIcons.put(PASSAGES, AnalysisTabIcons.passages());
+        analysisIcons.put(TERMS, AnalysisTabIcons.terms());
+        analysisIcons.put(REFERENCES, AnalysisTabIcons.references());
+        analysisIcons.put(IMAGES, AnalysisTabIcons.images());
+        analysisIcons.put(STATEMENTS, AnalysisTabIcons.statements());
+        analysisIcons.put(StandingTab.READING, AnalysisTabIcons.readFirst());
+        analysisIcons.put(StandingTab.CONFLICTS, AnalysisTabIcons.conflicts());
+        analysisIcons.put(StandingTab.GLOSSARY, AnalysisTabIcons.glossary());
+        analysisIcons.put(GRAPH, AnalysisTabIcons.graph());
+        analysisIcons.put(RELATIONS, AnalysisTabIcons.relations());
+        analysisRow = new AnalysisTabRow(analysisIcons);
+        analysisRow.follow(analysisTabs);
+        analysisRow.follow(standing.tabs());
+        standing.onConflicts(found -> analysisRow.mark(StandingTab.CONFLICTS, found == 0 ? null : String.valueOf(found)));
+        standing.tabs().detachBar();
+        JPanel helps = new JPanel(new BorderLayout());
+        helps.setOpaque(false);
+        helps.add(Comic.row(statementsHelp, standingHelp, glossaryHelp, graphHelp), BorderLayout.NORTH);
+        analysisFoot = new JPanel(new BorderLayout(8, 0));
+        analysisFoot.setOpaque(false);
+        analysisFoot.add(analysisRow.bar(), BorderLayout.CENTER);
+        analysisFoot.add(helps, BorderLayout.EAST);
+        analysisFoot.add(standingTrailing, BorderLayout.SOUTH);
+        analysesFoot.add(analysisFoot, BorderLayout.CENTER);
+        analyses.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
         deck.add(sourceView, SOURCE_CARD);
         deck.add(sourceChanges, SOURCE_TEXT_CARD);
@@ -1196,7 +1261,8 @@ public final class PageDetailPanel extends JPanel {
         searchPrograms.setVisible(false);
         cancelProgramSearch();
         pendingProgramFocus = null;
-        subpages.box().setVisible(true);
+        programShown = false;
+        subpagesShown();
         // Der Graph verlässt die Seite vor den Unterseiten: Deren Abmeldung soll für die alte Seite nichts mehr laden.
         graphView.page(null);
         subpages.page(null, null, null, null);
@@ -1310,18 +1376,20 @@ public final class PageDetailPanel extends JPanel {
         String selected = tabs.selected();
         // Die Werkzeuge der Updates stehen nur da, wo die Updates zu sehen sind.
         boolean area = areaShown();
-        // Ein Ordner hat keine Änderungen: dort kein „Änderungen | Bereich“, mit Buch aber „Buch | Bereich“.
+        // Ein Ordner hat keine Änderungen: dort kein „Änderungen | Bereich“, im Podcast mit Buch aber „Buch | Bereich“.
         boolean folderNow = folderShown();
         boolean book = bookAtFolder();
         ExportPanel.Selection.Collection folder = areaView.folder();
         String bookChoice = AreaSummaryView.bookChosen(folder == null ? null : folder.folderId())
                 ? AreaSummaryView.BOOK : AreaSummaryView.AREA;
         for (JComponent row : scopeRows) {
-            row.setVisible(!folderNow || book);
+            boolean hasBook = false;
             for (java.awt.Component part : row.getComponents()) {
                 boolean isBook = bookToggles.contains(part);
+                hasBook |= isBook;
                 part.setVisible(isBook ? book : !folderNow);
             }
+            row.setVisible(!folderNow || book && hasBook);
         }
         bookToggles.forEach(toggle -> toggle.select(bookChoice));
         sourceView.tools().setVisible(SOURCE_CARD.equals(pageCard) && READING.equals(selected) && !area);
@@ -1330,8 +1398,24 @@ public final class PageDetailPanel extends JPanel {
         areaPodcast.tools().setVisible(SOURCE_CARD.equals(pageCard) && READ.equals(selected) && area);
         sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && ADVANCED.equals(selected) && wide
                 && PROPERTIES.equals(wideAdvanced.selected()));
-        readingHelp.setVisible(PAGE.equals(pageCard) && READING.equals(selected));
-        analysisActions.setVisible(PAGE.equals(pageCard) && ANALYSES.equals(selected) && !wide);
+        // Die Hilfe einer Ansicht ist zu sehen, solange ihre Werkzeuge im Kopf zu sehen sind.
+        sourceView.help().setVisible(sourceView.tools().isVisible());
+        sourceChanges.help().setVisible(sourceChanges.tools().isVisible());
+        areaView.help().setVisible(areaView.tools().isVisible());
+        areaPodcast.help().setVisible(areaPodcast.tools().isVisible());
+        sourceProperties.help().setVisible(sourceProperties.tools().isVisible());
+        // Jede Ansicht hat ihr „?“ (Angelo 27.11.2026): Wo keine eigene Hilfe einer Quelle oder eines Bereichs
+        // steht, erklärt die des Reiters, was er zeigt.
+        boolean other = sourceView.help().isVisible() || sourceChanges.help().isVisible()
+                || areaView.help().isVisible() || areaPodcast.help().isVisible()
+                || sourceProperties.help().isVisible();
+        readingHelp.setVisible(!other && READING.equals(selected));
+        podcastHelp.setVisible(!other && READ.equals(selected));
+        attachmentsHelp.setVisible(!other && ATTACHMENTS.equals(selected));
+        infoHelp.setVisible(!other && ADVANCED.equals(selected));
+        exportHelp.setVisible(!other && EXPORT.equals(selected));
+        reload.setEnabled(pageId != null || SOURCE_CARD.equals(pageCard));
+        analysisActions.setVisible(PAGE.equals(pageCard) && analysesOpen && !wide);
         advancedActions.setVisible(PAGE.equals(pageCard) && ADVANCED.equals(selected) && !wide);
         // Analysen ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner): der Stand der Auswahl links, mit den
         // Unterreitern „Aussagen“, „Zuerst lesen“, „Mögliche Widersprüche“ (Angelo 17.11.2026, kein eigenes Symbol).
@@ -1339,13 +1423,13 @@ public final class PageDetailPanel extends JPanel {
         standing.shown(standingShown);
         showOverviewHelp();
         updateFootTools(selected);
-        if (sourceMenuShown() || standingShown) {
+        if (sourceMenuShown()) {
             more.setEnabled(true);
         } else if (SOURCE_CARD.equals(pageCard) || wide && pageId == null) {
             more.setEnabled(false);
         }
-        if (artifactTabs != null && (export.selection() != null || !artifactTabs.artifacts().isEmpty())) {
-            more.setEnabled(true); // „Neuer Export“ und die Artefakte des Chats stehen in jedem Fall im Menü
+        if (artifactTabs != null && export.selection() != null) {
+            more.setEnabled(true); // „Neuer Export“ steht in jedem Fall im Menü
         }
         heading.revalidate();
         heading.repaint();
@@ -1357,8 +1441,8 @@ public final class PageDetailPanel extends JPanel {
                     : READ.equals(selected) ? area ? AREA_TEXT_CARD : SOURCE_TEXT_CARD : EMPTY;
         }
         boolean wideAdvancedShown = ADVANCED.equals(selected) && wide;
-        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD
-                : standingShown ? STAND_CARD : wideAdvancedShown ? WIDE_ADVANCED_CARD : page);
+        cards.show(deck, EXPORT.equals(selected) ? EXPORT_CARD : wideAdvancedShown ? WIDE_ADVANCED_CARD : page);
+        analysesCards.show(analyses, wide ? STAND_CARD : PAGE.equals(pageCard) ? ANALYSES_PAGE : ANALYSES_NONE);
         showRelations();
     }
 
@@ -1548,8 +1632,75 @@ public final class PageDetailPanel extends JPanel {
         }
     }
 
+    /** Ob die gezeigte Seite ein Programm ist: dann gibt es „mit Unterseiten“ nicht. */
+    private boolean programShown;
+
+    private void subpagesShown() {
+        subpages.box().setVisible(!wide && PAGE.equals(pageCard) && !programShown);
+    }
+
     private boolean standingShown() {
-        return ANALYSES.equals(tabs.selected()) && wide;
+        return analysesOpen && wide;
+    }
+
+    /** Die Fläche der Analysen für die rechte Seitenleiste; ihr Inhalt folgt der Auswahl links und der offenen Seite. */
+    JComponent analyses() {
+        return analyses;
+    }
+
+    /** Die Reiter der gezeigten Analysen für den Fuß der Seitenleiste. */
+    JComponent analysesFoot() {
+        return analysesFoot;
+    }
+
+    /** Die Aktionen der Analysen einer Seite für die Kopfzeile der Seitenleiste. */
+    JComponent analysesActions() {
+        return analysisActions;
+    }
+
+    /** Was die Mitte wieder zeigt, wenn ein Sprung aus den groß gezeigten Analysen dorthin führt (das Hauptfenster). */
+    void onRevealMiddle(Runnable action) {
+        revealMiddle = java.util.Objects.requireNonNull(action, "action");
+    }
+
+    /** Was die Seitenleiste mit den Analysen aufklappt (das Hauptfenster); etwa wenn ein Sprung dorthin führt. */
+    /** Was „Jetzt analysieren“ in den leeren Analysen der Auswahl tut; das bestimmt das Hauptfenster. */
+    void onAnalyzeArea(Runnable action) {
+        standing.onAnalyze(action);
+    }
+
+    void onOpenAnalyses(Runnable action) {
+        openAnalyses = java.util.Objects.requireNonNull(action, "action");
+    }
+
+    /**
+     * Ob die Analysen in der Seitenleiste gerade zu sehen sind: verdeckt lesen und zählen sie nicht, beim Zeigen laden
+     * sie nach, was ihr gewählter Reiter braucht.
+     */
+    void analysesShown(boolean shown) {
+        if (analysesOpen == shown) {
+            return;
+        }
+        analysesOpen = shown;
+        showDeck();
+        if (shown) {
+            loadVisible();
+            if (!wide) {
+                loadBelowSection(analysisTabs.selected());
+            }
+        }
+        showTabStatus();
+    }
+
+    boolean analysesShown() {
+        return analysesOpen;
+    }
+
+    /** Das Menü hinter dem Dreieck der Seitenleiste: nur was zu den gezeigten Analysen gehört. */
+    java.util.List<javax.swing.JMenuItem> analysesMenu() {
+        // Nur für den Fehlerfall und deshalb hier versteckt (Angelo 24.11.2026).
+        return standingShown() ? java.util.List.of(menuItem(REBUILD_COUNTS, REBUILD_COUNTS_TIP, true,
+                overviewTerms::rebuild)) : java.util.List.of();
     }
 
     /**
@@ -1558,7 +1709,11 @@ public final class PageDetailPanel extends JPanel {
      */
     private void showProgramAnalysis(PageSnapshot snapshot) {
         boolean program = programAnalysisTabs.show(snapshot, views);
-        subpages.box().setVisible(!program);
+        programShown = program;
+        subpagesShown();
+        if (analysisRow != null) {
+            analysisRow.refresh();
+        }
         recomputeProgram.setVisible(program);
         recomputeBusiness.setVisible(program && com.aresstack.spaceharvester.app.runtime.program.StoredCobolSource.read(snapshot).isPresent());
         searchPrograms.setVisible(snapshot.metadata().attributes().containsKey("ftp.path")
@@ -1572,8 +1727,8 @@ public final class PageDetailPanel extends JPanel {
         boolean selected = RELATIONS.equals(analysisTabs.selected());
         analysisView.proposeIcon().setVisible(selected);
         analysisView.createIcon().setVisible(selected);
-        analysisView.shown(ANALYSES.equals(tabs.selected()) && !wide && selected);
-        statementsHelp.setVisible(ANALYSES.equals(tabs.selected()) && !wide
+        analysisView.shown(analysesOpen && !wide && selected);
+        statementsHelp.setVisible(analysesOpen && !wide && PAGE.equals(pageCard)
                 && STATEMENTS.equals(analysisTabs.selected()));
     }
 
@@ -1583,7 +1738,7 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Für Tests: die Unterreiter von „Analysen“ samt „mit Unterseiten“ in der unteren Leiste. */
-    TabFoot analysisFoot() {
+    JPanel analysisFoot() {
         return analysisFoot;
     }
 
@@ -1606,8 +1761,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Für Tests: der Fuß der breiten Ebene mit „mit Unterseiten“ eines Ordners. */
-    TabFoot standingFoot() {
-        return standingFoot;
+    AnalysisTabRow analysisRow() {
+        return analysisRow;
     }
 
     TabFoot folderFoot() {
@@ -1757,7 +1912,7 @@ public final class PageDetailPanel extends JPanel {
 
     /** Für Tests: ob „Analysen“ gerade den Stand der Auswahl zeigt. */
     boolean showsStanding() {
-        return ANALYSES.equals(tabs.selected()) && wide;
+        return standingShown();
     }
 
     /**
@@ -1774,6 +1929,7 @@ public final class PageDetailPanel extends JPanel {
         }
         // Ohne Stelle („Zuerst lesen“ öffnet nur die Seite) wird nach dem Laden nichts markiert.
         pendingJump = somewhere ? target : null;
+        revealMiddle.run();
         if (context.navigator() != null) {
             context.navigator().openPage(target.sourceId(), target.pageId());
         } else {
@@ -1795,6 +1951,7 @@ public final class PageDetailPanel extends JPanel {
         if (source == null || id == null) {
             return;
         }
+        revealMiddle.run();
         if (context != null && context.navigator() != null) {
             context.navigator().openPage(source, id);
         } else {
@@ -1836,9 +1993,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Setzt die Export-Ansicht mit den Artefakt-Reitern ein (ADR 0045, Abschnitt 5): Sie umschließt den Export und
-     * steht an seiner Stelle; ein geöffnetes Artefakt holt den Reiter „Export“ nach vorn. Im Menü
-     * „Weitere Aktionen“ stehen danach alle Artefakte des Chats.
+     * Setzt die Export-Ansicht mit den Export-Reitern ein (ADR 0045 §5, ADR 0047 §5): Sie umschließt den Export und
+     * steht an seiner Stelle; ein neuer Export-Reiter holt den Reiter „Export“ nach vorn.
      */
     void artifactTabs(ArtifactTabs artifactTabs) {
         this.artifactTabs = artifactTabs;
@@ -2705,6 +2861,13 @@ public final class PageDetailPanel extends JPanel {
         String tab = selectedTab();
         StatusNote note = tabStatus.getOrDefault(tab,
                 StatusNote.plain(" "));
+        // Eine Statuszeile für Mitte und Seitenleiste: Hat der gezeigte Reiter der Analysen etwas zu melden, steht das.
+        String side = analysesTab();
+        StatusNote sideNote = side == null ? null : tabStatus.get(side);
+        if (sideNote != null && sideNote.text() != null && !sideNote.text().isBlank()) {
+            tab = side;
+            note = sideNote;
+        }
         statusShown.accept(withStore(tab, note, shownStore));
     }
 
@@ -2944,7 +3107,7 @@ public final class PageDetailPanel extends JPanel {
         editor.setEditable(false);
         editor.setText(source);
         editor.setCaretPosition(0);
-        fileContent.add(new org.fife.ui.rtextarea.RTextScrollPane(editor), BorderLayout.CENTER);
+        fileContent.add(Comic.comicBars(new org.fife.ui.rtextarea.RTextScrollPane(editor)), BorderLayout.CENTER);
         originalProgramShown = true;
         originalCards.show(originalContent, ORIGINAL_FILE_CARD);
         if (line > 0 && line <= editor.getLineCount()) {
@@ -3502,7 +3665,7 @@ public final class PageDetailPanel extends JPanel {
     /** Setzt in {@link #footTools}, was zum Reiter {@code selected} gehört; nichts, wenn er keine Werkzeuge hat. */
     private void updateFootTools(String selected) {
         // Viewer und Transkript gibt es nur zu einer gezeigten Seite; jeder Wechsel räumt sie ab (closeOriginalFile).
-        boolean standingFootShown = ANALYSES.equals(selected) && wide && standingFoot != null;
+        boolean standingFootShown = analysesOpen && wide && analysisFoot != null;
         if (EXPORT.equals(selected)) {
             JComponent bar = artifactTabs == null ? null : artifactTabs.footBar();
             bar = bar == null ? export.formatBar() : bar;
@@ -3515,15 +3678,18 @@ public final class PageDetailPanel extends JPanel {
         }
         if (standingFootShown && folder != null) {
             if (folderSubfolders.getParent() != standingTrailing) {
-                standingTrailing.add(folderSubfolders, BorderLayout.CENTER);
+                standingTrailing.add(folderSubfolders);
+                standingTrailing.revalidate();
             }
         } else {
             folderFoot.reclaimTrailing();
         }
-        standingTrailing.setVisible(standingFootShown && folder != null);
+        if (analysisRow != null) {
+            // Die Ebene bestimmt nur, welche Ansichten es gibt; Zeile, Symbole und Fuß sind für alle dieselben.
+            analysisRow.level(wide ? standing.tabs() : PAGE.equals(pageCard) ? analysisTabs : null);
+            subpagesShown();
+        }
         JComponent shown = EXPORT.equals(selected) ? exportFoot
-                : standingFootShown ? standingFoot
-                : ANALYSES.equals(selected) && PAGE.equals(pageCard) && !wide ? analysisFoot
                 : ADVANCED.equals(selected) && wide ? wideAdvancedFoot
                 : ADVANCED.equals(selected) && PAGE.equals(pageCard) ? advancedFoot
                 : READING.equals(selected) && originalFileViewer != null ? originalFileViewer.footer()
@@ -3533,6 +3699,7 @@ public final class PageDetailPanel extends JPanel {
                 : READING.equals(selected) && SOURCE_CARD.equals(pageCard) && sourceView.sourceId() != null
                 ? readingSourceFoot
                 : READ.equals(selected) && PAGE.equals(pageCard) ? pageFoot
+                : ATTACHMENTS.equals(selected) && PAGE.equals(pageCard) ? attachmentsFoot
                 : wide && folder != null ? folderFoot
                 : null;
         // Podcast-Ansicht eines Ordners: „mit Unterseiten“ rechts in ihrer Leiste, wie in der Ordnerleiste.
@@ -3621,7 +3788,7 @@ public final class PageDetailPanel extends JPanel {
                 // (etwa einer Hintergrundgruppe „mit Unterseiten“) lesen neu; verdeckte Reiter beim nächsten Zeigen.
                 belowSectionFor.remove(STATEMENTS);
                 belowSectionFor.remove(GRAPH);
-                if (ANALYSES.equals(tabs.selected())) {
+                if (analysesOpen) {
                     loadBelowSection(analysisTabs.selected());
                 }
             }
@@ -3815,6 +3982,7 @@ public final class PageDetailPanel extends JPanel {
         if (target.end() > reader.getDocument().getLength()) {
             return;
         }
+        revealMiddle.run();
         tabs.select(READ);
         reader.requestFocusInWindow();
         mark(target);
@@ -3823,16 +3991,17 @@ public final class PageDetailPanel extends JPanel {
     /** Lädt nach, was der gerade sichtbare Reiter braucht (Haupt- oder Unterreiter unter „Analysen“). */
     private void loadVisible() {
         String visible = selectedTab();
+        String side = analysesTab();
         if (ATTACHMENTS.equals(visible)) {
             loadAssets(false);
         }
         if (READING.equals(visible) && originalFileViewer == null && originalVideoViewer == null && !originalLinkShown && !originalProgramShown) {
             loadReading();
         }
-        if (REFERENCES.equals(visible)) {
+        if (REFERENCES.equals(side)) {
             loadReferences();
         }
-        if (IMAGES.equals(visible)) {
+        if (IMAGES.equals(side)) {
             loadImages();
         }
     }
@@ -3954,9 +4123,7 @@ public final class PageDetailPanel extends JPanel {
                 prefetch(context.runtime()).focus(attachmentsOfKind(
                         com.aresstack.spaceharvester.application.assets.AssetKind.MARK), null);
             }
-            assetsHint.setText(Texts.count(overview.entries().size(), "Anhang", "Anhänge")
-                    + (overview.listComplete() ? "" : " (Liste unvollständig)") + " · live, "
-                    + Texts.time(overview.retrievedAt()));
+            updateAssetsHint();
         }, error -> {
             if (shown != page) {
                 return;
@@ -3970,6 +4137,19 @@ public final class PageDetailPanel extends JPanel {
                     .describe(error).title() + " (" + detail + "); der nächste Wechsel auf „Anhänge“ versucht es "
                     + "erneut.");
         });
+    }
+
+    /** „N Anhänge · live, Zeit“ über der Liste; ausgeblendete Bilder stehen mit ihrer Zahl dabei. */
+    private void updateAssetsHint() {
+        PageAssets overview = assetsModel.overview;
+        if (overview == null) {
+            return;
+        }
+        int hidden = overview.entries().size() - assetsModel.rows.size();
+        assetsHint.setText(Texts.count(overview.entries().size(), "Anhang", "Anhänge")
+                + (overview.listComplete() ? "" : " (Liste unvollständig)")
+                + (hidden == 0 ? "" : ", davon " + Texts.count(hidden, "Bild", "Bilder") + " ausgeblendet")
+                + " · live, " + Texts.time(overview.retrievedAt()));
     }
 
     /**
@@ -4081,7 +4261,7 @@ public final class PageDetailPanel extends JPanel {
                              ReadingPane.Prepared prepared) {
     }
 
-    private static ReadingPane.Prepared prepare(AppRuntime runtime,
+    static ReadingPane.Prepared prepare(AppRuntime runtime,
                                                 com.aresstack.spaceharvester.application.reading.ReadingView view) {
         // Ohne Bilder: Das HTML steht sofort, die Bilder holt die Ansicht nach dem Anzeigen nach (Angelo, 17.11.2026).
         return ReadingPane.prepareDeferred(view, image -> runtime.workspace().viewDiagramVector(view, image),
@@ -4884,7 +5064,7 @@ public final class PageDetailPanel extends JPanel {
         feedback.working(name + " wird gestartet …");
         java.nio.file.Path directory = context.settings() == null
                 ? com.aresstack.spaceharvester.app.settings.AppSettings.defaultOutputDirectory()
-                : context.settings().outputDirectory();
+                : context.exportDirectory();
         Background.run(() -> runtime.workspace().startVideoPresentation(video.sourceId(), video.pageId(), media,
                         format, directory),
                 run -> {
@@ -5410,7 +5590,7 @@ public final class PageDetailPanel extends JPanel {
                 return;
             }
             referencesLoaded = false;
-            if (REFERENCES.equals(selectedTab())) {
+            if (REFERENCES.equals(analysesTab())) {
                 loadReferences();
             }
         }));
@@ -5445,7 +5625,7 @@ public final class PageDetailPanel extends JPanel {
                         loadReadAloud(context.runtime(), sourceId, pageId, page);
                     }
                     imagesLoaded = false;
-                    if (IMAGES.equals(selectedTab())) {
+                    if (IMAGES.equals(analysesTab())) {
                         loadImages();
                     }
                 });
@@ -5971,6 +6151,10 @@ public final class PageDetailPanel extends JPanel {
         return assets;
     }
 
+    JCheckBox showImages() {
+        return showImages;
+    }
+
     ComposerButton previewAsset() {
         return previewAsset;
     }
@@ -6335,7 +6519,7 @@ public final class PageDetailPanel extends JPanel {
         saveRaw.setEnabled(enabled);
         browse.setEnabled(enabled);
         bookmark.setEnabled(enabled);
-        more.setEnabled(enabled || sourceMenuShown() || standingShown());
+        more.setEnabled(enabled || sourceMenuShown());
         harvest.setEnabled(enabled);
         saveAsset.setEnabled(enabled);
         updatePreviewEnabled();
@@ -6355,12 +6539,88 @@ public final class PageDetailPanel extends JPanel {
      * links davon die Werkzeuge der Updates (keine eigene Leiste, Angelo 17.11.2026).
      */
     JComponent headerActions() {
-        return Comic.row(analysisActions, advancedActions, sourceView.tools(), sourceChanges.tools(),
+        return Comic.row(advancedActions, sourceView.tools(), sourceChanges.tools(),
                 areaView.tools(), areaPodcast.tools(),
-                sourceProperties.tools(), readingHelp,
-                statementsHelp,
-                standingHelp, glossaryHelp, graphHelp, star, more);
+                sourceProperties.tools(), reload, star, more);
     }
+
+    /**
+     * „Seite neu laden“ im Kopf, an der früheren Stelle des „?“ (Angelo 27.11.2026): in jeder Ansicht derselbe Knopf.
+     * Eine Seite wird bei der Quelle geprüft und, wenn sie dort neuer ist, neu geholt; Quelle und Bereich laden ihre
+     * gezeigte Ansicht neu.
+     */
+    private final com.aresstack.spaceharvester.app.ui.IconButton reload =
+            new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.SYNC,
+                    ReadingPane.RELOAD);
+
+    {
+        reload.addActionListener(event -> reloadClicked());
+    }
+
+    com.aresstack.spaceharvester.app.ui.IconButton reloadButton() {
+        return reload;
+    }
+
+    private void reloadClicked() {
+        if (PAGE.equals(pageCard) || !SOURCE_CARD.equals(pageCard)) {
+            if (sourceId != null && pageId != null) {
+                load(sourceId, pageId, true, null);
+            }
+            return;
+        }
+        if (sourceView.tools().isVisible()) {
+            sourceView.reload();
+        } else if (sourceChanges.tools().isVisible()) {
+            sourceChanges.reload();
+        } else if (areaView.tools().isVisible()) {
+            areaView.reload();
+        } else if (areaPodcast.tools().isVisible()) {
+            areaPodcast.reload();
+        } else if (sourceProperties.tools().isVisible()) {
+            sourceProperties.reload();
+        }
+    }
+
+    /**
+     * Die „?“-Hilfe der gezeigten Ansicht für die Ecke unten rechts in der Werkzeugleiste: Nur die passende ist
+     * sichtbar; hat die Ansicht keine, bleibt die Ecke leer.
+     */
+    JComponent help() {
+        if (help == null) {
+            help = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
+            help.setOpaque(false);
+            for (JComponent part : new JComponent[] {sourceView.help(), sourceChanges.help(), areaView.help(),
+                    areaPodcast.help(), sourceProperties.help(), readingHelp, podcastHelp, attachmentsHelp,
+                    infoHelp, exportHelp}) {
+                help.add(part);
+            }
+        }
+        return help;
+    }
+
+    private JPanel help;
+
+    static final String PODCAST_HELP = "Die Podcast-Ansicht zeigt den Text der Seite zum Lesen und zum Hören. Der "
+            + "Podcast erzählt die Seite; die gerade erzählte Stelle ist gelb markiert, Stellen ohne Ton sind grau.\n\n"
+            + "Unten neben der Lupe kopierst du das Transkript. Der Podcast entsteht erst, wenn du ihn startest; "
+            + "dafür geht der Text der Seite an das eingestellte Modell.";
+    static final String ATTACHMENTS_HELP = "Hier stehen die Anhänge der Seite. Wähle einen Anhang, um ihn in der "
+            + "Vorschau zu sehen oder als Datei zu speichern.\n\n„Alle Anhänge ablegen“ lädt die Anhänge dieser Seite "
+            + "in die lokale Anhangsablage; danach stehen sie auch ohne Verbindung zur Quelle bereit.";
+    static final String INFO_HELP = "„Info“ zeigt, was der Bestand über die Seite weiß: unter „Eigenschaften“ Titel, "
+            + "Version und Adresse, daneben die technischen Angaben und die Rohdaten, wie die Quelle sie geliefert "
+            + "hat.\n\nDie Unterreiter stehen mittig in der Leiste unten; ihre Aktionen stehen oben links vom Stern.";
+    static final String EXPORT_HELP = "Der Export gibt die Auswahl links aus, auch ohne geöffnete Seite. Die Formate "
+            + "stehen unten in der Leiste; ein Klick öffnet einen eigenen Export-Reiter für diese Auswahl.\n\n"
+            + "Exportierte Dateien liegen im Ausgabeordner und heißen nach dem Titel.";
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton podcastHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, READ, PODCAST_HELP);
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton attachmentsHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, ATTACHMENTS, ATTACHMENTS_HELP);
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton infoHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, ADVANCED, INFO_HELP);
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton exportHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, EXPORT, EXPORT_HELP);
 
     /** Return the existing document-history control for the fixed viewer header. */
     JComponent navigation() {
@@ -6395,13 +6655,30 @@ public final class PageDetailPanel extends JPanel {
      */
     javax.swing.JPopupMenu moreMenu() {
         javax.swing.JPopupMenu menu = pageMenu();
+        // Das Buch eines Ordners an erster Stelle (ADR 0044 Nachtrag N5).
+        String bookFolder = folderShown() && areaView.folder() != null ? areaView.folder().folderId() : null;
+        if (bookFolder != null && context.navigator() != null && context.navigator().opensArtifacts()
+                && com.aresstack.spaceharvester.app.research.BookEditions.exists(
+                context.settings() == null || context.settings().storage() == null ? null
+                        : context.settings().storage().dataDirectory(), bookFolder)) {
+            menu.insert(menuItem(com.aresstack.spaceharvester.app.ui.Texts.OPEN_BOOK,
+                    com.aresstack.spaceharvester.app.ui.Texts.OPEN_BOOK_TIP, true, () -> {
+                        if (context.navigator() != null) {
+                            context.navigator().openBook(bookFolder);
+                        }
+                    }), 0);
+            if (menu.getComponentCount() > 1) {
+                menu.insert(new javax.swing.JPopupMenu.Separator(), 1);
+            }
+        }
         addArtifacts(menu);
         return menu;
     }
 
     /**
-     * Unter einer Linie alle Artefakte des Chats (Angelo 27.11.2026): Ein Klick öffnet den Reiter in der
-     * Export-Ansicht wieder, auch nachdem er geschlossen wurde.
+     * Unter einer Linie „Neuer Export“ (ADR 0045 §5), darunter „Aus dieser Seite erzeugt“ (ADR 0047 §5a). Die globalen
+     * Artefakte stehen nicht mehr hier, sondern links unter
+     * „Artefakte“ (ADR 0047 §5).
      */
     private void addArtifacts(javax.swing.JPopupMenu menu) {
         if (artifactTabs == null) {
@@ -6414,27 +6691,24 @@ public final class PageDetailPanel extends JPanel {
         ExportPanel.Selection current = export.selection();
         menu.add(menuItem(NEW_EXPORT, NEW_EXPORT_TIP, current != null,
                 () -> artifactTabs.openExport(current, null)));
-        List<com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact> artifacts = artifactTabs.artifacts();
-        for (com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact artifact : artifacts) {
-            String kind = artifact.kind() == com.aresstack.spaceharvester.app.chat.artifact.ChatArtifact.Kind.GRAPHIC
-                    ? ARTIFACT_GRAPHIC : ARTIFACT_DOCUMENT;
-            menu.add(menuItem(kind + artifact.title(), ARTIFACT_TIP, true, () -> artifactTabs.open(artifact.id())));
-        }
+        localArtifacts.addTo(menu);
+    }
+
+    /** Die Auswahl links für „Aus dieser Seite erzeugt“. */
+    void localArtifacts(ExportPanel.Selection selection) {
+        localArtifacts.selection(selection);
+    }
+
+    /** Für Tests: „Aus dieser Seite erzeugt“. */
+    LocalArtifacts localArtifacts() {
+        return localArtifacts;
     }
 
     static final String NEW_EXPORT = "Neuer Export";
     static final String NEW_EXPORT_TIP = "Öffnet einen Export-Reiter für die Auswahl links";
-    static final String ARTIFACT_DOCUMENT = "Dokument: ";
-    static final String ARTIFACT_GRAPHIC = "Grafik: ";
-    static final String ARTIFACT_TIP = "Öffnet das Artefakt dieses Chats als Reiter in der Export-Ansicht";
 
     private javax.swing.JPopupMenu pageMenu() {
         javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
-        if (standingShown()) {
-            // Nur für den Fehlerfall und deshalb hier versteckt (Angelo 24.11.2026).
-            menu.add(menuItem(REBUILD_COUNTS, REBUILD_COUNTS_TIP, true, overviewTerms::rebuild));
-            return menu;
-        }
         if (sourceMenuShown() && READING.equals(tabs.selected())) {
             menu.add(menuItem(SAVE_SUMMARY, "Die gezeigte Zusammenfassung als Textdatei", areaShown()
                     ? areaView.hasSummary() : sourceView.hasSummary(), this::saveSummary));
@@ -6645,7 +6919,7 @@ public final class PageDetailPanel extends JPanel {
     void selectTab(String name) {
         if (analysisTabs.button(name) != null) {
             analysisTabs.select(name);
-            tabs.select(ANALYSES);
+            openAnalyses.run();
         } else if (advancedTabs.button(name) != null) {
             advancedTabs.select(name);
             wideAdvanced.select(name);
@@ -6657,15 +6931,22 @@ public final class PageDetailPanel extends JPanel {
 
     /** Der sichtbare Reiter: unter „Analysen“ der gewählte Unterreiter, sonst der Hauptreiter. */
     String selectedTab() {
-        String main = tabs.selected();
-        if (ANALYSES.equals(main) && wide) {
+        return tabs.selected();
+    }
+
+    /** Der gezeigte Reiter der Analysen in der Seitenleiste; {@code null}, solange sie zu ist. */
+    String analysesTab() {
+        if (!analysesOpen) {
+            return null;
+        }
+        if (wide) {
             return switch (java.util.Objects.requireNonNullElse(standing.tabs().selected(), "")) {
                 case StandingTab.TERMS -> OVERVIEW_TERMS;
                 case StandingTab.GLOSSARY -> OVERVIEW_GLOSSARY;
                 default -> STAND;
             };
         }
-        return ANALYSES.equals(main) ? analysisTabs.selected() : main;
+        return analysisTabs.selected();
     }
 
     /** Für Tests: die angezeigte Seite oder {@code null} ohne Seite und während des Ladens. */
@@ -6914,11 +7195,30 @@ public final class PageDetailPanel extends JPanel {
     private static final class AssetsModel extends AbstractTableModel {
 
         private static final String[] COLUMNS = {"Titel", "Art", "Größe", "Version", "Abgelegt", "Vorschau von"};
+        /** Die gezeigten Zeilen: ohne „Bilder anzeigen“ alle außer Bildern und SVG-Grafiken. */
         private List<PageAssets.Entry> rows = new ArrayList<>();
+        private PageAssets overview;
+        private boolean images;
 
-        void set(PageAssets overview) {
-            rows = overview == null ? new ArrayList<>() : new ArrayList<>(overview.entries());
+        void set(PageAssets next) {
+            overview = next;
+            refilter();
+        }
+
+        void showImages(boolean shown) {
+            images = shown;
+            refilter();
+        }
+
+        private void refilter() {
+            rows = overview == null ? new ArrayList<>() : new ArrayList<>(overview.entries().stream()
+                    .filter(entry -> images || !isImage(entry.kind())).toList());
             fireTableDataChanged();
+        }
+
+        private static boolean isImage(com.aresstack.spaceharvester.application.assets.AssetKind kind) {
+            return kind == com.aresstack.spaceharvester.application.assets.AssetKind.IMAGE
+                    || kind == com.aresstack.spaceharvester.application.assets.AssetKind.VECTOR;
         }
 
         @Override

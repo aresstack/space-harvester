@@ -46,7 +46,7 @@ public final class PillTabs extends JPanel {
     public PillTabs tab(String name, JComponent content) {
         ComposerToggleButton button = new ComposerToggleButton(null, name, null);
         button.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        button.addActionListener(e -> select(name));
+        button.addActionListener(e -> clicked(name));
         group.add(button);
         buttons.put(name, button);
         bar.add(button);
@@ -179,6 +179,36 @@ public final class PillTabs extends JPanel {
         }
     }
 
+    /**
+     * Ein Klick des Benutzers auf einen Reiter. Der zweite Klick auf den gewählten, dunkel gezeigten Reiter geht an
+     * {@link #onAgain}, wenn jemand ihn haben will (etwa: die Mitte gibt den Reiter frei); sonst wählt er wie bisher.
+     */
+    private void clicked(String name) {
+        if (again != null && selectionShown && name.equals(current)) {
+            again.accept(name);
+            return;
+        }
+        select(name);
+        if (name.equals(current)) {
+            clicks.forEach(observer -> observer.accept(name));
+        }
+    }
+
+    /** Der zweite Klick auf den gewählten Reiter ({@link #clicked}); ohne Empfänger wählt er den Reiter erneut. */
+    public void onAgain(Consumer<String> again) {
+        this.again = again;
+    }
+
+    /** Beobachter der Wahl von Hand (nicht der Wahl aus dem Code); gerufen nach {@link #onSelect}. */
+    public void alsoOnClick(Consumer<String> observer) {
+        clicks.add(java.util.Objects.requireNonNull(observer, "observer"));
+    }
+
+    private Consumer<String> again;
+    private final java.util.List<Consumer<String>> clicks = new java.util.ArrayList<>();
+    /** Ob die Knöpfe ihre Auswahl gerade zeigen ({@link #showSelection}). */
+    private boolean selectionShown = true;
+
     public void select(String name) {
         ComposerToggleButton button = buttons.get(name);
         if (button != null && button.isVisible()) {
@@ -186,8 +216,19 @@ public final class PillTabs extends JPanel {
             button.setSelected(true);
             cards.show(deck, name);
             listener.accept(name);
+            observers.forEach(observer -> observer.accept(name));
         }
     }
+
+    /**
+     * Ein weiterer Beobachter der Wahl neben dem Besitzer ({@link #onSelect}), etwa eine Reiterzeile an anderer
+     * Stelle, die dieselbe Wahl zeigt. Er wird nach dem Besitzer gerufen.
+     */
+    public void alsoOnSelect(Consumer<String> observer) {
+        observers.add(java.util.Objects.requireNonNull(observer, "observer"));
+    }
+
+    private final java.util.List<Consumer<String>> observers = new java.util.ArrayList<>();
 
     public String selected() {
         return current;
@@ -199,6 +240,7 @@ public final class PillTabs extends JPanel {
      * ({@link #selected()}) bleibt dabei erhalten und kommt mit {@code true} wieder.
      */
     public void showSelection(boolean shown) {
+        selectionShown = shown;
         if (!shown) {
             group.clearSelection();
             return;
@@ -235,6 +277,53 @@ public final class PillTabs extends JPanel {
     }
 
     /**
+     * Zeigt die Reiter an Ort und Stelle als Symbolknöpfe statt als Pillen mit Text (Angelo 27.11.2026): Der Name
+     * steht im Tooltip und bleibt der zugängliche Name, Reihenfolge, Auswahl und Füllung bleiben. Reiter ohne Symbol
+     * in {@code icons} behalten ihren Text. Eine Zahl am Reiter setzt danach {@link #mark}.
+     */
+    public void icons(Map<String, javax.swing.Icon> icons) {
+        icons.forEach((name, icon) -> {
+            ComposerToggleButton button = buttons.get(name);
+            if (button == null) {
+                return;
+            }
+            button.setIcon(icon);
+            button.setText(null);
+            button.setToolTipText(name);
+            button.getAccessibleContext().setAccessibleName(name);
+            square(button);
+        });
+        bar.revalidate();
+        bar.repaint();
+    }
+
+    /**
+     * Eine kurze Marke hinter dem Symbol eines Reiters, etwa die Zahl der Widersprüche; {@code null} nimmt sie weg.
+     * Der Tooltip nennt dann Name und Marke. Nur für Reiter, die {@link #icons} auf Symbole umgestellt hat.
+     */
+    public void mark(String name, String mark) {
+        ComposerToggleButton button = buttons.get(name);
+        if (button == null) {
+            return;
+        }
+        button.setText(mark);
+        button.setToolTipText(mark == null ? name : name + " · " + mark);
+        button.setPreferredSize(null);
+        if (mark == null) {
+            square(button);
+        }
+        button.revalidate();
+        button.repaint();
+    }
+
+    private static void square(ComposerToggleButton button) {
+        button.setPreferredSize(null);
+        java.awt.Dimension natural = button.getPreferredSize();
+        int side = Math.max(natural.width, natural.height);
+        button.setPreferredSize(new java.awt.Dimension(side, side));
+    }
+
+    /**
      * Macht aus den Reitern quadratische Symbolknöpfe (der Name bleibt Tooltip und zugänglicher Name) und gibt ihre
      * Leiste zum Einbau an anderer Stelle zurück, etwa in die Icon-Leiste des Hauptfensters. Umschalten, Auswahl und
      * die dunkle Füllung des aktiven Knopfs bleiben wie bei den Pillen; die Reiterzeile oben entfällt, solange sie
@@ -259,7 +348,7 @@ public final class PillTabs extends JPanel {
             java.awt.Dimension natural = button.getPreferredSize();
             int side = Math.max(natural.width, natural.height);
             button.setPreferredSize(new java.awt.Dimension(side, side));
-            button.addActionListener(e -> select(name));
+            button.addActionListener(e -> clicked(name));
             group.add(button);
             buttons.put(name, button);
             strip.add(button);

@@ -429,7 +429,7 @@ final class ImagesTab extends JPanel {
     static String stateText(PassagesTab.State state) {
         return switch (state) {
             case CURRENT -> "Aktuell";
-            case STALE -> "Veraltet";
+            case STALE -> com.aresstack.spaceharvester.app.ui.controls.TabHeader.STALE;
             case FAILED -> "Fehlgeschlagen";
             case MISSING -> "Nicht durchgeführt";
         };

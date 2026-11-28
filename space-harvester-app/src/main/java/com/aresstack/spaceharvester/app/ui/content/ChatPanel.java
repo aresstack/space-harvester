@@ -470,16 +470,12 @@ public final class ChatPanel extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(8, 12, 12, 12));
 
         store = new ChatStore(context::chatsDirectory);
-        artifacts = new com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore(store);
+        // Ein Speicher für die ganze App: was das Buch (BookArtifacts) schreibt, sehen offene Reiter sofort.
+        artifacts = context.chatArtifacts();
         projects = context.projects();
-        // Artefakte gehören im Projekt dem Projekt, im Standardprojekt dem Chat (ADR 0043, F3).
-        artifacts.projects(projects::artifacts);
         chat = freshChat(null);
         // Wechselt das aktive Projekt (Ecke unten) oder ändert sich eine Gruppe, folgt der Chat (ADR 0027, ohne Abfragen).
         projects.addListener(() -> SwingUtilities.invokeLater(this::projectsChanged));
-        JLabel heading = new JLabel("Chat:");
-        heading.setFont(Comic.semiBold(16f));
-        heading.setForeground(Comic.INK);
         chatName.setFont(Comic.regular(15f));
         chatName.setForeground(Comic.INK);
         chatName.setToolTipText(NAME_TIP);
@@ -536,7 +532,6 @@ public final class ChatPanel extends JPanel {
         // Die Zeile gehört in die Kopfzeile des Inhaltsbereichs (Angelo, 17.11.2026): mittig statt der
         // Seitenüberschrift; hier oben steht nichts mehr.
         header.setOpaque(false);
-        header.add(heading, BorderLayout.WEST);
         header.add(nameHolder, BorderLayout.CENTER);
         header.add(chats, BorderLayout.EAST);
         showChatName();
@@ -675,7 +670,9 @@ public final class ChatPanel extends JPanel {
         editor.getActionMap().put("send", new javax.swing.AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent e) {
-                send();
+                if (enterSends(turn != null)) {
+                    send();
+                }
             }
         });
         editor.addFocusListener(new FocusAdapter() {
@@ -1846,8 +1843,16 @@ public final class ChatPanel extends JPanel {
         /** Der offene Chat; {@code folder} ist {@code null}, solange er nicht gespeichert ist. */
         void chat(Path folder, String chatId);
 
-        /** Öffnet ein Artefakt des offenen Chats als Reiter und zeigt ihn. */
+        /** Öffnet ein Artefakt des offenen Chats als Reiter und zeigt ihn (Klick auf einen Verweis). */
         void open(String artifactId);
+
+        /**
+         * Die KI hat ein Artefakt angelegt oder geändert (ADR 0047 §5): Die Mitte schaltet dafür nicht von selbst um;
+         * ohne eigene Umsetzung wie {@link #open}.
+         */
+        default void changed(String artifactId) {
+            open(artifactId);
+        }
 
         /** Das gerade gezeigte Artefakt oder {@code null}. */
         String focus();
@@ -1877,6 +1882,13 @@ public final class ChatPanel extends JPanel {
      * sie ins Projekt um (ADR 0043 F3), und die Verweise in seinen Antworten folgen den neuen Kennungen.
      */
     private java.util.Map<String, String> adoptArtifacts() {
+        // Der einmalige Umzug (ADR 0047) beim ersten Zugriff mit bekanntem Datenordner, auf dem EDT vor allem anderen:
+        // ein schon geladener Chat zieht seine Verweise sofort nach, sonst überschriebe er die umgeschriebene Datei.
+        java.util.Map<String, String> early = artifacts.adoptOnce().getOrDefault(chat.id(), java.util.Map.of());
+        if (!early.isEmpty()) {
+            chat = chat.withTexts(text -> com.aresstack.spaceharvester.app.chat.artifact.ChatArtifactStore.relink(
+                    text, early));
+        }
         java.util.Map<String, String> renamed = artifacts.moveToProject(home, chat.id(), chat.projectId());
         if (renamed.isEmpty()) {
             return renamed;
@@ -2309,7 +2321,8 @@ public final class ChatPanel extends JPanel {
     private void showEffortMenu() {
         JPopupMenu menu = new JPopupMenu();
         for (String level : EFFORTS) {
-            JMenuItem item = new JMenuItem((level.equals(effortLevel) ? "✓ " : "    ") + level);
+            JMenuItem item = new JMenuItem(level,
+                    com.aresstack.spaceharvester.app.ui.controls.CheckMark.of(level.equals(effortLevel)));
             item.addActionListener(e -> {
                 effortLevel = level;
                 fitFooter();
@@ -2343,6 +2356,23 @@ public final class ChatPanel extends JPanel {
                     earlyImages.remove(file);
                 });
         attach.setToolTipText(ATTACH + " (" + attachments.size() + " vorgemerkt)");
+    }
+
+    /**
+     * Fragt von außen (Diagramm-Ansicht: „im Chat erklären lassen“) wie über die Eingabe: der Ausschnitt als Zitat,
+     * die Frage gesendet mit den Werkzeugen des Bereichs. Läuft gerade eine Antwort oder steht schon Text in der
+     * Eingabe, bleibt es beim Zitat, damit nichts abgebrochen oder überschrieben wird.
+     *
+     * @return {@code true}, wenn die Frage hinausging
+     */
+    public boolean askAbout(String question, String excerpt, String reference) {
+        quote(excerpt, reference);
+        if (turn != null || readingAttachments || !editor.getText().isBlank()) {
+            return false;
+        }
+        editor.setText(question);
+        send();
+        return true;
     }
 
     /**
@@ -2559,7 +2589,8 @@ public final class ChatPanel extends JPanel {
     /**
      * Senden (Enter): die Nachricht erscheint als Sprechblase, der Turn holt das Wissen aus dem Bestand und streamt die
      * Antwort in eine zweite Blase; der Knopf heißt solange „Stopp“. Dateien aus den Chips gehen als Text mit, wenn
-     * sie lesbarer Text sind. Läuft schon ein Turn, bricht Senden ihn ab.
+     * sie lesbarer Text sind. Läuft schon ein Turn, bricht der Klick auf den Knopf ihn ab; Enter tut das nicht
+     * ({@link #enterSends}).
      */
     void send() {
         if (turn == null && dictationPhase != DictationPhase.IDLE) {
@@ -2639,6 +2670,14 @@ public final class ChatPanel extends JPanel {
     /** Bildangaben im Bild ohne Vision-Modell: wohin der Benutzer gehen muss. */
     static final String NO_VISION_MODEL = "(Bild: Kein Vision-Modell eingestellt – Einstellungen › KI-Dienst › Modelle "
             + "› „Vision-Modell“, etwa gemma)";
+
+    /**
+     * Enter sendet nur, solange keine Antwort läuft. Senden und Stopp sind derselbe Knopf; Enter während der Antwort
+     * würde sonst die Antwort abbrechen. Stoppen geht nur per Klick auf den Knopf.
+     */
+    static boolean enterSends(boolean answerRunning) {
+        return !answerRunning;
+    }
 
     /** Solange die Anhänge gelesen werden, sendet Enter nichts zweites. */
     private boolean readingAttachments;
@@ -2890,7 +2929,7 @@ public final class ChatPanel extends JPanel {
                     turnChat, () -> showsArtifactsOf(host, targetNode, turnChat) ? host.focus() : null,
                     changed -> SwingUtilities.invokeLater(() -> {
                         if (showsArtifactsOf(host, targetNode, turnChat)) {
-                            host.open(changed.id());
+                            host.changed(changed.id());
                         }
                     }), runtime.workspace()::composeDiagram));
         }
@@ -3061,7 +3100,7 @@ public final class ChatPanel extends JPanel {
         /** Die gelbe Gedankenblase dieser Antwort (Wissen, Schritte, Quellen, Balken); {@code null} nur in Tests. */
         KnowledgeCard card;
         /** Laufende Werkzeugaufrufe außer dem Browser: Kennung und Text, für die Schritte der Gedankenblase. */
-        private final java.util.Map<String, String> steps = new java.util.HashMap<>();
+        private final java.util.Map<String, String> steps = new java.util.LinkedHashMap<>();
         /** Die Browser-Werkzeuge dieser Antwort, {@code null} ohne Websuche. */
         com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools browserTools;
         /** Die Zeile der Antwortblase; wartet unsichtbar hinter den Wolken, bis Text kommt (EAC). */
@@ -3247,6 +3286,9 @@ public final class ChatPanel extends JPanel {
             String step = steps.remove(key);
             if (step != null && card != null && !detached) {
                 card.stepDone(step);
+                // Sonst bliebe der fertige Schritt als „läuft“ stehen, während schon das Modell arbeitet (Angelo
+                // 28.11.2026: „Sucht NDV-Objekte“ sah aus wie ein Hänger). Läuft noch ein Werkzeug, steht es da.
+                card.step(steps.isEmpty() ? KnowledgeCard.THINKING : steps.values().iterator().next());
             }
             var cloud = clouds.remove(key);
             if (cloud == null || detached) {
@@ -4302,8 +4344,10 @@ public final class ChatPanel extends JPanel {
     private JMenuItem chatItem(ChatStore.Entry entry, boolean deleted) {
         ChatRecord record = entry.record();
         boolean current = !deleted && record.id().equals(chat.id());
-        String label = (current ? "✓ " : "    ") + com.aresstack.spaceharvester.app.chat.ChatExport.displayTitle(record);
-        JMenuItem item = new JMenuItem(deleted ? "<html><s>" + escapeHtml(label) + "</s></html>" : label);
+        String label = com.aresstack.spaceharvester.app.chat.ChatExport.displayTitle(record);
+        // Der Haken des offenen Chats ist gezeichnet: Die Schrift der Einträge hat kein „✓“ (Kästchen im Verlauf).
+        JMenuItem item = new JMenuItem(deleted ? "<html><s>" + escapeHtml(label) + "</s></html>" : label,
+                com.aresstack.spaceharvester.app.ui.controls.CheckMark.of(current));
         item.setFont(Comic.regular(item.getFont().getSize2D()));
         String area = lastArea(record);
         item.setToolTipText(deleted ? DELETED_TIP : Texts.count(record.messages().size(), "Nachricht", "Nachrichten")

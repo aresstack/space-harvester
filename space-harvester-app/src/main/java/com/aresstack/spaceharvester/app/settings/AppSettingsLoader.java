@@ -1296,7 +1296,7 @@ public final class AppSettingsLoader {
                         count(ai, AiServiceSettings.PODCAST_SECTIONS, 1, Integer.MAX_VALUE, problems)),
                 use(ai, "diagnosis", problems), optionalFlag(get(ai, AiServiceSettings.DIAGNOSIS_ENABLED),
                         "space-harvester.ai." + AiServiceSettings.DIAGNOSIS_ENABLED, problems),
-                timeouts(ai, problems));
+                timeouts(ai, problems), use(ai, "source-code", problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
@@ -1309,7 +1309,8 @@ public final class AppSettingsLoader {
                 draft.pollDuration(), draft.thinking(), draft.parallelCount(), draft.visionTokens(),
                 draft.imageModel(), draft.imageTokens(), draft.visionLevel(), draft.imageLevel(),
                 draft.summary().use(), draft.summaryPlan().use(), draft.podcast().use(), draft.imagePlan().use(),
-                draft.deadline().use(), draft.speech(), draft.diagnosisSettings(), draft.timeouts());
+                draft.deadline().use(), draft.speech(), draft.diagnosisSettings(), draft.timeouts(),
+                draft.sourceCode().use());
     }
 
     /**

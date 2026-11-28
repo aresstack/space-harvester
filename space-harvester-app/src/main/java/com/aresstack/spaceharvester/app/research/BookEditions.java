@@ -184,6 +184,24 @@ public final class BookEditions {
         return dataDirectory != null && folderId != null && !files(directory(dataDirectory, folderId)).isEmpty();
     }
 
+    /** Alle lesbaren Auflagen in ihrer Reihenfolge; leer ohne Buch. */
+    public static List<Edition> all(Path dataDirectory, String folderId) {
+        if (dataDirectory == null || folderId == null) {
+            return List.of();
+        }
+        List<Edition> editions = new ArrayList<>();
+        for (Path file : files(directory(dataDirectory, folderId)).stream()
+                .sorted(Comparator.comparingInt(BookEditions::number)).toList()) {
+            try {
+                editions.add(JSON.readValue(Files.readString(file, StandardCharsets.UTF_8), Edition.class));
+            } catch (IOException | RuntimeException unreadable) {
+                LOG.log(System.Logger.Level.WARNING, "Buchauflage nicht lesbar ({0})",
+                        unreadable.getClass().getSimpleName());
+            }
+        }
+        return List.copyOf(editions);
+    }
+
     /** Die neueste lesbare Auflage; leer ohne Buch. */
     public static Optional<Edition> latest(Path dataDirectory, String folderId) {
         if (dataDirectory == null || folderId == null) {

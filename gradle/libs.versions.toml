@@ -93,6 +93,7 @@ knowledge4j-model = { module = "com.aresstack:knowledge4j-knowledge-model", vers
 research4j-core = { module = "com.aresstack:research4j-research-core", version.ref = "research4j" }
 research4j-browser-tools = { module = "com.aresstack:research4j-browser-tools", version.ref = "research4j" }
 research4j-browser-playwright = { module = "com.aresstack:research4j-browser-playwright", version.ref = "research4j" }
+research4j-agent-runtime = { module = "com.aresstack:research4j-research-agent-runtime", version.ref = "research4j" }
 playwright4j = { module = "com.aresstack:playwright4j", version.ref = "playwright4j" }
 playwright = { module = "com.microsoft.playwright:playwright", version.ref = "playwright" }
 writing4j-core = { module = "com.aresstack:writing4j-core", version.ref = "writing4j" }

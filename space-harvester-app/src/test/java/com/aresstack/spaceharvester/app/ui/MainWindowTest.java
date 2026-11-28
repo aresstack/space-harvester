@@ -164,18 +164,23 @@ class MainWindowTest {
             });
             assertThat(png).isNotEmptyFile();
         }
-        // Oben nur Symbole; Name und Tastenkürzel stehen im Tooltip und für Bildschirmleser im Namen. Links die Suche
-        // und die Reiter der Seitenansicht, rechts Aufträge, dann Verwaltung und Einstellungen (Angelo,
+        // Oben nur Symbole; Name und Tastenkürzel stehen im Tooltip und für Bildschirmleser im Namen. Links
+        // die Reiter der Seitenansicht, rechts Aufträge, dann Verwaltung und Einstellungen (Angelo,
         // 13.11.2026); Inhalte hat keinen eigenen Knopf mehr.
         assertThat(find(surface[0], AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
-                .containsSubsequence("Suche", "Leseansicht", "Podcast-Ansicht", "Anhänge", "Analysen", "Info",
-                        "Export", "Chat", "Aufträge", "Wissensquellen verwalten", "Einstellungen")
+                .as("Die Suche hat keinen Knopf mehr: sie ist die Mitte ohne gewählten Knopf (Angelo 27.11.2026)")
+                .doesNotContain("Suche")
+                .containsSubsequence("Leseansicht", "Podcast-Ansicht", "Anhänge", "Info",
+                        "Export", "Wissensquellen verwalten", "Einstellungen")
+                .as("Chat, Analysen und Aufträge stehen im Umschalter der rechten Leiste (Angelo 27.11.2026)")
+                .containsSubsequence("Chat", "Analysen", "Aufträge")
                 .doesNotContain("Inhalte")
                 .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen")
                 .as("Status ist kein Bereich mehr, sondern Einstellungen › Diagnose").doesNotContain("Status");
         assertThat(find(surface[0], AbstractButton.class).stream().map(AbstractButton::getToolTipText).toList())
-                .contains("Suche (Strg+1)", "Aufträge (Strg+3)", "Wissensquellen verwalten (Strg+4)",
+                .doesNotContain("Suche (Strg+1)")
+                .contains("Aufträge (Strg+3)", "Wissensquellen verwalten (Strg+4)",
                         "Einstellungen (Strg+5)")
                 .as("Begriffe stehen unter Analysen, kein eigener Bereich (BG2c)")
                 .noneMatch(tip -> tip != null && tip.startsWith("Begriffe (Strg+"))
@@ -480,6 +485,118 @@ class MainWindowTest {
     }
 
     /**
+     * Die Analysen sind die dritte Seitenleiste rechts, ihr Knopf steht zwischen Chat und Aufträgen (Angelo
+     * 27.11.2026): Er klappt sie auf, blendet Chat und Aufträge aus, ein zweiter Klick klappt zu; die Mitte bleibt.
+     */
+    @Test
+    void theAnalysesAreASidebarWhoseButtonSitsBetweenChatAndJobs() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            try {
+                surface.setSize(1400, 820);
+                window.chatOpen(true);
+                layoutAll(surface);
+                AppContext.Section before = window.current();
+                Component sidebar = find((java.awt.Container) window.chatSplit().getRightComponent(),
+                        com.aresstack.spaceharvester.app.ui.content.AnalysesSidebar.class).get(0);
+                assertThat(window.analysesOpen()).isFalse();
+                assertThat(((java.awt.Container) sidebar).getComponents()).noneMatch(Component::isVisible);
+
+                window.analysesToggle().doClick();
+                layoutAll(surface);
+                assertThat(window.analysesOpen()).isTrue();
+                assertThat(window.chatOpen()).isFalse();
+                assertThat(window.jobsOpen()).isFalse();
+                assertThat(window.analysesToggle().isSelected()).isTrue();
+                assertThat(window.chatToggle().isSelected()).isFalse();
+                assertThat(window.current()).as("die Mitte bleibt").isEqualTo(before);
+                assertThat(((java.awt.Container) sidebar).getComponents()).allMatch(Component::isVisible);
+                assertThat(sidebar.getWidth())
+                        .isGreaterThanOrEqualTo(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH);
+                assertThat(WindowSizes.recallInt(MainWindow.SIDE_JOBS_KEY, -1)).isEqualTo(2);
+                // Kein Zurück-Knopf in der Leiste: Der gehört zur Ansicht in der Mitte.
+                assertThat(find((java.awt.Container) sidebar,
+                        com.aresstack.spaceharvester.app.ui.controls.BackButton.class)).isEmpty();
+
+                window.jobsOpen(true);
+                assertThat(window.analysesOpen()).isFalse();
+                assertThat(window.analysesToggle().isSelected()).isFalse();
+                window.analysesToggle().doClick();
+                assertThat(window.analysesOpen()).isTrue();
+                // Der Umschalter steht im Kopf der gezeigten Leiste (Angelo 27.11.2026), nicht mehr oben.
+                assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), sidebar)).isTrue();
+                assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), window.windowBar())).isFalse();
+                window.jobsToggle().doClick();
+                assertThat(window.jobsOpen()).isTrue();
+                assertThat(SwingUtilities.isDescendingFrom(window.jobsToggle(), sidebar)).isFalse();
+                assertThat(SwingUtilities.isDescendingFrom(window.jobsToggle(),
+                        window.chatSplit().getRightComponent())).isTrue();
+                window.analysesToggle().doClick();
+                // Ein zweiter Klick auf das gewählte Symbol klappt die Leiste zu; zugeklappt steht der Umschalter
+                // ohne gewähltes Symbol senkrecht am rechten Fensterrand, direkt unter den Kopfleisten, und klappt
+                // von dort wieder auf; die Kopfleisten bleiben so breit, wie sie sind.
+                window.analysesToggle().doClick();
+                assertThat(window.analysesOpen()).isFalse();
+                assertThat(window.chatOpen()).isFalse();
+                assertThat(window.jobsOpen()).isFalse();
+                layoutAll(surface);
+                java.awt.Rectangle edge = SwingUtilities.convertRectangle(window.sideSwitch().getParent(),
+                        window.sideSwitch().getBounds(), surface);
+                java.awt.Rectangle bar = SwingUtilities.convertRectangle(window.windowBar().getParent(),
+                        window.windowBar().getBounds(), surface);
+                assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), window.windowBar())).isFalse();
+                int gap = com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.EDGE_GAP;
+                assertThat(edge.x + edge.width).as("am rechten Fensterrand")
+                        .isEqualTo(surface.getWidth() - surface.getInsets().right - gap);
+                assertThat(edge.height).as("senkrecht: Symbole untereinander").isGreaterThan(2 * edge.width);
+                assertThat(edge.y).as("direkt unter den Kopfleisten").isEqualTo(bar.y + bar.height
+                        + com.aresstack.spaceharvester.app.ui.controls.HeadBar.HEIGHT
+                        + com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.HEAD_GAP);
+                assertThat(window.split().getWidth()).as("die Arbeitsfläche behält ihre Breite")
+                        .isEqualTo(surface.getWidth() - surface.getInsets().left - surface.getInsets().right);
+                assertThat(List.of(window.chatToggle(), window.analysesToggle(), window.jobsToggle()))
+                        .noneMatch(AbstractButton::isSelected);
+                window.chatToggle().doClick();
+                assertThat(window.chatOpen()).isTrue();
+                assertThat(SwingUtilities.isDescendingFrom(window.chatToggle(),
+                        window.chatSplit().getRightComponent())).isTrue();
+                window.chatToggle().doClick();
+                assertThat(window.chatOpen()).isFalse();
+                // Links genauso: Der zweite Klick auf das gewählte Symbol klappt die Leiste zu, der Umschalter
+                // wandert ohne Wahl an den linken Rand unter das Logo und öffnet von dort wieder.
+                var view = window.explorer().view;
+                assertThat(view.selected()).isEqualTo(Explorer.SOURCES_TAB);
+                view.button(Explorer.SOURCES_TAB).doClick();
+                assertThat(window.split().isLeftCollapsed()).isTrue();
+                assertThat(view.selected()).isNull();
+                layoutAll(surface);
+                java.awt.Rectangle left = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface);
+                assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isFalse();
+                assertThat(left.x).isEqualTo(surface.getInsets().left + gap);
+                assertThat(left.y).as("auf derselben Höhe wie rechts").isEqualTo(edge.y);
+                assertThat(left.height).isGreaterThan(2 * left.width);
+                view.button(Explorer.FAVORITES_TAB).doClick();
+                assertThat(window.split().isLeftCollapsed()).isFalse();
+                assertThat(view.selected()).isEqualTo(Explorer.FAVORITES_TAB);
+                assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isTrue();
+                assertThat(view.vertical()).isFalse();
+                layoutAll(surface);
+            } finally {
+                // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten wieder mit dem Chat, zu.
+                window.chatOpen(true);
+                window.chatOpen(false);
+            }
+        });
+    }
+
+    /**
      * Der Chat ist eine Seitenleiste rechts neben der Arbeitsfläche (Angelo, 21.11.2026): der Knopf oben rechts vor
      * „Aufträge“, Strg+J und „»“ in der Leiste klappen sie auf und zu; sie bleibt in jedem Bereich stehen, zugeklappt
      * bleibt nur der schmale Teiler, und Zustand samt Breite gelten für den nächsten Start.
@@ -684,8 +801,176 @@ class MainWindowTest {
     }
 
     @Test
+    void theHeadBarsOfLeftMiddleAndRightEndOnOneLine() throws Exception {
+        // Angelo 27.11.2026: Die Kopfleisten links, in der Mitte und rechts sind gleich hoch, die Linie darunter läuft
+        // auf einer Höhe durch. Alle sind dieselbe Klasse (HeadBar), die die Höhe allein festlegt.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            surface.setSize(1400, 820);
+            for (AppContext.Section section : List.of(AppContext.Section.SEARCH, AppContext.Section.CONTENT)) {
+                window.show(section);
+                for (Runnable side : List.<Runnable>of(() -> window.chatOpen(true), () -> window.jobsOpen(true),
+                        () -> window.analysesOpen(true))) {
+                    side.run();
+                    layout(surface);
+                    layout(surface);
+                    List<com.aresstack.spaceharvester.app.ui.controls.HeadBar> bars = find(surface,
+                            com.aresstack.spaceharvester.app.ui.controls.HeadBar.class).stream()
+                            .filter(MainWindowTest::shownInTree).toList();
+                    assertThat(bars).as("links, Mitte, rechts in %s", section).hasSizeGreaterThanOrEqualTo(3);
+                    assertThat(bars).allSatisfy(bar -> {
+                        assertThat(bar.getHeight())
+                                .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.HeadBar.HEIGHT);
+                        assertThat(SwingUtilities.convertPoint(bar, 0, bar.getHeight(), surface).y)
+                                .isEqualTo(SwingUtilities.convertPoint(bars.get(0), 0, bars.get(0).getHeight(),
+                                        surface).y);
+                    });
+                }
+            }
+            window.chatOpen(true);
+            window.chatOpen(false);
+        });
+    }
+
+    /**
+     * Angelo 27.11.2026: Das „?“ der Seitenansicht steht unten rechts in der Ecke der Werkzeugleiste, wie die Lupe links
+     * fest an der Leiste und auch bei aufgeklappter Suche; an seiner früheren Stelle im Kopf steht „Seite neu laden“.
+     */
+    @Test
+    void theHelpSitsInTheFootCornerAndTheHeadReloadsThePage() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            surface.setSize(1280, 820);
+            window.show(AppContext.Section.CONTENT);
+            layoutAll(surface);
+            FindBar bar = window.findBar();
+            assertThat(bar.helpArea().getComponentCount()).isEqualTo(1);
+            javax.swing.JComponent row = (javax.swing.JComponent) bar.helpArea().getComponent(0);
+            List<com.aresstack.spaceharvester.app.ui.controls.HelpButton> helps =
+                    find(row, com.aresstack.spaceharvester.app.ui.controls.HelpButton.class);
+            assertThat(helps).isNotEmpty();
+            // Jeder Reiter der Seitenansicht hat sein „?“: genau eines ist zu sehen, auch ohne geöffnete Seite.
+            for (String tab : List.of("Leseansicht", "Podcast-Ansicht", "Anhänge", "Info", "Export")) {
+                find(surface, AbstractButton.class).stream().filter(button -> tab.equals(button.getToolTipText())
+                        || tab.equals(button.getText())).findFirst().ifPresent(AbstractButton::doClick);
+                assertThat(helps.stream().filter(java.awt.Component::isVisible).count()).as(tab).isEqualTo(1);
+            }
+            // Ohne Hilfe zur gezeigten Ansicht nimmt die Ecke keinen Platz.
+            helps.forEach(help -> help.setVisible(false));
+            layoutAll(surface);
+            assertThat(bar.helpArea().getWidth()).isZero();
+            helps.get(helps.size() - 1).setVisible(true);
+            layoutAll(surface);
+            assertThat(bar.helpArea().getWidth()).isPositive();
+            assertThat(bar.helpArea().getX() + bar.helpArea().getWidth())
+                    .isEqualTo(bar.getWidth() - bar.getInsets().right);
+            assertThat(bar.findButton().getX()).isEqualTo(bar.getInsets().left);
+            bar.focus();
+            layoutAll(surface);
+            assertThat(bar.helpArea().isVisible()).isTrue();
+            assertThat(bar.searchArea().getX() + bar.searchArea().getWidth())
+                    .isLessThanOrEqualTo(bar.helpArea().getX());
+            bar.close();
+
+            List<AbstractButton> reload = find(surface, AbstractButton.class).stream()
+                    .filter(button -> "Seite neu laden".equals(button.getToolTipText())).toList();
+            assertThat(reload).hasSize(1);
+            assertThat(SwingUtilities.isDescendingFrom(reload.get(0), bar)).isFalse();
+            assertThat(SwingUtilities.isDescendingFrom(reload.get(0), window.stage())).isTrue();
+            assertThat(SwingUtilities.convertPoint(reload.get(0).getParent(), reload.get(0).getLocation(), surface).y)
+                    .as("im Kopf der Mitte").isLessThan(surface.getHeight() / 4);
+        });
+    }
+
+    /** Ob das Bauteil und alle seine Vorfahren sichtbar sind und es eine Fläche hat (ohne Fenster gemessen). */
+    private static boolean shownInTree(java.awt.Component component) {
+        for (java.awt.Component up = component; up != null; up = up.getParent()) {
+            if (!up.isVisible()) {
+                return false;
+            }
+        }
+        return component.getWidth() > 0 && component.getHeight() > 0;
+    }
+
+    @Test
+    void aSecondClickDeselectsTheShownButtonAndTheMiddleShowsTheSearch() throws Exception {
+        // Angelo 27.11.2026: kein Lupen-Reiter mehr. Ein zweiter Klick auf den gezeigten Knopf (Reiter der Mitte oder
+        // Bereich wie die Einstellungen) wählt ihn ab, dann zeigt die Mitte die Suche; Enter im Suchfeld ebenso.
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            List<AbstractButton> buttons = find(surface, AbstractButton.class);
+            AbstractButton reading = named(buttons, "Leseansicht");
+            AbstractButton export = named(buttons, "Export");
+            AbstractButton settings = named(buttons, "Einstellungen");
+            AbstractButton sources = named(buttons, "Wissensquellen verwalten");
+
+            window.show(AppContext.Section.SEARCH);
+            reading.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.CONTENT);
+            assertThat(reading.isSelected()).isTrue();
+            reading.doClick();
+            assertThat(window.current()).as("zweiter Klick wählt ab").isEqualTo(AppContext.Section.SEARCH);
+            assertThat(List.of(reading, export, settings, sources)).noneMatch(AbstractButton::isSelected);
+            reading.doClick();
+            assertThat(window.current()).as("dritter Klick wählt wieder").isEqualTo(AppContext.Section.CONTENT);
+            export.doClick();
+            assertThat(window.current()).as("ein anderer Reiter schaltet um").isEqualTo(AppContext.Section.CONTENT);
+            assertThat(export.isSelected()).isTrue();
+
+            settings.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.SETTINGS);
+            assertThat(export.isSelected()).isFalse();
+            export.doClick();
+            assertThat(window.current()).as("aus einem anderen Bereich wählt der Klick den Reiter, er wählt nicht ab")
+                    .isEqualTo(AppContext.Section.CONTENT);
+            settings.doClick();
+            settings.doClick();
+            assertThat(window.current()).as("die Einstellungen lassen sich abwählen")
+                    .isEqualTo(AppContext.Section.SEARCH);
+            assertThat(settings.isSelected()).isFalse();
+            sources.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.SOURCES);
+            sources.doClick();
+            assertThat(window.current()).isEqualTo(AppContext.Section.SEARCH);
+            assertThat(sources.isSelected()).isFalse();
+
+            settings.doClick();
+            window.search("betrieb");
+            assertThat(window.current()).as("Enter im Suchfeld wählt die Mitte ab")
+                    .isEqualTo(AppContext.Section.SEARCH);
+            assertThat(List.of(reading, export, settings, sources)).noneMatch(AbstractButton::isSelected);
+        });
+    }
+
+    private static AbstractButton named(List<AbstractButton> buttons, String name) {
+        return buttons.stream().filter(button -> name.equals(button.getAccessibleContext().getAccessibleName()))
+                .findFirst().orElseThrow();
+    }
+
+    @Test
     void theSearchTabByHandClearsTheSelectionAndLeavingItSelectsAllSources() throws Exception {
-        // Angelo 24.11.2026: Der Suchreiter von Hand hebt die Auswahl auf, die Suche in der Titelleiste nicht; wer die
+        // Angelo 24.11.2026: Die Suche von Hand (heute Strg+Zahl oder Abwählen) hebt die Auswahl auf, die Suche in der Titelleiste nicht; wer die
         // Suche ohne Auswahl verlässt, hat „Wissensquellen“ gewählt.
         Path config = home.resolve("app.yml");
         Files.writeString(config, """
@@ -860,8 +1145,10 @@ class MainWindowTest {
     }
 
     /**
-     * #515: Ein Suchfeld für das ganze Fenster steht mittig zwischen den Icon-Gruppen der Kopfzeile, ohne sie bei
-     * 960, 1280 oder 1920 px zu überdecken; Enter aus jedem Bereich zeigt die Trefferansicht. Wird es eng (800 px oder
+     * #515: Ein Suchfeld für das ganze Fenster steht in der Kopfzeile, seit 27.11.2026 (Angelo) rechtsbündig direkt vor
+     * der Gruppe rechts und höchstens {@link SearchBarLayout#MAX_WIDTH} breit, ohne die Icon-Gruppen bei
+     * 960, 1280 oder 1920 px zu überdecken; die Reiter der Mitte stehen mittig über dem mittleren Fenster, mit offener
+     * Seitenleiste rechts an dessen linkem Rand; Enter aus jedem Bereich zeigt die Trefferansicht. Wird es eng (800 px oder
      * breitere Schriften), kürzt die Kopfzeile den Titel, nie das Suchfeld und nie die Knöpfe.
      */
     @Test
@@ -895,7 +1182,39 @@ class MainWindowTest {
                         .isLessThanOrEqualTo(west.getWidth());
                 assertThat(icons.getWidth()).as("Knöpfe ungekürzt bei %d", width)
                         .isEqualTo(icons.getPreferredSize().width);
+                assertThat(field.x + field.width).as("rechtsbündig vor der Gruppe rechts bei %d", width)
+                        .isGreaterThanOrEqualTo(east.getX() - 12);
             }
+            // Die Reiter der Mitte: zugeklappt mittig über dem mittleren Fenster, mit offener Seitenleiste an dessen
+            // linkem Rand (am linken Teiler).
+            surface.setSize(1920, 600);
+            java.awt.Component reading = find(surface, AbstractButton.class).stream()
+                    .filter(button -> "Leseansicht".equals(button.getAccessibleContext().getAccessibleName()))
+                    .findFirst().orElseThrow();
+            java.awt.Component export = find(surface, AbstractButton.class).stream()
+                    .filter(button -> "Export".equals(button.getAccessibleContext().getAccessibleName()))
+                    .findFirst().orElseThrow();
+            java.awt.Container middle = window.deck().getParent();
+            while (middle.getParent() != null && !(middle.getParent() instanceof javax.swing.JSplitPane)) {
+                middle = middle.getParent();
+            }
+            window.chatOpen(false);
+            layout(surface);
+            layout(surface);
+            int left = SwingUtilities.convertPoint(reading.getParent(), reading.getLocation(), surface).x;
+            int right = SwingUtilities.convertPoint(export.getParent(), export.getLocation(), surface).x
+                    + export.getWidth();
+            int stageLeft = SwingUtilities.convertPoint(middle, 0, 0, surface).x;
+            assertThat((left + right) / 2).as("mittig über der Mitte")
+                    .isCloseTo(stageLeft + middle.getWidth() / 2, org.assertj.core.data.Offset.offset(3));
+            window.chatOpen(true);
+            layout(surface);
+            layout(surface);
+            left = SwingUtilities.convertPoint(reading.getParent(), reading.getLocation(), surface).x;
+            stageLeft = SwingUtilities.convertPoint(middle, 0, 0, surface).x;
+            assertThat(left).as("am linken Rand der Mitte").isCloseTo(stageLeft,
+                    org.assertj.core.data.Offset.offset(3));
+            window.chatOpen(false);
             window.show(AppContext.Section.SETTINGS);
             javax.swing.JTextField field = (javax.swing.JTextField) ((java.awt.BorderLayout) bar.getLayout())
                     .getLayoutComponent(java.awt.BorderLayout.CENTER);

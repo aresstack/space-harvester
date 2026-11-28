@@ -91,7 +91,20 @@ public final class MainWindow implements AppContext.Navigator {
     /** Arbeitsfläche links, Chat-Seitenleiste rechts (Angelo, 21.11.2026). */
     private javax.swing.JSplitPane chatSplit;
     private com.aresstack.spaceharvester.app.ui.content.ChatSidebar chatSidebar;
-    private ComposerToggleButton chatToggle;
+    /**
+     * Der Umschalter der rechten Seitenleiste (Angelo 27.11.2026): Chat | Analysen | Aufträge, nur Symbole, wie der
+     * linke Umschalter. Er steht im Kopf der gezeigten Leiste; ein zweiter Klick auf das gewählte Symbol klappt sie zu.
+     * Zugeklappt hat die Leiste keinen Kopf, dann steht er ohne gewähltes Symbol oben rechts in der Titelleiste.
+     */
+    private final com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle sideSwitch =
+            new com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle();
+    /** Platz des Umschalters in der Titelleiste, solange die Seitenleiste zugeklappt ist. */
+    /** Die Fensterfläche; an ihren Rändern stehen die Umschalter der zugeklappten Seitenleisten. */
+    private final com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay edges =
+            new com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay();
+    private static final String SWITCH_CHAT = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.TITLE;
+    private static final String SWITCH_ANALYSES = com.aresstack.spaceharvester.app.ui.content.AnalysesSidebar.TITLE;
+    private static final String SWITCH_JOBS = AppContext.Section.ACTIVITIES.title();
     private boolean chatOpen;
     /** Eine Antwort kam, während die Leiste zu war: der Chat-Knopf trägt bis zum Aufklappen einen Punkt. */
     private boolean chatUnread;
@@ -103,13 +116,20 @@ public final class MainWindow implements AppContext.Navigator {
     static final String SIDE_JOBS_KEY = "sidebar.right.jobs";
     private static final String SIDE_CHAT = "chat";
     private static final String SIDE_JOBS = "jobs";
+    private static final String SIDE_ANALYSES = "analyses";
+    /** Die Leisten in der Reihenfolge ihrer gemerkten Nummer ({@link #SIDE_JOBS_KEY}): 0 Chat, 1 Aufträge, 2 Analysen. */
+    private static final java.util.List<String> SIDE_MODES = java.util.List.of(SIDE_CHAT, SIDE_JOBS, SIDE_ANALYSES);
+    static final String ANALYSES_TOOLTIP = "Analysen zur Auswahl links ein- oder ausklappen";
+    private com.aresstack.spaceharvester.app.ui.content.AnalysesSidebar analysesSidebar;
+
     /** Die rechte Seitenleiste zeigt entweder den Chat oder die Aufträge (Angelo 22.11.2026). */
     private final java.awt.CardLayout sideModes = new java.awt.CardLayout();
     private final JPanel sideDeck = new JPanel(sideModes);
-    private boolean sideJobs;
+    private String sideMode = SIDE_CHAT;
     /** Die Leiste über die ganze Arbeitsfläche („Groß anzeigen“); der Explorer bleibt. */
     private boolean chatLarge;
     static final String CHAT_TOOLTIP = "Chat (Strg+J)";
+    static final String JOBS_TOOLTIP = "Aufträge (Strg+" + shortcutNumber(AppContext.Section.ACTIVITIES) + ")";
     static final String CHAT_UNREAD_TOOLTIP = "Chat (Strg+J) · neue Antwort";
     /** Leere Karte der Aktionszeile für Bereiche ohne eigene Aktionen. */
     private static final String JOBS = "jobs";
@@ -175,6 +195,46 @@ public final class MainWindow implements AppContext.Navigator {
                     ComicWindowDragger.isMaximized(javax.swing.SwingUtilities.getWindowAncestor(this)));
         }
     };
+
+    /**
+     * Wo die Reiter der Mitte in der Kopfzeile enden sollen (Angelo 27.11.2026): mittig über dem mittleren Fenster;
+     * mit offener Seitenleiste rechts an dessen linkem Rand, also am linken Teiler, und sie wandern mit ihm. Negativ,
+     * solange es nichts auszurichten gibt (andere Perspektive, Seitenleiste groß, noch kein Layout).
+     */
+    private int tabsAnchor() {
+        if (harvesterNavigation == null || harvesterNavigation.getParent() != navigationSlot
+                || stage.getWidth() <= 0 || !stage.isVisible()
+                || javax.swing.SwingUtilities.getRoot(stage) != javax.swing.SwingUtilities.getRoot(top)) {
+            return -1;
+        }
+        int left = javax.swing.SwingUtilities.convertPoint(stage, 0, 0, top).x;
+        // Gemessen wird von Knopf zu Knopf, ohne die Abstände der Gruppe davor und dahinter.
+        int width = harvesterNavigation.getPreferredSize().width;
+        int[] span = {Integer.MAX_VALUE, Integer.MIN_VALUE};
+        buttonSpan(harvesterNavigation, harvesterNavigation, span);
+        if (span[0] > span[1]) {
+            return -1;
+        }
+        int tabs = span[1] - span[0];
+        int start = chatOpen ? left : left + (stage.getWidth() - tabs) / 2;
+        return start + tabs + Math.max(0, width - span[1]);
+    }
+
+    /** Linke und rechte Kante der sichtbaren Knöpfe unter {@code parent}, in den Koordinaten von {@code root}. */
+    private static void buttonSpan(java.awt.Container root, java.awt.Container parent, int[] span) {
+        for (Component child : parent.getComponents()) {
+            if (!child.isVisible() || child.getWidth() <= 0) {
+                continue;
+            }
+            if (child instanceof javax.swing.AbstractButton) {
+                int x = javax.swing.SwingUtilities.convertPoint(parent, child.getX(), 0, root).x;
+                span[0] = Math.min(span[0], x);
+                span[1] = Math.max(span[1], x + child.getWidth());
+            } else if (child instanceof java.awt.Container nested) {
+                buttonSpan(root, nested, span);
+            }
+        }
+    }
 
     /** Was der Doppelklick auf die Fensterleiste gerade tut. */
     static String windowBarTooltip(boolean maximized) {
@@ -268,23 +328,28 @@ public final class MainWindow implements AppContext.Navigator {
                 context.vault() == null ? null : context.vault().scope("sharepoint")));
         // NDV im Command Deck: „Indexieren (Regel anlegen)“ legt eine Wissensquelle an (globale Suche, KI-Suche).
         com.aresstack.spaceharvester.app.ui.deck.NdvAnalysisSettings.searchLink(new NdvSourceRules(context));
-        // Diagramm-Ansicht „Visuell“: KI-Kurzbeschriftung über das Modell der Zeile „Zusammenfassung“ (sonst das
-        // Chat-Modell), gestreamt; Systemfunktionen aus Einstellungen › Diagramme.
+        // Diagramm-Ansicht „Visuell“: KI-Beschreibung über die Zeile „Quellcode“, auf demselben Weg wie jede
+        // Modellzeile des Chats (Workspace#aiChat(ModelUse)): Modell, Tokenlänge und Nachdenken setzt der Zugang selbst,
+        // „aus“ richtig je Dienst; die Anfragen tragen kein eigenes reasoning_effort (Angelo 28.11.2026).
         com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.connect(() -> {
             var runtime = context.runtime();
             var settings = context.settings();
             if (runtime == null || settings == null || settings.ai() == null) {
                 return null;
             }
-            var use = settings.ai().summary();
-            String model = use != null && use.model() != null ? use.model() : settings.ai().chatModel();
-            // Tokenbudget aus Kontextlänge und Ausgabelimit (F41-7); fehlt eines, geht der Code in einer Anfrage.
-            // Kontextlänge aus den Einstellungen, sonst aus dem schon bekannten Modellkatalog des Dienstes.
+            var use = com.aresstack.spaceharvester.ai.AiServiceSettings.sourceCodeUse(settings.ai().sourceCode());
+            String model = use.model() != null ? use.model() : settings.ai().chatModel();
+            // Was die Zeile offen lässt, kommt vom Text-Modell (Chat): dessen Tokenlänge, dessen Nachdenken.
+            int maxTokens = use.maxTokens() != null ? use.maxTokens() : settings.ai().chatMaxTokens() != null
+                    ? settings.ai().chatMaxTokens()
+                    : com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS;
+            // Tokenbudget aus Kontextlänge und demselben Ausgabelimit (F41-7); fehlt eines, geht der Code in einer
+            // Anfrage. Kontextlänge aus den Einstellungen, sonst aus dem schon bekannten Modellkatalog des Dienstes.
             com.aresstack.spaceharvester.app.runtime.ModelBudget budget = com.aresstack.spaceharvester.app.runtime
                     .ModelBudget.chat(settings.ai().contextTokens(), runtime.workspace().catalogContextTokens(model,
-                            false), settings.ai().chatMaxTokens());
+                            false), maxTokens);
             return new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramLabels.Target(
-                    runtime.workspace().aiChat(), model, use == null ? null : use.thinking(), budget);
+                    runtime.workspace().aiChat(use), model, null, budget, null, settings.ai().parallel());
         });
         statusView = new StatusView(context);
         sources = new SourcesView(context);
@@ -318,6 +383,8 @@ public final class MainWindow implements AppContext.Navigator {
         // man sieht, dass beides dasselbe ist (Angelo, 22.11.2026).
         // Klick auf die Überschrift „Suche in …“: links den Bereich der Suche wählen (Angelo, 23.11.2026).
         searchView.onLocate(explorer::select);
+        searchView.onAnalyze(explorer::analyze);
+        content.onAnalyzeArea(() -> explorer.analyze(explorer.scopes()));
         searchView.onSourcesChecked(scopes -> {
             if (current == AppContext.Section.SEARCH) {
                 explorer.select(scopes);
@@ -328,6 +395,20 @@ public final class MainWindow implements AppContext.Navigator {
         explorer.onSelection(content::selection);
         // Ein Favoriten-Ordner wählt die Sammlung über die eine Auflösung Ordner → Wurzeln (ADR 0034).
         explorer.onFolder(content::folder);
+        // Die Liste „Artefakte“ links (ADR 0047 §5): derselbe Speicher wie der Chat; ein Klick öffnet in der Mitte.
+        explorer.artifacts(content.artifactStore(), id -> {
+            show(AppContext.Section.CONTENT);
+            content.openArtifact(id);
+        }, content::exportArtifact);
+        // Die Mitte folgt der Wippe links; ein Verweis im Chat schaltet auf „Artefakte“, ein Reiter der Seitenansicht
+        // oder eine geöffnete Seite zurück auf „Wissensquellen“. Was die KI ändert, zählt der Chip an der Wippe.
+        explorer.onArtifactsShown(content::showArtifacts);
+        content.onArtifactsWanted(() -> {
+            show(AppContext.Section.CONTENT);
+            explorer.showArtifacts(true);
+        });
+        content.onPageWanted(() -> explorer.showArtifacts(false));
+        content.onUnseenArtifacts(explorer::unseenArtifacts);
         searchView.onSubmit(() -> show(AppContext.Section.SEARCH));
         // Über den Navigator geöffnete Seiten (etwa ein Suchtreffer) zeigt der Explorer aufgeklappt und gewählt.
         content.onPosition(position -> {
@@ -441,7 +522,7 @@ public final class MainWindow implements AppContext.Navigator {
         frame.setVisible(true);
         WindowPlacement.maximizeIfRemembered(frame);
         WindowPlacement.track(frame);
-        // Die App startet auf dem Suchreiter, ohne Auswahl, mit dem Chat als Suchagent (Angelo, 24.11.2026).
+        // Die App startet in der Suche, ohne Auswahl, mit dem Chat als Suchagent (Angelo, 24.11.2026).
         openSearchTab();
         return frame;
     }
@@ -461,7 +542,8 @@ public final class MainWindow implements AppContext.Navigator {
      * @param minimize Klick auf das ✕
      */
     public JPanel content(Runnable close, Runnable minimize) {
-        JPanel surface = new JPanel(new BorderLayout());
+        JPanel surface = edges;
+        edges.bar(top);
         surface.setBackground(Comic.SURFACE);
         surface.setBorder(ComicBorder.windowBorder(Comic.PALETTE, WINDOW_PADDING));
 
@@ -481,35 +563,26 @@ public final class MainWindow implements AppContext.Navigator {
                 continue;
             }
             ComposerToggleButton button = navButton(section, shortcutNumber(section));
-            if (section == AppContext.Section.ACTIVITIES) {
-                // Wie der Chat-Knopf: schaltet die Seitenleiste um, ein zweiter Klick klappt sie zu.
-                for (java.awt.event.ActionListener listener : button.getActionListeners()) {
-                    button.removeActionListener(listener);
-                }
-                button.addActionListener(e -> sideOpen(button.isSelected(), true));
-            } else {
-                navGroup.add(button);
-            }
+            navGroup.add(button);
             nav.put(section, button);
-            (section.administration() ? administration : section.trailing() ? trailing : icons).add(button);
+            (section.administration() ? administration : icons).add(button);
         }
-        // Der Chat ist kein Bereich, sondern eine Leiste neben jedem Bereich: sein Umschalter steht rechts vor den
-        // Aufträgen und gehört nicht zur Gruppe der Bereichsknöpfe.
-        chatToggle = new ComposerToggleButton(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.icon(), null,
-                CHAT_TOOLTIP);
-        chatToggle.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        chatToggle.getAccessibleContext().setAccessibleName(
-                com.aresstack.spaceharvester.app.ui.content.ChatSidebar.TITLE);
-        chatToggle.addActionListener(e -> sideOpen(chatToggle.isSelected(), false));
-        trailing.add(chatToggle, 0);
+        // Chat, Analysen und Aufträge sind keine Bereiche, sondern Leisten neben jedem Bereich: ihr Umschalter steht
+        // im Kopf der Leiste, zugeklappt senkrecht am rechten Fensterrand unter der Kopfleiste (Angelo 27.11.2026).
+        sideSwitch.segment(SWITCH_CHAT, com.aresstack.spaceharvester.app.ui.content.ChatSidebar.icon())
+                .segment(SWITCH_ANALYSES, com.aresstack.spaceharvester.app.ui.content.AnalysesSidebar.icon())
+                .segment(SWITCH_JOBS, stack());
+        sideSwitch.button(SWITCH_CHAT).setToolTipText(CHAT_TOOLTIP);
+        sideSwitch.button(SWITCH_ANALYSES).setToolTipText(ANALYSES_TOOLTIP);
+        sideSwitch.button(SWITCH_JOBS).setToolTipText(JOBS_TOOLTIP);
+        sideSwitch.clear();
+        sideSwitch.onSelect(name -> sideOpen(true, sideModeOf(name)));
+        sideSwitch.onAgain(name -> sideOpen(false, sideMode));
         // Die Reiter der Seitenansicht schalten die Mitte um: ein Klick zeigt Inhalte, auch aus einem anderen Bereich.
         JComponent tabBar = content.tabBar();
         tabBar.setBorder(BorderFactory.createEmptyBorder(0, TAB_GAP, 0, 0));
-        for (Component tab : tabBar.getComponents()) {
-            if (tab instanceof javax.swing.AbstractButton button) {
-                button.addActionListener(e -> show(AppContext.Section.CONTENT));
-            }
-        }
+        // Ein zweiter Klick auf den gezeigten Reiter wählt ihn ab: Ohne Auswahl zeigt die Mitte die Suche.
+        content.onTabClick(() -> show(AppContext.Section.CONTENT), this::openSearchTab);
         icons.add(tabBar);
         // Der Titel steht in der Mitte der linken Gruppe und ist ihr einziger kürzbarer Teil (HeaderLayout). Er ist
         // zugleich der Umschalter der Perspektiven (#1141); rechts daneben steht die Navigation der gewählten.
@@ -519,10 +592,10 @@ public final class MainWindow implements AppContext.Navigator {
         switcher = new PerspectiveSwitcher(ApplicationIcons.titleLogo(), perspectives);
         // Avenger-Easter-Egg (#1141): vorläufiger Auslöser fünf Klicks auf das Logo; Ablauf und Auslöser sind getrennt.
         avenger = new AvengerEasterEgg(switcher);
-        switcher.onSidebarToggle(this::toggleDrawer);
+        switcher.onSidebarToggle(this::logoClicked);
         com.aresstack.spaceharvester.app.ui.controls.ClickBurst.install(switcher.logo(), 5,
                 java.time.Duration.ofMillis(700), avenger::reveal);
-        west.add(switcher, BorderLayout.CENTER);
+        west.add(HeaderLayout.leading(switcher), BorderLayout.CENTER);
         navigationSlot.setOpaque(false);
         west.add(navigationSlot, BorderLayout.EAST);
         JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
@@ -537,7 +610,20 @@ public final class MainWindow implements AppContext.Navigator {
                 BorderFactory.createEmptyBorder(8, 16, 8, 10)));
         top.add(west, BorderLayout.WEST);
         top.add(east, BorderLayout.EAST);
-        // Ein Suchfeld für das ganze Fenster, mittig zwischen den Icon-Gruppen (#515).
+        // Die Reiter der Mitte stehen über dem mittleren Fenster (Angelo 27.11.2026) und wandern mit seinen Teilern.
+        ((HeaderLayout) top.getLayout()).anchor(this::tabsAnchor);
+        stage.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent event) {
+                top.revalidate();
+            }
+
+            @Override
+            public void componentMoved(java.awt.event.ComponentEvent event) {
+                top.revalidate();
+            }
+        });
+        // Ein Suchfeld für das ganze Fenster, rechtsbündig vor der Gruppe rechts (#515, Angelo 27.11.2026).
         searchSlot = SearchBarLayout.wrap(searchView.searchBar());
         top.add(searchSlot, BorderLayout.CENTER);
         ComicWindowDragger.install(top);
@@ -547,7 +633,9 @@ public final class MainWindow implements AppContext.Navigator {
         side.setBackground(Comic.SURFACE);
         // Unten ohne Rand: Die Fußleiste des Explorers (SideFoot) steht bündig auf einer Linie mit der Leiste mit der
         // Lupe unter der Arbeitsfläche, gleich hoch (Comic.FOOT_HEIGHT).
-        side.setBorder(BorderFactory.createEmptyBorder(10, 12, 0, 10));
+        // Oben ohne Rand: Die Kopfleiste des Explorers (HeadBar) steht auf einer Linie mit der der Mitte und der der
+        // rechten Leiste (Angelo 27.11.2026); die Schubladen bringen ihren Abstand selbst mit.
+        side.setBorder(BorderFactory.createEmptyBorder(0, 12, 0, 10));
         side.setMinimumSize(new Dimension(0, 0));
         side.add(explorer.component(), EXPLORER);
         side.add(bottomGap(sources.drawer()), AppContext.Section.SOURCES.name());
@@ -609,11 +697,27 @@ public final class MainWindow implements AppContext.Navigator {
         work.add(deckHolder, BorderLayout.CENTER);
         work.add(workFoot, BorderLayout.SOUTH);
         chatSidebar = content.chatSidebar();
-        chatSidebar.onCollapse(() -> sideOpen(false, sideJobs));
-        activities.sidebar(() -> chatLarge(!chatLarge), () -> sideOpen(false, sideJobs));
+        chatSidebar.onCollapse(() -> sideOpen(false, sideMode));
+        // Diagramm-Ansicht: „im Chat erklären lassen“ geht in diesen Chat, mit den Werkzeugen des Bereichs
+        com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.chat((question, excerpt, reference) -> {
+            sideOpen(true, SIDE_CHAT);
+            return chatSidebar.chat().askAbout(question, excerpt, reference);
+        });
+        activities.sidebar(() -> chatLarge(!chatLarge), () -> sideOpen(false, sideMode));
+        analysesSidebar = content.analysesSidebar();
+        analysesSidebar.onCollapse(() -> sideOpen(false, sideMode));
+        analysesSidebar.onOpen(() -> sideOpen(true, SIDE_ANALYSES));
+        // Ein Sprung zu einer Fundstelle oder Seite soll sie zeigen: die große Ansicht wird wieder zur Leiste.
+        analysesSidebar.onRevealMiddle(() -> {
+            if (chatLarge && analysesOpen()) {
+                chatLarge(false);
+            }
+        });
+        analysesSidebar.enlargeButton().addActionListener(e -> chatLarge(!chatLarge));
         sideDeck.setBackground(Comic.SURFACE);
         sideDeck.add(chatSidebar, SIDE_CHAT);
         sideDeck.add(activities.component(), SIDE_JOBS);
+        sideDeck.add(analysesSidebar, SIDE_ANALYSES);
         chatSidebar.chat().onAnswer(this::chatAnswered);
         // Command Deck: anderer Reiter, anderer Hinweis und andere Vorschläge im Chat.
         if (commandDeck != null) {
@@ -632,7 +736,8 @@ public final class MainWindow implements AppContext.Navigator {
         perspectives.add(new Perspective(Perspectives.HARVESTER, "Space Harvester",
                 "Quellen sammeln, suchen, lesen, chatten und analysieren", true, icons, work, side, null, null, null));
         perspectives.add(commandDeck.perspective());
-        perspectives.add(Perspectives.provingGround());
+        perspectives.add(new com.aresstack.spaceharvester.app.ui.proving.ProvingGroundWorkspace(context::keePass,
+                context::dataDirectory).perspective());
         perspectives.add(Perspectives.missionControl());
         for (Perspective perspective : perspectives.all()) {
             stage.add(perspective.workspace(), perspective.id());
@@ -674,7 +779,7 @@ public final class MainWindow implements AppContext.Navigator {
                 @Override
                 public void mouseClicked(java.awt.event.MouseEvent event) {
                     if (event.getClickCount() == 2) {
-                        sideOpen(!chatOpen, sideJobs);
+                        sideOpen(!chatOpen, sideMode);
                     }
                 }
             });
@@ -691,10 +796,10 @@ public final class MainWindow implements AppContext.Navigator {
                 WindowSizes.recallInt(CHAT_WIDTH_KEY, chatWidth));
         chatOpen = WindowSizes.recallInt(CHAT_OPEN_KEY, 0) == 1;
         chatLarge = WindowSizes.recallInt(CHAT_LARGE_KEY, 0) == 1;
-        sideJobs = WindowSizes.recallInt(SIDE_JOBS_KEY, 0) == 1;
-        chatToggle.setSelected(chatOpen && !sideJobs);
-        nav.get(AppContext.Section.ACTIVITIES).setSelected(chatOpen && sideJobs);
-        sideModes.show(sideDeck, sideJobs ? SIDE_JOBS : SIDE_CHAT);
+        int recalled = WindowSizes.recallInt(SIDE_JOBS_KEY, 0);
+        sideMode = recalled >= 0 && recalled < SIDE_MODES.size() ? SIDE_MODES.get(recalled) : SIDE_CHAT;
+        selectSideToggles();
+        sideModes.show(sideDeck, sideMode);
         placeChat();
         split = new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
                 side, chatSplit, 200, 520, WindowSizes.recallInt(LEFT_WIDTH_KEY, SIDEBAR_WIDTH));
@@ -744,6 +849,14 @@ public final class MainWindow implements AppContext.Navigator {
 
         surface.add(top, BorderLayout.NORTH);
         surface.add(split, BorderLayout.CENTER);
+        // Der zweite Klick auf das gewählte Symbol klappt die linke Leiste zu; der Umschalter wandert dann senkrecht an
+        // den linken Fensterrand, und ein Klick dort klappt sie wieder auf (Angelo 27.11.2026).
+        explorer.view.onAgain(name -> toggleDrawer());
+        explorer.view.onSelect(name -> {
+            if (explorerDrawer() && split.isLeftCollapsed()) {
+                toggleDrawer();
+            }
+        });
         refreshDrawerToggle();
         surface.add(bottom, BorderLayout.SOUTH);
         ComicWindowResizer.install(surface, RESIZE_GRIP);
@@ -771,11 +884,25 @@ public final class MainWindow implements AppContext.Navigator {
                 section.title() + " (Strg+" + number + ")");
         button.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
         button.getAccessibleContext().setAccessibleName(section.title());
-        button.addActionListener(e -> showByHand(section));
+        button.addActionListener(e -> clicked(section));
         return button;
     }
 
-    /** Ein Bereich, den der Benutzer selbst wählt (Knopf oder Strg+Zahl): der Suchreiter hebt die Auswahl auf. */
+    /**
+     * Ein Klick auf einen Bereichsknopf (Angelo, 27.11.2026): Der zweite Klick auf den gezeigten Bereich wählt ihn ab.
+     * Ohne Auswahl zeigt die Mitte die Suche; die Einstellungen über einer anderen Perspektive geben diese wieder frei.
+     */
+    private void clicked(AppContext.Section section) {
+        if (settingsOver != null && section == AppContext.Section.SETTINGS) {
+            leaveSettings();
+        } else if (section == current && settingsOver == null && perspectives.isCurrent(Perspectives.HARVESTER)) {
+            openSearchTab();
+        } else {
+            showByHand(section);
+        }
+    }
+
+    /** Ein Bereich, den der Benutzer selbst wählt (Knopf oder Strg+Zahl): die Suche von Hand hebt die Auswahl auf. */
     private void showByHand(AppContext.Section section) {
         if (section == AppContext.Section.SEARCH) {
             openSearchTab();
@@ -785,7 +912,7 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /**
-     * Der Suchreiter von Hand (Angelo, 24.11.2026): Die Auswahl der Wissensquellen verschwindet ganz, auch die globale;
+     * Die Suche von Hand (Strg+Zahl oder Abwählen des gezeigten Knopfs; Angelo, 24.11. und 27.11.2026): Die Auswahl der Wissensquellen verschwindet ganz, auch die globale;
      * gesucht wird überall, und der Chat arbeitet ohne Bereich nur mit den zugeschalteten Suchen, ohne die langsame
      * Suche im Bereich. Die Suche in der Titelleiste lässt die Auswahl dagegen stehen.
      */
@@ -863,42 +990,134 @@ public final class MainWindow implements AppContext.Navigator {
      * Teiler). Zugeklappt bleibt nur der schmale Teiler; der Zustand und die Breite gelten auch nach dem Neustart.
      */
     void chatOpen(boolean open) {
-        sideOpen(open, false);
+        sideOpen(open, SIDE_CHAT);
     }
 
     /** Klappt die Seitenleiste mit den Aufträgen auf oder zu (Knopf oben rechts, Strg+Ziffer). */
     void jobsOpen(boolean open) {
-        sideOpen(open, true);
+        sideOpen(open, SIDE_JOBS);
+    }
+
+    /** Klappt die Seitenleiste mit den Analysen auf oder zu (Knopf oben rechts zwischen Chat und Aufträgen). */
+    void analysesOpen(boolean open) {
+        sideOpen(open, SIDE_ANALYSES);
+    }
+
+    boolean analysesOpen() {
+        return chatOpen && SIDE_ANALYSES.equals(sideMode);
+    }
+
+    /** Die Hälfte „Analysen“ des Umschalters der rechten Leiste (für Tests). */
+    javax.swing.AbstractButton analysesToggle() {
+        return sideSwitch.button(SWITCH_ANALYSES);
+    }
+
+    /** Die Hälfte „Aufträge“ des Umschalters der rechten Leiste (für Tests). */
+    javax.swing.AbstractButton jobsToggle() {
+        return sideSwitch.button(SWITCH_JOBS);
+    }
+
+    private static String sideModeOf(String name) {
+        return SWITCH_JOBS.equals(name) ? SIDE_JOBS : SWITCH_ANALYSES.equals(name) ? SIDE_ANALYSES : SIDE_CHAT;
     }
 
     /**
-     * Die rechte Seitenleiste zeigt den Chat oder die Aufträge: der Knopf des einen blendet das andere aus, ein
+     * Zeigt am Umschalter, welche Leiste offen ist, und stellt ihn an seinen Platz: in den Kopf der gezeigten Leiste
+     * oder, zugeklappt, ohne gewähltes Symbol senkrecht an den rechten Fensterrand, direkt unter die Kopfleiste.
+     */
+    private void selectSideToggles() {
+        JComponent slot = null;
+        if (!chatOpen) {
+            sideSwitch.clear();
+        } else if (SIDE_JOBS.equals(sideMode)) {
+            sideSwitch.show(SWITCH_JOBS);
+            slot = activities.switchSlot();
+        } else if (SIDE_ANALYSES.equals(sideMode)) {
+            sideSwitch.show(SWITCH_ANALYSES);
+            slot = analysesSidebar.switchSlot();
+        } else {
+            sideSwitch.show(SWITCH_CHAT);
+            slot = chatSidebar.switchSlot();
+        }
+        if (slot == null) {
+            sideSwitch.vertical(true);
+            edges.place(edges.right(), sideSwitch);
+            return;
+        }
+        java.awt.Container old = sideSwitch.getParent();
+        if (old != slot) {
+            sideSwitch.vertical(false);
+            slot.add(sideSwitch);
+            slot.revalidate();
+            slot.repaint();
+            edges.place(edges.right(), null);
+            if (old != null && old != edges.right()) {
+                old.revalidate();
+                old.repaint();
+            }
+        }
+    }
+
+
+    /** Der Umschalter der rechten Leiste (für Tests). */
+    JComponent sideSwitch() {
+        return sideSwitch;
+    }
+
+    /** Ob links der Baum der Wissensquellen steht: Nur er hat einen Umschalter, der die Leiste auch zuklappt. */
+    private boolean explorerDrawer() {
+        return settingsOver == null && perspectives.isCurrent(Perspectives.HARVESTER);
+    }
+
+    /** Das Logo klappt nur Leisten ohne eigenen Umschalter (Command Deck, Einstellungen). */
+    private void logoClicked() {
+        if (!explorerDrawer()) {
+            toggleDrawer();
+        }
+    }
+
+    /**
+     * Stellt den Umschalter der linken Leiste an seinen Platz: in ihren Kopf oder, zugeklappt, ohne gewähltes Symbol
+     * senkrecht an den linken Fensterrand, direkt unter die Kopfleiste.
+     */
+    private void placeExplorerSwitch() {
+        boolean collapsed = explorerDrawer() && split.isLeftCollapsed();
+        if (collapsed) {
+            explorer.switchAway();
+            edges.place(edges.left(), explorer.view);
+        } else {
+            edges.place(edges.left(), null);
+            explorer.switchHome();
+        }
+    }
+
+    /**
+     * Die rechte Seitenleiste zeigt den Chat, die Analysen oder die Aufträge: der Knopf des einen blendet das andere aus, ein
      * zweiter Klick auf den aktiven Knopf klappt die Leiste zu (Angelo 22.11.2026). Breite und „groß“ gelten für
      * beide; was zuletzt offen war, gilt auch nach dem Neustart.
      */
-    private void sideOpen(boolean open, boolean jobs) {
+    private void sideOpen(boolean open, String mode) {
         chatOpen = open;
         if (open) {
-            sideJobs = jobs;
-            WindowSizes.rememberInt(SIDE_JOBS_KEY, jobs ? 1 : 0);
-            sideModes.show(sideDeck, jobs ? SIDE_JOBS : SIDE_CHAT);
+            sideMode = mode;
+            WindowSizes.rememberInt(SIDE_JOBS_KEY, SIDE_MODES.indexOf(mode));
+            sideModes.show(sideDeck, mode);
         }
-        chatToggle.setSelected(open && !sideJobs);
-        nav.get(AppContext.Section.ACTIVITIES).setSelected(open && sideJobs);
-        if (open && !sideJobs) {
+        selectSideToggles();
+        if (chatOpen()) {
             chatUnread(false);
         }
         WindowSizes.rememberInt(CHAT_OPEN_KEY, open ? 1 : 0);
         placeChat();
-        if (open && sideJobs) {
+        if (jobsOpen()) {
             activities.shown();
-        } else if (open) {
+        } else if (chatOpen()) {
             chatSidebar.chat().focusEditor();
         }
     }
 
     boolean jobsOpen() {
-        return chatOpen && sideJobs;
+        return chatOpen && SIDE_JOBS.equals(sideMode);
     }
 
     /** Eine Antwort ist fertig: Ist die Leiste zu, zeigt der Chat-Knopf einen Punkt, bis sie aufgeklappt wird. */
@@ -914,13 +1133,13 @@ public final class MainWindow implements AppContext.Navigator {
 
     private void chatUnread(boolean unread) {
         chatUnread = unread;
-        chatToggle.setIcon(unread ? com.aresstack.spaceharvester.app.ui.content.ChatSidebar.unreadIcon()
+        sideSwitch.icon(SWITCH_CHAT, unread ? com.aresstack.spaceharvester.app.ui.content.ChatSidebar.unreadIcon()
                 : com.aresstack.spaceharvester.app.ui.content.ChatSidebar.icon());
-        chatToggle.setToolTipText(unread ? CHAT_UNREAD_TOOLTIP : CHAT_TOOLTIP);
+        sideSwitch.button(SWITCH_CHAT).setToolTipText(unread ? CHAT_UNREAD_TOOLTIP : CHAT_TOOLTIP);
     }
 
     boolean chatOpen() {
-        return chatOpen && !sideJobs;
+        return chatOpen && SIDE_CHAT.equals(sideMode);
     }
 
     /**
@@ -946,10 +1165,12 @@ public final class MainWindow implements AppContext.Navigator {
         try {
             int min = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH;
             sideDeck.setMinimumSize(new Dimension(chatOpen ? min : 0, 0));
-            chatSidebar.shown(chatOpen && !sideJobs);
-            activities.sidebarShown(chatOpen && sideJobs);
+            chatSidebar.shown(chatOpen());
+            activities.sidebarShown(jobsOpen());
+            analysesSidebar.shown(analysesOpen());
             boolean large = chatOpen && chatLarge;
             chatSidebar.large(large);
+            analysesSidebar.large(large);
             activities.large(large);
             // Groß: die Arbeitsfläche weicht ganz, die Teilung gibt der Leiste dann allen Platz und zeigt keinen Teiler.
             chatSplit.getLeftComponent().setVisible(!large);
@@ -1016,7 +1237,10 @@ public final class MainWindow implements AppContext.Navigator {
         if (switcher == null || split == null || perspectives == null) {
             return;
         }
-        if (harvesterDrawerActive()) {
+        placeExplorerSwitch();
+        if (explorerDrawer()) {
+            switcher.sidebarElsewhere();
+        } else if (harvesterDrawerActive()) {
             switcher.sidebarState(true, !split.isLeftCollapsed());
         } else {
             var pane = activeDeckSidebar();
@@ -1190,7 +1414,7 @@ public final class MainWindow implements AppContext.Navigator {
         if (changed && section == AppContext.Section.SEARCH && !history.restoring()) {
             history.preview();
             content.refreshHistoryNavigation();
-            // Gesucht wird in dem, was links gewählt ist; nur der Suchreiter von Hand hebt die Auswahl auf.
+            // Gesucht wird in dem, was links gewählt ist; nur die Suche von Hand hebt die Auswahl auf.
             searchView.scope(explorer.scopes());
         }
         // Keine zweite Leiste: Die Quellenkarten bzw. die Bereiche der Einstellungen ersetzen im Drawer den Explorer,
@@ -1220,6 +1444,7 @@ public final class MainWindow implements AppContext.Navigator {
         content.chatSidebar().chat().searchFront(section == AppContext.Section.SEARCH);
         content.chatSidebar().chat().readingFront(section == AppContext.Section.CONTENT);
         findBar.tools(view.tools());
+        findBar.help(view.help());
         view.shown();
         if (changed) {
             findBar.areaChanged();
@@ -1368,6 +1593,37 @@ public final class MainWindow implements AppContext.Navigator {
     public void editSource(String sourceId) {
         show(AppContext.Section.SOURCES);
         sources.select(sourceId);
+    }
+
+    @Override
+    public void openBook(String folderId) {
+        explorer.openBook(folderId);
+    }
+
+    /**
+     * Öffnet ein globales Artefakt (etwa das Buch aus „Buch öffnen“) in der Mitte, links unter „Artefakte“ (ADR 0047 §5);
+     * gehört es einem anderen Projekt, wird dieses aktiv.
+     */
+    @Override
+    public void openArtifact(String projectId, String artifactId) {
+        show(AppContext.Section.CONTENT);
+        if (projectId != null && (context.projects().active() == null
+                || !projectId.equals(context.projects().active().id()))) {
+            context.projects().activate(projectId);
+            // Der Chat wechselt auf die Meldung des Projekts hin; erst danach öffnen.
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                explorer.revealArtifacts();
+                content.openArtifact(artifactId);
+            });
+            return;
+        }
+        explorer.revealArtifacts();
+        content.openArtifact(artifactId);
+    }
+
+    @Override
+    public boolean opensArtifacts() {
+        return true;
     }
 
     @Override
@@ -1719,12 +1975,12 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /**
-     * Gibt einer Schublade der linken Leiste den unteren Rand, den die Leiste selbst nicht mehr hat. Ohne Hülle: Die
+     * Gibt einer Schublade der linken Leiste den oberen und unteren Rand, den die Leiste selbst nicht mehr hat. Ohne Hülle: Die
      * Schublade bleibt direktes Kind der Leiste.
      */
     private static JComponent bottomGap(JComponent drawer) {
         drawer.setBorder(BorderFactory.createCompoundBorder(drawer.getBorder(),
-                BorderFactory.createEmptyBorder(0, 0, 10, 0)));
+                BorderFactory.createEmptyBorder(10, 0, 10, 0)));
         return drawer;
     }
 
@@ -1816,8 +2072,9 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /** Für Tests: der Umschalter der Chat-Seitenleiste oben rechts. */
-    ComposerToggleButton chatToggle() {
-        return chatToggle;
+    /** Die Hälfte „Chat“ des Umschalters der rechten Leiste (für Tests). */
+    javax.swing.AbstractButton chatToggle() {
+        return sideSwitch.button(SWITCH_CHAT);
     }
 
     /** Für Tests: die Teilung zwischen Drawer und Arbeitsfläche. */

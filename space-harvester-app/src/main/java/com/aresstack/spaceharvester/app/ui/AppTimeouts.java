@@ -24,15 +24,20 @@ public final class AppTimeouts {
                         + "Datenstrom endet über „Abbrechen“", 60, 1, 86_400),
         // Schlüssel aus der Firefox-Zeit, damit eingestellte Werte bleiben (ADR 0046: der Browser ist jetzt Edge o. a.).
         BROWSER_START("firefox-start-seconds", "Browser-Start für den Chat (Sekunden)",
-                "So lange darf der Start des Browsers dauern, wenn der Chat Webseiten liest", 30, 1, 86_400),
+                "So lange darf der Start des Browsers dauern, wenn der Chat Webseiten liest. 0 = ohne Frist: Der Start "
+                        + "endet, wenn der Browser bereit ist oder sich beendet (geschlossen, abgestürzt) oder bei Stopp",
+                0, 0, 86_400),
         BROWSER_NAVIGATION("browser-navigation-seconds", "Seitenaufruf im Chat-Browser (Sekunden)",
                 "So lange darf eine Seite im Browser des Chats laden, bevor der Aufruf als zu langsam scheitert", 30,
                 1, 86_400),
-        DIAGRAM_LABELS("diagram-labels-seconds", "Beschriftung von Code-Diagrammen (Sekunden)",
-                "So lange wartet die Beschriftung eines Code-Diagramms höchstens auf das Modell", 30, 1, 86_400),
         AUDIO_SILENCE("audio-silence-seconds", "Transkription: ohne Ton (Sekunden)",
                 "So lange darf VLC beim Transkribieren keine Tondaten liefern, bevor der Lauf abbricht", 60, 1,
-                86_400);
+                86_400),
+        // Angelo 27.11.2026: „das spammt hier alles so zu mit Aufträgen“; Vorgabe 5 Minuten.
+        FINISHED_JOBS("finished-jobs-seconds", "Fehlerfrei fertige Aufträge entfernen nach (Sekunden)",
+                "So lange nach seinem Ende bleibt ein fehlerfrei fertiger Auftrag in der Auftragsliste, dann wird er "
+                        + "gelöscht; Downloads mit ihrem Datenbestand und Aufträge mit Fehlern oder Auslassungen "
+                        + "bleiben. 0 schaltet das Aufräumen ab", 300, 0, 31_536_000);
 
         private final String key;
         private final String label;
@@ -102,8 +107,22 @@ public final class AppTimeouts {
         return numbers.values();
     }
 
-    /** Speichert die Fristen; eine Vorgabe wird nicht gemerkt. */
+    /** Speichert die Fristen; eine Vorgabe wird nicht gemerkt. Wer zuhört ({@link #onSave}), erfährt es. */
     public void save(Map<Value, Long> values) {
         numbers.save(values);
+        SAVED.forEach(Runnable::run);
+    }
+
+    private static final java.util.List<Runnable> SAVED = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * Meldet jedes Speichern der Fristen, etwa damit die Auftragsliste ihr Aufräumen sofort nach der neuen Frist stellt
+     * statt erst bei der nächsten Meldung des Core.
+     *
+     * @return beendet das Zuhören
+     */
+    public static AutoCloseable onSave(Runnable listener) {
+        SAVED.add(java.util.Objects.requireNonNull(listener, "listener"));
+        return () -> SAVED.remove(listener);
     }
 }

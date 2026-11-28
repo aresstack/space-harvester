@@ -77,6 +77,8 @@ class GraphicCanvas extends JPanel {
     static final String SAVED = "selbst gezeichnet";
     /** Strichstärke neuer Linien (SVG-Benutzereinheiten). */
     private static final String LINE_WIDTH = "2";
+    /** Für Tests: wie oft {@link #settle} nachsieht, ob die Fläche inzwischen neu geladen wurde (Millisekunden). */
+    private static final long SETTLE_SLICE_MS = 50;
     /** Kantenlänge des Größengriffs in Pixeln. */
     private static final int HANDLE = 8;
 
@@ -135,7 +137,8 @@ class GraphicCanvas extends JPanel {
             public void managerStarted(org.apache.batik.bridge.UpdateManagerEvent event) {
                 // Erst jetzt gehört das Dokument dem neuen Aktualisierungs-Thread.
                 java.util.concurrent.CountDownLatch ready = started;
-                queue(() -> {
+                // Auf die Warteschlange genau dieses Threads, nicht auf die, die die Fläche gerade meldet.
+                ((UpdateManager) event.getSource()).getUpdateRunnableQueue().invokeLater(() -> {
                     document = canvas.getSVGDocument();
                     selected = null;
                     selection = null;
@@ -203,14 +206,35 @@ class GraphicCanvas extends JPanel {
         return canvas;
     }
 
-    /** Für Tests: wartet, bis die Fläche bearbeitbar ist und alles bis hierher Eingereihte erledigt hat. */
+    /**
+     * Für Tests: wartet, bis die Fläche bearbeitbar ist und alles bis hierher Eingereihte erledigt hat. Lädt die Fläche
+     * währenddessen einen neuen Stand (der alte Aktualisierungs-Thread endet dann, ohne die Marke abzuarbeiten), wartet
+     * sie auf den neuen; so hängt das Ergebnis nicht davon ab, wie schnell der Rechner ist.
+     */
     boolean settle(long millis) throws InterruptedException {
-        if (!started.await(millis, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-            return false;
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(millis);
+        while (true) {
+            java.util.concurrent.CountDownLatch ready = started;
+            if (!ready.await(remaining(deadline), java.util.concurrent.TimeUnit.NANOSECONDS)) {
+                return false;
+            }
+            java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+            queue(done::countDown);
+            while (ready == started) {
+                long left = remaining(deadline);
+                if (left <= 0) {
+                    return false;
+                }
+                if (done.await(Math.min(left, java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(SETTLE_SLICE_MS)),
+                        java.util.concurrent.TimeUnit.NANOSECONDS)) {
+                    return true;
+                }
+            }
         }
-        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
-        queue(done::countDown);
-        return done.await(millis, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    private static long remaining(long deadline) {
+        return Math.max(0, deadline - System.nanoTime());
     }
 
     /** Zeigt einen Stand der Grafik; die Auswahl geht verloren. */

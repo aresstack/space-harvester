@@ -98,6 +98,8 @@ Diese Prinzipien tragen die ADRs 0036 bis 0042 (26.11.2026):
      Harvesters). Netzlaufwerke, UNC-Pfade und Cloud-Platzhalter werden ohne eigene Freigabe nicht durchlaufen.
    - Eine KI-Abfrage indexiert nie dauerhaft. Fundstellen aus Live-Werkzeugen sind anklickbare, rechtegeprüfte
      Verweise in die passende Perspektive.
+   - Hinweis (28.11.2026): ADR 0048 zu Mission Control ist zurückgenommen; die Entscheidung wird in ADR 0049 neu
+     getroffen.
 10. **JES und BetaView bleiben primär Live-Dienste.** Spool und Reportarchiv werden nie automatisch vollständig
     indexiert. Bestehende, eng konfigurierte Quellen bleiben möglich und werden nicht migriert. Eine spätere Aktion
     „In Wissensbestand übernehmen“ hält einen ausgewählten Joblauf oder Beleg fest. Die Identität einer solchen

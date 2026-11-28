@@ -812,4 +812,51 @@ public class ChatBrowserRuntimeTest {
         assertEquals(Arrays.asList("https://intranet.example/richtlinie.pdf", "https://intranet.example/extern.pdf"),
                 engine.fetches);
     }
+
+    @Test
+    public void theSearchRunsInTheChatsOneBrowserWithTheChatsBlockList() throws Exception {
+        final List<String> refusedFor = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        final java.util.concurrent.atomic.AtomicReference<java.util.function.Predicate<String>> handed =
+                new java.util.concurrent.atomic.AtomicReference<java.util.function.Predicate<String>>();
+        BrowserAccessGuard guard = new BrowserAccessGuard() {
+            @Override
+            public void admit(com.aresstack.enterpriseai.astu.chat.ChatConversationId chat, String url) {
+            }
+
+            @Override
+            public boolean refuses(com.aresstack.enterpriseai.astu.chat.ChatConversationId chat, String url) {
+                refusedFor.add(chat + " " + url);
+                return url.contains("blocked.example");
+            }
+        };
+        final java.util.List<com.aresstack.enterpriseai.browser.api.engine.BrowserInstance> searchedIn =
+                new java.util.concurrent.CopyOnWriteArrayList<com.aresstack.enterpriseai.browser.api.engine.BrowserInstance>();
+        com.aresstack.enterpriseai.browser.api.WebSearchPort search = (chat, running, query, engines, refused) -> {
+            handed.set(refused);
+            searchedIn.add(running);
+            return chat + " " + query + " " + engines;
+        };
+        ChatBrowser browser = new ChatBrowserRuntime(engine, new BrowserProfileStore(folder.getRoot().toPath()),
+                guard, search).browserOf(chatA);
+
+        assertEquals(chatA + " frage [startpage]", browser.search("frage", Arrays.asList("startpage")));
+        browser.navigate(null, "https://example.org/");
+        assertEquals("one browser for the search and the page (Angelo 28.11.2026)", 1, engine.starts.size());
+        assertEquals(1, searchedIn.size());
+        assertTrue("the search got the chat's running browser", searchedIn.get(0) != null
+                && searchedIn.get(0).isAlive());
+        assertTrue(handed.get().test("https://www.blocked.example/a"));
+        assertFalse(handed.get().test("https://example.org/"));
+        assertEquals(chatA + " https://www.blocked.example/a", refusedFor.get(0));
+    }
+
+    @Test
+    public void withoutAWebSearchTheSearchIsRefusedWithTheReason() {
+        try {
+            runtime.browserOf(chatA).search("frage", null);
+            fail("expected INVALID_REQUEST");
+        } catch (BrowserException expected) {
+            assertEquals(BrowserException.Kind.INVALID_REQUEST, expected.kind());
+        }
+    }
 }

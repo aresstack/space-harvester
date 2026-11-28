@@ -89,9 +89,9 @@ final class DeckHome extends JPanel {
         GridBagConstraints at = new GridBagConstraints();
         at.insets = new Insets(24, 24, 24, 24);
         centred.add(column, at);
-        javax.swing.JScrollPane scroll = new javax.swing.JScrollPane(centred,
+        javax.swing.JScrollPane scroll = Comic.comicBars(new javax.swing.JScrollPane(centred,
                 javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
-                javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+                javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED));
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.getViewport().setBackground(Comic.SURFACE);
         scroll.getVerticalScrollBar().setUnitIncrement(16);

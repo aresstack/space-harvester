@@ -190,18 +190,24 @@ public final class PlaywrightBrowserRuntime implements AutoCloseable {
         // A4: the three layout-repair tools, backed by the SAME engine navigation as web_search. The browser
         // stays MODEL-FREE — it only captures/extracts and applies a runtime-validated decision to a cached
         // snapshot. web_search remains the unchanged compatibility surface.
-        SearchLayoutRepairTools repairTools = actor.isPlaywrightBacked()
-                ? new SearchLayoutRepairTools(options.settings, new PlaywrightRenderedPageSource(actor),
+        SearchLayoutRepairTools repairTools = repairToolsFor(actor, options.settings);
+        // The READY line as the launcher renders it (channel + executable), for diagnostics and the capability check.
+        String readiness = options.launcher.readiness().render();
+        System.err.println("[browser] ready backend=" + actor.getBackendKind() + " " + readiness);
+        return new PlaywrightBrowserRuntime(actor, repairTools, readiness);
+    }
+
+    /** The layout-repair tools over {@code actor}'s rendered pages; {@code null} without a Playwright session. */
+    static SearchLayoutRepairTools repairToolsFor(BrowserSessionActor actor,
+                                                  LegacyBrowserSearchSettings settings) {
+        return actor.isPlaywrightBacked()
+                ? new SearchLayoutRepairTools(settings, new PlaywrightRenderedPageSource(actor),
                         new LongSupplier() {
                             public long getAsLong() {
                                 return System.currentTimeMillis();
                             }
                         })
                 : null;
-        // The READY line as the launcher renders it (channel + executable), for diagnostics and the capability check.
-        String readiness = options.launcher.readiness().render();
-        System.err.println("[browser] ready backend=" + actor.getBackendKind() + " " + readiness);
-        return new PlaywrightBrowserRuntime(actor, repairTools, readiness);
     }
 
     /**

@@ -92,6 +92,7 @@ public class PlaywrightBrowserSessionTest {
 
         public PlaywrightPageState open(String url) throws BrowserException {
             opened.add(url);
+            ownTabEvents.add("open " + url);
             PlaywrightPageState state = byUrl.get(url);
             if (state == null) {
                 throw new BrowserException("Navigation failed: 404 " + url);
@@ -171,6 +172,8 @@ public class PlaywrightBrowserSessionTest {
         final List<List<String>> openedTabSets = new ArrayList<List<String>>();
         /** The user closed the window: opening tabs fails the way the real driver reports it. */
         boolean windowClosed;
+        /** Addresses that do not load in a search tab. */
+        final java.util.Set<String> unreachable = new java.util.HashSet<String>();
 
         /** The thread that opened the last set of search tabs. */
         volatile String searchTabThread;
@@ -186,9 +189,17 @@ public class PlaywrightBrowserSessionTest {
             tabHomes.addAll(homeUrls);
             List<String> loaded = new ArrayList<String>();
             for (int i = 0; i < homeUrls.size(); i++) {
-                loaded.add(null);
+                loaded.add(unreachable.contains(homeUrls.get(i)) ? "net::ERR_CONNECTION_REFUSED" : null);
             }
             return loaded;
+        }
+
+        @Override
+        public PlaywrightPageState openInSearchTab(int index, String url) {
+            tabHomes.set(index, url);
+            PlaywrightPageState start = state(url, "Start", "a start page");
+            history.add(start);
+            return start;
         }
 
         @Override
@@ -216,6 +227,19 @@ public class PlaywrightBrowserSessionTest {
         @Override
         public void closeSearchTabs() {
             closeTabsCalls++;
+        }
+
+        /** begin/end of the search's own tab and every page opened, in order. */
+        final List<String> ownTabEvents = new ArrayList<String>();
+
+        @Override
+        public void beginSearchTab() {
+            ownTabEvents.add("begin");
+        }
+
+        @Override
+        public void endSearchTab() {
+            ownTabEvents.add("end");
         }
 
         // ---- the engine's own pager: each click shows the next scripted page; none left = no pager
@@ -247,6 +271,118 @@ public class PlaywrightBrowserSessionTest {
      * Issue #22, Argos' web_search: every form engine gets its start page in a tab, the query is typed into ALL of
      * them in ONE call (side by side), each tab's result page is evaluated, and no result URL is ever opened.
      */
+    @Test
+    public void theResultUrlOfASearchPagesOwnFieldBecomesItsSearchUrl() throws Exception {
+        PlaywrightBrowserSession.SearchUrl parameter = PlaywrightBrowserSession.deriveSearchUrl(
+                "https://portal.example/suche?q=Reisekosten+Inland&bereich=alle", "Reisekosten Inland");
+        assertEquals("https://portal.example/suche?q={query}&bereich=alle", parameter.template);
+        assertEquals("https://portal.example/suche?q=Umzugskosten+Inland&bereich=alle",
+                parameter.forQuery("Umzugskosten Inland"));
+        PlaywrightBrowserSession.SearchUrl hashRoute = PlaywrightBrowserSession.deriveSearchUrl(
+                "https://portal.example/#/search/Reisekosten%20Inland", "Reisekosten Inland");
+        assertEquals("https://portal.example/#/search/{query}", hashRoute.template);
+        assertEquals("a hash route keeps its percent encoding", "https://portal.example/#/search/Umzugskosten%20Inland",
+                hashRoute.forQuery("Umzugskosten Inland"));
+        PlaywrightBrowserSession.SearchUrl path = PlaywrightBrowserSession.deriveSearchUrl(
+                "https://portal.example/suche/Reisekosten+Inland/seite/1", "Reisekosten Inland");
+        assertEquals("https://portal.example/suche/{query}/seite/1", path.template);
+        assertEquals("a path that writes + for a space keeps it", "https://portal.example/suche/Umzugskosten+Inland/seite/1",
+                path.forQuery("Umzugskosten Inland"));
+        assertEquals("by POST: nothing to remember", null,
+                PlaywrightBrowserSession.deriveSearchUrl("https://portal.example/suche", "Reisekosten"));
+        assertEquals("a word of the host is no search word", null,
+                PlaywrightBrowserSession.deriveSearchUrl("https://reisekosten.example/", "reisekosten"));
+    }
+
+    /**
+     * A remembered result URL opens in the search page's own tab, never over the session's page, and the field is
+     * not typed into.
+     */
+    @Test
+    public void aRememberedResultUrlOpensInTheSearchTabWithoutTyping() throws Exception {
+        FakeDriver driver = new FakeDriver();
+        String portal = "http://portal.test/";
+        driver.typedResults.put(portal, resultsPage("http://portal.test/find?q=hase", "portal"));
+        driver.typedResults.put("http://portal.test/find?q=fuchs", resultsPage("http://portal.test/find?q=fuchs",
+                "fuchs"));
+        PlaywrightBrowserSession s = session(driver,
+                com.aresstack.askai.browser.search.engine.EngineAcquisitionMode.ALL_ENABLED);
+        s.setSearchEngines(java.util.Collections.singletonList(formEngine(portal, portal)));
+        s.search("hase");
+
+        WebSearchResult again = s.search("fuchs");
+
+        assertEquals(java.util.Collections.singletonList("http://portal.test/find?q=fuchs"),
+                driver.openedTabSets.get(1));
+        assertTrue("the session's own page was never navigated: " + driver.opened, driver.opened.isEmpty());
+        assertEquals("the field was not typed into again", 1, driver.typedQueries.size());
+        assertEquals(3, again.getItems().size());
+    }
+
+    /**
+     * In a chat's browser (Angelo 28.11.2026: one browser, the search as a tab) even an engine asked by URL template
+     * opens in the search's own tab; the chat's tab is current again afterwards.
+     */
+    @Test
+    public void inAChatsBrowserEveryEngineSearchesInATabOfItsOwn() throws Exception {
+        FakeDriver driver = new FakeDriver();
+        driver.byUrl.put("http://suche.test/?q=hase", resultsPage("http://suche.test/?q=hase", "hase"));
+        PlaywrightBrowserSession s = session(driver,
+                com.aresstack.askai.browser.search.engine.EngineAcquisitionMode.ALL_ENABLED);
+        s.setSearchEngines(engines("http://suche.test/?q={query}"));
+        s.useSearchSettings(null, new SearchUrlMemory());
+
+        WebSearchResult hits = s.search("hase");
+
+        assertEquals(java.util.Arrays.asList("begin", "open http://suche.test/?q=hase", "end"), driver.ownTabEvents);
+        assertEquals(3, hits.getItems().size());
+    }
+
+    /** Without a chat (the research browser of its own) the search keeps working on the session's page. */
+    @Test
+    public void aBrowserOfItsOwnSearchesWithoutAnExtraTab() throws Exception {
+        FakeDriver driver = new FakeDriver();
+        driver.byUrl.put("http://suche.test/?q=hase", resultsPage("http://suche.test/?q=hase", "hase"));
+        PlaywrightBrowserSession s = session(driver,
+                com.aresstack.askai.browser.search.engine.EngineAcquisitionMode.ALL_ENABLED);
+        s.setSearchEngines(engines("http://suche.test/?q={query}"));
+
+        s.search("hase");
+
+        assertEquals(java.util.Collections.singletonList("open http://suche.test/?q=hase"), driver.ownTabEvents);
+    }
+
+    /** A remembered result URL that cannot be opened any more is forgotten, and the page's own field asked again. */
+    @Test
+    public void aRememberedResultUrlThatFailsToOpenIsForgottenAndTheFieldAskedAgain() throws Exception {
+        FakeDriver driver = new FakeDriver();
+        String portal = "http://portal.test/";
+        driver.typedResults.put(portal, resultsPage("http://portal.test/find?q=hase", "portal"));
+        driver.unreachable.add("http://portal.test/find?q=fuchs");
+        PlaywrightBrowserSession s = session(driver,
+                com.aresstack.askai.browser.search.engine.EngineAcquisitionMode.ALL_ENABLED);
+        s.setSearchEngines(java.util.Collections.singletonList(formEngine(portal, portal)));
+        s.search("hase");
+
+        WebSearchResult again = s.search("fuchs");
+
+        assertEquals("the remembered URL was tried first, in the search tab", java.util.Collections.singletonList(
+                "http://portal.test/find?q=fuchs"), driver.openedTabSets.get(1));
+        assertTrue("the session's own page was never navigated: " + driver.opened, driver.opened.isEmpty());
+        assertEquals("then the field was asked again", 2, driver.typedQueries.size());
+        assertEquals("fuchs", driver.typedQueries.get(1));
+        assertEquals(3, again.getItems().size());
+    }
+
+    /** The search words are the parameter's value, never a path segment or a parameter name that reads the same. */
+    @Test
+    public void theSearchWordsAreTheQueryComponentNotTheFirstPlaceTheyOccur() throws Exception {
+        PlaywrightBrowserSession.SearchUrl url = PlaywrightBrowserSession.deriveSearchUrl(
+                "https://portal.example/search?search=search", "search");
+        assertEquals("https://portal.example/search?search={query}", url.template);
+        assertEquals("https://portal.example/search?search=expenses", url.forQuery("expenses"));
+    }
+
     @Test
     public void formEnginesAreTypedIntoTogetherAndNeverAskedByUrl() throws Exception {
         FakeDriver driver = new FakeDriver();

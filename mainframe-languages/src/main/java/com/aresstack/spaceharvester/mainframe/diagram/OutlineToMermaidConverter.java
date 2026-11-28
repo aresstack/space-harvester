@@ -48,6 +48,29 @@ public final class OutlineToMermaidConverter {
         blockLabelSummarizer = summarizer;
     }
 
+    /** Der eingestellte Dienst der KI-Beschreibung oder {@code null}. */
+    public static BlockLabelSummarizer blockLabelSummarizer() {
+        return blockLabelSummarizer;
+    }
+
+    /** Länge und Zeilenbreite der Beschriftungen (Einstellungen › Diagramme). */
+    private static volatile Supplier<FlowLabels.Layout> labelLayout = () -> FlowLabels.Layout.DEFAULT;
+
+    /** Woher Länge und Zeilenbreite der Beschriftungen kommen; {@code null} = Vorgabe. */
+    public static void labelLayout(Supplier<FlowLabels.Layout> source) {
+        labelLayout = source == null ? () -> FlowLabels.Layout.DEFAULT : source;
+    }
+
+    /** Die eingestellte Länge und Zeilenbreite, bei einem Fehler die Vorgabe. */
+    public static FlowLabels.Layout labelLayout() {
+        try {
+            FlowLabels.Layout layout = labelLayout.get();
+            return layout == null ? FlowLabels.Layout.DEFAULT : layout;
+        } catch (RuntimeException e) {
+            return FlowLabels.Layout.DEFAULT;
+        }
+    }
+
     private static Set<String> loadSystemFunctionNames() {
         try {
             Set<String> names = systemFunctions.get();
@@ -152,7 +175,20 @@ public final class OutlineToMermaidConverter {
                                  CallTreeNode callTree,
                                  List<com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition> ddmDefs,
                                  boolean collapsed) {
+        return convert(model, type, callTree, ddmDefs, collapsed,
+                FlowLabels.outlineOnly(blockLabelSummarizer, labelLayout()));
+    }
+
+    /**
+     * Wie oben, mit den Beschriftungen des Flussdiagramms aus dem Quelltext: vollständige Zeilen der Blöcke,
+     * Bedingungen und Zweige, aufgelöste Aufrufziele und, wenn eingeschaltet, KI-Beschreibungen ({@link FlowLabels}).
+     */
+    public static String convert(JclOutlineModel model, DiagramType type,
+                                 CallTreeNode callTree,
+                                 List<com.aresstack.spaceharvester.mainframe.parser.DdmParser.DdmDefinition> ddmDefs,
+                                 boolean collapsed, FlowLabels labels) {
         if (model == null || model.isEmpty()) return null;
+        if (labels == null) labels = FlowLabels.outlineOnly(blockLabelSummarizer, labelLayout());
         if (type == null) type = DiagramType.STRUCTURE;
 
         Set<String> sysFuncs = loadSystemFunctionNames();
@@ -165,7 +201,7 @@ public final class OutlineToMermaidConverter {
 
         if (collapsed) {
             switch (type) {
-                case FLOWCHART:   return convertFlowchartCollapsed(model, sysFuncs);
+                case FLOWCHART:   return convertFlowchartCollapsed(model, sysFuncs, labels);
                 case SEQUENCE:    return convertSequenceCollapsed(model, sysFuncs);
                 case MINDMAP:     return convertMindmapCollapsed(model, sysFuncs);
                 case ER_DIAGRAM:  return convertErDiagram(model, ddmDefs); // ER is already compact
@@ -175,7 +211,7 @@ public final class OutlineToMermaidConverter {
         }
 
         switch (type) {
-            case FLOWCHART:   return convertFlowchart(model, sysFuncs);
+            case FLOWCHART:   return convertFlowchart(model, sysFuncs, labels);
             case SEQUENCE:    return convertSequence(model, sysFuncs);
             case MINDMAP:     return convertMindmap(model, callTree, sysFuncs);
             case ER_DIAGRAM:  return convertErDiagram(model, ddmDefs);
@@ -584,16 +620,16 @@ public final class OutlineToMermaidConverter {
     //  FLOWCHART (control flow: branches, loops, external calls)
     // ═══════════════════════════════════════════════════════════
 
-    private static String convertFlowchart(JclOutlineModel model, Set<String> sysFuncs) {
+    private static String convertFlowchart(JclOutlineModel model, Set<String> sysFuncs, FlowLabels labels) {
         switch (model.getLanguage()) {
-            case JCL:     return convertJclFlowchart(model, sysFuncs);
+            case JCL:     return convertJclFlowchart(model, sysFuncs, labels);
             case COBOL:   return null;
-            case NATURAL: return convertNaturalFlowchart(model, sysFuncs);
-            default:      return convertJclFlowchart(model, sysFuncs);
+            case NATURAL: return convertNaturalFlowchart(model, sysFuncs, labels);
+            default:      return convertJclFlowchart(model, sysFuncs, labels);
         }
     }
 
-    private static String convertJclFlowchart(JclOutlineModel model, Set<String> sysFuncs) {
+    private static String convertJclFlowchart(JclOutlineModel model, Set<String> sysFuncs, FlowLabels labels) {
         StringBuilder sb = new StringBuilder("flowchart TD\n");
         Set<String> usedIds = new HashSet<String>();
         List<JclElement> all = model.getElements();
@@ -613,7 +649,7 @@ public final class OutlineToMermaidConverter {
 
         if (hasConditionals) {
             // Build flow with conditionals
-            prevId = buildJclConditionalFlow(sb, all, steps, usedIds, startId);
+            prevId = buildJclConditionalFlow(sb, all, steps, usedIds, startId, labels, model.getTotalLines());
         } else {
             // Linear step flow
             for (JclElement step : steps) {
@@ -625,6 +661,7 @@ public final class OutlineToMermaidConverter {
                 sb.append("    ").append(stepId).append("[\"").append(esc(label));
                 if (pgm != null) sb.append("\\nPGM=").append(esc(pgm));
                 else if (proc != null) sb.append("\\nPROC=").append(esc(proc));
+                sb.append(jclStepAbout(stepId, step, all, labels, model.getTotalLines()));
                 sb.append("\"]\n");
 
                 // Style system function steps with IBM Blue
@@ -661,7 +698,8 @@ public final class OutlineToMermaidConverter {
      */
     private static String buildJclConditionalFlow(StringBuilder sb, List<JclElement> all,
                                                    List<JclElement> steps,
-                                                   Set<String> usedIds, String startId) {
+                                                   Set<String> usedIds, String startId,
+                                                   FlowLabels labels, int totalLines) {
         String prevId = startId;
         int stepIdx = 0;
 
@@ -710,7 +748,8 @@ public final class OutlineToMermaidConverter {
                         JclElement step = steps.get(stepIdx++);
                         String label = step.getName() != null ? step.getName() : "(Step)";
                         String stepId = safeId("STEP_" + label, usedIds);
-                        sb.append("    ").append(stepId).append("[\"").append(esc(label)).append("\"]\n");
+                        sb.append("    ").append(stepId).append("[\"").append(esc(label))
+                    .append(jclStepAbout(stepId, step, all, labels, totalLines)).append("\"]\n");
                         sb.append("    ").append(trueEnd).append(" -->|Ja| ").append(stepId).append("\n");
                         trueEnd = stepId;
                     }
@@ -726,7 +765,8 @@ public final class OutlineToMermaidConverter {
                             JclElement step = steps.get(stepIdx++);
                             String label = step.getName() != null ? step.getName() : "(Step)";
                             String stepId = safeId("STEP_" + label, usedIds);
-                            sb.append("    ").append(stepId).append("[\"").append(esc(label)).append("\"]\n");
+                            sb.append("    ").append(stepId).append("[\"").append(esc(label))
+                    .append(jclStepAbout(stepId, step, all, labels, totalLines)).append("\"]\n");
                             sb.append("    ").append(falseEnd).append(" -->|Nein| ").append(stepId).append("\n");
                             falseEnd = stepId;
                         }
@@ -748,7 +788,8 @@ public final class OutlineToMermaidConverter {
                     JclElement step = steps.get(stepIdx++);
                     String label = step.getName() != null ? step.getName() : "(Step)";
                     String stepId = safeId("STEP_" + label, usedIds);
-                    sb.append("    ").append(stepId).append("[\"").append(esc(label)).append("\"]\n");
+                    sb.append("    ").append(stepId).append("[\"").append(esc(label))
+                    .append(jclStepAbout(stepId, step, all, labels, totalLines)).append("\"]\n");
                     sb.append("    ").append(prevId).append(" --> ").append(stepId).append("\n");
                     prevId = stepId;
                 }
@@ -758,7 +799,33 @@ public final class OutlineToMermaidConverter {
         return prevId;
     }
 
-    private static String convertNaturalFlowchart(JclOutlineModel model, Set<String> sysFuncs) {
+    /**
+     * Was ein JCL-Schritt tut, als weitere Zeile seines Knotens (mit führendem Zeilenumbruch): mit KI eine kurze
+     * Überschrift seiner Zeilen (EXEC bis vor den nächsten Schritt, IF, ELSE, ENDIF), sonst nichts. Die Zeilen kommen
+     * in den Detailbereich des Knotens; dort beschreibt die KI sie beim Klick ausführlich.
+     */
+    private static String jclStepAbout(String stepId, JclElement step, List<JclElement> all, FlowLabels labels,
+                                       int totalLines) {
+        int to = totalLines;
+        boolean after = false;
+        for (JclElement e : all) {
+            if (e == step) { after = true; continue; }
+            if (!after) continue;
+            JclElementType t = e.getType();
+            if (t == JclElementType.EXEC || t == JclElementType.IF || t == JclElementType.ELSE
+                    || t == JclElementType.ENDIF || t == JclElementType.JOB || t == JclElementType.PROC
+                    || t == JclElementType.PEND) {
+                to = e.getLineNumber() - 1;
+                break;
+            }
+        }
+        String name = step.getName() != null ? step.getName() : "Schritt";
+        String about = labels.titleLines(stepId, name + " (Zeilen " + step.getLineNumber() + "–" + to + ")",
+                step.getLineNumber(), to, FlowLabels.STEP_TITLE_PURPOSE, FlowLabels.STEP_PURPOSE);
+        return about == null ? "" : "\\n" + esc(labels.wrap(about));
+    }
+
+    private static String convertNaturalFlowchart(JclOutlineModel model, Set<String> sysFuncs, FlowLabels labels) {
         StringBuilder sb = new StringBuilder("flowchart TD\n");
         Set<String> usedIds = new HashSet<String>();
         List<JclElement> all = model.getElements();
@@ -784,11 +851,7 @@ public final class OutlineToMermaidConverter {
 
             // ── Branches (IF, DECIDE) ──
             if (t == JclElementType.NAT_IF_BLOCK || t == JclElementType.NAT_DECIDE) {
-                String condLabel = e.getName() != null ? e.getName() : t.getDisplayName();
-                String condId = safeId("COND_" + condLabel, usedIds);
-                sb.append("    ").append(condId).append("{\"").append(esc(condLabel)).append("\"}\n");
-                sb.append("    ").append(prevId).append(" --> ").append(condId).append("\n");
-                prevId = condId;
+                prevId = emitDecision(sb, e, usedIds, prevId, labels);
             }
             // ── Loops (FOR, REPEAT, READ, FIND, HISTOGRAM) ──
             else if (t == JclElementType.NAT_FOR || t == JclElementType.NAT_REPEAT) {
@@ -814,21 +877,8 @@ public final class OutlineToMermaidConverter {
             // ── External calls (CALLNAT, CALL, FETCH — prominently highlighted) ──
             else if (t == JclElementType.NAT_CALLNAT || t == JclElementType.NAT_CALL
                     || t == JclElementType.NAT_FETCH) {
-                String target = e.getParameter("TARGET");
-                if (target == null) target = e.getName();
-                if (target == null) continue;
-                String extId = safeId("EXT_" + target, usedIds);
-                sb.append("    ").append(extId).append(">\"").append(esc(target))
-                        .append("\\n(").append(esc(t.getDisplayName())).append(")\"]\n");
-                sb.append("    ").append(prevId).append(" ==>|").append(t.getDisplayName())
-                        .append("| ").append(extId).append("\n");
-                // System functions → IBM Blue; others → orange highlight
-                if (isSysFunc(target, sysFuncs)) {
-                    styleSysFunc(sb, extId);
-                } else {
-                    sb.append("    style ").append(extId).append(" fill:#ffe0b2,stroke:#e65100,stroke-width:2px\n");
-                }
                 // Don't change prevId — external call returns and flow continues
+                emitExternalCall(sb, e, usedIds, prevId, sysFuncs, labels);
             }
             // ── Inline PERFORM (internal subroutine calls) ──
             else if (t == JclElementType.NAT_PERFORM) {
@@ -1788,23 +1838,68 @@ public final class OutlineToMermaidConverter {
     }
 
     /**
+     * Verzweigung (IF, DECIDE) als Raute: die Bedingung aus dem Quelltext, mit KI als verständliche Frage.
+     *
+     * @return ID der Raute (neuer Vorgänger im Hauptfluss)
+     */
+    private static String emitDecision(StringBuilder sb, JclElement e, Set<String> usedIds, String prevId,
+                                       FlowLabels labels) {
+        String name = e.getName() != null ? e.getName() : e.getType().getDisplayName();
+        String id = safeId("COND_" + name, usedIds);
+        sb.append("    ").append(id).append("{\"").append(esc(labels.wrap(labels.decision(e)))).append("\"}\n");
+        sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
+        return id;
+    }
+
+    /**
+     * Externer Aufruf (CALLNAT, CALL, FETCH) als Seitenzweig: der Pfeil trägt den Zweig, unter dem der Aufruf steht
+     * (etwa {@code = 'SW'}), sonst die Aufrufart; der Knoten den Namen (erste Zeile, Doppelklick öffnet ihn), die Art
+     * und, wenn das Programm geladen werden konnte, was es tut und was es selbst aufruft.
+     */
+    private static void emitExternalCall(StringBuilder sb, JclElement e, Set<String> usedIds, String prevId,
+                                         Set<String> sysFuncs, FlowLabels labels) {
+        JclElementType t = e.getType();
+        String target = e.getParameter("TARGET");
+        if (target == null) target = e.getName();
+        if (target == null) return;
+        String id = safeId("EXT_" + target, usedIds);
+        boolean sysFunc = isSysFunc(target, sysFuncs);
+        String branch = labels.branch(e.getLineNumber());
+        String about = sysFunc ? null : labels.callee(id, target, e, branch);
+        sb.append("    ").append(id).append(">\"").append(esc(target))
+          .append("\\n(").append(esc(t.getDisplayName())).append(")");
+        if (about != null) {
+            sb.append("\\n").append(esc(labels.wrap(about)));
+        }
+        sb.append("\"]\n");
+        sb.append("    ").append(prevId).append(" ==>|");
+        if (branch != null) {
+            sb.append('"').append(esc(labels.wrap(branch)).replace("|", "#124;")).append('"');
+        } else {
+            sb.append(t.getDisplayName());
+        }
+        sb.append("| ").append(id).append("\n");
+        if (sysFunc) {
+            styleSysFunc(sb, id);
+        } else {
+            sb.append("    style ").append(id).append(" fill:#ffe0b2,stroke:#e65100,stroke-width:2px\n");
+        }
+    }
+
+    /**
      * Emit a single structural or important element as a Mermaid flowchart node.
      *
      * @return the new prevId for the main flow (unchanged for side-branch elements)
      */
     private static String emitCollapsedFlowElement(StringBuilder sb, JclElement e,
                                                     Set<String> usedIds, String prevId,
-                                                    Set<String> sysFuncs) {
+                                                    Set<String> sysFuncs, FlowLabels labels) {
         JclElementType t = e.getType();
 
         // ── Branches: IF, DECIDE → diamond ──
         if (t == JclElementType.NAT_IF_BLOCK || t == JclElementType.NAT_DECIDE
                 || t == JclElementType.IF) {
-            String label = e.getName() != null ? e.getName() : t.getDisplayName();
-            String id = safeId("COND_" + label, usedIds);
-            sb.append("    ").append(id).append("{\"").append(esc(truncate(label, 50))).append("\"}\n");
-            sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
-            return id;
+            return emitDecision(sb, e, usedIds, prevId, labels);
         }
 
         // ── Loops: FOR, REPEAT → hexagon with self-loop ──
@@ -1832,19 +1927,7 @@ public final class OutlineToMermaidConverter {
         // ── External calls → asymmetric shape (side branch, prevId unchanged) ──
         if (t == JclElementType.NAT_CALLNAT || t == JclElementType.NAT_CALL
                 || t == JclElementType.NAT_FETCH || t == JclElementType.CALL_STMT) {
-            String target = e.getParameter("TARGET");
-            if (target == null) target = e.getName();
-            if (target == null) return prevId;
-            String id = safeId("EXT_" + target, usedIds);
-            sb.append("    ").append(id).append(">\"").append(esc(target))
-              .append("\\n(").append(esc(t.getDisplayName())).append(")\"]\n");
-            sb.append("    ").append(prevId).append(" ==>|").append(t.getDisplayName())
-              .append("| ").append(id).append("\n");
-            if (isSysFunc(target, sysFuncs)) {
-                styleSysFunc(sb, id);
-            } else {
-                sb.append("    style ").append(id).append(" fill:#ffe0b2,stroke:#e65100,stroke-width:2px\n");
-            }
+            emitExternalCall(sb, e, usedIds, prevId, sysFuncs, labels);
             return prevId; // external call returns, main flow continues
         }
 
@@ -1922,8 +2005,11 @@ public final class OutlineToMermaidConverter {
                                                     List<JclElement> details,
                                                     Set<String> frequentTargets,
                                                     Set<String> usedIds,
-                                                    String prevId) {
-        if (details.isEmpty()) return prevId;
+                                                    String prevId,
+                                                    FlowLabels labels, int from, int to) {
+        // Ohne erkannte Anweisungen nur ein Block, wenn die KI den Abschnitt (MOVE, COMPUTE …) beschreiben kann
+        boolean codeOnly = details.isEmpty();
+        if (codeOnly && !(labels.ai() && labels.hasStatements(from, to))) return prevId;
 
         // Collect frequent subroutine calls in this block
         Map<String, Integer> localFreqCalls = new LinkedHashMap<String, Integer>();
@@ -1941,8 +2027,13 @@ public final class OutlineToMermaidConverter {
         // Build label
         StringBuilder label = new StringBuilder();
         label.append("\uD83D\uDCE6 "); // 📦
-        label.append(details.size());
-        label.append(details.size() == 1 ? " Anweisung" : " Anweisungen");
+        if (codeOnly) {
+            int count = to - from + 1;
+            label.append(count).append(count == 1 ? " Zeile" : " Zeilen");
+        } else {
+            label.append(details.size());
+            label.append(details.size() == 1 ? " Anweisung" : " Anweisungen");
+        }
 
         if (!localFreqCalls.isEmpty()) {
             label.append("\\n");
@@ -1971,9 +2062,10 @@ public final class OutlineToMermaidConverter {
         // inhaltliche Kurzbeschreibung. Schlägt der Aufruf fehl (Timeout, Service
         // nicht erreichbar), liefert SummarizerService den Fallback (=heuristisches
         // Label) zurück, sodass das Diagramm immer rendert.
-        String finalLabel = trySummarizeDetails(details, label.toString());
-
         String id = safeId("BLOCK", usedIds);
+        String finalLabel = trySummarizeDetails(id, from, to, labels.blockCode(details, from, to), label.toString(),
+                labels);
+
         sb.append("    ").append(id).append("[\"").append(finalLabel).append("\"]\n");
         sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
         sb.append("    style ").append(id)
@@ -2015,7 +2107,7 @@ public final class OutlineToMermaidConverter {
      *   <li>A Mermaid comment with raw text is added for future AI summarisation.</li>
      * </ol>
      */
-    private static String convertFlowchartCollapsed(JclOutlineModel model, Set<String> sysFuncs) {
+    private static String convertFlowchartCollapsed(JclOutlineModel model, Set<String> sysFuncs, FlowLabels labels) {
         StringBuilder sb = new StringBuilder("flowchart TD\n");
         Set<String> usedIds = new HashSet<String>();
         List<JclElement> all = model.getElements();
@@ -2054,20 +2146,35 @@ public final class OutlineToMermaidConverter {
 
         String prevId = startId;
         List<JclElement> detailBuffer = new ArrayList<JclElement>();
+        // Zeile des letzten gezeigten oder übersprungenen Elements: ein Block umfasst alle Quelltextzeilen danach bis
+        // vor das nächste gezeigte Element, auch solche ohne eigenes Element (MOVE, COMPUTE …)
+        int afterLine = 0;
+        JclElement lastShown = null;
 
         // Phase 2 — Walk elements, classify, and build collapsed flow
         for (JclElement e : all) {
-            if (isSkippedInCollapsedFlow(e)) continue;
+            if (isSkippedInCollapsedFlow(e)) {
+                if (e.getType() == JclElementType.NAT_END) {
+                    // Programmende: offene Zeilen davor (MOVE, WRITE …) noch als Block beschreiben
+                    prevId = emitCollapsedDetailBlock(sb, detailBuffer, frequentTargets, usedIds, prevId, labels,
+                            blockStart(lastShown, afterLine), e.getLineNumber() - 1);
+                    detailBuffer.clear();
+                    afterLine = Math.max(afterLine, e.getLineNumber());
+                } else if (detailBuffer.isEmpty()) {
+                    afterLine = Math.max(afterLine, e.getLineNumber());
+                }
+                continue;
+            }
 
             if (isStructuralFlowElement(e) || isImportantFlowElement(e, frequentTargets)) {
                 // Flush buffered detail elements as collapsed block
-                if (!detailBuffer.isEmpty()) {
-                    prevId = emitCollapsedDetailBlock(sb, detailBuffer,
-                            frequentTargets, usedIds, prevId);
-                    detailBuffer.clear();
-                }
+                prevId = emitCollapsedDetailBlock(sb, detailBuffer, frequentTargets, usedIds, prevId, labels,
+                        blockStart(lastShown, afterLine), e.getLineNumber() - 1);
+                detailBuffer.clear();
                 // Emit the structural / important element
-                prevId = emitCollapsedFlowElement(sb, e, usedIds, prevId, sysFuncs);
+                prevId = emitCollapsedFlowElement(sb, e, usedIds, prevId, sysFuncs, labels);
+                afterLine = Math.max(afterLine, e.getLineNumber());
+                lastShown = e;
             } else {
                 // Everything else goes into the detail buffer
                 detailBuffer.add(e);
@@ -2075,10 +2182,8 @@ public final class OutlineToMermaidConverter {
         }
 
         // Flush remaining detail buffer
-        if (!detailBuffer.isEmpty()) {
-            prevId = emitCollapsedDetailBlock(sb, detailBuffer,
-                    frequentTargets, usedIds, prevId);
-        }
+        prevId = emitCollapsedDetailBlock(sb, detailBuffer,
+                frequentTargets, usedIds, prevId, labels, blockStart(lastShown, afterLine), model.getTotalLines());
 
         // End node
         String endId = safeId("END", usedIds);
@@ -2086,6 +2191,19 @@ public final class OutlineToMermaidConverter {
         sb.append("    ").append(prevId).append(" --> ").append(endId).append("\n");
 
         return sb.toString();
+    }
+
+    /**
+     * Erste Zeile eines Blocks: die Zeile nach dem zuletzt gezeigten Element; folgt der Block direkt auf einen
+     * JCL-Schritt (seine DD-Anweisungen), gehört die EXEC-Zeile dazu, damit die KI weiß, welches Programm die Dateien
+     * benutzt.
+     */
+    private static int blockStart(JclElement lastShown, int afterLine) {
+        if (lastShown != null && lastShown.getType() == JclElementType.EXEC
+                && lastShown.getLineNumber() == afterLine) {
+            return afterLine;
+        }
+        return afterLine + 1;
     }
 
     private static String convertSequenceCollapsed(JclOutlineModel model, Set<String> sysFuncs) {
@@ -2169,58 +2287,28 @@ public final class OutlineToMermaidConverter {
     // ─── Summarizer integration ──────────────────────────────────
 
     /**
-     * Versucht, ein heuristisch erzeugtes Block-Label durch eine inhaltliche
-     * Kurzzusammenfassung des darin gesammelten Codes zu ersetzen.
+     * Ersetzt das heuristische Block-Label („📦 5 Anweisungen“) durch die KI-Beschreibung des Codes, wenn die KI an
+     * diesem Diagramm mitschreibt ({@link FlowLabels#ai()}); sonst, bei Fehler oder leerer Antwort bleibt das
+     * heuristische Label (keine Aufrufe ohne eingeschaltete KI).
      *
-     * <p>Strategie:
-     * <ol>
-     *   <li>Sammelt rohen Code aus den {@code details}-Elementen (max. 2&nbsp;KB).</li>
-     *   <li>Ruft synchron {@link SummarizerService#summarize(String, SummarizeOptions)}
-     *       mit Stil <b>LABEL</b> und einem Fallback auf das heuristische Label auf.</li>
-     *   <li>Greift nur dann ein, wenn ein dedizierter Summarizer aktiv ist UND
-     *       die UML-Zusammenfassung in den Einstellungen freigeschaltet ist —
-     *       sonst sofort heuristisches Label zurück (keine HTTP-Calls).</li>
-     * </ol>
-     *
-     * @param details          gesammelte Detail-Elemente des Blocks
-     * @param heuristicLabel   heuristisch berechnetes Label („📦 5 Anweisungen\\nABC ×3")
-     * @return AI-Label (falls erfolgreich), sonst das heuristische Label
+     * @param code           vollständige Quelltextzeilen des Blocks ({@link FlowLabels#blockCode})
+     * @param heuristicLabel heuristisch berechnetes Label
+     * @return KI-Beschreibung (umbrochen, für Mermaid maskiert) oder das heuristische Label
      */
-    private static String trySummarizeDetails(List<JclElement> details, String heuristicLabel) {
-        if (details == null || details.isEmpty()) return heuristicLabel;
+    private static String trySummarizeDetails(String id, int from, int to, String code, String heuristicLabel,
+                                              FlowLabels labels) {
+        if (code == null || code.isBlank()) return heuristicLabel;
         try {
-            BlockLabelSummarizer svc = blockLabelSummarizer;
-            if (svc == null) return heuristicLabel;
-            // Nur wenn freigeschaltet (MainframeMate: dedizierter Summarizer UND UML-Zusammenfassung aktiv) — sonst
-            // keine KI-Aufrufe aus der Render-Pipeline.
-            if (!svc.enabled()) return heuristicLabel;
-
-            StringBuilder raw = new StringBuilder(2048);
-            int budget = 2048;
-            for (JclElement e : details) {
-                String t = e != null ? e.getRawText() : null;
-                if (t == null) continue;
-                String line = t.replace("\r", "").trim();
-                if (line.isEmpty()) continue;
-                if (line.length() > 200) line = line.substring(0, 200);
-                if (raw.length() + line.length() + 1 > budget) break;
-                raw.append(line).append('\n');
-            }
-            if (raw.length() == 0) return heuristicLabel;
-
-            String summary = svc.summarize(raw.toString(), 60,
-                    "Mainframe-Code-Block (JCL/COBOL/Natural) — beschreibe in 1 Substantiv-Phrase, was dieser Block tut.");
-            if (summary == null || summary.trim().isEmpty()) return heuristicLabel;
-            String trimmed = summary.trim();
-            if (trimmed.equals(heuristicLabel)) return heuristicLabel;
-            // Mermaid-Label-Escaping: Anführungszeichen + Newlines neutralisieren.
-            trimmed = trimmed.replace("\"", "'").replace("\r", " ").replace("\n", "\\n");
-            // Zähler-Präfix beibehalten, damit der visuelle „📦 N"-Cue erhalten bleibt.
-            return "\uD83D\uDCE6 " + details.size() + ": " + trimmed;
+            // Der Code kommt in den Detailbereich des Knotens; im Knoten steht nur die kurze Überschrift.
+            String heading = from >= 1 && to >= from ? "Zeilen " + from + "–" + to : "Block";
+            String title = labels.title(id, heading, code, FlowLabels.BLOCK_TITLE_PURPOSE, FlowLabels.BLOCK_PURPOSE);
+            if (title == null || title.trim().isEmpty()) return heuristicLabel;
+            return esc(labels.wrap(title.trim().replace("\"", "'").replace("\r", " ")));
         } catch (Throwable t) {
             // Niemals die Diagramm-Generierung wegen eines AI-Glitches abbrechen.
             return heuristicLabel;
         }
     }
+
 
 }

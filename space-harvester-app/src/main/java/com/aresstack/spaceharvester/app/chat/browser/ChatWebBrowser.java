@@ -23,10 +23,15 @@ import com.aresstack.spaceharvester.browser.runtime.BrowserRuntime;
 import com.aresstack.spaceharvester.browser.runtime.BrowserRuntimeConfig;
 import com.aresstack.spaceharvester.application.assets.DocumentText;
 
+import com.aresstack.askai.browser.search.LegacyBrowserSearchDefaults;
+import com.aresstack.askai.browser.search.engine.BrowserSearchEngineSelection;
+import com.aresstack.askai.research.runtime.search.SearchBrowserWebSearch;
+
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -35,11 +40,13 @@ import java.util.function.Supplier;
  * Browser-Teile von {@code CompositionRoot} im Enterprise AI Client, seit ADR 0046 aus Research4j: die Werkzeuge aus
  * {@code browser-tools}, als Engine ein sichtbarer Browser über Playwright ({@link PlaywrightChatEngine}) mit eigenem
  * Profil je Chat unter {@code <Datenordner>/browser-profiles}. Den Browser startet die Browser-Laufzeit
- * ({@code browser-runtime}) über den Adapter {@link RuntimeBrowserLauncher}. Welcher Browser (Edge als Vorgabe, Chrome, Camoufox),
+ * ({@code browser-runtime}) über den Adapter {@link RuntimeBrowserLauncher}. Welcher Browser (Firefox als Vorgabe, Edge, Chrome, Camoufox),
  * steht unter Einstellungen › Browser; ist er nicht installiert, gibt es keine Websuche ({@link #start} liefert
  * {@code null}, {@link #unavailable} sagt warum). Jede Adresse prüft die Richtlinie des aktiven Profils (Extern oder Intern);
  * unbekannte Websites und verändernde Aktionen fragt der Chat nach. Nach jeder Antwort schließt der Browser, das
- * Profil bleibt.
+ * Profil bleibt. Gesucht wird mit den Suchmaschinen des Profils in Tabs desselben Browsers
+ * ({@link SearchBrowserWebSearch}, Angelo 28.11.2026: ein Browser, die Suche als Tab); nur Google sucht im
+ * Serp4j-Suchbrowser.
  */
 public final class ChatWebBrowser {
 
@@ -55,6 +62,10 @@ public final class ChatWebBrowser {
     /** Der jüngste Turn je Chat; ein älterer räumt nicht mehr auf. */
     private final Map<ChatConversationId, Long> turns = new ConcurrentHashMap<>();
     private long nextTurn;
+    /** Die Websuche der Chats in Tabs ihrer Browser ({@link #start}), sonst {@code null}. */
+    private volatile AutoCloseable webSearch;
+    /** Fragt bei der ersten internen Suche ohne Suchseite nach einer (Angelo 27.11.2026). */
+    private volatile SearchPageQuestion searchPageQuestion = SearchPageQuestion.DIALOG;
 
     ChatWebBrowser(ChatBrowserPort browsers, DelegatingBrowserAccessGuard guard, BrowserSettings settings) {
         this.browsers = browsers;
@@ -96,10 +107,87 @@ public final class ChatWebBrowser {
         }
         unavailable = "";
         DelegatingBrowserAccessGuard guard = new DelegatingBrowserAccessGuard();
+        // Die Suche aus Ask AI in Tabs des Browsers des Chats (Angelo 28.11.2026: ein Browser, die Suche als Tab); nur
+        // Google sucht im Serp4j-Suchbrowser, dessen Fenster die Einstellung zeigt.
+        AtomicReference<ChatWebBrowser> built = new AtomicReference<>();
+        SearchBrowserWebSearch webSearch = new SearchBrowserWebSearch(launcher, () -> !settings.searchWindowShown(),
+                LegacyBrowserSearchDefaults::create, chat -> built.get().engines(chat));
         ChatBrowserRuntime runtime = new ChatBrowserRuntime(new PlaywrightChatEngine(launcher, false,
                 timeouts.get(AppTimeouts.Value.BROWSER_NAVIGATION).toMillis()),
-                new BrowserProfileStore(dataDirectory.resolve(PROFILES_DIRECTORY)), guard);
-        return new ChatWebBrowser(runtime, guard, settings);
+                new BrowserProfileStore(dataDirectory.resolve(PROFILES_DIRECTORY)), guard, webSearch);
+        ChatWebBrowser browser = new ChatWebBrowser(runtime, guard, settings);
+        browser.webSearch = webSearch;
+        built.set(browser);
+        return browser;
+    }
+
+    /** Fragt nach der Adresse der internen Suchseite; {@code null}, wenn der Benutzer abbricht. */
+    public interface SearchPageQuestion {
+        String ask();
+
+        /**
+         * Der Dialog der App, auf dem EDT; der Werkzeug-Thread wartet auf die Antwort. Er gehört zum Hauptfenster der
+         * App und liegt über allen Fenstern: Hat gerade der Browser den Fokus, kennt Swing kein aktives Fenster, und ein
+         * Dialog ohne Besitzer lag hinter dem Browser, während der Chat auf ihn wartete; Windows holt das Fenster der App
+         * im Hintergrund auch mit Besitzer nicht vor den Browser.
+         */
+        SearchPageQuestion DIALOG = () -> {
+            String[] answer = {null};
+            try {
+                javax.swing.SwingUtilities.invokeAndWait(() -> answer[0] =
+                        com.aresstack.spaceharvester.app.ui.Dialogs.askTextInFront(appWindow(), INTERNAL_SEARCH_TITLE,
+                                INTERNAL_SEARCH_HINT, ""));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (java.lang.reflect.InvocationTargetException e) {
+                LOG.log(System.Logger.Level.WARNING, "Frage nach der internen Suchseite nicht gezeigt: "
+                        + e.getCause());
+            }
+            return answer[0];
+        };
+    }
+
+    /**
+     * Das Fenster, zu dem Fragen des Chats gehören: das aktive Fenster der App, sonst ihr sichtbares Hauptfenster (der
+     * Browser hat den Fokus, Swing meldet dann kein aktives Fenster).
+     */
+    static java.awt.Window appWindow() {
+        java.awt.Window active = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow();
+        if (active != null) {
+            return active;
+        }
+        for (java.awt.Frame frame : java.awt.Frame.getFrames()) {
+            if (frame.isShowing()) {
+                return frame;
+            }
+        }
+        return null;
+    }
+
+    static final String INTERNAL_SEARCH_TITLE = "Interne Suche";
+    static final String INTERNAL_SEARCH_HINT = "Auf welcher Seite soll intern gesucht werden?";
+
+    /** Wie die erste interne Suche ohne Suchseite nachfragt (Tests ersetzen den Dialog). */
+    void searchPageQuestion(SearchPageQuestion question) {
+        searchPageQuestion = question == null ? SearchPageQuestion.DIALOG : question;
+    }
+
+    /**
+     * Die Suchmaschinen des Chats nach seinem Profil. Hat Intern noch keine aktive Suchseite, fragt die erste interne
+     * Suche nach ihrer Adresse und trägt sie ein; ohne Antwort sucht sie nichts.
+     */
+    BrowserSearchEngineSelection engines(ChatConversationId chat) {
+        BrowserProfile profile = profile(chat);
+        BrowserSearchEngineSelection engines = settings.engines(profile);
+        if (profile != BrowserProfile.INTERNAL || !engines.resolvedEnabledEngines().isEmpty()) {
+            return engines;
+        }
+        String address = BrowserSettings.searchPageAddress(searchPageQuestion.ask());
+        if (address == null) {
+            return engines;
+        }
+        settings.addSearchPage(BrowserProfile.INTERNAL, address);
+        return settings.engines(BrowserProfile.INTERNAL);
     }
 
     /** Warum der letzte {@link #start} keinen Browser lieferte; leer, wenn er einen lieferte. */
@@ -141,24 +229,17 @@ public final class ChatWebBrowser {
     }
 
     /**
-     * Die Browser-Werkzeuge des Chats {@code chatId}; der Chat wird hier gebunden, nie vom Modell. Im Profil Intern
-     * fehlt {@code browser_search}: Suchbegriffe aus dem Intranet gehen nie an eine öffentliche Suchmaschine, dort
-     * sucht der Chat über die Such-URLs des Profils und die Suche der Websites.
+     * Die Browser-Werkzeuge des Chats {@code chatId}; der Chat wird hier gebunden, nie vom Modell. {@code browser_search}
+     * sucht mit den Suchmaschinen des Profils: Intern nur die Suchseiten des Hauses, so gehen Suchbegriffe aus dem
+     * Intranet nie an eine öffentliche Suchmaschine.
      */
     public List<McpToolContribution> tools(String chatId) {
-        ChatConversationId chat = new ChatConversationId(chatId);
-        List<McpToolContribution> all = tools.contributionsFor(chat);
-        if (profile(chat) == BrowserProfile.EXTERNAL) {
-            return all;
-        }
-        return all.stream().filter(tool -> !BrowserMcpTools.SEARCH.equals(tool.getName())).toList();
+        return tools.contributionsFor(new ChatConversationId(chatId));
     }
 
-    /** Die Regel des Browserprofils mit seinen Such-URLs für den Systemhinweis. */
+    /** Die Regel des Browserprofils für den Systemhinweis. */
     public String profileRule(String chatId) {
-        BrowserProfile profile = profile(new ChatConversationId(chatId));
-        return BrowserRules.browserProfile(profile.label(), settings.load().profile(profile).searchUrls(),
-                profile == BrowserProfile.EXTERNAL);
+        return BrowserRules.browserProfile(profile(new ChatConversationId(chatId)));
     }
 
     /** Das Profil eines Chats, ohne Wahl Extern. */
@@ -241,8 +322,16 @@ public final class ChatWebBrowser {
         }
     }
 
-    /** Beendet alle Browser beim Schließen der App; die Profile bleiben. */
+    /** Beendet alle Browser beim Schließen der App, auch den Suchbrowser; die Profile bleiben. */
     public void shutdown() {
         browsers.releaseAll();
+        AutoCloseable search = webSearch;
+        if (search != null) {
+            try {
+                search.close();
+            } catch (Exception failed) {
+                LOG.log(System.Logger.Level.DEBUG, "Suchbrowser nicht beendet: " + failed.getClass().getSimpleName());
+            }
+        }
     }
 }

@@ -785,6 +785,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      *                      {@code null}: eingeschaltet, Vorbelegung des Core
      * @param timeouts      Fristen einzelner KI-Aufgaben ({@code summary-timeout}, {@code label-timeout},
      *                      {@code expansion-timeout}); {@code null}: Vorgaben des Core
+     * @param sourceCode    Zeile „Quellcode“ ({@code source-code-*}): Quellcode-Analysen (Diagramme von Natural,
+     *                      COBOL, JCL); {@code null}: Standards des Core
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
@@ -796,7 +798,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                              AiServiceSettings.ModelUse summary, AiServiceSettings.ModelUse summaryPlan,
                              AiServiceSettings.ModelUse podcast, AiServiceSettings.ModelUse imagePlan,
                              AiServiceSettings.ModelUse deadline, AiServiceSettings.Speech speech,
-                             AiServiceSettings.Diagnosis diagnosis, AiServiceSettings.Timeouts timeouts) {
+                             AiServiceSettings.Diagnosis diagnosis, AiServiceSettings.Timeouts timeouts,
+                             AiServiceSettings.ModelUse sourceCode) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
@@ -811,6 +814,26 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
             speech = speech == null ? AiServiceSettings.Speech.AUTOMATIC : speech;
             diagnosis = diagnosis == null ? AiServiceSettings.Diagnosis.DEFAULT : diagnosis;
             timeouts = timeouts == null ? AiServiceSettings.Timeouts.DEFAULT : timeouts;
+            sourceCode = sourceCode == null ? AiServiceSettings.ModelUse.DEFAULT : sourceCode;
+        }
+
+        /** Ohne eigene Zeile „Quellcode“. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences, String visionModel,
+                          Integer chatMaxTokens, AiProvider provider, Integer contextTokens,
+                          Duration loadTimeout, Integer retries, Duration loadPollInterval, String stepThinking,
+                          Integer parallel, Integer visionMaxTokens, String imageModel, Integer imageMaxTokens,
+                          String visionThinking, String imageThinking, AiServiceSettings.ModelUse summary,
+                          AiServiceSettings.ModelUse summaryPlan, AiServiceSettings.ModelUse podcast,
+                          AiServiceSettings.ModelUse imagePlan, AiServiceSettings.ModelUse deadline,
+                          AiServiceSettings.Speech speech, AiServiceSettings.Diagnosis diagnosis,
+                          AiServiceSettings.Timeouts timeouts) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, visionModel, chatMaxTokens, provider,
+                    contextTokens, loadTimeout, retries, loadPollInterval, stepThinking, parallel, visionMaxTokens,
+                    imageModel, imageMaxTokens, visionThinking, imageThinking, summary, summaryPlan, podcast,
+                    imagePlan, deadline, speech, diagnosis, timeouts, null);
         }
 
         /** Ohne eigene Fristen der KI-Aufgaben. */

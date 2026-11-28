@@ -1,0 +1,55 @@
+// Proving Ground (#1153): Webtests aufzeichnen, speichern, bearbeiten und abspielen, ohne Swing. Aufnahme über den
+// originalen Playwright-Recorder (Programm-Modus, Playwright-Core von playwright4j), Wiedergabe über die originale
+// Playwright Java API, Browserstart über :browser-runtime. WD4J ist nur fachliche Referenz.
+plugins {
+    id 'java-library'
+}
+
+description = 'Proving Ground: Webtests mit dem originalen Playwright-Recorder aufzeichnen und abspielen.'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    api project(':browser-runtime')
+    implementation libs.gson
+    // Der JUnit-Export wird auch in der App übersetzt und ausgeführt (@Test); nur die API, keine Engine.
+    implementation platform(libs.junit.bom)
+    implementation 'org.junit.jupiter:junit-jupiter-api'
+
+    testImplementation platform(libs.junit.bom)
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+def driverJars = project(':browser-runtime').configurations.driverProcessClasspath
+
+tasks.named('test') {
+    useJUnitPlatform {
+        excludeTags 'live'
+    }
+}
+
+// Aufnahme und Wiedergabe mit einem echten Browser (eigener CI-Job mit dem Standard-Firefox des Runners). Welcher
+// Browser, sagen PROVING_GROUND_TEST_CHANNEL und PROVING_GROUND_TEST_EXECUTABLE; ohne Browser übersprungen.
+tasks.register('liveTest', Test) {
+    group = 'verification'
+    description = 'Nimmt mit einem echten Browser auf und spielt ab.'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags 'live'
+    }
+    inputs.files(driverJars)
+    doFirst {
+        systemProperty 'playwright4j.driver.classpath', driverJars.files.join(File.pathSeparator)
+    }
+    outputs.upToDateWhen { false }
+}

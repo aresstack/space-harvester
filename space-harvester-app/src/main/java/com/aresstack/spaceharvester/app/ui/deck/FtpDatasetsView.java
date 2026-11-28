@@ -1305,7 +1305,7 @@ final class FtpDatasetsView extends JPanel {
                     };
                     offset.addChangeListener(e -> render.run());
                     panel.add(navigation, BorderLayout.NORTH);
-                    panel.add(new javax.swing.JScrollPane(content), BorderLayout.CENTER);
+                    panel.add(Comic.comicBars(new javax.swing.JScrollPane(content)), BorderLayout.CENTER);
                     render.run();
                     Dialogs.view(this, "Hex · " + entry.path(), panel);
                 });

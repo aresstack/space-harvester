@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.ui.content.WordSearch;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceHttpResponse;
@@ -113,6 +115,9 @@ class SearchViewTest {
         // läuft (Ring über der Liste); die Zeile unter der Liste gilt erst mit dem fertigen Stapel.
         await(() -> table.getRowCount() > 0 && !view[0].overlay.isBusy());
         assertThat(view[0].statusText()).contains("Dateien: " + SearchView.NOT_ONLINE_SEARCHABLE).doesNotContain("Bestand");
+        // Angelo 28.11.2026: Der Begriff landet im Suchverlauf des Felds und bleibt über einen Neustart gemerkt.
+        assertThat(view[0].recentTerms.terms()).startsWith("betrieb");
+        assertThat(AppState.shared().get(SearchView.STATE_RECENT_TERMS)).startsWith("betrieb");
         // Angelo 27.11.2026: Eine nicht indexierte Quelle ohne Online-Suche bekommt einmal die Rückfrage; „Nein“ startet
         // nichts, und weitere Stapel fragen nicht erneut.
         await(() -> !offered.isEmpty());
@@ -184,6 +189,35 @@ class SearchViewTest {
         assertThat(revealed).containsExactly(expected[0]);
         assertThat(opened).isEmpty();
         assertThat(view[0].heading.selected()).as("ein gewählter Treffer hebt die Markierung auf").isFalse();
+
+        // Angelo 28.11.2026: Der Pfeil unten rechts klappt die Vorschau auf und dreht sich; sie zeigt den gewählten
+        // Treffer, ein anderer Klick den nächsten, geöffnet wird dabei nichts.
+        assertThat(view[0].help()).isSameAs(view[0].previewToggle());
+        assertThat(view[0].previewOpen()).isFalse();
+        assertThat(view[0].previewArea().isVisible()).isFalse();
+        assertThat(view[0].previewToggle().getToolTipText()).isEqualTo(SearchView.PREVIEW_SHOW);
+        javax.swing.Icon up = view[0].previewToggle().getIcon();
+        SearchView.HitsModel hits = (SearchView.HitsModel) table.getModel();
+        SwingUtilities.invokeAndWait(() -> view[0].previewToggle().doClick());
+        assertThat(view[0].previewOpen()).isTrue();
+        assertThat(view[0].previewArea().isVisible()).isTrue();
+        assertThat(view[0].previewToggle().getToolTipText()).isEqualTo(SearchView.PREVIEW_HIDE);
+        assertThat(view[0].previewToggle().getIcon()).isNotSameAs(up)
+                .isInstanceOf(com.aresstack.spaceharvester.app.ui.controls.Flipped.class);
+        assertThat(view[0].previewPane().titleText())
+                .isEqualTo(hits.rows.get(table.convertRowIndexToModel(1)).title());
+        SwingUtilities.invokeAndWait(() -> table.setRowSelectionInterval(0, 0));
+        assertThat(view[0].previewPane().titleText())
+                .isEqualTo(hits.rows.get(table.convertRowIndexToModel(0)).title());
+        assertThat(opened).isEmpty();
+        assertThat(AppState.shared().getBoolean(SearchView.STATE_PREVIEW, false)).isTrue();
+        // Eine geleerte Trefferliste (neue Suche) leert auch die Vorschau.
+        SwingUtilities.invokeAndWait(() -> hits.set(List.of()));
+        assertThat(view[0].previewPane().titleText()).isBlank();
+        SwingUtilities.invokeAndWait(() -> view[0].previewToggle().doClick());
+        assertThat(view[0].previewOpen()).isFalse();
+        assertThat(view[0].previewArea().isVisible()).isFalse();
+        assertThat(AppState.shared().getBoolean(SearchView.STATE_PREVIEW, true)).isFalse();
     }
 
     @Test
@@ -362,6 +396,8 @@ class SearchViewTest {
         await(() -> context.runtime() != null);
         SwingUtilities.invokeAndWait(() -> {
             view[0].scope(List.of());
+            // „Nur Fachbegriffe“ gehört zur Wortsuche (Angelo 27.11.2026).
+            view[0].switchMode(true);
             view[0].technicalTerms.setSelected(true);
             assertThat(view[0].modeLabel.getText()).isEqualTo(SearchView.TECHNICAL_TERMS_MODE);
             assertThat(view[0].termsPanel.isVisible()).isTrue();
@@ -374,8 +410,12 @@ class SearchViewTest {
             view[0].scope(List.of(new Explorer.Scope("alpha", "DEV"), new Explorer.Scope("beta", null)));
             assertThat(view[0].technicalScope().sourceIds()).containsExactlyInAnyOrder("alpha", "beta");
             view[0].technicalTerms.setSelected(false);
-            assertThat(view[0].modeLabel.getText()).isEqualTo("Modus: Schlagwortsuche");
+            assertThat(view[0].modeLabel.getText()).isEqualTo(SearchView.WORDS_MODE);
             assertThat(view[0].termsPanel.isVisible()).isFalse();
+            assertThat(view[0].wordsPanel.isVisible()).isTrue();
+            view[0].switchMode(false);
+            assertThat(view[0].modeLabel.getText()).isEqualTo("Modus: Schlagwortsuche");
+            assertThat(view[0].wordsPanel.isVisible()).isFalse();
         });
     }
 
@@ -476,6 +516,35 @@ class SearchViewTest {
         assertThat(view[0].chosenSources()).isEmpty();
         assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alle Wissensquellen");
         loadAll(view[0], table, more, 2 * PAGES_PER_SOURCE);
+    }
+
+    /**
+     * Lädt die erste Quelle beim Bereichswechsel noch Seiten in den Cache, folgt die Ansicht ihrem Stapel nicht
+     * weiter: Sonst sortiert ihre nächste Meldung mit der alten Anfrage neu und nimmt der nachgesuchten Quelle
+     * „Weitere laden“ (roter Lauf auf main, 28.11.2026).
+     */
+    @Test
+    void choosingAnotherAreaStopsFollowingThePreviousBatch() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
+        await(() -> context.runtime() != null);
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].scope(List.of(new Explorer.Scope("beta", null)));
+            view[0].search("betrieb");
+        });
+        JTable table = find(whole(view[0]), JTable.class).get(0);
+        AbstractButton more = button(whole(view[0]), "Weitere laden");
+        loadAll(view[0], table, more, PAGES_PER_SOURCE);
+        String[] followed = new String[1];
+        SwingUtilities.invokeAndWait(() -> {
+            // Der Zustand des Wettlaufs, fest hergestellt: der Stapel der ersten Quelle lädt noch.
+            view[0].progressId = "stapel-der-ersten-quelle";
+            view[0].scope(List.of(new Explorer.Scope("alpha", null)));
+            followed[0] = view[0].progressId;
+        });
+        assertThat(followed[0]).as("dem alten Stapel wird nicht mehr gefolgt").isNull();
+        loadAll(view[0], table, more, PAGES_PER_SOURCE);
     }
 
     /** Ein anderer Bereich links (Angelo 21./23.11.2026): die fehlende Quelle wird nachgesucht, die Liste gefiltert. */
@@ -674,9 +743,10 @@ class SearchViewTest {
                     .filter(text -> text.equals(SearchView.SEMANTIC) || text.equals(SearchView.NEIGHBORS)
                             || text.equals(SearchView.SYNONYMS) || text.equals(SearchView.TERM_PAGES)
                             || text.equals(SearchView.TECHNICAL_TERMS)).toList();
-            // W8: „Seiten zu Fachbegriffen einbeziehen“ unter den Synonymen, Standard aus.
+            // W8: „Seiten zu Fachbegriffen einbeziehen“ unter den Synonymen, Standard aus. „Nur Fachbegriffe“ steht
+            // seit dem 27.11.2026 nur in der Wortsuche.
             assertThat(methods).containsExactly(SearchView.SEMANTIC, SearchView.NEIGHBORS, SearchView.SYNONYMS,
-                    SearchView.TERM_PAGES, SearchView.TECHNICAL_TERMS);
+                    SearchView.TERM_PAGES);
             assertThat(view[0].termPages.isSelected()).as("Seiten zu Fachbegriffen ist Standard aus").isFalse();
             assertThat(view[0].termPages.isEnabled()).isTrue();
             assertThat(view[0].modeLabel.getText()).doesNotContain("Fachbegriffe");
@@ -714,6 +784,104 @@ class SearchViewTest {
             view[0].kindBoxes.get(DocumentKind.IMAGE).doClick();
             assertThat(view[0].queryText()).isEqualTo("betrieb");
         });
+    }
+
+    /**
+     * Die Lupe wechselt zur Wortsuche (Angelo 27.11.2026): Lupe mit „w“, statt der Seitenmethoden die Worttypen,
+     * „Nur Fachbegriffe“ und Synonyme; die Wahl merkt der Application State, auch für die nächste Ansicht.
+     */
+    @Test
+    void theMagnifierSwitchesToTheWordSearchWhichSearchesOnlyTermsAndRemembersTheChoice() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
+        await(() -> context.runtime() != null);
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].scope(List.of());
+            assertThat(view[0].words).isFalse();
+            assertThat(view[0].modeIcon.word()).isFalse();
+            assertThat(view[0].modeIcon.getToolTipText()).isEqualTo(SearchView.PAGE_MODE_TIP);
+            view[0].modeIcon.doClick();
+            assertThat(view[0].words).isTrue();
+            assertThat(view[0].modeIcon.word()).isTrue();
+            assertThat(view[0].modeIcon.getToolTipText()).isEqualTo(SearchView.WORD_MODE_TIP);
+            assertThat(AppState.shared().get(SearchView.STATE_MODE)).isEqualTo(SearchView.STATE_WORDS);
+            assertThat(view[0].modeLabel.getText()).isEqualTo(SearchView.WORDS_MODE);
+            // Statt der Dateitypen nur Seiten und Anhänge (Angelo 27.11.2026).
+            assertThat(find(view[0].options, javax.swing.JLabel.class)).extracting(javax.swing.JLabel::getText)
+                    .contains("WISSENSQUELLEN", "SEITEN UND ANHÄNGE", "WORTTYPEN", "SUCHMETHODEN")
+                    .doesNotContain("DATEITYPEN");
+            List<String> items = find(view[0].options, AbstractButton.class).stream().map(AbstractButton::getText)
+                    .toList();
+            assertThat(items).doesNotContain("PDF", "Word");
+            assertThat(view[0].wordPages.isSelected()).isTrue();
+            assertThat(view[0].wordDocuments.isSelected()).isTrue();
+            view[0].wordDocuments.doClick();
+            assertThat(AppState.shared().getBoolean(SearchView.STATE_WORD_DOCUMENTS, true)).isFalse();
+            view[0].wordDocuments.doClick();
+            assertThat(items).contains("Alpha", SearchView.WORD_PAGES, SearchView.WORD_DOCUMENTS, "Akronyme", "Bezeichner", "Verben", SearchView.TECHNICAL_TERMS,
+                    SearchView.SYNONYMS, SearchView.HEADINGS_ONLY).doesNotContain(SearchView.SEMANTIC, SearchView.NEIGHBORS,
+                    SearchView.TERM_PAGES);
+            assertThat(view[0].wordKindBoxes.get(WordSearch.Kind.ACRONYMS).isSelected()).isTrue();
+            assertThat(view[0].wordKindBoxes.get(WordSearch.Kind.IDENTIFIERS).isSelected()).isTrue();
+            assertThat(view[0].wordKindBoxes.get(WordSearch.Kind.VERBS).isSelected())
+                    .as("Verben gibt es erst nach der Aussagenanalyse").isFalse();
+            view[0].wordSynonyms.doClick();
+            assertThat(AppState.shared().getBoolean(SearchView.STATE_WORD_SYNONYMS, false)).isTrue();
+            assertThat(view[0].modeLabel.getText()).isEqualTo(SearchView.WORDS_MODE + " + Synonyme");
+            view[0].wordSynonyms.doClick();
+            assertThat(view[0].wordsPanel.isVisible()).isTrue();
+            String shots = System.getenv("SCREENSHOTS_DIR");
+            if (shots != null && !shots.isBlank()) {
+                // Die Suchoptionen der Wortsuche zur Sichtprüfung.
+                view[0].options.setSize(view[0].options.getPreferredSize());
+                Screenshots.write(view[0].options, java.nio.file.Path.of(shots, "wortsuche-optionen.png"));
+            }
+            view[0].search("betrieb");
+        });
+        // Ohne gespeicherte Seiten gibt es keine Begriffe: die Wortsuche sagt es in der Statuszeile.
+        await(() -> WordHitsPanel.NO_WORDS.equals(view[0].statusText()));
+        SearchView[] next = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            next[0] = new SearchView(context);
+            assertThat(next[0].words).as("die letzte Wahl gilt auch nach dem Neustart").isTrue();
+            assertThat(next[0].modeIcon.word()).isTrue();
+            view[0].modeIcon.doClick();
+            assertThat(view[0].words).isFalse();
+            assertThat(AppState.shared().get(SearchView.STATE_MODE)).isEqualTo(SearchView.STATE_PAGES);
+            assertThat(find(view[0].options, AbstractButton.class)).extracting(AbstractButton::getText)
+                    .contains(SearchView.SEMANTIC).doesNotContain("Akronyme", SearchView.TECHNICAL_TERMS);
+        });
+    }
+
+    @Test
+    void theWordStatusCountsWordsAndTheHintsNameWhatIsMissing() {
+        assertThat(WordHitsPanel.status(0, false)).isEqualTo(WordHitsPanel.NO_WORDS);
+        assertThat(WordHitsPanel.status(1, false)).isEqualTo("1 Wort");
+        assertThat(WordHitsPanel.status(120, true)).isEqualTo("120 Wörter, weitere folgen");
+        assertThat(SearchView.technicalMissing(SearchView.TECHNICAL_TERMS, "in „Alpha“", true))
+                .contains("Nur Fachbegriffe", "noch keine ermittelt", "findet deshalb nichts");
+        assertThat(SearchView.technicalQuestion("in „Alpha“", true)).contains("wirklich jetzt ermitteln?");
+        assertThat(SearchView.verbsMissing(new WordSearch.VerbCoverage(0, 5, 0), "Alpha"))
+                .contains("noch nichts analysiert");
+        assertThat(SearchView.verbsMissing(new WordSearch.VerbCoverage(3, 2, 1), "Alpha"))
+                .contains("3 Seiten", "davon 1 veraltet");
+        assertThat(SearchView.verbsQuestion(new WordSearch.VerbCoverage(0, 5, 0), "Alpha"))
+                .endsWith("Aussagen wirklich jetzt analysieren?");
+        // Nomen und Kennung gleichen Wortlauts bleiben zwei Zeilen.
+        var noun = new com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary("Order", "order",
+                com.aresstack.spaceharvester.application.terms.TermKind.NOUN, 1, 1, 1, List.of(), List.of());
+        var identifier = new com.aresstack.spaceharvester.application.terms.TermQueries.TermSummary("order", "order",
+                com.aresstack.spaceharvester.application.terms.TermKind.IDENTIFIER, 1, 1, 1, List.of(), List.of());
+        assertThat(new WordSearch.Word("Order", WordSearch.Kind.IDENTIFIERS, 1, 1, "", noun, null).key())
+                .isNotEqualTo(new WordSearch.Word("order", WordSearch.Kind.IDENTIFIERS, 1, 1, "", identifier, null)
+                        .key());
+        assertThat(WordSearch.origin(true, false)).isEqualTo(
+                com.aresstack.spaceharvester.application.terms.TermOrigin.PAGES);
+        assertThat(WordSearch.origin(false, true)).isEqualTo(
+                com.aresstack.spaceharvester.application.terms.TermOrigin.DOCUMENTS);
+        assertThat(WordSearch.origin(true, true)).isEqualTo(
+                com.aresstack.spaceharvester.application.terms.TermOrigin.ALL);
     }
 
     private void start(boolean withOffline) throws Exception {

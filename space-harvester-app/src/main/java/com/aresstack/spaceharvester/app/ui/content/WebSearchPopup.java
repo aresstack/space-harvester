@@ -39,8 +39,8 @@ import java.util.List;
 import java.util.function.IntConsumer;
 
 /**
- * Das Menü am Pfeil der Websuche, übernommen aus {@code BrowserBudgetPopup} des Enterprise AI Client (dort zusätzlich
- * mit {@code ComicFormControls}, die es hier nicht gibt): eine Comic-Sprechblase über der Eingabe, deren Spitze auf
+ * Das Menü am Pfeil der Websuche, übernommen aus {@code BrowserBudgetPopup} des Enterprise AI Client samt dessen
+ * {@code ComicFormControls} für Umschalter, Zahlenfeld, Schieber und Ankreuzfelder: eine Comic-Sprechblase über der Eingabe, deren Spitze auf
  * den Pfeil zeigt; oben das Profil Extern/Intern, dann je Wert eine Zeile mit Feld und Schieber (Werkzeugrunden je
  * Antwort, parallele Tabs, zufällige Verzögerung je Tab), darunter Human Emulation und Mausbewegungen. Jede Änderung
  * geht sofort an den Empfänger der Zeile.
@@ -62,6 +62,12 @@ final class WebSearchPopup extends JPopupMenu {
     static final int POINTER = 10;
     /** Corner radius of the bubble. */
     static final int RADIUS = 14;
+    /** Abstand zwischen den Ankreuzfeldern in ihrer Zeile. */
+    static final int CHECK_GAP = 12;
+    /** Abstand der Zeilen vom Rand, wie in den Zeilen darüber. */
+    static final int ROW_GAP = 6;
+    /** Luft links und rechts der Beschriftung im Profil-Umschalter. */
+    static final int PILL_PAD = 16;
     /** Where the pointer's tip sits, from the bubble's left edge. */
     private int pointerX = 22;
 
@@ -156,15 +162,24 @@ final class WebSearchPopup extends JPopupMenu {
         for (Row row : rows) {
             addRow(content, row, palette);
         }
+        // Die Ankreuzfelder nebeneinander in einer Zeile (Angelo 28.11.2026).
+        JPanel checkRow = new JPanel(new FlowLayout(FlowLayout.LEFT, ROW_GAP, 2));
+        checkRow.setOpaque(false);
+        checkRow.setAlignmentX(Component.LEFT_ALIGNMENT);
         for (final Check check : checks) {
             final javax.swing.JCheckBox box = new javax.swing.JCheckBox(check.title, check.value);
             box.setToolTipText(check.tooltip);
             box.setFont(ResearchUiTypography.semiBold(12f));
             box.setForeground(palette.getInk());
-            box.setAlignmentX(Component.LEFT_ALIGNMENT);
+            box.setOpaque(false);
+            com.aresstack.enterpriseai.ui.comic.control.ComicFormControls.install(box, palette);
+            box.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, CHECK_GAP - ROW_GAP));
             box.addActionListener(event -> check.listener.accept(box.isSelected()));
-            content.add(box);
+            checkRow.add(box);
             checkBoxes.add(box);
+        }
+        if (!checks.isEmpty()) {
+            content.add(checkRow);
         }
         bubble.add(content, BorderLayout.CENTER);
         add(bubble);
@@ -176,6 +191,11 @@ final class WebSearchPopup extends JPopupMenu {
         toggle.setToolTipText(profile.tooltip);
         toggle.setFont(ResearchUiTypography.semiBold(12f));
         toggle.getAccessibleContext().setAccessibleName(profile.title);
+        com.aresstack.enterpriseai.ui.comic.control.ComicFormControls.install(toggle, palette);
+        // Breit genug für beide Beschriftungen, damit der Knopf beim Umschalten nicht springt oder kürzt.
+        java.awt.FontMetrics metrics = toggle.getFontMetrics(toggle.getFont());
+        toggle.setPreferredSize(new java.awt.Dimension(Math.max(metrics.stringWidth(PROFILE_INTERNAL),
+                metrics.stringWidth(PROFILE_EXTERNAL)) + 2 * PILL_PAD, toggle.getPreferredSize().height));
         toggle.addActionListener(event -> {
             toggle.setText(toggle.isSelected() ? PROFILE_INTERNAL : PROFILE_EXTERNAL);
             profile.listener.accept(toggle.isSelected());
@@ -203,6 +223,7 @@ final class WebSearchPopup extends JPopupMenu {
         JSpinner field = new JSpinner(number);
         JSpinner.NumberEditor editor = new JSpinner.NumberEditor(field, "#");
         field.setEditor(editor);
+        com.aresstack.enterpriseai.ui.comic.control.ComicFormControls.install(field, palette);
         JFormattedTextField text = editor.getTextField();
         text.setColumns(5);
         if (text.getFormatter() instanceof DefaultFormatter) {
@@ -214,6 +235,8 @@ final class WebSearchPopup extends JPopupMenu {
         slider.setMajorTickSpacing(Math.max(1, (row.sliderMax - row.sliderMin) / 4));
         slider.setPaintTicks(true);
         slider.setPaintLabels(true);
+        slider.setOpaque(false);
+        com.aresstack.enterpriseai.ui.comic.control.ComicFormControls.install(slider, palette);
         final boolean[] syncing = {false};
         number.addChangeListener(event -> {
             if (syncing[0]) {

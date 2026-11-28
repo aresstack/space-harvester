@@ -91,15 +91,45 @@ final class PageOperations {
     }
 
     /**
-     * Loads {@code url} and waits until the page is settled; a load that a script or form redirect (SAML/SSO bounce)
-     * replaced waits for the final page instead of failing.
+     * What the browser reaches instead of a page: a PDF shown in its viewer or a download. The research session
+     * reads such documents ({@code web_open}); the chat hands them over here.
      */
-    void navigate(Page page, String url, HumanMotion human, Pointer pointer) throws BrowserException {
+    interface Documents {
+        /** Pages only: a document fails like any other page that cannot be read. */
+        Documents NONE = new Documents() {
+            @Override
+            public boolean downloadStarted(Page page, String url, PlaywrightException e) {
+                return false;
+            }
+
+            @Override
+            public boolean shown(Page page, com.microsoft.playwright.Response response) {
+                return false;
+            }
+        };
+
+        /** Navigating to {@code url} only started a download; true when it was taken as a document. */
+        boolean downloadStarted(Page page, String url, PlaywrightException e) throws BrowserException;
+
+        /** The response of the load; true when it is a document shown in the browser's viewer and was taken. */
+        boolean shown(Page page, com.microsoft.playwright.Response response) throws BrowserException;
+    }
+
+    /**
+     * Loads {@code url} and waits until the page is settled; a load that a script or form redirect (SAML/SSO bounce)
+     * replaced waits for the final page instead of failing. A document instead of a page goes to {@code documents}.
+     */
+    void navigate(Page page, String url, HumanMotion human, Pointer pointer, Documents documents)
+            throws BrowserException {
         String before = tokenOrNull(page);
+        com.microsoft.playwright.Response response;
         try {
-            page.navigate(url, new Page.NavigateOptions().setWaitUntil(WaitUntilState.LOAD)
+            response = page.navigate(url, new Page.NavigateOptions().setWaitUntil(WaitUntilState.LOAD)
                     .setTimeout(navigationTimeoutMillis));
         } catch (PlaywrightException e) {
+            if (documents.downloadStarted(page, url, e)) {
+                return; // the tab keeps its page; the document was taken
+            }
             if (!isAbortedByRedirect(e)) {
                 throw guard.classify(e);
             }
@@ -108,6 +138,9 @@ final class PageOperations {
             guard.check();
             settleRedirect(page, before, originOf(url), e);
             return;
+        }
+        if (documents.shown(page, response)) {
+            return; // the viewer shows a document: no page to settle or scroll through
         }
         // Load is not ready: intranets and single page apps render their content after the load event.
         settle(page, null, LOAD_SETTLE_MILLIS);
@@ -577,10 +610,14 @@ final class PageOperations {
     }
 
     /** What the page says about itself for the access rules (sign-in form, origin, title). */
-    BrowserProbe probe(Page page) throws BrowserException {
+    BrowserProbe probe(Page page, java.util.function.BooleanSupplier challengeShown) throws BrowserException {
         JsonArray values = parse(evaluate(page, PROBE_SCRIPT));
-        return new BrowserProbe(values.get(0).getAsBoolean(), values.get(1).getAsString(),
-                values.get(2).getAsString(), values.get(3).getAsString());
+        String challenge = values.get(2).getAsString();
+        if (!BrowserProbe.CAPTCHA.equals(challenge) && challengeShown.getAsBoolean()) {
+            challenge = BrowserProbe.CAPTCHA; // a challenge widget the research's detection sees
+        }
+        return new BrowserProbe(values.get(0).getAsBoolean(), values.get(1).getAsString(), challenge,
+                values.get(3).getAsString());
     }
 
     /** A token that changes with every new document in the page, to tell whether the page was replaced. */

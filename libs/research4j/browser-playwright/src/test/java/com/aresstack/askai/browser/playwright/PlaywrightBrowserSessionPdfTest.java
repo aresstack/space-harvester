@@ -106,6 +106,24 @@ public class PlaywrightBrowserSessionPdfTest {
             return "none";
         }
 
+        /** The search's own tab: a history of its own, the chat's tab comes back unchanged afterwards. */
+        private List<PlaywrightPageState> chatTabHistory;
+
+        @Override
+        public void beginSearchTab() {
+            chatTabHistory = new ArrayList<PlaywrightPageState>(history);
+            history.clear();
+        }
+
+        @Override
+        public void endSearchTab() {
+            if (chatTabHistory != null) {
+                history.clear();
+                history.addAll(chatTabHistory);
+                chatTabHistory = null;
+            }
+        }
+
         public void close() {
         }
     }
@@ -228,6 +246,24 @@ public class PlaywrightBrowserSessionPdfTest {
         assertEquals(base + "/start", now.getUrl());
         assertEquals("results page", now.getText());
         assertEquals("the page's links are back", 1, session.links().size());
+    }
+
+    /** A search in its own tab (a chat's browser) leaves the chat's downloaded PDF the current page. */
+    @Test
+    public void aDownloadStaysTheCurrentPageAfterASearchInItsOwnTab() throws Exception {
+        driver.byUrl.put(base + "/find?q=hase", new PlaywrightPageState(base + "/find?q=hase", "Results", "hits",
+                java.util.Arrays.asList(new PlaywrightPageState.Anchor("hase primer", "http://target-a.test/hase"),
+                        new PlaywrightPageState.Anchor("hase guide", "http://target-b.test/hase"))));
+        session.setSearchEngines(java.util.Collections.singletonList(
+                new com.aresstack.askai.browser.search.engine.BrowserSearchEngine("find", "Find",
+                        java.util.Collections.singletonList(base + "/find?q={query}"))));
+        session.useSearchSettings(null, new SearchUrlMemory());
+        session.open(base + "/start");
+        session.open(base + "/download/report.pdf");
+
+        session.search("hase");
+
+        assertEquals("the download, not the page the tab kept", PDF_TEXT, session.currentPage().getText());
     }
 
     @Test

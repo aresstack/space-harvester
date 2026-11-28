@@ -333,12 +333,33 @@ final class BookFlow {
             return;
         }
         Path output = context.settings() == null ? com.aresstack.spaceharvester.app.settings.AppSettings
-                .defaultOutputDirectory() : context.settings().outputDirectory();
+                .defaultOutputDirectory() : context.exportDirectory();
         CornerstoneSurvey.Chosen chosen = view.chosen(session.prepared().basketHints());
+        // Das Buch gehört dem Projekt, das beim Schreiben aktiv ist (ADR 0047), auch wenn später gewechselt wird.
+        String projectId = context.projects().active().id();
         context.runtime().workspace().startBook(session.folderId(), session.folderName(), BookJob.write(session,
                 chosen, dataDirectory(context), output,
                 PageDetailPanel.safeName(session.folderName()),
-                book -> SwingUtilities.invokeLater(() -> written(session, book))));
+                book -> SwingUtilities.invokeLater(() -> written(session, book)),
+                folderId -> context.bookArtifacts().publish(folderId, projectId, session.folderName())));
+    }
+
+    /**
+     * „Buch öffnen“ (ADR 0044 Nachtrag N5): zieht das Buch-Artefakt des aktiven Projekts auf den Stand der Auflagen
+     * (ältere Auflagen ohne KI, beim ersten Mal) und öffnet es in der Mitte.
+     */
+    void openBook(String folderId) {
+        String projectId = context.projects().active().id();
+        String name = context.favorites().folder(folderId).map(Favorites.Folder::name).orElse("Buch");
+        com.aresstack.spaceharvester.app.ui.Background.run(
+                () -> context.bookArtifacts().publish(folderId, projectId, name),
+                artifact -> {
+                    if (artifact != null && context.navigator() != null) {
+                        context.navigator().openArtifact(projectId, artifact.id());
+                    }
+                },
+                failure -> Dialogs.view(parent, BasketResearchForm.BOOK_TITLE, Comic.note(
+                        "Das Buch ließ sich nicht öffnen: " + failure.getClass().getSimpleName() + ".")));
     }
 
     private void written(BookJob.Session session, Path book) {

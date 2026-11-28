@@ -53,7 +53,13 @@ class ChatPanelTest {
 
     private static java.util.List<String> menuTexts(ChatPanel panel) {
         return panel.chatMenuItems().stream()
-                .map(item -> item instanceof javax.swing.JMenuItem menu ? menu.getText() : "—").toList();
+                .map(item -> item instanceof javax.swing.JMenuItem menu ? marked(menu) : "—").toList();
+    }
+
+    /** Der Titel eines Eintrags; der gezeichnete Haken des offenen Chats steht hier als „✓ “, sein leerer Platz als Lücke. */
+    private static String marked(javax.swing.JMenuItem menu) {
+        return menu.getIcon() instanceof com.aresstack.spaceharvester.app.ui.controls.CheckMark mark
+                ? (mark.checked() ? "✓ " : "    ") + menu.getText() : menu.getText();
     }
 
     @Test
@@ -512,7 +518,7 @@ class ChatPanelTest {
                 enabled[0] = panel[0].webSearchEnabled();
             });
             BrowserSettings.shared().saveExecutable(BrowserSettings.DEFAULT_CHANNEL,
-                    Files.writeString(home.resolve("msedge"), "").toString());
+                    Files.writeString(home.resolve("firefox"), "").toString());
             SwingUtilities.invokeAndWait(() -> {
                 context.browserChannelChanged();
                 enabled[1] = panel[0].webSearchEnabled();
@@ -528,10 +534,10 @@ class ChatPanelTest {
         Path config = home.resolve("app.yml");
         Files.writeString(config, "space-harvester-app:\n  data-directory: %s\n".formatted(home.resolve("data")));
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
-        // Ein Edge, den nichts startet: Die Weltkugel braucht nur seinen Pfad.
-        Path edge = Files.writeString(home.resolve("msedge"), "");
+        // Ein Firefox, den nichts startet: Die Weltkugel braucht nur seinen Pfad.
+        Path browser = Files.writeString(home.resolve("firefox"), "");
         String before = BrowserSettings.shared().executable(BrowserSettings.DEFAULT_CHANNEL);
-        BrowserSettings.shared().saveExecutable(BrowserSettings.DEFAULT_CHANNEL, edge.toString());
+        BrowserSettings.shared().saveExecutable(BrowserSettings.DEFAULT_CHANNEL, browser.toString());
         try {
             String[] texts = new String[3];
             boolean[] visible = new boolean[3];
@@ -1028,5 +1034,11 @@ class ChatPanelTest {
         assertThat(asked).endsWith("(Bildinhalt, abgelesen vom Vision-Modell gemma4:12b)\nSprint-Ziele: Login fertig");
         // Beim Anhängen steht die Frage noch nicht fest: das Modell liest mit der allgemeinen Anweisung.
         assertThat(instructions).containsExactly(com.aresstack.spaceharvester.app.chat.AttachmentImages.PROMPT);
+    }
+
+    @Test
+    void enterDoesNotStopARunningAnswer() {
+        assertThat(ChatPanel.enterSends(false)).isTrue();
+        assertThat(ChatPanel.enterSends(true)).isFalse();
     }
 }

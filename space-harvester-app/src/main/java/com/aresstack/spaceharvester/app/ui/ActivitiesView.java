@@ -202,8 +202,11 @@ public final class ActivitiesView implements View {
     static final int MIN_DETAIL_HEIGHT = 80;
     /** Kleinste Höhe der Liste über den Details, damit ein paar Zeilen sichtbar bleiben. */
     static final int MIN_LIST_HEIGHT = 90;
-    /** Ob die Höhe des Detailbereichs im Application State bleibt; Tests ohne Ablage merken sich nichts. */
+    /** Ob die Höhe des Detailbereichs im Application State bleibt; Tests merken sich nichts. */
     private final boolean rememberDetails;
+    /** Ob die Liste fehlerfrei fertige Aufträge selbst löscht ({@link #scheduleCleanup}); Tests nie. */
+    private final boolean housekeeping;
+    private static final System.Logger LOG = System.getLogger(ActivitiesView.class.getName());
     /** Während die Ansicht den Trenner selbst setzt, ist das keine Wahl des Benutzers. */
     private boolean placingDivider;
     /** Schreibt die gezogene Höhe erst, wenn der Trenner kurz ruht, nicht bei jedem Schritt des Ziehens. */
@@ -219,6 +222,7 @@ public final class ActivitiesView implements View {
             new com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle();
     static final String JOBS_TAB = "Aufträge";
     static final String BACKGROUND_TAB = "Hintergrund";
+    static final String JOBS_TIP = "Aufträge, die du gestartet hast";
     /** Sehr heller Petrol-Ton hinter der Zeile einer Hintergrundgruppe. */
     static final java.awt.Color BACKGROUND_TONE = mix(Comic.PETROL, java.awt.Color.WHITE, 0.88);
     /** Breite des Petrol-Streifens am linken Rand jeder Hintergrundzeile. */
@@ -260,7 +264,7 @@ public final class ActivitiesView implements View {
     private boolean toTop;
 
     public ActivitiesView(AppContext context) {
-        this(context, userPreferences());
+        this(context, userPreferences(), true);
     }
 
     /**
@@ -268,9 +272,22 @@ public final class ActivitiesView implements View {
      *                    in die Ablage des Benutzers)
      */
     ActivitiesView(AppContext context, java.util.prefs.Preferences preferences) {
+        this(context, preferences, false);
+    }
+
+    /**
+     * @param live die App selbst: merkt sich die Höhe der Details im Application State und räumt fehlerfrei fertige
+     *             Aufträge auf; Tests nie
+     */
+    private ActivitiesView(AppContext context, java.util.prefs.Preferences preferences, boolean live) {
         this.context = context;
         this.preferences = preferences;
-        this.rememberDetails = preferences != null;
+        this.rememberDetails = live;
+        this.housekeeping = live;
+        if (live) {
+            // Eine neue Frist gilt sofort, auch für schon fertige Aufträge.
+            AppTimeouts.onSave(() -> javax.swing.SwingUtilities.invokeLater(this::cleanupDue));
+        }
         if (rememberDetails) {
             detailHeight = Math.max(MIN_DETAIL_HEIGHT, WindowSizes.recallInt(DETAIL_HEIGHT_KEY, DEFAULT_DETAIL_HEIGHT));
         }
@@ -318,8 +335,9 @@ public final class ActivitiesView implements View {
         list.setBackground(Comic.SURFACE);
         list.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
         HelpButton hint = new HelpButton(24, "Aufträge", HELP);
-        tabs.segment(JOBS_TAB).segment(BACKGROUND_TAB);
-        tabs.button(JOBS_TAB).setToolTipText("Aufträge, die du gestartet hast");
+        // Nur Symbole wie der Umschalter der Wissensquellen gegenüber (Angelo 27.11.2026); der Name steht im Tooltip.
+        tabs.segment(JOBS_TAB, SwitchIcons.jobs()).segment(BACKGROUND_TAB, SwitchIcons.background());
+        tabs.button(JOBS_TAB).setToolTipText(JOBS_TIP);
         tabs.button(BACKGROUND_TAB).setToolTipText(BACKGROUND_TIP);
         String remembered = rememberedTab();
         if (BACKGROUND_TAB.equals(remembered)) {
@@ -330,7 +348,8 @@ public final class ActivitiesView implements View {
         // Kopfzeile, immer einzeilig (Angelo 22.11.2026). GridBagLayout hält sie in ihrer eigenen Höhe mittig.
         JPanel listTitle = new JPanel(new java.awt.GridBagLayout());
         listTitle.setOpaque(false);
-        listTitle.add(tabs);
+        switchSlot.setOpaque(false);
+        listTitle.add(switchSlot);
         // Die drei Grenzen der Parallelität stehen im Menü hinter dem Dreieck (Angelo 22.11.2026), damit die
         // Kopfzeile auch in der Seitenleiste Platz hat.
         for (ParallelChoice choice : List.of(preparations, downloads, connections)) {
@@ -340,7 +359,7 @@ public final class ActivitiesView implements View {
         expandAll.addActionListener(e -> setAllGroups(false));
         collapseAll.addActionListener(e -> setAllGroups(true));
         enlarge.addActionListener(e -> enlargeAction.run());
-        JPanel listTools = Comic.row(hint, deleteFinished, enlarge, moreJobs);
+        JPanel listTools = Comic.row(deleteFinished, enlarge, moreJobs);
         // „Alle anhalten“ und „Alle abbrechen“ sind Aktionen und stehen mittig in der Werkzeugleiste unten
         // (tools(), Angelo 22.11.2026); oben bleibt Platz für die Wippe.
         pauseAll.addActionListener(e -> pauseOrResumeAll());
@@ -352,31 +371,34 @@ public final class ActivitiesView implements View {
         global.add(cancelAll);
         // Auf- und Zuklappen stehen gleich rechts der Lupe, die beiden Aktionen mittig in der ganzen Leiste.
         JPanel folding = Comic.row(expandAll, collapseAll);
-        JPanel globalRow = new JPanel(new ToolsLayout(folding, global));
+        // Die Hilfe steht unten rechts in der Ecke der Leiste, nicht mehr in der Kopfzeile (Angelo 27.11.2026).
+        // Rechts in der Leiste der Umschalter „Aufträge / Hintergrund“ (Angelo 27.11.2026: aus der Kopfzeile nach
+        // unten, rechtsbündig), dahinter in der Ecke die Hilfe. Wird es eng, weicht nur die Hilfe.
+        JPanel tabsHolder = new JPanel(new java.awt.GridBagLayout());
+        tabsHolder.setOpaque(false);
+        tabsHolder.add(tabs);
+        ToolsLayout toolsLayout = new ToolsLayout(folding, global, tabsHolder, hint);
+        // Reicht die Breite auch ohne Hilfe nicht (Leiste an ihrer Mindestbreite), stehen Auf- und Zuklappen im Menü
+        // hinter dem Dreieck, wie der Besen der Kopfzeile.
+        toolsLayout.onTight(tight -> foldingInMenu = tight);
+        JPanel globalRow = new JPanel(toolsLayout);
         globalRow.setOpaque(false);
         globalRow.putClientProperty(View.TOOLS_FILL, Boolean.TRUE);
         globalRow.add(folding);
         globalRow.add(global);
+        globalRow.add(tabsHolder);
+        globalRow.add(hint);
         tools = globalRow;
-        JPanel listHead = new JPanel();
-        // Reicht die Breite nicht (Leiste an ihrer Mindestbreite), weichen Hilfe und Besen; „Fertige löschen“ steht
+        // Dieselbe Kopfleiste wie überall (HeadBar): gleiche Höhe, Linie darunter (Angelo 22.11. und 27.11.2026).
+        JPanel listHead = new com.aresstack.spaceharvester.app.ui.controls.HeadBar(null, 10, 6);
+        // Reicht die Breite nicht (Leiste an ihrer Mindestbreite), weicht der Besen; „Fertige löschen“ steht
         // dann im Menü hinter dem Dreieck.
         int fullTools = listTools.getPreferredSize().width;
-        hint.setVisible(false);
         deleteFinished.setVisible(false);
         int saved = fullTools - listTools.getPreferredSize().width;
-        hint.setVisible(true);
         deleteFinished.setVisible(true);
-        listHead.setLayout(new HeadLayout(listTitle, listTools, saved, tight -> {
-            hint.setVisible(!tight);
-            deleteFinished.setVisible(!tight);
-        }));
-        listHead.setOpaque(false);
-        // Dieselbe Kopfzeile wie der Chat und die Seitenansicht: gleiche Höhe, Linie darunter (Angelo 22.11.2026).
-        listHead.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(0, 10, 0, 6)));
-        listHead.setPreferredSize(new java.awt.Dimension(0,
-                com.aresstack.spaceharvester.app.ui.content.ChatSidebar.HEAD_HEIGHT));
+        listHead.setLayout(new HeadLayout(listTitle, listTools, saved,
+                tight -> deleteFinished.setVisible(!tight)));
         listHead.add(listTitle);
         listHead.add(listTools);
         updateGlobalButtons(List.of());
@@ -516,6 +538,15 @@ public final class ActivitiesView implements View {
     final IconButton enlarge = new IconButton(
             com.aresstack.spaceharvester.app.ui.content.ChatSidebar.enlargeIcon(false),
             com.aresstack.spaceharvester.app.ui.content.ChatSidebar.ENLARGE);
+    private final JPanel switchSlot = new JPanel(new java.awt.GridBagLayout());
+    /** Ob Auf- und Zuklappen gerade im Menü hinter dem Dreieck stehen, weil die Fußleiste zu schmal ist. */
+    private boolean foldingInMenu;
+
+    /** Platz für den Umschalter der rechten Leiste (Chat | Analysen | Aufträge); das Hauptfenster stellt ihn hinein. */
+    JComponent switchSlot() {
+        return switchSlot;
+    }
+
     private Runnable enlargeAction = () -> { };
     private Runnable collapseAction = () -> { };
 
@@ -843,6 +874,7 @@ public final class ActivitiesView implements View {
             overall.observe(jobs, now, averages::get);
             groupEstimates = groupEstimates(jobs, now);
             lastJobs = List.copyOf(jobs);
+            scheduleCleanup(runtime);
             followSelectedTab(id);
             model.set(visible(jobs, backgroundTab()));
             updateBackgroundChip(jobs);
@@ -986,6 +1018,11 @@ public final class ActivitiesView implements View {
         // Die Meldung gehörte zum abgewählten Auftrag; sie hielte den Detailbereich sonst offen.
         feedback.clear();
         render();
+        // Ein fälliger fertiger Auftrag blieb nur, solange er gewählt war.
+        AppRuntime runtime = context.runtime();
+        if (runtime != null) {
+            scheduleCleanup(runtime);
+        }
     }
 
     /** Der Detailbereich ist offen, solange er etwas zeigt: einen Auftrag, das Codefeld oder eine Meldung. */
@@ -1136,7 +1173,7 @@ public final class ActivitiesView implements View {
         }
         facts.add("Auftrags-ID", status.id());
         outputShown = outputDirectory(status,
-                context.settings() == null ? null : context.settings().outputDirectory());
+                context.exportDirectory());
         if (outputShown != null) {
             facts.add(OUTPUT_LABEL, outputShown.toString(), Comic.INK, openOutput);
         }
@@ -1893,6 +1930,141 @@ public final class ActivitiesView implements View {
         });
     }
 
+    /** Weckt das Aufräumen der Liste, wenn der nächste fehlerfrei fertige Auftrag fällig ist; einmalig, kein Takt. */
+    private final Timer cleanup = new Timer(0, e -> cleanupDue());
+    /** Fällige Aufträge, die das Aufräumen wegen eines Vermerks mit Auslassung behält ({@link #withoutOmissions}). */
+    private final Set<String> withOmissions = new HashSet<>();
+
+    private void cleanupDue() {
+        AppRuntime runtime = context.runtime();
+        if (runtime != null) {
+            scheduleCleanup(runtime);
+        }
+    }
+
+    /**
+     * Räumt die Auftragsliste auf (Angelo 27.11.2026: „jeder Auftrag, der erfolgreich durchgelaufen ist, also ohne
+     * irgendwelche Mängel, entfernt sich automatisch nach 5 Minuten“): Fällige löscht derselbe Weg wie der Besen
+     * ({@code Workspace#deleteJobs}), ohne Rückfrage; für den nächsten fälligen steht ein einmaliger Wecker. Die Frist
+     * steht unter Einstellungen › Allgemein ({@link AppTimeouts.Value#FINISHED_JOBS}), 0 schaltet es ab.
+     */
+    private void scheduleCleanup(AppRuntime runtime) {
+        cleanup.stop();
+        if (!housekeeping) {
+            return;
+        }
+        java.time.Duration keep = AppTimeouts.shared().get(AppTimeouts.Value.FINISHED_JOBS);
+        if (keep.isZero()) {
+            return;
+        }
+        Instant now = Instant.now();
+        List<String> due = new ArrayList<>();
+        Instant next = null;
+        for (JobStatus job : expendable(lastJobs, selectedId)) {
+            if (withOmissions.contains(job.id())) {
+                continue;
+            }
+            Instant at = job.finishedAt().plus(keep);
+            if (!at.isAfter(now)) {
+                due.add(job.id());
+            } else if (next == null || at.isBefore(next)) {
+                next = at;
+            }
+        }
+        if (!due.isEmpty()) {
+            Background.run(() -> {
+                List<String> clean = withoutOmissions(runtime.workspace(), due);
+                runtime.workspace().deleteJobs(clean);
+                return clean;
+            }, clean -> {
+                // Mit Auslassung bleibt ein Auftrag; das Aufräumen fragt ihn nicht wieder.
+                due.stream().filter(id -> !clean.contains(id)).forEach(withOmissions::add);
+                poll();
+            },
+                    error -> LOG.log(System.Logger.Level.WARNING, "Aufräumen der Auftragsliste gescheitert ({0})",
+                            error.getClass().getName()));
+            return;
+        }
+        if (next != null) {
+            long millis = java.time.Duration.between(now, next).toMillis() + 1;
+            cleanup.setInitialDelay((int) Math.min(Integer.MAX_VALUE, Math.max(1, millis)));
+            cleanup.setRepeats(false);
+            cleanup.start();
+        }
+    }
+
+    /**
+     * Die Aufträge, die das Aufräumen löschen darf: fertig ohne Fehlschlag, ohne Unvollständiges und ohne bewusst
+     * Ausgelassenes. Es bleiben Downloads (ihr Datenbestand verschwindet mit dem Auftrag, {@link #KEPT}), der gewählte
+     * Auftrag, solange seine Details offen sind, und Vorgänger, auf die ein offener Auftrag noch wartet.
+     */
+    static List<JobStatus> expendable(List<JobStatus> jobs, String selectedId) {
+        Set<String> awaited = new HashSet<>();
+        for (JobStatus job : jobs) {
+            if (job.state().terminal()) {
+                continue;
+            }
+            // Beide Arten, auf Vorgänger zu warten: Hintergrundteile ({@code Jobs.AFTER}) und Folgeaufträge
+            // ({@code Jobs.AWAITS}); das Löschen eines solchen Vorgängers löschte den wartenden Folgeauftrag mit.
+            String after = job.parameter(com.aresstack.spaceharvester.application.jobs.Jobs.AFTER);
+            if (after != null) {
+                awaited.addAll(java.util.Arrays.asList(after.split(",")));
+            }
+            String awaits = job.parameter(com.aresstack.spaceharvester.application.jobs.Jobs.AWAITS);
+            if (awaits != null) {
+                awaited.add(awaits);
+            }
+        }
+        Set<String> shown = selected(jobs, selectedId);
+        return jobs.stream()
+                .filter(job -> job.id() != null && !synthetic(job.id()) && !shown.contains(job.id()))
+                .filter(job -> job.state() == JobState.COMPLETED && job.finishedAt() != null)
+                .filter(job -> job.progress().failed() == 0 && !job.incomplete() && skipped(job) == 0)
+                .filter(job -> job.type() != JobType.EXPORT && !awaited.contains(job.id()))
+                .toList();
+    }
+
+    /**
+     * Die Aufträge, deren Details gerade offen sind: der gewählte oder, bei einer gewählten Gruppenzeile, alle Teile
+     * dieser Gruppe; sie bleiben, bis die Auswahl wechselt.
+     */
+    static Set<String> selected(List<JobStatus> jobs, String selectedId) {
+        if (selectedId == null) {
+            return Set.of();
+        }
+        if (!synthetic(selectedId)) {
+            return Set.of(selectedId);
+        }
+        boolean sync = selectedId.startsWith(SYNC_GROUP_PREFIX);
+        String group = selectedId.substring((sync ? SYNC_GROUP_PREFIX : GROUP_PREFIX).length());
+        String key = sync ? SpaceSyncJobs.GROUP : BackgroundJobs.GROUP;
+        Set<String> members = new HashSet<>();
+        for (JobStatus job : jobs) {
+            if (group.equals(job.parameter(key))) {
+                members.add(job.id());
+            }
+        }
+        return members;
+    }
+
+    /**
+     * Ohne Aufträge, die einen Schritt bewusst ausgelassen haben (Vermerk mit Auslassung, etwa „Fachbegriffe
+     * ermitteln“ ohne Modell): Das ist ein Mangel, ihre Diagnose bleibt. Liest die Ereignisse nur der fälligen.
+     */
+    private static List<String> withoutOmissions(Workspace workspace, List<String> due) {
+        List<String> kept = new ArrayList<>();
+        for (String id : due) {
+            try {
+                if (notes(workspace.events(id)).stream().noneMatch(Note::skipped)) {
+                    kept.add(id);
+                }
+            } catch (RuntimeException gone) {
+                // Inzwischen gelöscht: nichts zu tun.
+            }
+        }
+        return kept;
+    }
+
     /** Für Tests und Bilder: zeigt diese Aufträge, als kämen sie vom Core. */
     void showJobsForTest(List<JobStatus> jobs) {
         lastJobs = List.copyOf(jobs);
@@ -2436,6 +2608,15 @@ public final class ActivitiesView implements View {
         menu.add(preparations.menu(PARALLEL_PREPARATIONS));
         menu.add(downloads.menu(PARALLEL_DOWNLOADS));
         menu.add(connections.menu(CONNECTIONS));
+        if (foldingInMenu) {
+            menu.addSeparator();
+            for (IconButton button : List.of(expandAll, collapseAll)) {
+                javax.swing.JMenuItem item = new javax.swing.JMenuItem(button.getToolTipText(), button.getIcon());
+                item.setFont(Comic.regular(13f));
+                item.addActionListener(e -> button.doClick(0));
+                menu.add(item);
+            }
+        }
         if (narrow) {
             menu.addSeparator();
             for (javax.swing.AbstractButton button : List.of(pauseAll, cancelAll)) {
@@ -2645,10 +2826,32 @@ public final class ActivitiesView implements View {
 
         private final Component west;
         private final Component center;
+        /** Steht rechts und bleibt immer stehen (etwa ein Umschalter), oder {@code null}. */
+        private final Component fixed;
+        /** Steht rechtsbündig am Ende der Zeile, also unten rechts in der Ecke der Leiste; weicht, wenn es eng wird. */
+        private final Component east;
 
-        ToolsLayout(Component west, Component center) {
+        ToolsLayout(Component west, Component center, Component east) {
+            this(west, center, null, east);
+        }
+
+        ToolsLayout(Component west, Component center, Component fixed, Component east) {
             this.west = west;
             this.center = center;
+            this.fixed = fixed;
+            this.east = east;
+        }
+
+        private Consumer<Boolean> tight = now -> { };
+        private boolean isTight;
+
+        /** Meldet, wenn der linke Teil weichen muss, weil die Breite auch ohne Hilfe nicht reicht, und wenn er zurückkommt. */
+        void onTight(Consumer<Boolean> tight) {
+            this.tight = tight;
+        }
+
+        private int fixedWidth() {
+            return fixed == null || !fixed.isVisible() ? 0 : fixed.getPreferredSize().width + GAP / 2;
         }
 
         @Override
@@ -2656,24 +2859,52 @@ public final class ActivitiesView implements View {
             int height = parent.getHeight();
             java.awt.Dimension westSize = west.getPreferredSize();
             java.awt.Dimension centerSize = center.getPreferredSize();
-            west.setBounds(0, (height - westSize.height) / 2, westSize.width, westSize.height);
+            // Ein fester Teil rechts (der Umschalter) geht vor: Passt er nicht mehr neben die Aktionen, weicht der
+            // linke Teil ganz und sein Besitzer bietet ihn anderswo an.
+            boolean now = fixedWidth() > 0
+                    && westSize.width + GAP + centerSize.width + GAP + fixedWidth() > parent.getWidth();
+            if (now != isTight) {
+                isTight = now;
+                tight.accept(now);
+            }
+            if (now) {
+                westSize = new java.awt.Dimension(-GAP, westSize.height);
+                west.setBounds(0, 0, 0, 0);
+            } else {
+                west.setBounds(0, (height - westSize.height) / 2, westSize.width, westSize.height);
+            }
             // Die Leiste ist der nächste Vorfahr mit eigener Breite über die ganze Zeile (FindBar); ohne sie mittig
             // im eigenen Platz.
             Container bar = javax.swing.SwingUtilities.getAncestorOfClass(FindBar.class, parent);
             int middle = bar == null ? parent.getWidth() / 2
                     : javax.swing.SwingUtilities.convertPoint(bar, bar.getWidth() / 2, 0, parent).x;
+            // Reicht die Breite nicht für alles (Leiste an ihrer Mindestbreite), weicht die Hilfe wie zuvor in der
+            // Kopfzeile; die Aktionen und der Umschalter behalten ihren Platz.
+            java.awt.Dimension eastSize = east.getPreferredSize();
+            int fixedWidth = fixedWidth();
+            boolean fits = westSize.width + GAP + centerSize.width + GAP + fixedWidth + eastSize.width
+                    <= parent.getWidth();
+            int right = fits ? parent.getWidth() - eastSize.width : parent.getWidth();
+            east.setBounds(right, (height - eastSize.height) / 2, fits ? eastSize.width : 0, eastSize.height);
+            if (fixedWidth > 0) {
+                java.awt.Dimension fixedSize = fixed.getPreferredSize();
+                right -= fits ? fixedWidth : fixedSize.width;
+                fixed.setBounds(right, (height - fixedSize.height) / 2, fixedSize.width, fixedSize.height);
+            }
+            int room = fits || fixedWidth > 0 ? right - GAP : right;
             int x = Math.max(westSize.width + GAP, middle - centerSize.width / 2);
-            x = Math.max(westSize.width + GAP, Math.min(x, parent.getWidth() - centerSize.width));
+            x = Math.max(westSize.width + GAP, Math.min(x, room - centerSize.width));
             center.setBounds(x, (height - centerSize.height) / 2,
-                    Math.max(0, Math.min(centerSize.width, parent.getWidth() - x)), centerSize.height);
+                    Math.max(0, Math.min(centerSize.width, room - x)), centerSize.height);
         }
 
         @Override
         public java.awt.Dimension preferredLayoutSize(Container parent) {
             java.awt.Dimension westSize = west.getPreferredSize();
             java.awt.Dimension centerSize = center.getPreferredSize();
-            return new java.awt.Dimension(westSize.width + GAP + centerSize.width,
-                    Math.max(westSize.height, centerSize.height));
+            java.awt.Dimension eastSize = east.getPreferredSize();
+            return new java.awt.Dimension(westSize.width + GAP + centerSize.width + GAP + fixedWidth()
+                    + eastSize.width, Math.max(Math.max(westSize.height, centerSize.height), eastSize.height));
         }
 
         @Override

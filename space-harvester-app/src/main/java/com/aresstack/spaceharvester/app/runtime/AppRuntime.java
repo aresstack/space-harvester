@@ -313,6 +313,8 @@ public final class AppRuntime implements AutoCloseable {
         if (!ndvSources.isEmpty()) {
             builder.enrichmentProcessor(new com.aresstack.spaceharvester.app.runtime.program.NaturalProgramEnrichment(ndvSources));
         }
+        // Seitenstruktur: Gliederung von FTP-/NDV-Quelltext als Überschriften für Suche und Gliederung.
+        builder.textProjector(new com.aresstack.spaceharvester.app.runtime.program.ProgramOutlineTextProjector());
         builder.accessPolicy(policy);
         // #499: MaltParser nur auf Knopfdruck; das Modell lädt erst der erste Klick, ohne Modell startet die App normal.
         MaltStatementAnalyzer.pinned(MaltStatementAnalyzer.defaultDirectory(storage.dataDirectory()))
@@ -487,6 +489,8 @@ public final class AppRuntime implements AutoCloseable {
                 // Eigene Zeilen für Zusammenfassung, ihren Plan und den Podcast (Angelo 22.11.2026).
                 .withUses(ai.summary(), ai.podcast()).withSummaryPlan(ai.summaryPlan())
                 .withImagePlan(ai.imagePlan()).withDeadline(ai.deadline())
+                // Zeile „Quellcode“ (Angelo 28.11.2026): Beschreibung der Diagramme von Natural, COBOL, JCL.
+                .withSourceCode(ai.sourceCode())
                 // Eigene Sprachausgabe für Podcast und Vorlesen (Angelo 24.11.2026); leer: automatisch.
                 .withSpeech(ai.speech())
                 // Diagnose per KI (Angelo 26.11.2026): Schalter und Modell, vorbelegt mit gpt-oss-120b.

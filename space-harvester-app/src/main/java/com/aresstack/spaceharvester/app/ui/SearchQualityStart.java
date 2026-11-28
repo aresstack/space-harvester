@@ -144,7 +144,7 @@ final class SearchQualityStart {
         if (runtime == null) {
             return;
         }
-        Path output = context.settings() == null ? null : context.settings().outputDirectory();
+        Path output = context.exportDirectory();
         String version = com.aresstack.spaceharvester.app.SpaceHarvesterApp.version();
         Runner background = new Runner() {
             @Override

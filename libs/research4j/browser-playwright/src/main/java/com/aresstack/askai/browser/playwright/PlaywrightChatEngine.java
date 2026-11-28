@@ -20,8 +20,6 @@ public final class PlaywrightChatEngine implements BrowserEngine {
     private final boolean headless;
     private final long navigationTimeoutMillis;
     private final com.aresstack.askai.browser.search.LegacyBrowserSearchSettings searchSettings;
-    /** Dev/test only: one local search engine URL with {@code {query}}, host:port domain families; null in production. */
-    private String testSearchUrlTemplate;
 
     /**
      * @param launcher                the host's browser runtime
@@ -33,7 +31,7 @@ public final class PlaywrightChatEngine implements BrowserEngine {
     }
 
     /**
-     * @param searchSettings the search engines and SERP handling of {@code browser_search} ({@code null} = the
+     * @param searchSettings consent, captcha and page analysis of the chat browser ({@code null} = the
      *                       central defaults, {@link com.aresstack.askai.browser.search.LegacyBrowserSearchDefaults})
      */
     public PlaywrightChatEngine(BrowserLauncher launcher, boolean headless, long navigationTimeoutMillis,
@@ -46,12 +44,6 @@ public final class PlaywrightChatEngine implements BrowserEngine {
         this.launcher = launcher;
         this.headless = headless;
         this.navigationTimeoutMillis = navigationTimeoutMillis;
-    }
-
-    /** Dev/test only: search with one local engine template and key domains by host:port. */
-    PlaywrightChatEngine searchingLocally(String searchUrlTemplate) {
-        this.testSearchUrlTemplate = searchUrlTemplate;
-        return this;
     }
 
     /**
@@ -92,11 +84,7 @@ public final class PlaywrightChatEngine implements BrowserEngine {
                 driver.browserContext().onClose(context -> gone.set(true));
                 PlaywrightBrowserSession session = new PlaywrightBrowserSession(driver,
                         com.aresstack.askai.browser.UrlSafetyPolicy.allowingPrivateNetworks(),
-                        com.aresstack.askai.browser.BrowserLimits.defaults(), testSearchUrlTemplate, null,
-                        searchSettings);
-                if (testSearchUrlTemplate != null) {
-                    session.setDomainKeyResolver(new com.aresstack.askai.browser.domain.HostPortDomainKeyResolver());
-                }
+                        com.aresstack.askai.browser.BrowserLimits.defaults(), null, null, searchSettings);
                 return session;
             });
         } catch (RuntimeException e) {
@@ -106,8 +94,7 @@ public final class PlaywrightChatEngine implements BrowserEngine {
             throw new BrowserException(BrowserException.Kind.START_FAILED,
                     "Browser konnte nicht gestartet werden: " + message, e);
         }
-        return new Instance(actor, started[0].browserContext(), gone, started[0].camoufox(), navigationTimeoutMillis,
-                searchSettings, testSearchUrlTemplate);
+        return new Instance(actor, started[0].browserContext(), gone, navigationTimeoutMillis);
     }
 
     /** One running browser on one profile folder, owned by one thread. */
@@ -115,20 +102,12 @@ public final class PlaywrightChatEngine implements BrowserEngine {
         final BrowserSessionActor actor;
         private final BrowserContext context;
         private final long navigationTimeoutMillis;
-        final com.aresstack.askai.browser.search.LegacyBrowserSearchSettings searchSettings;
-        final boolean camoufox;
-        final String testSearchUrlTemplate;
         /** Set when the context closed (window closed, browser gone) or the chat stopped it. */
         private final java.util.concurrent.atomic.AtomicBoolean closed;
 
         Instance(BrowserSessionActor actor, BrowserContext context, java.util.concurrent.atomic.AtomicBoolean closed,
-                 boolean camoufox, long navigationTimeoutMillis,
-                 com.aresstack.askai.browser.search.LegacyBrowserSearchSettings searchSettings,
-                 String testSearchUrlTemplate) {
+                 long navigationTimeoutMillis) {
             this.actor = actor;
-            this.testSearchUrlTemplate = testSearchUrlTemplate;
-            this.searchSettings = searchSettings;
-            this.camoufox = camoufox;
             this.context = context;
             this.navigationTimeoutMillis = navigationTimeoutMillis;
             this.closed = closed;

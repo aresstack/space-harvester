@@ -128,4 +128,62 @@ public class BrowserSearchEngineSelectionTest {
         }
         return ids;
     }
+
+    @Test
+    public void aSearchPageNamedOnlyByItsAddressIsAskedThroughItsOwnSearchField() {
+        String portal = "https://portal.example/";
+        assertTrue(BrowserSearchEngineCatalog.isSearchPage(portal));
+
+        BrowserSearchEngine engine = BrowserSearchEngineCatalog.byId(portal);
+        assertEquals(portal, engine.getId());
+        assertEquals("portal.example", engine.getDisplayName());
+        assertTrue(engine.usesSearchForms());
+        assertEquals(portal, engine.formOf(0).getHomeUrl());
+        assertTrue(engine.formOf(0).getSearchBoxSelectors().contains("input[type=search]"));
+        org.junit.Assert.assertFalse(BrowserSearchEngineCatalog.runsInSearchBrowser(portal));
+    }
+
+    @Test
+    public void aSearchPageOfTheUsersOwnIsAnEngineWithItsUrlAsId() {
+        String portal = "https://portal.example:8443/suche?q={query}&bereich=a,b";
+        assertTrue(BrowserSearchEngineCatalog.isSearchPage(portal));
+        org.junit.Assert.assertFalse(BrowserSearchEngineCatalog.isSearchPage("ftp://portal.example/{query}"));
+        org.junit.Assert.assertFalse(BrowserSearchEngineCatalog.isSearchPage("Reisekosten"));
+
+        BrowserSearchEngine engine = BrowserSearchEngineCatalog.byId(portal);
+        assertEquals(portal, engine.getId());
+        assertEquals("portal.example:8443", engine.getDisplayName());
+        assertEquals(java.util.Collections.singletonList(portal), engine.getEndpointTemplates());
+        org.junit.Assert.assertFalse(BrowserSearchEngineCatalog.runsInSearchBrowser(portal));
+    }
+
+    @Test
+    public void searchPagesOfEqualPriorityFormOneGroupAndSurviveTheStoredForm() {
+        String first = "https://portal.example/suche?q={query}";
+        String second = "https://wiki.example/find?text={query}&x=50%25";
+        BrowserSearchEngineSelection selection = new BrowserSearchEngineSelection(Arrays.asList(
+                new BrowserSearchEngineSelection.Entry(first, true, 1, 0, 0, null, null),
+                new BrowserSearchEngineSelection.Entry(second, true, 1, 0, 0, null, null)),
+                EngineAcquisitionMode.ALL_ENABLED);
+
+        List<BrowserSearchEngineSelection.Entry> back =
+                BrowserSearchEngineSelection.parseEntries(selection.encodeEntries());
+        assertEquals(2, back.size());
+        assertEquals(java.util.Arrays.asList(first, second),
+                Arrays.asList(back.get(0).getEngineId(), back.get(1).getEngineId()));
+        assertEquals(0, back.get(0).getPriority());
+        assertEquals(0, back.get(1).getPriority());
+        assertEquals(2, new BrowserSearchEngineSelection(back, EngineAcquisitionMode.ALL_ENABLED)
+                .resolvedEnabledEngines().size());
+    }
+
+    @Test
+    public void aSearchPageNamedTwiceIsVisitedOnce() {
+        String portal = "https://portal.example/suche?q={query}";
+        BrowserSearchEngineSelection selection = new BrowserSearchEngineSelection(Arrays.asList(
+                new BrowserSearchEngineSelection.Entry(portal, true, 1, 0, 0, null, null),
+                new BrowserSearchEngineSelection.Entry(portal, true, 1, 0, 1, null, null)),
+                EngineAcquisitionMode.ALL_ENABLED);
+        assertEquals(1, selection.resolvedEnabledEngines().size());
+    }
 }

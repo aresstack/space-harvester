@@ -12,6 +12,7 @@ public final class SearchMethods {
 
     static final String NEIGHBORS = "search.method.neighbors";
     static final String TERM_PAGES = "search.method.term-pages";
+    static final String HEADINGS_ONLY = "search.method.headings-only";
 
     private static final SearchMethods USER = new SearchMethods(Preferences.userNodeForPackage(SearchMethods.class));
 
@@ -88,16 +89,28 @@ public final class SearchMethods {
     }
 
     /**
-     * Suchmethode „Nur Fachbegriffe“ (K5b); Standard aus, gilt nur für die Sitzung. Der Chat übernimmt sie nicht: sie
-     * ist eine Pflegeansicht für das Glossar und liefert keine Seitentreffer.
+     * Suchmethode „Nur Überschriften durchsuchen“ (Angelo 27.11.2026): Seitentitel und Überschriften, kein Fließtext;
+     * Standard aus, die Stellung bleibt über den Neustart erhalten. Normale Suche und Wortsuche lesen dieselbe.
      */
-    public boolean technicalTermsOnly() {
-        return technicalTermsOnly;
+    public boolean headingsOnly() {
+        try {
+            Boolean held = headingsOnlySession;
+            return held != null ? held : preferences.getBoolean(HEADINGS_ONLY, false);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
-    public void technicalTermsOnly(boolean on) {
-        technicalTermsOnly = on;
+    public void headingsOnly(boolean on) {
+        try {
+            preferences.putBoolean(HEADINGS_ONLY, on);
+        } catch (RuntimeException e) {
+            // Ohne Ablage gilt die Stellung nur bis zum Ende der Sitzung; die Suche läuft trotzdem.
+            headingsOnlySession = on;
+            return;
+        }
+        headingsOnlySession = null;
     }
 
-    private volatile boolean technicalTermsOnly;
+    private volatile Boolean headingsOnlySession;
 }

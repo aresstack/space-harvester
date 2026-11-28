@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.app.chat.ChatRecord;
 import com.aresstack.spaceharvester.app.chat.ChatStore;
 import com.aresstack.spaceharvester.app.event.StatusMessageEvent;
 import com.aresstack.spaceharvester.app.project.Project;
+import com.aresstack.spaceharvester.app.project.ProjectOutput;
 import com.aresstack.spaceharvester.app.project.ProjectStore;
 import com.aresstack.spaceharvester.app.project.ProjectTarget;
 import org.junit.jupiter.api.Test;
@@ -37,21 +38,28 @@ class ProjectChooserTest {
     }
 
     private static List<String> texts(List<Component> items) {
-        return items.stream().filter(JMenuItem.class::isInstance).map(item -> ((JMenuItem) item).getText()).toList();
+        // Der gezeichnete Haken des aktiven Projekts steht hier als „✓ “, sein leerer Platz als Lücke.
+        return items.stream().filter(JMenuItem.class::isInstance).map(item -> (JMenuItem) item)
+                .map(item -> item.getIcon() instanceof com.aresstack.spaceharvester.app.ui.controls.CheckMark mark
+                        ? (mark.checked() ? "✓ " : "    ") + item.getText() : item.getText()).toList();
     }
 
     @Test
     void theListShowsAllProjectsWithTheActiveCheckedAndActionsOnlyForOwnProjects() {
         ProjectStore projects = projects();
         ProjectChooser chooser = chooser(projects);
-        assertThat(texts(chooser.items())).containsExactly("✓ AresStack", ProjectChooser.NEW);
+        assertThat(texts(chooser.items())).containsExactly("✓ AresStack", ProjectChooser.NEW,
+                ProjectChooser.SETTINGS);
+        JMenuItem standardSettings = (JMenuItem) chooser.items().stream().filter(JMenuItem.class::isInstance)
+                .filter(item -> ProjectChooser.SETTINGS.equals(((JMenuItem) item).getText())).findFirst().orElseThrow();
+        assertThat(standardSettings.isEnabled()).as("AresStack nutzt immer den Ausgabeordner").isFalse();
 
         chooser.askName = (title, current) -> "Umzug";
         chooser.create();
         Project created = projects.active();
         assertThat(created.name()).as("neues Projekt wird gleich aktiv").isEqualTo("Umzug");
         assertThat(texts(chooser.items())).containsExactly("    AresStack", "✓ Umzug", ProjectChooser.NEW,
-                ProjectChooser.RENAME, ProjectChooser.TARGET, ProjectChooser.DELETE);
+                ProjectChooser.SETTINGS, ProjectChooser.RENAME, ProjectChooser.DELETE);
 
         ((JMenuItem) chooser.items().get(0)).doClick();
         assertThat(projects.active().isDefault()).isTrue();
@@ -72,7 +80,7 @@ class ProjectChooserTest {
         chooser.openPath = opened::add;
 
         Path folder = Files.createDirectories(home.resolve("aufgaben"));
-        chooser.askTarget = (p, current) -> ProjectTarget.of(ProjectTarget.Kind.PATH, folder.toString());
+        chooser.askSettings = p -> p.withTarget(ProjectTarget.of(ProjectTarget.Kind.PATH, folder.toString()));
         chooser.open(project);
         assertThat(opened).as("ohne Ziel nur der Dialog, nichts öffnet sich").isEmpty();
         project = projects.resolve(project.id());
@@ -85,8 +93,8 @@ class ProjectChooserTest {
 
         projects.retarget(project.id(), ProjectTarget.of(ProjectTarget.Kind.PATH, home.resolve("fehlt").toString()));
         List<ProjectTarget> asked = new ArrayList<>();
-        chooser.askTarget = (p, current) -> {
-            asked.add(current);
+        chooser.askSettings = p -> {
+            asked.add(p.target());
             return null;
         };
         chooser.open(projects.resolve(project.id()));
@@ -169,5 +177,47 @@ class ProjectChooserTest {
         assertThat(body.hint.getText()).isEqualTo(ProjectTargetDialog.INVALID_WEBSITE);
         body.field.setText("beispiel.invalid");
         assertThat(body.target().value()).isEqualTo("https://beispiel.invalid");
+    }
+
+    @Test
+    void theSettingsOfferSaveHereWithTheSubfolderDownloadsAndAcceptAnEmptyOne() {
+        ProjectTargetDialog.Body body = new ProjectTargetDialog.Body(null, ProjectOutput.standard(),
+                parent -> home.toFile());
+        assertThat(body.saveHere.isSelected()).as("Vorgabe: alles im Projektordner").isTrue();
+        assertThat(body.subfolder.getText()).isEqualTo(ProjectOutput.DEFAULT_SUBFOLDER);
+        body.browse.doClick();
+        assertThat(body.complete()).isTrue();
+
+        body.subfolder.setText("");
+        assertThat(body.complete()).as("leer = direkt im Projektordner").isTrue();
+        assertThat(body.output()).isEqualTo(new ProjectOutput(true, ""));
+
+        body.subfolder.setText("../weg");
+        assertThat(body.complete()).isFalse();
+        assertThat(body.subfolderHint.getText()).isEqualTo(ProjectTargetDialog.INVALID_SUBFOLDER);
+        body.saveHere.doClick();
+        assertThat(body.complete()).as("ohne Haken zählt der Unterordner nicht").isTrue();
+        assertThat(body.subfolder.isEnabled()).isFalse();
+    }
+
+    @Test
+    void projectSettingsAreStoredForTheActiveProject() {
+        ProjectStore projects = projects();
+        ProjectChooser chooser = chooser(projects);
+        Project project = projects.create("Umzug");
+        chooser.askSettings = p -> p.withTarget(ProjectTarget.of(ProjectTarget.Kind.PATH, home.toString()))
+                .withOutput(new ProjectOutput(false, "Ablage"));
+        chooser.configure(project);
+        Project stored = projects.resolve(project.id());
+        assertThat(stored.target().value()).isEqualTo(home.toString());
+        assertThat(stored.output()).isEqualTo(new ProjectOutput(false, "Ablage"));
+
+        List<Project> asked = new ArrayList<>();
+        chooser.askSettings = p -> {
+            asked.add(p);
+            return p;
+        };
+        chooser.configure(Project.standard());
+        assertThat(asked).as("AresStack hat keine Projekteinstellungen").isEmpty();
     }
 }
