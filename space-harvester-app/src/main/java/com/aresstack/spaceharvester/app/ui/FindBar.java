@@ -120,6 +120,11 @@ public final class FindBar extends JPanel {
         /** Das Symbol des Umschalters. */
         javax.swing.Icon foldIcon();
 
+        /** Ob die Ansicht Zeilen ohne Treffer zufalten kann; ohne das zeigt das Feld keinen Falt-Umschalter. */
+        default boolean canFold() {
+            return true;
+        }
+
         /** Was rechts in der Ecke der Leiste steht (Sprachauswahl des Code-Viewers); {@code null} ohne. */
         JComponent findCorner();
     }
@@ -486,8 +491,8 @@ public final class FindBar extends JPanel {
         }
         JComponent root = area.get();
         Own shown = own != null ? own : root == null ? null : owner(root);
-        foldToggle.setVisible(shown != null);
-        if (shown != null) {
+        foldToggle.setVisible(shown != null && shown.canFold());
+        if (shown != null && shown.canFold()) {
             foldToggle.setIcon(shown.foldIcon());
             foldToggle.marked(shown.folding());
         }

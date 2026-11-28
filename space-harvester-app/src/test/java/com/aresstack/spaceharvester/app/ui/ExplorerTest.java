@@ -947,6 +947,33 @@ class ExplorerTest {
             explorer[0].clearSelection();
         });
 
+        // Die Fußleiste ist dieselbe wie unter der Arbeitsfläche (Angelo 27.11.2026): links die Lupe, mittig „Alles
+        // zuklappen“ und das Fadenkreuz, rechts das Bestandszeichen und in der Ecke die Hilfe. Die Lupe markiert
+        // Titel im Baum, ohne zu filtern und ohne die Auswahl zu ändern.
+        SwingUtilities.invokeAndWait(() -> {
+            FindBar foot = explorer[0].footBar();
+            javax.swing.JTree tree = explorer[0].tree();
+            assertThat(SwingUtilities.isDescendingFrom(explorer[0].collapseAllButton(), foot.toolsArea())).isTrue();
+            assertThat(SwingUtilities.isDescendingFrom(explorer[0].allBadge(), foot.cornerArea())).isTrue();
+            assertThat(foot.helpArea().getComponent(0))
+                    .isInstanceOf(com.aresstack.spaceharvester.app.ui.controls.HelpButton.class);
+            assertThat(foot.foldToggle().isVisible()).as("im Baum wird nicht gefiltert").isFalse();
+            int rows = tree.getRowCount();
+            int before = scopes.size();
+
+            foot.search("HANDB");
+            assertThat(explorer[0].findHits()).extracting(String::valueOf).containsExactly("Handbuch");
+            assertThat(foot.counterText()).isEqualTo("1 / 1");
+            assertThat(tree.getRowCount()).as("nichts ausgeblendet").isEqualTo(rows);
+            assertThat(tree.getSelectionCount()).as("Auswahl unverändert").isZero();
+            assertThat(scopes).hasSize(before);
+
+            foot.search("gibtesnicht");
+            assertThat(foot.counterText()).isEqualTo("Keine Treffer");
+            foot.close();
+            assertThat(explorer[0].findHits()).isEmpty();
+        });
+
         // „Alles indexieren“ im Kontextmenü der Überschrift indexiert jede Quelle mit allen Spaces (je Space ein
         // Auftrag, wie einzeln).
         List<String> indexed = new java.util.ArrayList<>();
