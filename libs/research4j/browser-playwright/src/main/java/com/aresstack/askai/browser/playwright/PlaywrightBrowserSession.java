@@ -351,6 +351,7 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
         List<BrowserLink> linksBefore = currentLinks;
         long linksGenerationBefore = linksGeneration;
         boolean hadPage = hasPage;
+        PlaywrightPageState documentBefore = currentDocument; // a downloaded PDF lives only here, not in the tab
         searchTabsUsed = false;
         boolean ownTab = searchInOwnTab;
         if (ownTab) {
@@ -366,11 +367,12 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
                 driver.endSearchTab();
             }
             if (searchTabsUsed) {
-                // The result pages were read in the tabs that are gone now: links and "has a page" are again those
+                // The result pages were read in the tabs that are gone now: links, "has a page" and the read document are again those
                 // of the page the session is back on, so a follow_link never resolves an id of a closed tab.
                 currentLinks = linksBefore;
                 linksGeneration = linksGenerationBefore;
                 hasPage = hadPage;
+                currentDocument = documentBefore;
             }
         }
     }
