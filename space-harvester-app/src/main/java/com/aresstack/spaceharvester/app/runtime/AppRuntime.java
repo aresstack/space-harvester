@@ -489,6 +489,8 @@ public final class AppRuntime implements AutoCloseable {
                 // Eigene Zeilen für Zusammenfassung, ihren Plan und den Podcast (Angelo 22.11.2026).
                 .withUses(ai.summary(), ai.podcast()).withSummaryPlan(ai.summaryPlan())
                 .withImagePlan(ai.imagePlan()).withDeadline(ai.deadline())
+                // Zeile „Quellcode“ (Angelo 28.11.2026): Beschreibung der Diagramme von Natural, COBOL, JCL.
+                .withSourceCode(ai.sourceCode())
                 // Eigene Sprachausgabe für Podcast und Vorlesen (Angelo 24.11.2026); leer: automatisch.
                 .withSpeech(ai.speech())
                 // Diagnose per KI (Angelo 26.11.2026): Schalter und Modell, vorbelegt mit gpt-oss-120b.

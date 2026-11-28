@@ -385,8 +385,9 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
                             wanted, false);
                 }
                 VisualAction.takeLabelProblem();
+                // Erst das Bild ohne KI (sofort da), die KI-Fassung zieht danach nach
                 return SourceDiagrams.generate(text, name, language, wanted, depth, compact, auto, targets,
-                        preparedOutline.get());
+                        preparedOutline.get(), false);
             }
 
             @Override
@@ -415,6 +416,9 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
                     showCollapse();
                 }
                 diagram.setMermaidSource(result.mermaid().get());
+                if (!mermaid && VisualAction.aiAvailable()) {
+                    describe(mine, text, name, language, result, depth, preparedOutline);
+                }
                 String labelProblem = VisualAction.takeLabelProblem();
                 if (result.type() != wanted && language.orElse(null) == SourceLanguage.COBOL
                         && (wanted == DiagramType.FLOWCHART || wanted == DiagramType.SEQUENCE)) {
@@ -423,6 +427,48 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
                 } else if (labelProblem != null) {
                     plate.show("KI-Kurzbeschriftung nicht möglich (" + labelProblem
                             + ") – die Blöcke tragen die einfache Beschriftung.", null, null);
+                }
+            }
+        }.execute();
+    }
+
+    /**
+     * Zweiter Durchgang mit KI: dasselbe Diagramm (gleicher Typ, gleiche Kompaktheit), aber Blöcke, Verzweigungen und
+     * aufgerufene Programme von der KI beschrieben. Ersetzt das Bild nur, solange keine neuere Erzeugung läuft.
+     */
+    private void describe(long mine, String text, String name, Optional<SourceLanguage> language,
+            SourceDiagrams.Result first, int depth,
+            java.util.function.Supplier<com.aresstack.spaceharvester.mainframe.outline.Outline> outline) {
+        diagram.getStatusLabel().setText("KI beschreibt das Diagramm …");
+        new SwingWorker<SourceDiagrams.Result, Void>() {
+            @Override
+            protected SourceDiagrams.Result doInBackground() {
+                return SourceDiagrams.generate(text, name, language, first.type(), depth, first.collapsed(), false,
+                        targets, outline.get(), true);
+            }
+
+            @Override
+            protected void done() {
+                if (mine != ticket) {
+                    return;
+                }
+                SourceDiagrams.Result described;
+                try {
+                    described = get();
+                } catch (Exception e) {
+                    described = null;
+                }
+                String problem = VisualAction.takeLabelProblem();
+                if (described != null && described.mermaid().isPresent()
+                        && !described.mermaid().equals(first.mermaid())) {
+                    diagram.setMermaidSource(described.mermaid().get());
+                    diagram.getStatusLabel().setText("Von der KI beschrieben.");
+                } else {
+                    diagram.getStatusLabel().setText(" ");
+                }
+                if (problem != null) {
+                    plate.show("KI-Beschreibung nicht möglich (" + problem
+                            + ") – das Diagramm trägt die einfache Beschriftung.", null, null);
                 }
             }
         }.execute();

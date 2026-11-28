@@ -87,6 +87,18 @@ public final class SourceDiagrams {
     public static Result generate(String content, String sourceName, Optional<SourceLanguage> language,
             DiagramType type, int mindmapDepth, boolean collapsed, boolean autoCollapse, SourceResolver resolver,
             Outline preparedOutline) {
+        return generate(content, sourceName, language, type, mindmapDepth, collapsed, autoCollapse, resolver,
+                preparedOutline, true);
+    }
+
+    /**
+     * Wie oben; {@code ai = false} beschriftet ohne KI-Aufrufe (schnelles erstes Bild), {@code true} mit der
+     * eingeschalteten KI-Beschreibung ({@link OutlineToMermaidConverter#blockLabelSummarizer()}). Aufgerufene
+     * Programme werden in beiden Fällen über {@code resolver} geladen, damit ihre eigenen Aufrufe erscheinen.
+     */
+    public static Result generate(String content, String sourceName, Optional<SourceLanguage> language,
+            DiagramType type, int mindmapDepth, boolean collapsed, boolean autoCollapse, SourceResolver resolver,
+            Outline preparedOutline, boolean ai) {
         if (content == null || content.isEmpty()) {
             return new Result(Optional.empty(), type, collapsed);
         }
@@ -144,7 +156,9 @@ public final class SourceDiagrams {
         }
 
         boolean compact = collapsed || autoCollapse && OutlineToMermaidConverter.shouldCollapse(model);
-        String result = OutlineToMermaidConverter.convert(model, type, callTree, ddms, compact);
+        FlowLabels labels = FlowLabels.of(content, resolver,
+                ai ? OutlineToMermaidConverter.blockLabelSummarizer() : null, OutlineToMermaidConverter.labelLayout());
+        String result = OutlineToMermaidConverter.convert(model, type, callTree, ddms, compact, labels);
         DiagramType produced = type;
         if (result == null && type != DiagramType.STRUCTURE) {
             result = OutlineToMermaidConverter.convert(model, DiagramType.STRUCTURE, null, null, compact);
