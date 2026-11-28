@@ -116,9 +116,18 @@ Prüfung am 28.11.2026 (Probe außerhalb des Repos, CEL 0.15.0 unter Java 21):
 | Benutzte Variablen | aus dem geprüften Ausdruck ablesbar; Hilfsnamen der Makros sind herauszufiltern |
 | Weitere Abhängigkeiten | Guava 33.7.2-jre, protobuf-java 4.36.2, RE2/J 1.8, threeten-extra 1.11.0, SnakeYAML 2.7 |
 
-Nicht geprüft: der Abgleich mit dem ganzen Klassenpfad der App. Die Auflösung im Container scheiterte, weil Maven
-Central die Abrufe begrenzte. Space Harvester legt SnakeYAML 2.4 fest, CEL bringt 2.7 mit. Das klärt der erste
-Bau-PR über die CI.
+Abgleich mit dem aufgelösten Laufzeit-Klassenpfad der App (`:space-harvester-app:runtimeClasspath`, develop
+`fc0767b7f`, 28.11.2026):
+
+| Bibliothek von CEL | Im Klassenpfad der App | Folge |
+| --- | --- | --- |
+| antlr4-runtime 4.13.2 | 4.13.2 | gleich |
+| jspecify 1.0.1 | 1.0.1 | gleich |
+| SnakeYAML 2.7 | 2.6 (über die Spring-Boot-Vorgabe) | würde auf 2.7 steigen |
+| Guava, protobuf-java, RE2/J, threeten-extra, auto-value-annotations | nicht vorhanden | kommen neu dazu, kein Versionskonflikt |
+
+Damit sind die Versionen abgeglichen. Nicht geprüft ist ein Bau und Lauf der App mit CEL und mit SnakeYAML 2.7; das
+zeigt die CI im ersten Bau-Schritt. Gson liegt in Fassung 2.14.0 schon im Klassenpfad der App.
 
 ### 6. Auslöser
 
