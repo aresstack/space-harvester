@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.bubble;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -818,7 +819,7 @@ public class AnimatedThoughtBubblePanel extends JPanel {
     }
 
     private static Color withAlpha(Color color, int alpha) {
-        return new Color(color.getRed(), color.getGreen(), color.getBlue(), alpha);
+        return ThemeColor.withAlpha(color, alpha); // derived live: follows a theme switch of the base color
     }
 
     private static String normalize(String value) {

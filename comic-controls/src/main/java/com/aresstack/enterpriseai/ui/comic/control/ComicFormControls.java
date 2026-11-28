@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.control;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import com.aresstack.enterpriseai.ui.comic.theme.ComicPalette;
 
 import javax.swing.AbstractButton;
@@ -96,7 +97,7 @@ public final class ComicFormControls {
                     RoundRectangle2D pill = new RoundRectangle2D.Float(1, 1, c.getWidth() - 2, c.getHeight() - 2,
                             c.getHeight() - 2, c.getHeight() - 2);
                     g2.setColor(!c.isEnabled() ? palette.getSurface() : button.isSelected()
-                            ? palette.getNavigationBlue() : hovered ? palette.getAccentYellow() : Color.WHITE);
+                            ? palette.getNavigationBlue() : hovered ? palette.getAccentYellow() : ThemeColor.of("comic.buttonPlate"));
                     g2.fill(pill);
                     g2.setColor(c.isEnabled() ? palette.getInk() : muted(palette));
                     g2.setStroke(new BasicStroke(2f));
@@ -104,7 +105,7 @@ public final class ComicFormControls {
                 } finally {
                     g2.dispose();
                 }
-                c.setForeground(button.isSelected() && c.isEnabled() ? Color.WHITE : palette.getInk());
+                c.setForeground(button.isSelected() && c.isEnabled() ? ThemeColor.of("comic.buttonPlate") : palette.getInk());
                 super.paint(g, c);
             }
         });
@@ -160,7 +161,7 @@ public final class ComicFormControls {
                 g2.translate(x, y);
                 RoundRectangle2D box = new RoundRectangle2D.Float(1.5f, 1.5f, SIZE - 3, SIZE - 3, 7, 7);
                 g2.setColor(!enabled ? palette.getSurface() : selected ? palette.getAccentYellow()
-                        : hovered ? lighter(palette.getAccentYellow()) : Color.WHITE);
+                        : hovered ? lighter(palette.getAccentYellow()) : ThemeColor.of("comic.fieldBg"));
                 g2.fill(box);
                 g2.setColor(enabled ? palette.getInk() : muted(palette));
                 g2.setStroke(new BasicStroke(2f));
@@ -185,8 +186,9 @@ public final class ComicFormControls {
         }
 
         private static Color lighter(Color color) {
-            return new Color((color.getRed() + 255 * 2) / 3, (color.getGreen() + 255 * 2) / 3,
-                    (color.getBlue() + 255 * 2) / 3);
+            Color white = ThemeColor.of("comic.fieldBg");
+            return new Color((color.getRed() + white.getRed() * 2) / 3, (color.getGreen() + white.getGreen() * 2) / 3,
+                    (color.getBlue() + white.getBlue() * 2) / 3);
         }
     }
 
@@ -223,7 +225,7 @@ public final class ComicFormControls {
                 float w = horizontal ? track.width : TRACK;
                 float h = horizontal ? TRACK : track.height;
                 RoundRectangle2D bar = new RoundRectangle2D.Float(x, y, w, h, TRACK, TRACK);
-                g2.setColor(Color.WHITE);
+                g2.setColor(ThemeColor.of("comic.fieldBg"));
                 g2.fill(bar);
                 if (slider.isEnabled()) {
                     g2.setColor(palette.getNavigationBlue());
@@ -317,7 +319,7 @@ public final class ComicFormControls {
         public void paint(Graphics g, JComponent c) {
             Graphics2D g2 = smooth(g);
             try {
-                g2.setColor(c.isEnabled() ? Color.WHITE : palette.getSurface());
+                g2.setColor(c.isEnabled() ? ThemeColor.of("comic.fieldBg") : palette.getSurface());
                 g2.fill(new RoundRectangle2D.Float(1, 1, c.getWidth() - 2, c.getHeight() - 2, 10, 10));
             } finally {
                 g2.dispose();

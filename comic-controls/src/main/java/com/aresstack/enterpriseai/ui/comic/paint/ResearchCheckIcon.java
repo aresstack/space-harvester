@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.paint;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPainter;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 
@@ -41,11 +42,11 @@ public final class ResearchCheckIcon implements Icon {
             g2.fillRoundRect(1, 1, SIZE - 2, SIZE - 2, 6, 6);
             if (!selected) {
                 g2.setColor(hovered && enabled ? ResearchUiPalette.ACCENT_BLUE
-                        : ResearchUiPainter.mix(ResearchUiPalette.LIGHT_CONTROL_BORDER, Color.BLACK, 0.1f));
+                        : ResearchUiPainter.mix(ResearchUiPalette.LIGHT_CONTROL_BORDER, ThemeColor.of("comic.checkBorderShade"), 0.1f));
                 g2.setStroke(new BasicStroke(1.4f));
                 g2.drawRoundRect(1, 1, SIZE - 3, SIZE - 3, 6, 6);
             } else {
-                g2.setColor(Color.WHITE);
+                g2.setColor(ThemeColor.of("comic.buttonPlate"));
                 g2.setStroke(new BasicStroke(1.9f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                 g2.drawPolyline(new int[]{4, 7, 12}, new int[]{8, 11, 5}, 3);
             }
