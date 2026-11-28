@@ -163,7 +163,10 @@ public final class DividerRail {
                     button.getModel().setPressed(false);
                 }
             }
-            pane.setDividerLocation(startLocation + moved);
+            // Wie beim Ziehen an der Linie: nie über die kleinste Breite einer der beiden Seiten hinaus.
+            int low = pane.getMinimumDividerLocation();
+            int high = Math.max(low, pane.getMaximumDividerLocation());
+            pane.setDividerLocation(Math.max(low, Math.min(high, startLocation + moved)));
         }
 
         @Override

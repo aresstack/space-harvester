@@ -102,6 +102,19 @@ class DividerRailTest {
             assertThat(events).as("Ziehen ist kein Klick").isEmpty();
             assertThat(rail.selected()).isEqualTo("Chat");
 
+            // Wie an der Linie endet das Ziehen an der kleinsten Breite der Seiten.
+            int placed = pane.getDividerLocation();
+            mouse(jobs, MouseEvent.MOUSE_PRESSED, 1000);
+            mouse(jobs, MouseEvent.MOUSE_DRAGGED, 5000);
+            assertThat(pane.getDividerLocation()).isEqualTo(pane.getMaximumDividerLocation())
+                    .isLessThanOrEqualTo(800 - ComicDivider.THICKNESS - 50);
+            mouse(jobs, MouseEvent.MOUSE_DRAGGED, -5000);
+            assertThat(pane.getDividerLocation()).isEqualTo(pane.getMinimumDividerLocation()).isEqualTo(50);
+            mouse(jobs, MouseEvent.MOUSE_DRAGGED, 1000);
+            mouse(jobs, MouseEvent.MOUSE_RELEASED, 1000);
+            assertThat(pane.getDividerLocation()).isEqualTo(placed);
+            assertThat(events).isEmpty();
+
             // Unter der Schwelle bleibt es ein Klick: Der Trenner steht, der Knopf schaltet um.
             mouse(jobs, MouseEvent.MOUSE_PRESSED, 1000);
             mouse(jobs, MouseEvent.MOUSE_DRAGGED, 1001);
