@@ -2054,9 +2054,10 @@ final class AiSettingsPanel {
     static final String SOURCE_CODE_LABEL = "Quellcode";
     static final String SOURCE_CODE_HELP = "Dieses Modell beschreibt Quelltexte (Natural, COBOL, JCL) für Menschen, "
             + "die die Sprache nicht kennen: in der Diagramm-Ansicht jeden zusammengefassten Block, jede Verzweigung "
-            + "als Frage und jedes aufgerufene Programm mit seinem Zweck. Leer: das Text-Modell."
-            + "\n\n" + TOKENS_HELP_TAIL + "\n\nStandard " + AiServiceSettings.DEFAULT_SOURCE_CODE_MAX_TOKENS
-            + " Tokens, denkt nicht. Schlüssel in der Konfigurationsdatei: space-harvester.ai.source-code-model, "
+            + "als Frage und jedes aufgerufene Programm mit seinem Zweck. Leer: Modell, Tokenlänge und Nachdenken genau "
+            + "wie beim Text-Modell (Chat)."
+            + "\n\n" + TOKENS_HELP_TAIL + "\n\nMit eigenem Modell Standard "
+            + AiServiceSettings.DEFAULT_SOURCE_CODE_MAX_TOKENS + " Tokens, Nachdenken wie beim Text-Modell. Schlüssel in der Konfigurationsdatei: space-harvester.ai.source-code-model, "
             + ".source-code-max-tokens und .source-code-thinking.";
     static final String DEADLINE_LABEL = "Fristen";
     static final String DEADLINE_HELP = "Dieses Modell liest Erlasse und Verfügungen für die Fristenprüfung: Konten, "

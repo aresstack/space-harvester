@@ -59,13 +59,15 @@ public final class DiagramSettingsPanel {
                 + "Programm mit seinem Zweck. Aus: keine KI-Aufrufe, die einfache Beschriftung bleibt.");
         aiLabels.addActionListener(e -> AppState.shared().put(DiagramLabels.ENABLED_KEY, aiLabels.isSelected()));
         diagram.add(aiLabels, BorderLayout.NORTH);
-        diagram.add(Comic.hint("Der Code der Blöcke und der aufgerufenen Programme geht dabei an den KI-Dienst. Das "
-                + "Diagramm erscheint sofort mit der einfachen Beschriftung („📦 5 Anweisungen“, Bedingungen, Zweige); "
-                + "die KI-Fassung ersetzt es, sobald sie fertig ist."), BorderLayout.CENTER);
+        diagram.add(Comic.hint("Der Code der Blöcke und der aufgerufenen Programme geht dabei an den KI-Dienst, so "
+                + "viele Fragen gleichzeitig wie unter „ai.parallel“ eingestellt. Das Diagramm wird einmal gezeichnet, "
+                + "wenn alle Antworten da sind: kurze Titel mit Nummer in den Knoten, die Erklärungen unter derselben "
+                + "Nummer in der gelben Box daneben. Ohne KI oder bei einem Fehler bleibt die einfache Beschriftung "
+                + "(„📦 5 Anweisungen“, Bedingungen, Zweige)."), BorderLayout.CENTER);
         number(length, DiagramLabels.LENGTH_KEY, "Länge kurzer Beschriftungen (Frage, Zweig, Zweck) in Zeichen");
-        number(detailLength, DiagramLabels.DETAIL_LENGTH_KEY, "Länge der Beschreibung eines Blocks in Zeichen");
+        number(detailLength, DiagramLabels.DETAIL_LENGTH_KEY, "Länge einer Erklärung in der gelben Erklärbox in Zeichen");
         number(lineWidth, DiagramLabels.LINE_WIDTH_KEY, "Zeichen je Zeile in einem Diagrammknoten");
-        diagram.add(Comic.row(new JLabel("Kurz"), length, new JLabel("Block"), detailLength,
+        diagram.add(Comic.row(new JLabel("Kurz"), length, new JLabel("Erklärung"), detailLength,
                 new JLabel("Zeilenbreite"), lineWidth), BorderLayout.SOUTH);
         showNumbers();
 

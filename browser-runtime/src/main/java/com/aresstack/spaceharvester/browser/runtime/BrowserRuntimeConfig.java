@@ -14,7 +14,9 @@ import java.util.Objects;
  * @param dataDirectory       the host's data folder: profiles under {@code browser-profiles/<channel>}, start
  *                            failures under {@code logs}, the driver JARs under {@code playwright-driver}
  * @param camoufoxRoot        where Camoufox is (or is to be) installed
- * @param startTimeout        how long a browser start may take; zero = Playwright's own limit
+ * @param startTimeout        how long a browser start may take; zero = no limit: the start ends when the browser is
+ *                            ready or its process ends (the user closed it, it crashed), never while it is still
+ *                            starting
  * @param profileReleaseWait  how long a restart waits for the previous browser of the same profile to release it
  *                            before it falls back to a temporary profile
  * @param staleTemporaryAge   temporary profiles older than this are left-overs of a crash and are removed

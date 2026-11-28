@@ -104,13 +104,13 @@ class VisualActionTest {
             assertThat(sides).containsExactly(view.sideTools());
             assertThat(components(view.sideTools(), javax.swing.JToggleButton.class)).isEmpty();
             assertThat(components(view.sideTools(), javax.swing.JSpinner.class)).isEmpty();
-            // Zoom, Einpassen, Neu zeichnen, Export: Symbolknöpfe in der Werkzeugzeile des Editors.
+            // Zoom, Einpassen, Neu zeichnen, Export, im Chat erklären: Symbolknöpfe in der Werkzeugzeile des Editors.
             for (javax.swing.JComponent tool : view.barTools()) {
                 assertThat(javax.swing.SwingUtilities.isDescendingFrom(tool, fixture.editor)).isTrue();
                 assertThat(javax.swing.SwingUtilities.isDescendingFrom(tool, view)).isFalse();
             }
             assertThat(java.util.Arrays.stream(view.barTools())
-                    .filter(c -> c instanceof com.aresstack.spaceharvester.app.ui.IconButton)).hasSize(5);
+                    .filter(c -> c instanceof com.aresstack.spaceharvester.app.ui.IconButton)).hasSize(6);
             fixture.action.toggle();
             return null;
         });
