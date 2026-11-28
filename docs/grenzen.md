@@ -614,7 +614,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `RecentTerms.MAX_TERMS` | `BackButton.MAX_ENTRIES` | fest | Cache-Aufbewahrung | einstellbar: folgt dem Verlauf am Zurück-Knopf |
 | `RelationTab.RELATION_LIMIT` | `TermRelations.MAX_LIMIT` | fest | Stapel-/Seitengröße | einstellbar |
 | `ScreenText.MAX_ROWS` | `300` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
-| `SearchBarLayout.MAX_WIDTH` | `560` | fest | Invariante/Darstellung | im Code belassen |
+| `SearchBarLayout.MAX_WIDTH` | `360` | fest | Invariante/Darstellung | im Code belassen |
 | `SearchView.LIMIT` | `25` | fest | Stapel-/Seitengröße | einstellbar |
 | `SearchView.MAX_LISTED_SPACES` | `3` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `SearchView.MAX_NAMED_AREAS` | `3` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |

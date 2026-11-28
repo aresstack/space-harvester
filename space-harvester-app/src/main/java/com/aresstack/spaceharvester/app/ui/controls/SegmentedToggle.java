@@ -55,17 +55,134 @@ public final class SegmentedToggle extends JPanel {
         Segment segment = new Segment(name);
         segment.icon = icon;
         if (icon != null) {
+            segment.setIcon(icon);
             segment.setToolTipText(name);
         }
         segments.put(name, segment);
         group.add(segment);
         add(segment);
-        segment.addActionListener(event -> select(name));
+        segment.addActionListener(event -> clicked(name));
+        segment.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseEntered(java.awt.event.MouseEvent event) {
+                hovered(true);
+            }
+
+            @Override
+            public void mouseExited(java.awt.event.MouseEvent event) {
+                hovered(false);
+            }
+        });
         if (selected == null) {
             selected = name;
             segment.setSelected(true);
         }
         return this;
+    }
+
+    /**
+     * Ein Klick des Benutzers. Der zweite Klick auf die gewählte Hälfte geht an {@link #onAgain}, wenn jemand ihn haben
+     * will (etwa: die Seitenleiste klappt zu); sonst bleibt die Hälfte gewählt wie bisher.
+     */
+    private void clicked(String name) {
+        if (again != null && name.equals(selected)) {
+            again.accept(name);
+            return;
+        }
+        select(name);
+    }
+
+    /** Der zweite Klick auf die gewählte Hälfte; ohne Empfänger geschieht nichts. */
+    public void onAgain(Consumer<String> again) {
+        this.again = again;
+    }
+
+    private Consumer<String> again;
+
+    /**
+     * Stellt die Hälften untereinander statt nebeneinander (Angelo 27.11.2026): So schmal steht der Umschalter einer
+     * zugeklappten Seitenleiste am Fensterrand, umgekehrt gefärbt (schwarzer Grund, weiße Symbole, die Hälfte unter
+     * der Maus hell). Nur für Hälften mit Symbol gedacht; eine Zahl zeigt sich dann als Punkt an der Ecke des Symbols.
+     */
+    public void vertical(boolean vertical) {
+        if (this.vertical == vertical) {
+            return;
+        }
+        this.vertical = vertical;
+        hovered = false;
+        setLayout(vertical ? new GridLayout(0, 1, 0, 0) : new GridLayout(1, 0, 0, 0));
+        revalidate();
+        repaint();
+    }
+
+    public boolean vertical() {
+        return vertical;
+    }
+
+    private boolean vertical;
+    /**
+     * Deckkraft des senkrechten Umschalters, solange die Maus nicht über ihm steht (Angelo 27.11.2026): Am Fensterrand
+     * wirkt er wie Glas über dem Inhalt; unter der Maus ist er voll deckend.
+     */
+    public static final float GLASS_OPACITY = 0.8f;
+    private boolean hovered;
+
+    /** Ob der Umschalter gerade durchscheinend gezeichnet wird (für Tests). */
+    public boolean glassy() {
+        return vertical && !hovered;
+    }
+
+    private void hovered(boolean hovered) {
+        if (this.hovered != hovered) {
+            this.hovered = hovered;
+            repaint();
+        }
+    }
+
+    @Override
+    public void paint(Graphics graphics) {
+        if (!glassy()) {
+            super.paint(graphics);
+            return;
+        }
+        Graphics2D g = (Graphics2D) graphics.create();
+        try {
+            g.setComposite(java.awt.AlphaComposite.SrcOver.derive(GLASS_OPACITY));
+            super.paint(g);
+        } finally {
+            g.dispose();
+        }
+    }
+    /** Rand um das Symbol einer senkrechten Hälfte: Sie ist so breit, wie eine waagerechte hoch ist. */
+    private static final int VERTICAL_PAD = 3;
+    private static final int DOT = 6;
+
+    /** Hebt die Wahl auf, ohne etwas zu melden: Keine Hälfte ist gefüllt (etwa solange die Leiste zugeklappt ist). */
+    public void clear() {
+        selected = null;
+        group.clearSelection();
+        repaint();
+    }
+
+    /** Zeigt eine Hälfte als gewählt, ohne etwas zu melden (der Aufrufer hat den Zustand schon hergestellt). */
+    public void show(String name) {
+        Segment segment = segments.get(name);
+        if (segment != null) {
+            selected = name;
+            segment.setSelected(true);
+            repaint();
+        }
+    }
+
+    /** Tauscht das Symbol einer Hälfte (etwa „ungelesen“). */
+    public void icon(String name, javax.swing.Icon icon) {
+        Segment segment = segments.get(name);
+        if (segment != null && segment.icon != icon) {
+            segment.icon = icon;
+            segment.setIcon(icon);
+            revalidate();
+            repaint();
+        }
     }
 
     /** Wählt eine Hälfte; meldet nur einen echten Wechsel. */
@@ -184,6 +301,10 @@ public final class SegmentedToggle extends JPanel {
 
         @Override
         public Dimension getPreferredSize() {
+            if (vertical) {
+                int label = labelWidth(getFontMetrics(getFont()));
+                return new Dimension(label + 2 * VERTICAL_PAD, label + 2 * VERTICAL_PAD + 4);
+            }
             int chip = chipWidth();
             return new Dimension(2 * PAD + labelWidth(getFontMetrics(getFont()))
                     + (chip > 0 ? CHIP_GAP + chip : 0), SEGMENT_HEIGHT);
@@ -205,20 +326,42 @@ public final class SegmentedToggle extends JPanel {
                 int index = new ArrayList<>(segments.values()).indexOf(this);
                 boolean first = index == 0;
                 boolean last = index == segments.size() - 1;
-                int arc = height - 1;
+                int arc = (vertical ? width : height) - 1;
                 // Der gemeinsame Rahmen: nur die äußeren Enden sind rund, dazwischen gerade Kanten.
-                int x = first ? 0 : -arc;
-                int w = width - 1 + (first ? 0 : arc) + (last ? 0 : arc);
+                int before = first ? 0 : arc;
+                int after = last ? 0 : arc;
+                int x = vertical ? 0 : -before;
+                int y = vertical ? -before : 0;
+                int w = vertical ? width - 1 : width - 1 + before + after;
+                int h = vertical ? height - 1 + before + after : height - 1;
                 boolean on = isSelected();
+                if (vertical) {
+                    // Am Fensterrand ist der Umschalter umgekehrt gefärbt (Angelo 27.11.2026): schwarzer Grund,
+                    // weiße Symbole, denn keine Hälfte ist gewählt; die Hälfte unter der Maus wird hell.
+                    boolean light = getModel().isRollover() && isEnabled();
+                    g.setColor(light ? Comic.SURFACE : Comic.INK);
+                    g.fillRoundRect(x, y, w, h, arc, arc);
+                    g.setColor(Comic.INK);
+                    g.drawRoundRect(x, y, w, h, arc, arc);
+                    FontMetrics metrics = g.getFontMetrics(getFont());
+                    g.setFont(getFont());
+                    paintLabel(g, (width - labelWidth(metrics)) / 2, height, light ? Comic.INK : Color.WHITE, !light,
+                            metrics);
+                    if (count > 0) {
+                        g.setColor(tone);
+                        g.fillOval(width - DOT - 3, 3, DOT, DOT);
+                    }
+                    return;
+                }
                 if (on) {
                     g.setColor(Comic.INK);
-                    g.fillRoundRect(x, 0, w, height - 1, arc, arc);
+                    g.fillRoundRect(x, y, w, h, arc, arc);
                 } else if (getModel().isRollover() && isEnabled()) {
                     g.setColor(new Color(Comic.INK.getRed(), Comic.INK.getGreen(), Comic.INK.getBlue(), 20));
-                    g.fillRoundRect(x, 0, w, height - 1, arc, arc);
+                    g.fillRoundRect(x, y, w, h, arc, arc);
                 }
                 g.setColor(Comic.INK);
-                g.drawRoundRect(x, 0, w, height - 1, arc, arc);
+                g.drawRoundRect(x, y, w, h, arc, arc);
                 if (isFocusOwner()) {
                     g.setColor(on ? Color.WHITE : Comic.INK);
                     g.setStroke(new java.awt.BasicStroke(1f, java.awt.BasicStroke.CAP_BUTT,
