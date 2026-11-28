@@ -81,3 +81,9 @@ halte die Originalbytes jeder Seite. Für lokale Dateien, die an Ort und Stelle 
 (`local-original-reference/v1`) mit dem SHA-256 des Originals, dazu Extraktion, Index und Analysen, aber keine Kopie.
 Der Hash eines solchen Snapshots ist nicht der Hash des Originals; beide werden getrennt geführt. Für alle anderen
 Quellen gilt diese ADR unverändert. Der Grundsatz „nur Lucene, kein Datenbankserver“ bleibt.
+
+## Hinweis (28.11.2026): H2 nur für die Engine von Mission Control
+
+[ADR 0049](0049-mission-control-auf-flowable-cmmn.md), Abschnitt 5: Angelo hat am 28.11.2026 entschieden, dass die
+Workflow-Engine von Mission Control eine eingebettete H2-Datenbank als Datei benutzen darf, „nur für die Abläufe“. Für
+Seiten, Index und Aufträge gilt diese ADR unverändert: nur Lucene, kein Datenbankserver.

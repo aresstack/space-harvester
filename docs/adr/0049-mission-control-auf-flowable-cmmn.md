@@ -1,7 +1,8 @@
 # ADR 0049: Mission Control auf Flowable mit CMMN statt eigener Engine
 
-- Status: **Vorschlag** (28.11.2026). Offen ist eine Entscheidung von Angelo, siehe Abschnitt 5. **Nichts aus diesem
-  ADR ist zum Bau freigegeben.**
+- Status: **Entschieden** (28.11.2026): Flowable 8 mit CMMN ist die Engine von Mission Control. Angelo hat am
+  28.11.2026 um 03:50 MEZ entschieden, dass die Engine eine eingebettete H2-Datenbank als Datei benutzen darf
+  (Abschnitt 5). **Zum Bau ist damit noch nichts freigegeben;** die Freigabe erfolgt gesondert.
 - Ersetzt [ADR 0048](0048-mission-control-ablaeufe-aus-faehigkeiten.md), das Angelo am 28.11.2026 zurückgenommen hat.
 - Quellen:
   - **Maßgeblich:** Angelos Nachricht vom 28.11.2026, 03:20 MEZ: „Die bisherige Architekturentscheidung zur
@@ -129,14 +130,19 @@ Space Harvester baut nur, was keine Engine liefern kann:
 7. **Ablage.** Die Definition ist ein globales, versioniertes Artefakt des Projekts (ADR 0047) und wird von dort in
    der Engine bereitgestellt.
 
-## 5. Offene Entscheidung: eingebettete Datenbank
+## 5. Eingebettete Datenbank: entschieden
 
-Flowable und Operaton speichern in einer relationalen Datenbank. Eingebettet heißt das: H2 als Datei im
-Datenverzeichnis, im selben Prozess, ohne Server. ADR 0003 hält als Angelos Grundsatz fest „nur Lucene, kein
-Datenbankserver“ und nennt für den Seitenspeicher auch H2 als ausgeschlossen. H2 wäre hier kein Server und nur der
-Speicher der Engine im Teilprojekt `mission-control`; Seiten, Index und Aufträge bleiben in Lucene. Ob das mit dem
-Grundsatz vereinbar ist, entscheidet Angelo. Ohne Datenbank bliebe von den ausprobierten Engines nur Serverless
-Workflow, also die aufgeschriebene Reihenfolge statt des Prinzips.
+Flowable speichert in einer relationalen Datenbank. Eingebettet heißt das: H2 als Datei im Datenverzeichnis, im selben
+Prozess, ohne Server. ADR 0003 hält als Angelos Grundsatz fest „nur Lucene, kein Datenbankserver“ und nennt für den
+Seitenspeicher auch H2 als ausgeschlossen. Deshalb wurde Angelo gefragt: „Darf die Engine eine eingebettete
+H2-Datenbank als Datei benutzen?“ Er hat am 28.11.2026 um 03:50 MEZ gewählt: „Ja, H2 nur für die Abläufe“.
+
+Daraus folgt:
+
+- H2 ist ausschließlich der Speicher der Engine im Teilprojekt `mission-control`. Kein anderer Teil von Space
+  Harvester legt Daten in H2 ab.
+- Seiten, Index und Aufträge bleiben in Lucene. ADR 0003 gilt für sie unverändert.
+- Es gibt keinen Datenbankserver und keinen Netzwerkzugang zur Datenbank.
 
 ## 6. Befunde aus den Probeläufen, die der Bau beachten muss
 
@@ -176,6 +182,6 @@ freigegebener Ablauf ist selbst eine Fähigkeit; Abläufe gehören dem Projekt.
 
 ## 9. Umsetzung
 
-Erst nach Angelos Entscheidung zu Abschnitt 5 und einer gesonderten Freigabe. Dann in kleinen Schritten: Teilprojekt
+Erst nach Angelos gesonderter Freigabe. Dann in kleinen Schritten: Teilprojekt
 `mission-control` mit eingebetteter Engine; Katalog der Fähigkeiten; lange Schritte als Aufträge; Freigabe; Auslöser;
 Werkzeuge für die KI; Perspektive.
