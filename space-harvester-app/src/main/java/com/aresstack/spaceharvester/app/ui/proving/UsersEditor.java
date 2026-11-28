@@ -10,11 +10,11 @@ import java.awt.BorderLayout;
 import java.awt.FlowLayout;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.BiConsumer;
 import javax.swing.DefaultCellEditor;
 import javax.swing.JComboBox;
 import javax.swing.JPanel;
 import javax.swing.JTable;
+import javax.swing.SwingUtilities;
 import javax.swing.table.AbstractTableModel;
 
 /**
@@ -28,16 +28,30 @@ final class UsersEditor extends JPanel {
     static final String DELETE_TIP = "Testbenutzer löschen";
 
     private final Rows rows = new Rows();
-    private final JTable table = Comic.table(new JTable(rows));
+    private final JTable table = Tables.commitOnFocusLost(Comic.table(new JTable(rows)));
     private final JComboBox<String> entries = Comic.combo();
     private final IconButton add = new IconButton(ComposerIcons.plus(12), ADD_TIP).compact();
     private final IconButton delete = new IconButton(Glyph.TRASH, DELETE_TIP).compact();
+    /** KeePass-Einträge, die während einer Eingabe in der Spalte ankamen. */
+    private List<String> pendingEntries;
 
     UsersEditor() {
         super(new BorderLayout(0, 4));
         setOpaque(false);
         entries.setEditable(true);
-        table.getColumnModel().getColumn(Rows.ENTRY).setCellEditor(new DefaultCellEditor(entries));
+        DefaultCellEditor entryEditor = new DefaultCellEditor(entries);
+        entryEditor.addCellEditorListener(new javax.swing.event.CellEditorListener() {
+            @Override
+            public void editingStopped(javax.swing.event.ChangeEvent event) {
+                applyPendingEntries();
+            }
+
+            @Override
+            public void editingCanceled(javax.swing.event.ChangeEvent event) {
+                applyPendingEntries();
+            }
+        });
+        table.getColumnModel().getColumn(Rows.ENTRY).setCellEditor(entryEditor);
         table.getColumnModel().getColumn(Rows.DEFAULT).setMaxWidth(72);
         add.addActionListener(event -> {
             rows.add();
@@ -64,21 +78,39 @@ final class UsersEditor extends JPanel {
      * @param defaultUser der Standardbenutzer, oder null
      * @param changed     bekommt nach jeder Änderung Benutzer und Standardbenutzer
      */
-    void show(List<TestUser> users, String defaultUser, BiConsumer<List<TestUser>, String> changed) {
-        if (table.isEditing()) {
-            table.getCellEditor().cancelCellEditing();
-        }
+    void show(List<TestUser> users, String defaultUser, Changed changed) {
+        // Typed but not confirmed: saved into the shown level before another one is shown (Codex #1770)
+        Tables.commit(table);
         rows.show(users, defaultUser, changed);
     }
 
     /** Die Einträge aus KeePass als Auswahl in der Spalte „KeePass-Eintrag“ (eintippen geht immer). */
     void entries(List<String> titles) {
+        if (table.isEditing() && table.getEditingColumn() == Rows.ENTRY) {
+            // Refilling the combo now would end the edit and save an empty entry (Codex #1770): after the edit.
+            pendingEntries = List.copyOf(titles);
+            return;
+        }
         entries.removeAllItems();
         titles.forEach(entries::addItem);
     }
 
+    private void applyPendingEntries() {
+        List<String> titles = pendingEntries;
+        if (titles != null) {
+            pendingEntries = null;
+            SwingUtilities.invokeLater(() -> entries(titles));
+        }
+    }
+
     Rows rows() {
         return rows;
+    }
+
+    /** Bekommt nach jeder Änderung Benutzer, Standardbenutzer und umbenannte Benutzer (alter Name → neuer). */
+    @FunctionalInterface
+    interface Changed {
+        void accept(List<TestUser> users, String defaultUser, java.util.Map<String, String> renamed);
     }
 
     /** Eine Zeile; der Name darf beim Bearbeiten kurz leer sein. */
@@ -94,19 +126,24 @@ final class UsersEditor extends JPanel {
         private static final String[] COLUMNS = {"Name", "KeePass-Eintrag", "Beschreibung", "Standard"};
 
         private final List<Row> rows = new ArrayList<>();
-        private BiConsumer<List<TestUser>, String> changed;
+        /** Je Zeile der Name, unter dem der Benutzer zuletzt gespeichert wurde ("" = neu): so wird Umbenennen erkannt. */
+        private final List<String> saved = new ArrayList<>();
+        private Changed changed;
 
-        void show(List<TestUser> users, String defaultUser, BiConsumer<List<TestUser>, String> listener) {
+        void show(List<TestUser> users, String defaultUser, Changed listener) {
             rows.clear();
+            saved.clear();
             changed = listener;
             for (TestUser user : users) {
                 rows.add(new Row(user.name(), user.vaultEntry(), user.description(), user.name().equals(defaultUser)));
+                saved.add(user.name());
             }
             fireTableDataChanged();
         }
 
         void add() {
             rows.add(new Row("", "", "", false));
+            saved.add("");
             int index = rows.size() - 1;
             fireTableRowsInserted(index, index);
         }
@@ -116,6 +153,7 @@ final class UsersEditor extends JPanel {
                 return;
             }
             rows.remove(row);
+            saved.remove(row);
             fireTableRowsDeleted(row, row);
             publish();
         }
@@ -179,7 +217,18 @@ final class UsersEditor extends JPanel {
                     standard = row.name();
                 }
             }
-            changed.accept(users, standard);
+            java.util.Map<String, String> renamed = new java.util.LinkedHashMap<>();
+            for (int i = 0; i < rows.size(); i++) {
+                String before = saved.get(i);
+                String now = rows.get(i).name();
+                if (!before.isBlank() && !now.isBlank() && !before.equals(now)) {
+                    renamed.put(before, now);
+                }
+                if (!now.isBlank()) {
+                    saved.set(i, now);
+                }
+            }
+            changed.accept(users, standard, renamed);
         }
 
         @Override

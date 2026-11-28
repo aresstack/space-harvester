@@ -130,6 +130,8 @@ public final class ProvingGroundWorkspace extends JPanel {
     private final StepsModel steps = new StepsModel();
     private final JTable table = Comic.table(new JTable(steps));
     private final JTextArea report = Comic.code();
+    /** Bericht des letzten Laufs, sichtbar bei Projekt und Suite. */
+    private String lastRun = "";
     private final IconButton run = new IconButton(ComposerIcons.play(), RUN_TIP).compact();
     private final IconButton stop = new IconButton(ComposerIcons.stop(), STOP_TIP).compact();
     private final IconButton create = new IconButton(ComposerIcons.plus(12), CREATE_TIP).compact();
@@ -231,9 +233,6 @@ public final class ProvingGroundWorkspace extends JPanel {
         }
         table.getColumnModel().getColumn(1).setCellEditor(new DefaultCellEditor(roles));
         report.setEditable(false);
-        JSplitPane center = new JSplitPane(JSplitPane.VERTICAL_SPLIT, Comic.scroll(table), Comic.scroll(report));
-        center.setResizeWeight(0.65);
-        center.setBorder(null);
         caseUser.addActionListener(event -> caseUserChosen());
         JPanel userRow = new JPanel(new BorderLayout(8, 0));
         userRow.setOpaque(false);
@@ -242,8 +241,7 @@ public final class ProvingGroundWorkspace extends JPanel {
         JPanel stepsView = new JPanel(new BorderLayout(0, 6));
         stepsView.setOpaque(false);
         stepsView.add(userRow, BorderLayout.NORTH);
-        stepsView.add(center, BorderLayout.CENTER);
-        ComicDivider.install(center, Comic.PALETTE);
+        stepsView.add(Comic.scroll(table), BorderLayout.CENTER);
         views.setOpaque(false);
         views.add(stepsView, STEPS);
         views.add(hooks, HOOKS);
@@ -253,7 +251,12 @@ public final class ProvingGroundWorkspace extends JPanel {
             toggle.onSelect(name -> cards.show(views, name));
         }
         viewSwitch.setOpaque(false);
-        offer = new CenterOffer(views, OFFER_PROJECT, CREATE_TIP).onAccept(() -> offerAction.run());
+        // The report under every view: a run of the project or a suite shows its result there, too (Codex #1770).
+        JSplitPane center = new JSplitPane(JSplitPane.VERTICAL_SPLIT, views, Comic.scroll(report));
+        center.setResizeWeight(0.65);
+        center.setBorder(null);
+        ComicDivider.install(center, Comic.PALETTE);
+        offer = new CenterOffer(center, OFFER_PROJECT, CREATE_TIP).onAccept(() -> offerAction.run());
         JPanel content = new JPanel(new BorderLayout());
         content.setOpaque(false);
         JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
@@ -429,7 +432,8 @@ public final class ProvingGroundWorkspace extends JPanel {
         shownCase = null;
         shownEntry = null;
         shownSuite = node == null ? null : node.suite();
-        report.setText("");
+        // Project and suite show the report of the last run, a test case its own result (below)
+        report.setText(node == null || node.testCase() == null ? lastRun : "");
         updateUsers();
         showEditors(node);
         updateOffer();
@@ -517,10 +521,8 @@ public final class ProvingGroundWorkspace extends JPanel {
         status.show(new StatusNote(result.passed() ? "Bestanden: " + Texts.count(result.cases().size(), "Testfall", "Testfälle")
                 : failed + " von " + result.cases().size() + " Testfällen fehlgeschlagen",
                 result.passed() ? StatusNote.Tone.PLAIN : StatusNote.Tone.ERROR, null, null));
+        lastRun = result.render() + "\nTraces und Bildschirmfotos: " + output;
         selected();
-        if (selectedNode() == null || selectedNode().testCase() == null) {
-            report.setText(result.render() + "\nTraces und Bildschirmfotos: " + output);
-        }
         tree.repaint();
     }
 
@@ -579,8 +581,8 @@ public final class ProvingGroundWorkspace extends JPanel {
             toggle = projectViews;
             hooks.show(project.scope(), false, scope -> edit(p -> p.withScope(scope)));
             preconditions.show(project, project.preconditions(), null, list -> edit(p -> p.withPreconditions(list)));
-            users.show(project.users(), project.defaultUser(), (list, standard) -> {
-                edit(p -> p.withUsers(list, standard));
+            users.show(project.users(), project.defaultUser(), (list, standard, renamed) -> {
+                edit(p -> p.withUsers(list, standard, renamed));
                 updateUsers();
             });
             loadVaultEntries();

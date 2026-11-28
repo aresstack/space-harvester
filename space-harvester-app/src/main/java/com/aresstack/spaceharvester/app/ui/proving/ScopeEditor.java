@@ -30,7 +30,7 @@ final class ScopeEditor extends JPanel {
     static final String DELETE_TIP = "Zeile löschen";
 
     private final Rows rows = new Rows();
-    private final JTable table = Comic.table(new JTable(rows));
+    private final JTable table = Tables.commitOnFocusLost(Comic.table(new JTable(rows)));
     private final IconButton add = new IconButton(ComposerIcons.plus(12), ADD_TIP).compact();
     private final IconButton delete = new IconButton(Glyph.TRASH, DELETE_TIP).compact();
     private final JComboBox<Hook> hooks = Comic.combo();
@@ -43,7 +43,20 @@ final class ScopeEditor extends JPanel {
         for (String type : CHECK_TYPES) {
             checks.addItem(type);
         }
+        hooks.setRenderer(new javax.swing.DefaultListCellRenderer() {
+            @Override
+            public java.awt.Component getListCellRendererComponent(javax.swing.JList<?> list, Object value, int index,
+                                                                   boolean selected, boolean focused) {
+                return super.getListCellRendererComponent(list, labelOf(value), index, selected, focused);
+            }
+        });
         table.getColumnModel().getColumn(Rows.HOOK).setCellEditor(new DefaultCellEditor(hooks));
+        table.getColumnModel().getColumn(Rows.HOOK).setCellRenderer(new javax.swing.table.DefaultTableCellRenderer() {
+            @Override
+            protected void setValue(Object value) {
+                super.setValue(labelOf(value));
+            }
+        });
         table.getColumnModel().getColumn(Rows.CHECK).setCellEditor(new DefaultCellEditor(checks));
         table.getColumnModel().getColumn(Rows.ENABLED).setMaxWidth(56);
         add.addActionListener(event -> {
@@ -74,9 +87,8 @@ final class ScopeEditor extends JPanel {
      * @param changed   bekommt nach jeder Änderung den neuen Stand
      */
     void show(Scope scope, boolean caseLevel, Consumer<Scope> changed) {
-        if (table.isEditing()) {
-            table.getCellEditor().cancelCellEditing();
-        }
+        // Typed but not confirmed: saved into the shown level before another one is shown (Codex #1770)
+        Tables.commit(table);
         hooks.removeAllItems();
         for (Hook hook : Hook.of(caseLevel)) {
             hooks.addItem(hook);
@@ -86,6 +98,11 @@ final class ScopeEditor extends JPanel {
 
     Rows rows() {
         return rows;
+    }
+
+    /** The name of a hook as shown on this level (Vorher/Vorlage/Nachher on a test case). */
+    String labelOf(Object value) {
+        return value instanceof Hook hook ? hook.label(rows.caseLevel()) : value == null ? "" : value.toString();
     }
 
     /** Die Prüfungen aus WD4J; „!“ davor verneint, frei eingeben geht auch. */
@@ -102,7 +119,6 @@ final class ScopeEditor extends JPanel {
 
         private final String label;
         private final String caseLabel;
-        private boolean caseLevel;
 
         Hook(String label, String caseLabel) {
             this.label = label;
@@ -152,6 +168,10 @@ final class ScopeEditor extends JPanel {
 
         private final List<Row> rows = new ArrayList<>();
         private boolean caseLevel;
+
+        boolean caseLevel() {
+            return caseLevel;
+        }
         private Consumer<Scope> changed;
 
         void show(Scope scope, boolean onCase, Consumer<Scope> listener) {
@@ -264,7 +284,8 @@ final class ScopeEditor extends JPanel {
             Row r = rows.get(row);
             ScopeEntry e = r.entry();
             return switch (column) {
-                case HOOK -> r.hook().label(caseLevel);
+                // the Hook itself, so the combo editor selects it; shown with its label (hookRenderer)
+                case HOOK -> r.hook();
                 case ENABLED -> e.enabled();
                 case NAME -> e.name();
                 case EXPRESSION -> e.expression();

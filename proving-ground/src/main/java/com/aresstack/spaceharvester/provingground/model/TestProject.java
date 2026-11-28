@@ -80,7 +80,42 @@ public record TestProject(String name, Scope scope, List<String> preconditions, 
 
     /** This project with other users and default user (null = a context without login). */
     public TestProject withUsers(List<TestUser> value, String defaultUserName) {
-        return new TestProject(name, scope, preconditions, value, defaultUserName, suites);
+        return withUsers(value, defaultUserName, java.util.Map.of());
+    }
+
+    /**
+     * This project with other users; test cases and steps that named a renamed user ({@code renamed}: old name to new
+     * name) name the new one, those that named a user who is gone run as the default again. So the project stays
+     * runnable after editing its users.
+     */
+    public TestProject withUsers(List<TestUser> value, String defaultUserName, java.util.Map<String, String> renamed) {
+        java.util.Set<String> known = new java.util.HashSet<>();
+        for (TestUser user : value == null ? List.<TestUser>of() : value) {
+            known.add(user.name());
+        }
+        java.util.function.UnaryOperator<String> follow = user -> {
+            if (user == null) {
+                return null;
+            }
+            String now = renamed.getOrDefault(user, user);
+            return known.contains(now) ? now : null;
+        };
+        List<TestSuite> changed = new java.util.ArrayList<>();
+        for (TestSuite suite : suites) {
+            List<TestCaseEntry> cases = new java.util.ArrayList<>();
+            for (TestCaseEntry entry : suite.cases()) {
+                TestCaseEntry next = entry.withUser(follow.apply(entry.user()));
+                for (java.util.Map.Entry<String, StepBinding> step : entry.steps().entrySet()) {
+                    String user = step.getValue().user();
+                    if (user != null) {
+                        next = next.withBinding(step.getKey(), step.getValue().withUser(follow.apply(user)));
+                    }
+                }
+                cases.add(next);
+            }
+            changed.add(suite.withCases(cases));
+        }
+        return new TestProject(name, scope, preconditions, value, defaultUserName, changed);
     }
 
     /**

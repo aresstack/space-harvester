@@ -62,7 +62,36 @@ class ProvingGroundEditorsTest {
         rows.setValueAt(ScopeEditor.Hook.AFTER_EACH, 0, ScopeEditor.Rows.HOOK);
         rows.setValueAt("Angemeldet", 0, ScopeEditor.Rows.EXPECTED);
         assertThat(published.get().afterEach().get(0).check()).isEqualTo(new Check("equals", "Angemeldet"));
+        // Codex #1770: opening and confirming the hook cell hands back what it shows; the hook stays AFTER_EACH
+        rows.setValueAt(rows.getValueAt(0, ScopeEditor.Rows.HOOK), 0, ScopeEditor.Rows.HOOK);
+        assertThat(published.get().afterEach()).hasSize(1);
+        assertThat(published.get().afterEach().get(0).check()).isEqualTo(new Check("equals", "Angemeldet"));
         assertThat(rows.isCellEditable(0, ScopeEditor.Rows.CHECK)).isTrue();
+    }
+
+    @Test
+    void renamingAUserKeepsTheProjectRunnableCasesAndStepsFollow() {
+        // Codex #1770: a renamed user left the old name in test cases and steps, and the whole project was rejected
+        com.aresstack.spaceharvester.provingground.model.TestCaseEntry entry =
+                com.aresstack.spaceharvester.provingground.model.TestCaseEntry.of("login", "Login", "a/login.jsonl")
+                        .withUser("sb")
+                        .withBinding("s1", com.aresstack.spaceharvester.provingground.model.StepBinding.NONE
+                                .withUser("sb"));
+        AtomicReference<com.aresstack.spaceharvester.provingground.model.TestProject> project = new AtomicReference<>(
+                com.aresstack.spaceharvester.provingground.model.TestProject.of("P", List.of(
+                        com.aresstack.spaceharvester.provingground.model.TestSuite.of("a", "A", List.of(entry))))
+                        .withUsers(List.of(new TestUser("sb", "Test/SB", "")), "sb"));
+        UsersEditor.Rows rows = new UsersEditor.Rows();
+        rows.show(project.get().users(), "sb",
+                (list, name, renamed) -> project.set(project.get().withUsers(list, name, renamed)));
+        rows.setValueAt("sachbearbeitung", 0, UsersEditor.Rows.NAME);
+        com.aresstack.spaceharvester.provingground.model.TestCaseEntry now = project.get().testCase("a/login");
+        assertThat(now.user()).isEqualTo("sachbearbeitung");
+        assertThat(now.binding("s1").user()).isEqualTo("sachbearbeitung");
+        assertThat(project.get().problems()).isEmpty();
+        rows.remove(0); // gone: the case runs as the default again instead of breaking the project
+        assertThat(project.get().testCase("a/login").user()).isNull();
+        assertThat(project.get().problems()).isEmpty();
     }
 
     @Test
@@ -70,7 +99,7 @@ class ProvingGroundEditorsTest {
         UsersEditor.Rows rows = new UsersEditor.Rows();
         AtomicReference<List<TestUser>> users = new AtomicReference<>();
         AtomicReference<String> standard = new AtomicReference<>();
-        rows.show(List.of(new TestUser("sb", "Test/SB", "")), "sb", (list, name) -> {
+        rows.show(List.of(new TestUser("sb", "Test/SB", "")), "sb", (list, name, renamed) -> {
             users.set(list);
             standard.set(name);
         });
