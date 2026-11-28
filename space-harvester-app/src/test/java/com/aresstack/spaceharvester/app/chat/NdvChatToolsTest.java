@@ -39,4 +39,24 @@ class NdvChatToolsTest {
         assertThat(new NdvChatTools(session, () -> null).run(new AiChat.ToolCall("6", NdvChatTools.SEARCH, "{}")))
                 .contains("andere NDV-Sitzung");
     }
+
+    @Test
+    void searchReportsHowManyObjectsItFoundSoFar() {
+        FakeNdvServer server = FakeNdvServer.sample().pageSize(1);
+        NdvSessions sessions = new NdvSessions(server, Runnable::run);
+        NdvSession session = sessions.open(new NdvProfile("10.0.0.7", 2700), "Testhost NDV",
+                () -> new ServerCredentials(new com.aresstack.spaceharvester.deck.access.ServerAccount("Testhost NDV",
+                        "10.0.0.7", "PILOT"), "geheim".toCharArray()));
+        NdvChatTools tools = new NdvChatTools(session, () -> session);
+        java.util.List<String> reports = new java.util.ArrayList<>();
+
+        ToolProgress.within(reports::add, () -> tools.run(new AiChat.ToolCall("1", NdvChatTools.SEARCH,
+                "{\"bibliothek\":\"LAGER\",\"muster\":\"LAGER0*\"}")));
+
+        assertThat(reports).first().isEqualTo("Sucht NDV-Objekte in LAGER …");
+        assertThat(reports).contains("Sucht NDV-Objekte in LAGER · 1 gefunden", "Sucht NDV-Objekte in LAGER · 2 gefunden");
+        // Außerhalb eines Turns geht die Meldung ins Leere.
+        ToolProgress.report("ohne Turn");
+        assertThat(reports).doesNotContain("ohne Turn");
+    }
 }
