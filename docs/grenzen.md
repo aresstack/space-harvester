@@ -434,8 +434,8 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `SignInFailures.MAX_DETAIL` | `120` | fest | Invariante/Darstellung | im Code belassen |
 | `SignInRequests.DEFAULT_WAIT` | `Duration.ofMinutes(15)` | Vorgabe | Timeout | einstellbar |
 | `SimplificationSettings.DEFAULT_PARALLEL` | `2` | Vorgabe | Parallelität | einstellbar |
-| `SourceDataPurge.JOB_STOP_TIMEOUT` | `Jobs.STOP_GRACE` | fest | Timeout | einstellbar |
-| `SourceManagement.JOB_STOP_TIMEOUT` | `com.aresstack.spaceharvester.application.jobs.Jobs.STOP_GRACE` | fest | Timeout | einstellbar |
+| `SourceDataPurge.JOB_STOP_TIMEOUT` | `Duration.ofSeconds(30)` | fest | Timeout | einstellbar |
+| `SourceManagement.JOB_STOP_TIMEOUT` | `Duration.ofSeconds(30)` | fest | Timeout | einstellbar |
 | `SourceQueries.MAX_PAGE_ID_LIMIT` | `200` | fest | Stapel-/Seitengröße | einstellbar |
 | `SourceQueries.MAX_PAGE_METADATA_LIMIT` | `100` | fest | Stapel-/Seitengröße | einstellbar |
 | `SpaceSync.DEFAULT_WITHHELD_RETENTION` | `Duration.ofDays(30)` | Vorgabe | Cache-Aufbewahrung | einstellbar |

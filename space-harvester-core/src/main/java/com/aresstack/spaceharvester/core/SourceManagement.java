@@ -38,7 +38,7 @@ import java.util.Optional;
 public final class SourceManagement {
 
     /** So lange warten Entfernen und Ändern auf laufende Aufträge der Quelle. */
-    static final Duration JOB_STOP_TIMEOUT = com.aresstack.spaceharvester.application.jobs.Jobs.STOP_GRACE;
+    static final Duration JOB_STOP_TIMEOUT = com.aresstack.spaceharvester.application.jobs.Jobs.STOP_TIMEOUT;
 
     private static final System.Logger LOG = System.getLogger(SourceManagement.class.getName());
 
