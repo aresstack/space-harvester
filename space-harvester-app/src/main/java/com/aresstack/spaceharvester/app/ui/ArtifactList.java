@@ -225,6 +225,11 @@ final class ArtifactList {
         show();
     }
 
+    /** Der geltende Titelfilter in Kleinbuchstaben; leer ohne Filter (für Tests). */
+    String filter() {
+        return filter;
+    }
+
     /** Liest die Artefakte des aktiven Projekts neu. */
     void reload() {
         if (store == null) {

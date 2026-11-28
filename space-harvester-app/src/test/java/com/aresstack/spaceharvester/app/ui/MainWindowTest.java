@@ -723,6 +723,145 @@ class MainWindowTest {
      * eigenen Bereich neben dem der Leiste; beide teilen sich die Höhe. Zurück in der Leiste schaltet sie wieder um.
      */
     @Test
+    void favoritesAndArtifactsLeaveTheSwitchOfTheExplorerAsBallsWithTheirOwnAreaAndFootBar() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            String harvester = com.aresstack.spaceharvester.app.ui.perspective.Perspectives.HARVESTER;
+            try {
+                surface.setSize(1400, 820);
+                layoutAll(surface);
+                com.aresstack.spaceharvester.app.ui.controls.PearlString left = window.leftPearls();
+                Explorer explorer = window.explorer();
+                Component side = window.leftStack().shown().get(0);
+                Component favorites = explorer.favoriteView().component();
+                Component newFolder = explorer.favoriteView().newFolderButton();
+                Component artifacts = explorer.artifactList().component();
+                assertThat(left.tools()).containsExactly(Explorer.SOURCES_TAB, Explorer.FAVORITES_TAB,
+                        Explorer.ARTIFACTS_TAB);
+                assertThat(SwingUtilities.isDescendingFrom(favorites, side)).isTrue();
+                assertThat(newFolder.isVisible()).as("in der Leiste nur unter „Favoriten“").isFalse();
+
+                // Die gezeigten Favoriten werden zur Kugel: eigener Bereich unter dem Baum, die Leiste zeigt den Baum.
+                explorer.showOnlyFavorites(true);
+                left.detach(Explorer.FAVORITES_TAB, 1);
+                layoutAll(surface);
+                layoutAll(surface);
+                javax.swing.JComponent favoritesArea = explorer.area(Explorer.FAVORITES_TAB);
+                assertThat(window.leftStack().shown()).containsExactly(side, favoritesArea);
+                assertThat(SwingUtilities.isDescendingFrom(favorites, favoritesArea)).isTrue();
+                assertThat(favorites.isShowing() || favorites.isVisible()).isTrue();
+                assertThat(explorer.onlyFavorites()).isFalse();
+                assertThat(explorer.view.selected()).isEqualTo(Explorer.SOURCES_TAB);
+                assertThat(explorer.view.names()).containsExactly(Explorer.SOURCES_TAB, Explorer.ARTIFACTS_TAB);
+                // Der Bereich hat seine eigene Fußleiste, dieselbe Klasse und Höhe wie alle; „Neuer Ordner“ steht dort.
+                List<FindBar> bars = find(favoritesArea, FindBar.class);
+                assertThat(bars).hasSize(1);
+                assertThat(bars.get(0).getHeight()).isEqualTo(explorer.footBar().getHeight()).isPositive();
+                assertThat(SwingUtilities.isDescendingFrom(newFolder, bars.get(0))).isTrue();
+                assertThat(SwingUtilities.convertPoint(bars.get(0), 0, 0, surface).x)
+                        .as("in einer Flucht mit der Fußleiste des Explorers")
+                        .isEqualTo(SwingUtilities.convertPoint(explorer.footBar(), 0, 0, surface).x);
+                assertThat(bars.get(0).getWidth()).isEqualTo(explorer.footBar().getWidth());
+                assertThat(newFolder.isVisible()).isTrue();
+                assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + harvester)).isEqualTo("L=R,1:1;R=");
+
+                // Die Wissensquellen sind die Leiste selbst und bleiben in ihr.
+                left.detach(Explorer.SOURCES_TAB, 0);
+                assertThat(left.pearl(Explorer.SOURCES_TAB)).isFalse();
+
+                // Die Artefakte als Kugel: Ihr Bereich geht auf, die Mitte zeigt die Artefakte; eine Seite aus dem
+                // Baum holt die Seitenansicht nach vorn, ohne den Bereich zu schließen.
+                // Ein Titelfilter der Leiste wirkt in der herausgezogenen Liste nicht unsichtbar weiter.
+                explorer.artifactList().filter("entwurf");
+                left.detach(Explorer.ARTIFACTS_TAB, 2);
+                layoutAll(surface);
+                assertThat(explorer.artifactList().filter()).isEmpty();
+                javax.swing.JComponent artifactsArea = explorer.area(Explorer.ARTIFACTS_TAB);
+                assertThat(left.open(Explorer.ARTIFACTS_TAB)).isFalse();
+                assertThat(explorer.artifactsInFront()).isFalse();
+                explorer.showArtifacts(true);
+                layoutAll(surface);
+                assertThat(left.open(Explorer.ARTIFACTS_TAB)).as("ein Verweis öffnet die Kugel").isTrue();
+                assertThat(window.leftStack().shown()).containsExactly(side, favoritesArea, artifactsArea);
+                assertThat(SwingUtilities.isDescendingFrom(artifacts, artifactsArea)).isTrue();
+                assertThat(explorer.artifactsInFront()).isTrue();
+                assertThat(SwingUtilities.isDescendingFrom(explorer.groupByKindButton(), artifactsArea)).isTrue();
+                assertThat(explorer.groupByKindButton().isVisible()).isTrue();
+                explorer.showArtifacts(false);
+                assertThat(left.open(Explorer.ARTIFACTS_TAB)).isTrue();
+                assertThat(explorer.artifactsInFront()).isFalse();
+                // Die Zahl der neuen Artefakte steht an der Kugel.
+                explorer.unseenArtifacts(2);
+                assertThat(((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle) left
+                        .button(Explorer.ARTIFACTS_TAB).getParent()).count(Explorer.ARTIFACTS_TAB)).isEqualTo(2);
+                // Die Fußleiste der Artefakte filtert die Liste über ihr Feld hinter der Schleuse.
+                FindBar artifactBar = find(artifactsArea, FindBar.class).get(0);
+                artifactBar.filtering(true);
+                assertThat(artifactBar.filtering()).isTrue();
+
+                // Ein neues Fenster stellt beide Kugeln samt ihren Bereichen wieder her.
+                MainWindow again = new MainWindow(context);
+                JPanel againSurface = again.content(() -> { }, () -> { });
+                againSurface.setSize(1400, 820);
+                layoutAll(againSurface);
+                assertThat(again.leftPearls().pearls()).containsExactly(Explorer.FAVORITES_TAB,
+                        Explorer.ARTIFACTS_TAB);
+                assertThat(again.leftStack().shown()).hasSize(3);
+                assertThat(again.leftStack().shown().get(1)).isSameAs(
+                        again.explorer().area(Explorer.FAVORITES_TAB));
+
+                // An den rechten Rand gezogen, steht der Bereich in der rechten Leiste.
+                left.move(Explorer.FAVORITES_TAB, window.sidePearls(), 0);
+                layoutAll(surface);
+                assertThat(favoritesArea.getParent()).isSameAs(window.sideStack());
+                assertThat(window.sideStack().shown()).contains(favoritesArea);
+                assertThat(window.leftStack().shown()).containsExactly(side, artifactsArea);
+                // Auch am anderen Rand erfährt der Explorer, dass der Bereich seiner Kugel auf- und zugeht.
+                left.move(Explorer.ARTIFACTS_TAB, window.sidePearls(), 0);
+                explorer.showArtifacts(false);
+                window.sidePearls().open(Explorer.ARTIFACTS_TAB, false);
+                assertThat(explorer.artifactsInFront()).isFalse();
+                window.sidePearls().open(Explorer.ARTIFACTS_TAB, true);
+                assertThat(explorer.artifactsInFront()).as("rechts geöffnet zeigt die Mitte die Artefakte").isTrue();
+                window.sidePearls().open(Explorer.ARTIFACTS_TAB, false);
+                assertThat(explorer.artifactsInFront()).isFalse();
+                window.sidePearls().open(Explorer.ARTIFACTS_TAB, true);
+                window.sidePearls().move(Explorer.ARTIFACTS_TAB, left, 1);
+                layoutAll(surface);
+                assertThat(window.leftStack().shown()).containsExactly(side, artifactsArea);
+
+                // Zurück in der Leiste: Die offene Hälfte ist gewählt, Liste und Knopf stehen wieder im Explorer.
+                left.home(Explorer.FAVORITES_TAB);
+                left.home(Explorer.ARTIFACTS_TAB);
+                layoutAll(surface);
+                assertThat(left.pearls()).isEmpty();
+                assertThat(window.leftStack().shown()).containsExactly(side);
+                assertThat(explorer.view.names()).containsExactly(Explorer.SOURCES_TAB, Explorer.FAVORITES_TAB,
+                        Explorer.ARTIFACTS_TAB);
+                assertThat(SwingUtilities.isDescendingFrom(favorites, side)).isTrue();
+                assertThat(SwingUtilities.isDescendingFrom(artifacts, side)).isTrue();
+                assertThat(SwingUtilities.isDescendingFrom(newFolder, explorer.footBar())).isTrue();
+                assertThat(explorer.view.selected()).isEqualTo(Explorer.ARTIFACTS_TAB);
+                assertThat(explorer.artifactsShown()).isTrue();
+                assertThat(artifacts.isVisible()).isTrue();
+                assertThat(explorer.view.count(Explorer.ARTIFACTS_TAB)).isEqualTo(2);
+            } finally {
+                for (String tool : window.leftPearls().tools()) {
+                    window.leftPearls().home(tool);
+                }
+                AppState.shared().put(MainWindow.PEARLS_KEY + "." + harvester, (String) null);
+            }
+        });
+    }
+
+    @Test
     void aBallMovedToTheLeftEdgeShowsItsAreaInTheLeftSidebarAndEachPerspectiveKeepsItsOwnArrangement()
             throws Exception {
         Path config = home.resolve("app.yml");
