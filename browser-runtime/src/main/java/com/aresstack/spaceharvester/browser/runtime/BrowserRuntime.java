@@ -60,6 +60,9 @@ public final class BrowserRuntime {
             new java.util.concurrent.atomic.AtomicInteger();
     private static final java.util.concurrent.atomic.AtomicInteger MOST_LAUNCHES_AT_ONCE =
             new java.util.concurrent.atomic.AtomicInteger();
+    /** How many browser processes this process launched; a live test checks that one page opens one browser. */
+    private static final java.util.concurrent.atomic.AtomicInteger LAUNCHES =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     private final BrowserRuntimeConfig config;
     private final BrowserProbe probe;
@@ -216,6 +219,7 @@ public final class BrowserRuntime {
             stage = "BROWSER_LAUNCH_QUEUE";
             LAUNCHING.lockInterruptibly();
             MOST_LAUNCHES_AT_ONCE.accumulateAndGet(LAUNCHES_RUNNING.incrementAndGet(), Math::max);
+            LAUNCHES.incrementAndGet();
             try {
                 stage = "BROWSER_LAUNCH";
                 long launchStarted = System.nanoTime();
@@ -299,6 +303,11 @@ public final class BrowserRuntime {
     /** How many browser launches ran at once at most in this process (one: they run one after another). */
     static int mostLaunchesAtOnce() {
         return MOST_LAUNCHES_AT_ONCE.get();
+    }
+
+    /** How many browser processes this process has launched so far, every channel and profile together. */
+    public static int launches() {
+        return LAUNCHES.get();
     }
 
     /** The driver JARs of the host package, then the pathing JAR for a long class path. */
