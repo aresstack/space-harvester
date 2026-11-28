@@ -588,8 +588,12 @@ nennen und das Core-JAR kein Fat-JAR ist. Für Maven-Nutzer mit transitiven Abh�
   `SHA256SUMS` und das Offline-ZIP `space-harvester-chatgpt-compatible.zip`). Das Release `latest` („Space Harvester –
   current build“) bleibt bestehen und wird bei jedem main-Lauf als *Latest* markiert; jeder main-Lauf verschiebt den Tag und ersetzt die
   Dateien. Titel und Dateinamen tragen keine Versionsnummer; intern zeigt `java -jar space-harvester-app.jar
-  --version` `<Basis>-beta.<N>` (Basis = nächste Patch-Version nach dem neuesten getaggten Release, N = Commits auf
-  main).
+  --version` `<Basis>-beta.<N>` (Basis = nächste Patch-Version nach dem neuesten getaggten Release, N = Commits des
+  gebauten Stands; develop trägt dieselbe Art Version).
+- **Kein zweiter Bau für `latest`:** Ein main-Push, dessen Dateibaum ein erfolgreich gebauter und getesteter
+  develop-Stand schon hatte (das Bündel develop → main), übernimmt dessen JARs aus dem develop-Lauf und veröffentlicht
+  sie nur noch; `--version` nennt dann die Nummer des develop-Stands. Gebaut wird auf main nur, wenn es keinen solchen
+  develop-Lauf gibt.
 - Versionsnummern gibt es nur bei einem ausdrücklich getaggten Release (Tag wie `v0.1.0` oder *Run workflow* mit
   `tag`). *Latest* ist immer das neueste Release: das getaggte, bis der nächste main-Push das rollierende
   `latest` wieder dazu macht. Ohne Vorabkennung braucht es auf `main` die Release-Notizen

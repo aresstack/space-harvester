@@ -60,11 +60,13 @@ jobs:
     outputs:
       mode: ${{ steps.version.outputs.mode }}
       tag: ${{ steps.version.outputs.tag }}
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.promote.outputs.version || steps.version.outputs.version }}
     permissions:
       contents: write
       id-token: write
       attestations: write
+      # Artefakte des develop-Laufs herunterladen (Schritt „Geprüften develop-Stand übernehmen“)
+      actions: read
     env:
       GH_TOKEN: ${{ github.token }}
       INPUT_TAG: ${{ inputs.tag }}
@@ -99,11 +101,10 @@ jobs:
           if [ "$mode" = "beta" ] || [ "$mode" = "snapshot" ]; then
             # Nach einem regulären Release ist die Basis weiter als build.gradle; ohne Angabe hießen die JARs noch
             # nach build.gradle und die Prüfung unten fände sie nicht.
-            if [ "$mode" = "beta" ]; then
-              version="$base-beta.$(git rev-list --count HEAD)"; tag="$BETA_TAG"
-            else
-              version="$base-SNAPSHOT"; tag="$SNAPSHOT_TAG"
-            fi
+            # develop trägt dieselbe Art Version wie main: so kann main den geprüften develop-Stand unverändert als
+            # latest übernehmen (Schritt „Geprüften develop-Stand übernehmen“), und --version nennt eine eindeutige Nummer
+            version="$base-beta.$(git rev-list --count HEAD)"
+            if [ "$mode" = "beta" ]; then tag="$BETA_TAG"; else tag="$SNAPSHOT_TAG"; fi
             echo "args=-PreleaseVersion=$version" >> "$GITHUB_OUTPUT"
             echo "tag=$tag" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
@@ -132,21 +133,63 @@ jobs:
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Modus $mode, Version $version, Tag $tag" >> "$GITHUB_STEP_SUMMARY"
+      # Angelo 28.11.: kein zweiter Bau für latest. Das Bündel develop → main bringt genau den Stand nach main, den der
+      # Release-Lauf auf develop schon gebaut, getestet und als Snapshot veröffentlicht hat. Hat ein erfolgreicher
+      # develop-Lauf denselben Dateibaum (git tree) wie dieser main-Commit, werden seine geprüften JARs übernommen
+      # statt neu gebaut. Nur wenn es keinen solchen Lauf gibt (main enthält etwas, das develop so nie hatte, oder das
+      # Artefakt ist abgelaufen), baut dieser Lauf selbst.
+      - name: Geprüften develop-Stand übernehmen
+        id: promote
+        if: steps.version.outputs.mode == 'beta'
+        run: |
+          set -euo pipefail
+          tree=$(git rev-parse 'HEAD^{tree}')
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?branch=develop&event=push&status=success&per_page=50" \
+            --jq '.workflow_runs[] | "\(.id) \(.head_sha)"')
+          while read -r id sha; do
+            [ -n "$id" ] || continue
+            git cat-file -e "$sha^{commit}" 2>/dev/null || continue
+            [ "$(git rev-parse "$sha^{tree}")" = "$tree" ] || continue
+            dir="$RUNNER_TEMP/promoted"
+            if gh run download "$id" --repo "$GITHUB_REPOSITORY" --pattern "space-harvester-*-$sha" --dir "$dir"; then
+              artifact=$(ls "$dir")
+              version="${artifact#space-harvester-}"; version="${version%-$sha}"
+              echo "Übernehme Lauf $id (develop $sha, Version $version)" | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "dir=$dir/$artifact" >> "$GITHUB_OUTPUT"
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done <<< "$runs"
+          echo "Kein erfolgreicher develop-Lauf mit demselben Stand, latest wird hier gebaut" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
+        if: steps.promote.outputs.dir == ''
       # build = alle Module mit Tests, appJarCheck (App-JAR mit --version und allen Bereichen), bootJarPacCheck (PAC im
       # Server-JAR), verifyPublishedPom (Core) sowie Core-JAR mit Sources und Javadoc
       - name: Alle Module bauen und testen
+        if: steps.promote.outputs.dir == ''
         run: ./gradlew build ${{ steps.version.outputs.args }} --console=plain
       - name: Artefakte prüfen
         id: dist
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.promote.outputs.version || steps.version.outputs.version }}
           MODE: ${{ steps.version.outputs.mode }}
+          PROMOTED: ${{ steps.promote.outputs.dir }}
         run: |
+          if [ -n "$PROMOTED" ]; then
+            # Übernommene develop-JARs: unverändert, nur Prüfsummen und Version nachweisen
+            (cd "$PROMOTED" && sha256sum -c SHA256SUMS)
+            out=$(java -jar "$PROMOTED/space-harvester-app.jar" --version)
+            echo "$out"
+            [[ "$out" == *"$VERSION"* ]] || { echo "::error::App --version nennt nicht $VERSION"; exit 1; }
+            echo "dir=$PROMOTED" >> "$GITHUB_OUTPUT"
+            echo "suffix=" >> "$GITHUB_OUTPUT"
+            { echo "### Space Harvester $VERSION (vom develop-Lauf übernommen)"; echo; echo '```'; cat "$PROMOTED/SHA256SUMS"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           dist="$RUNNER_TEMP/dist"
           mkdir -p "$dist"
           files=(
@@ -187,14 +230,14 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Fehlgeschlagene Tests ins Log
-        if: failure()
+        if: failure() && steps.promote.outputs.dir == ''
         run: python3 .github/scripts/test-summary.py --log space-harvester-*/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results
       - name: Testübersicht
-        if: always()
+        if: always() && steps.promote.outputs.dir == ''
         run: python3 .github/scripts/test-summary.py space-harvester-*/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: space-harvester-${{ steps.version.outputs.version }}-${{ github.sha }}
+          name: space-harvester-${{ steps.promote.outputs.version || steps.version.outputs.version }}-${{ github.sha }}
           path: ${{ steps.dist.outputs.dir }}/
           if-no-files-found: error
       - if: failure()
@@ -214,7 +257,7 @@ jobs:
         env:
           MODE: ${{ steps.version.outputs.mode }}
           TAG: ${{ steps.version.outputs.tag }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.promote.outputs.version || steps.version.outputs.version }}
           PRERELEASE: ${{ steps.version.outputs.prerelease }}
           BRANCH: ${{ github.ref_name }}
           SUFFIX: ${{ steps.dist.outputs.suffix }}
