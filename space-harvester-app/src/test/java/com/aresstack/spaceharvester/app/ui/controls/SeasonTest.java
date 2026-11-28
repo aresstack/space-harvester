@@ -103,7 +103,10 @@ class SeasonTest {
 
             perspectives.select("deck");
             layoutAll(switcher);
-            assertThat(switcher.hatLetter()).as("ohne „Harvester“ im Titel keine Mütze").isNull();
+            java.awt.Rectangle deck = switcher.hatLetter();
+            assertThat(deck).as("in anderen Perspektiven auf dem Anfang des letzten Worts").isNotNull();
+            assertThat(deck.x).isEqualTo(title.getFontMetrics(title.getFont()).stringWidth("Command "));
+            assertThat(red(switcher)).isGreaterThan(10);
             perspectives.select("harvester");
 
             Season.enabled(false);

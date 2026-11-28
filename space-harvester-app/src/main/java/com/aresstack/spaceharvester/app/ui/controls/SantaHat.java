@@ -12,7 +12,7 @@ import java.awt.geom.RoundRectangle2D;
 
 /**
  * Die Weihnachtsmütze (Angelo 28.11.2026): rot mit weißem Rand und weißer Bommel, leicht schräg. Sie sitzt in der
- * Weihnachtszeit auf dem „H“ von „Harvester“ im Titel ({@link PerspectiveSwitcher}); gezeichnet und in jeder
+ * Weihnachtszeit auf dem Anfangsbuchstaben des letzten Worts im Titel, etwa dem „H“ von „Harvester“ ({@link PerspectiveSwitcher}); gezeichnet und in jeder
  * Skalierung scharf.
  */
 public final class SantaHat {
