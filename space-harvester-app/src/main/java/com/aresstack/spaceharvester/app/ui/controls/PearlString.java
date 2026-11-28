@@ -64,6 +64,11 @@ public final class PearlString {
     /** Welche Kette an einem Punkt der Tragfläche zuständig ist (links oder rechts); ohne Angabe diese. */
     private java.util.function.Function<Point, PearlString> sideAt = point -> this;
     private boolean railShown = true;
+    /**
+     * Je Gruppe die Höhe, auf der sie mit offenem Bereich zuletzt saß, als Anteil der Länge: Dort bleibt sie, wenn
+     * ihr Bereich zu ist oder die Leiste zugeklappt am Fensterrand steht.
+     */
+    private final Map<String, Double> seats = new java.util.HashMap<>();
     private boolean carrying;
     private java.util.function.Function<String, Integer> centre = name -> null;
     private Runnable laidOut = () -> { };
@@ -151,7 +156,7 @@ public final class PearlString {
      * Auf welcher Höhe der Spalte der Bereich eines Werkzeugs seine Mitte hat, oder {@code null}, wenn er nicht zu
      * sehen ist. Ist die Spalte über einen Trenner gestreckt, sitzt die Knopfleiste auf Höhe des Bereichs ihres
      * gewählten Symbols und jede offene Kugel auf Höhe ihres eigenen Bereichs: Man sieht, was wozu gehört. Was
-     * keinen offenen Bereich hat, steht oben, wo die Leiste auch zugeklappt steht.
+     * keinen offenen Bereich hat, bleibt auf der Höhe, auf der es offen zuletzt saß.
      */
     public void centres(java.util.function.Function<String, Integer> centre) {
         this.centre = centre;
@@ -629,6 +634,16 @@ public final class PearlString {
             return rests;
         }
 
+        /** Die Gruppe dieses Teils: die Knopfleiste oder der Name der Kugel. */
+        private String unitOf(Component part) {
+            for (String name : views.keySet()) {
+                if (views.get(name) == part) {
+                    return name;
+                }
+            }
+            return RAIL;
+        }
+
         /** Das Werkzeug, dessen Bereich zu diesem Teil gehört: das gewählte der Leiste oder das der Kugel. */
         private String toolOf(Component part) {
             if (part == rail) {
@@ -682,19 +697,46 @@ public final class PearlString {
         @Override
         public void doLayout() {
             rail.setBounds(0, 0, 0, 0);
-            // Gestreckt über einen Trenner: Was offen ist, sitzt auf Höhe seines Bereichs; der Rest steht oben.
+            // Gestreckt über die Länge eines Trenners (oder zugeklappt über dieselbe Länge am Fensterrand).
             boolean stretched = getHeight() > getPreferredSize().height;
-            int y = stretched ? HeadBar.HEIGHT + EdgeOverlay.HEAD_GAP : 0;
-            for (Component part : parts()) {
-                Dimension size = part.getPreferredSize();
-                String tool = stretched ? toolOf(part) : null;
-                Integer middle = tool == null ? null : centre.apply(tool);
-                if (middle != null) {
-                    part.setBounds((getWidth() - size.width + 1) / 2, middle - size.height / 2, size.width, size.height);
-                } else {
+            List<Component> parts = parts();
+            if (!stretched) {
+                int y = 0;
+                for (Component part : parts) {
+                    Dimension size = part.getPreferredSize();
                     part.setBounds((getWidth() - size.width + 1) / 2, y, size.width, size.height);
                     y += size.height + GAP;
                 }
+                laidOut.run();
+                return;
+            }
+            // Jedes Teil sitzt auf Höhe seines Bereichs. Ist der zu (oder die ganze Leiste zugeklappt, die Kette steht
+            // dann am Fensterrand), bleibt es auf der Höhe, auf der es offen zuletzt saß (Angelo 28.11.2026: zugeklappt
+            // genau dort, wo aufgeklappt). Was noch nie offen war, teilt sich die Länge in der Reihenfolge der Kette.
+            Map<Component, Integer> middles = new LinkedHashMap<>();
+            for (int index = 0; index < parts.size(); index++) {
+                Component part = parts.get(index);
+                String unit = unitOf(part);
+                String tool = toolOf(part);
+                Integer middle = tool == null ? null : centre.apply(tool);
+                if (middle != null) {
+                    seats.put(unit, middle / (double) getHeight());
+                } else if (seats.containsKey(unit)) {
+                    middle = (int) Math.round(seats.get(unit) * getHeight());
+                } else {
+                    middle = (2 * index + 1) * getHeight() / (2 * parts.size());
+                }
+                middles.put(part, middle);
+            }
+            // Von oben nach unten: Zwei Teile auf fast derselben Höhe rücken untereinander statt aufeinander.
+            List<Component> down = new ArrayList<>(parts);
+            down.sort(java.util.Comparator.comparingInt(middles::get));
+            int free = 0;
+            for (Component part : down) {
+                Dimension size = part.getPreferredSize();
+                int y = Math.max(free, middles.get(part) - size.height / 2);
+                part.setBounds((getWidth() - size.width + 1) / 2, y, size.width, size.height);
+                free = y + size.height + GAP;
             }
             laidOut.run();
         }

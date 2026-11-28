@@ -560,12 +560,18 @@ class MainWindowTest {
                 assertThat(window.jobsToggle().isSelected()).isTrue();
                 window.analysesToggle().doClick();
                 // Ein zweiter Klick auf das gewählte Symbol klappt die Leiste zu; zugeklappt steht der Umschalter
-                // ohne gewähltes Symbol senkrecht am rechten Fensterrand, direkt unter den Kopfleisten, und klappt
-                // von dort wieder auf; die Kopfleisten bleiben so breit, wie sie sind.
+                // ohne gewähltes Symbol senkrecht am rechten Fensterrand, auf genau der Höhe, auf der er aufgeklappt
+                // saß (Angelo 28.11.2026), und klappt von dort wieder auf; die Kopfleisten bleiben so breit, wie sie
+                // sind.
+                layoutAll(surface);
+                layoutAll(surface);
+                java.awt.Rectangle open = SwingUtilities.convertRectangle(window.sideSwitch().getParent(),
+                        window.sideSwitch().getBounds(), surface);
                 window.analysesToggle().doClick();
                 assertThat(window.analysesOpen()).isFalse();
                 assertThat(window.chatOpen()).isFalse();
                 assertThat(window.jobsOpen()).isFalse();
+                layoutAll(surface);
                 layoutAll(surface);
                 java.awt.Rectangle edge = SwingUtilities.convertRectangle(window.sideSwitch().getParent(),
                         window.sideSwitch().getBounds(), surface);
@@ -578,7 +584,8 @@ class MainWindowTest {
                 assertThat(edge.x + edge.width).as("ganz am rechten Fensterrand")
                         .isEqualTo(surface.getWidth() - frame);
                 assertThat(edge.height).as("senkrecht: Symbole untereinander").isGreaterThan(2 * edge.width);
-                assertThat(edge.y).as("direkt unter den Kopfleisten").isEqualTo(bar.y + bar.height
+                assertThat(edge.y).as("zugeklappt auf derselben Höhe wie aufgeklappt, nicht oben").isEqualTo(open.y);
+                assertThat(edge.y).isGreaterThan(bar.y + bar.height
                         + com.aresstack.spaceharvester.app.ui.controls.HeadBar.HEIGHT
                         + com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.HEAD_GAP);
                 assertThat(window.split().getWidth()).as("die Arbeitsfläche behält ihre Breite")
@@ -591,17 +598,22 @@ class MainWindowTest {
                 window.chatToggle().doClick();
                 assertThat(window.chatOpen()).isFalse();
                 // Links genauso: Der zweite Klick auf das gewählte Symbol klappt die Leiste zu, der Umschalter
-                // wandert ohne Wahl an den linken Rand unter das Logo und öffnet von dort wieder.
+                // wandert ohne Wahl an den linken Rand, auf der Höhe, auf der er aufgeklappt saß, und öffnet von dort
+                // wieder.
                 var view = window.explorer().view;
                 assertThat(view.selected()).isEqualTo(Explorer.SOURCES_TAB);
+                layoutAll(surface);
+                layoutAll(surface);
+                int leftOpen = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface).y;
                 view.button(Explorer.SOURCES_TAB).doClick();
                 assertThat(window.split().isLeftCollapsed()).isTrue();
                 assertThat(view.selected()).isNull();
                 layoutAll(surface);
+                layoutAll(surface);
                 java.awt.Rectangle left = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface);
                 assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isFalse();
                 assertThat(left.x).as("ganz am linken Fensterrand").isEqualTo(frame);
-                assertThat(left.y).as("auf derselben Höhe wie rechts").isEqualTo(edge.y);
+                assertThat(left.y).as("zugeklappt auf derselben Höhe wie aufgeklappt").isEqualTo(leftOpen);
                 assertThat(left.height).isGreaterThan(2 * left.width);
                 view.button(Explorer.FAVORITES_TAB).doClick();
                 assertThat(window.split().isLeftCollapsed()).isFalse();
@@ -1053,6 +1065,98 @@ class MainWindowTest {
                 window.chatOpen(false);
                 WindowSizes.rememberInt(MainWindow.CHAT_WIDTH_KEY,
                         com.aresstack.spaceharvester.app.ui.content.ChatSidebar.DEFAULT_WIDTH);
+            }
+        });
+    }
+
+    /**
+     * Angelo 28.11.2026: Zugeklappt sitzen die Knopfleiste und jede Kugel auf genau der Höhe, auf der sie aufgeklappt
+     * sitzen, nur eben am Fensterrand; links wie rechts, auch eine Kugel, deren Bereich zu ist.
+     */
+    @Test
+    void collapsedRailsAndBallsKeepTheHeightTheyHaveWhenOpen() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            try {
+                surface.setSize(1400, 820);
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(surface);
+                }
+                int frame = com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.FRAME_LINE;
+                // Links: die Knopfleiste des Explorers.
+                Component leftRail = window.explorer().view;
+                java.awt.Rectangle leftOpen = SwingUtilities.convertRectangle(leftRail.getParent(),
+                        leftRail.getBounds(), surface);
+                window.toggleDrawer();
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(surface);
+                }
+                assertThat(window.split().isLeftCollapsed()).isTrue();
+                java.awt.Rectangle leftShut = SwingUtilities.convertRectangle(leftRail.getParent(),
+                        leftRail.getBounds(), surface);
+                assertThat(leftShut.y).as("links zugeklappt auf derselben Höhe").isEqualTo(leftOpen.y);
+                assertThat(leftShut.x).as("am linken Fensterrand").isLessThanOrEqualTo(frame + 1);
+                window.toggleDrawer();
+
+                // Rechts: Leiste (Analysen offen) oben, die Kugel des Chats mit offenem Bereich unten.
+                window.chatOpen(true);
+                window.sidePearls().detach(com.aresstack.spaceharvester.app.ui.content.ChatSidebar.TITLE, 1);
+                window.analysesToggle().doClick();
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(surface);
+                }
+                Component rail = window.sideSwitch();
+                Component ball = window.chatToggle().getParent();
+                int railOpen = SwingUtilities.convertRectangle(rail.getParent(), rail.getBounds(), surface).y;
+                int ballOpen = SwingUtilities.convertRectangle(ball.getParent(), ball.getBounds(), surface).y;
+                assertThat(ballOpen).isGreaterThan(railOpen + rail.getHeight());
+
+                // Nur der Bereich der Kugel zu: Sie bleibt, wo sie saß, und rückt nicht nach oben.
+                window.chatToggle().doClick();
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(surface);
+                }
+                ball = window.chatToggle().getParent();
+                assertThat(SwingUtilities.convertRectangle(ball.getParent(), ball.getBounds(), surface).y)
+                        .as("eine Kugel mit geschlossenem Bereich bleibt auf ihrer Höhe").isEqualTo(ballOpen);
+                window.chatToggle().doClick();
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(surface);
+                }
+
+                // Alles zu: Leiste und Kugel stehen am rechten Fensterrand, jede auf ihrer Höhe.
+                window.chatToggle().doClick();
+                window.analysesToggle().doClick();
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(surface);
+                }
+                assertThat(window.rightRail().onDivider()).isFalse();
+                ball = window.chatToggle().getParent();
+                java.awt.Rectangle railShut = SwingUtilities.convertRectangle(rail.getParent(), rail.getBounds(),
+                        surface);
+                java.awt.Rectangle ballShut = SwingUtilities.convertRectangle(ball.getParent(), ball.getBounds(),
+                        surface);
+                assertThat(railShut.y).as("rechts zugeklappt auf derselben Höhe").isEqualTo(railOpen);
+                assertThat(ballShut.y).isEqualTo(ballOpen);
+                assertThat(railShut.x + railShut.width).as("am rechten Fensterrand")
+                        .isEqualTo(surface.getWidth() - frame);
+            } finally {
+                for (String tool : window.sidePearls().tools()) {
+                    window.sidePearls().home(tool);
+                }
+                if (window.split().isLeftCollapsed()) {
+                    window.toggleDrawer();
+                }
+                window.chatOpen(true);
+                window.chatOpen(false);
+                AppState.shared().put(MainWindow.SIDE_SHARES_KEY, "");
             }
         });
     }

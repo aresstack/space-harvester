@@ -250,8 +250,9 @@ Die Symbole der Leiste schalten nur um (höchstens eines offen) und bleiben eine
 Symbol bleibt in ihr. Jede Kugel öffnet und schließt ihren eigenen Bereich; die offenen Bereiche stehen untereinander
 und teilen sich die Höhe zunächst gleich; am waagerechten Trenner zwischen zwei Bereichen (Linie mit gelbem Griff)
 zieht man ihre Höhen, die Anteile sind gemerkt (`sidebar.right.shares`). Die Leiste und jede offene Kugel sitzen auf dem senkrechten Trenner mittig auf Höhe
-ihres eigenen Bereichs und wandern mit ihm; hinter ihnen ruht die Linie. Was keinen offenen Bereich hat, steht oben am
-Trenner, wo die Leiste auch zugeklappt steht. Die Reihenfolge der Gruppen ist die ihrer Bereiche: Eine Kugel (oder
+ihres eigenen Bereichs und wandern mit ihm; hinter ihnen ruht die Linie. Was keinen offenen Bereich hat, bleibt auf der
+Höhe, auf der es offen zuletzt saß; ist die Leiste ganz zugeklappt, stehen Knopfleiste und Kugeln am Fensterrand auf
+genau dieser Höhe (Angelo, 28.11.2026: zugeklappt dort, wo aufgeklappt, nur am Rand). Die Reihenfolge der Gruppen ist die ihrer Bereiche: Eine Kugel (oder
 die Leiste aus einem Symbol) über dem Bereich einer anderen losgelassen tauscht mit ihr den Platz, die Größen bleiben.
 Kugeln sind wie die Leiste leicht durchscheinend und unter der Maus voll deckend. Reihenfolge, Kugeln und ihre
 offenen Bereiche sind gemerkt (`sidebar.right.pearls`). Noch nicht gebaut: Kugeln an den linken Rand verschieben und die
