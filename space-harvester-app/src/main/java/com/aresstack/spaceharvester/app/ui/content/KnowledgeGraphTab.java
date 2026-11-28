@@ -215,6 +215,9 @@ final class KnowledgeGraphTab extends JPanel {
     private final Supplier<Actions> actions;
     private final Runner runner;
     private final Canvas canvas = new Canvas();
+    /** Mitten im leeren Graphen einer nicht analysierten Seite: startet die Analyse der Seite. */
+    private com.aresstack.spaceharvester.app.ui.controls.CenterOffer analyzeOffer;
+    private Runnable onAnalyze = () -> { };
     private final EdgeTableModel tableModel = new EdgeTableModel();
     private final JTable table = new JTable(tableModel);
     private final JPanel cards = new JPanel(new CardLayout());
@@ -573,7 +576,9 @@ final class KnowledgeGraphTab extends JPanel {
             }
         });
         cards.setOpaque(false);
-        cards.add(canvas, "graph");
+        analyzeOffer = new com.aresstack.spaceharvester.app.ui.controls.CenterOffer(canvas, StandingTab.ANALYZE_NOW, StatementsTab.ANALYZE_NOW_TIP)
+                .onAccept(() -> onAnalyze.run());
+        cards.add(analyzeOffer, "graph");
         cards.add(Comic.scroll(table), "table");
         // Bis die Fachsicht ihre Lage gefunden hat (abseits des EDT), dreht über der leeren Fläche der Ring.
         com.aresstack.spaceharvester.app.ui.controls.BusyOverlay domainBusy =
@@ -1653,6 +1658,7 @@ final class KnowledgeGraphTab extends JPanel {
         syncTable();
         canvas.hint(!nodes.isEmpty() ? null : emptyHint != null ? emptyHint
                 : page == null ? "Keine Seite geöffnet." : pageLoaded ? "Kein Teilgraph." : null);
+        analyzeOffer.offer(nodes.isEmpty() && NOT_ANALYSED.equals(emptyHint));
         String covered = coverage == null ? "" : coverage.text();
         if (nodes.isEmpty()) {
             status(page == null ? "Keine Seite geöffnet." : !pageLoaded ? "Teilgraph lädt beim Öffnen."
@@ -3777,6 +3783,16 @@ final class KnowledgeGraphTab extends JPanel {
     /** Titel und Text des Detailfensters zur Auswahl (auch ungeöffnet). */
     String detailsText() {
         return detailTitle.isBlank() ? "" : detailTitle + "\n" + detailText;
+    }
+
+    /** Was „Jetzt analysieren“ im leeren Graphen tut; das bestimmt die Seitenansicht. */
+    void onAnalyze(Runnable action) {
+        onAnalyze = java.util.Objects.requireNonNull(action, "action");
+    }
+
+    /** Für Tests: das Angebot in der Mitte. */
+    com.aresstack.spaceharvester.app.ui.controls.CenterOffer analyzeOffer() {
+        return analyzeOffer;
     }
 
     /** Der Hinweis in der leeren Fläche oder {@code null}. */

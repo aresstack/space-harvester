@@ -154,8 +154,19 @@ class StandingTabTest {
         assertThat(none.placeholder()).isEqualTo("Keine analysierten Aussagen in der Auswahl. "
                 + StandingTab.HOW_TO_ANALYZE);
         assertThat(none.staleChip().isVisible()).isFalse();
+        // Mitten in der leeren Fläche steht „Jetzt analysieren“ und stößt die Analyse der Auswahl an.
+        java.util.concurrent.atomic.AtomicInteger analysed = new java.util.concurrent.atomic.AtomicInteger();
+        none.onAnalyze(analysed::incrementAndGet);
+        assertThat(none.analyzeOffer().offered()).isTrue();
+        assertThat(none.analyzeOffer().button().getText()).isEqualTo("Jetzt analysieren");
+        none.analyzeOffer().button().doClick();
+        assertThat(analysed).hasValue(1);
         none.tabs().select(StandingTab.CONFLICTS);
         assertThat(none.conflictPlaceholder()).isEqualTo("Keine möglichen Widersprüche");
+        assertThat(none.analyzeOffer().offered()).as("auch Widersprüche brauchen die Analyse").isTrue();
+        none.tabs().select(StandingTab.READING);
+        assertThat(none.analyzeOffer().offered()).isTrue();
+        assertThat(new Fixture(base).shownTab().analyzeOffer().offered()).as("mit Aussagen kein Angebot").isFalse();
 
         StandingTab onlyStale = new Fixture(new StatusQuoView(base.entries().stream().map(StandingTabTest::stale)
                 .toList(), List.of(), base.pages(), Map.of(), Map.of(), List.of())).shownTab();
