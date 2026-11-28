@@ -248,6 +248,20 @@ public class PlaywrightBrowserSessionTest {
      * them in ONE call (side by side), each tab's result page is evaluated, and no result URL is ever opened.
      */
     @Test
+    public void theResultUrlOfASearchPagesOwnFieldBecomesItsSearchUrl() {
+        assertEquals("https://portal.example/suche?q={query}&bereich=alle",
+                PlaywrightBrowserSession.deriveSearchUrl("https://portal.example/suche?q=Reisekosten+Inland"
+                        + "&bereich=alle", "Reisekosten Inland"));
+        assertEquals("https://portal.example/#/search/{query}",
+                PlaywrightBrowserSession.deriveSearchUrl("https://portal.example/#/search/Reisekosten%20Inland",
+                        "Reisekosten Inland"));
+        assertEquals("by POST: nothing to remember", null,
+                PlaywrightBrowserSession.deriveSearchUrl("https://portal.example/suche", "Reisekosten"));
+        assertEquals("a word of the host is no search word", null,
+                PlaywrightBrowserSession.deriveSearchUrl("https://reisekosten.example/", "reisekosten"));
+    }
+
+    @Test
     public void formEnginesAreTypedIntoTogetherAndNeverAskedByUrl() throws Exception {
         FakeDriver driver = new FakeDriver();
         driver.typedResults.put("http://one.test/", resultsPage("http://one.test/search?q=hase", "one"));

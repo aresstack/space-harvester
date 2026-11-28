@@ -93,7 +93,7 @@ class ChatWebBrowserFirefoxLiveTest {
         List<String> asked = new ArrayList<>();
         browser.searchPageQuestion(() -> {
             asked.add("gefragt");
-            return base + "/find?q={query}";
+            return base + "/";
         });
         browser.profile("chat-1", true);
         ApprovalPromptPort approve = (request, timeout) -> ApprovalDecision.of(request,
