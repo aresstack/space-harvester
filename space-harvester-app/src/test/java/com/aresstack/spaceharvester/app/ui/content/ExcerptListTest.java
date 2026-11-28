@@ -64,7 +64,6 @@ class ExcerptListTest {
                         java.awt.event.MouseEvent.MOUSE_CLICKED, 0, 0, 1, 1, 1, false));
             }
             assertThat(opened).extracting(WordSearch.Place::pageId).containsExactly("seite-1");
-            //SHOT
         });
     }
 

@@ -552,9 +552,10 @@ class MainWindowTest {
                 java.awt.Rectangle bar = SwingUtilities.convertRectangle(window.windowBar().getParent(),
                         window.windowBar().getBounds(), surface);
                 assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), window.windowBar())).isFalse();
-                int gap = com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.EDGE_GAP;
-                assertThat(edge.x + edge.width).as("am rechten Fensterrand")
-                        .isEqualTo(surface.getWidth() - surface.getInsets().right - gap);
+                // Ohne Luft am Fensterrahmen (Angelo 28.11.2026), nicht hinter dessen Polster.
+                int line = com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.FRAME_LINE;
+                assertThat(edge.x + edge.width).as("ganz am rechten Fensterrand")
+                        .isEqualTo(surface.getWidth() - line);
                 assertThat(edge.height).as("senkrecht: Symbole untereinander").isGreaterThan(2 * edge.width);
                 assertThat(edge.y).as("direkt unter den Kopfleisten").isEqualTo(bar.y + bar.height
                         + com.aresstack.spaceharvester.app.ui.controls.HeadBar.HEIGHT
@@ -579,7 +580,7 @@ class MainWindowTest {
                 layoutAll(surface);
                 java.awt.Rectangle left = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface);
                 assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isFalse();
-                assertThat(left.x).isEqualTo(surface.getInsets().left + gap);
+                assertThat(left.x).as("ganz am linken Fensterrand").isEqualTo(line);
                 assertThat(left.y).as("auf derselben Höhe wie rechts").isEqualTo(edge.y);
                 assertThat(left.height).isGreaterThan(2 * left.width);
                 view.button(Explorer.FAVORITES_TAB).doClick();
