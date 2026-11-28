@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
 import java.awt.BorderLayout;
 import java.awt.Cursor;
 import java.awt.Dimension;
+import java.awt.Rectangle;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import javax.swing.AbstractAction;
@@ -241,7 +242,49 @@ public final class PerspectiveSwitcher extends JPanel {
                 g2.dispose();
             }
             super.paintComponent(g);
+            paintHat(g);
         }
+
+        /**
+         * In der Weihnachtszeit sitzt die Mütze auf dem „H“ von „Harvester“ (Angelo 28.11.2026), nicht auf dem Logo;
+         * in den anderen Perspektiven ebenso auf dem Anfangsbuchstaben des letzten Worts („D“ von Command Deck).
+         * Ist der Name so weit gekürzt, dass der Buchstabe fehlt, gibt es keine Mütze.
+         */
+        private void paintHat(java.awt.Graphics g) {
+            Rectangle letter = hatLetter();
+            if (letter != null) {
+                SantaHat.paint(g, letter.x - SantaHat.WIDTH * HAT_OVERHANG, letter.y + SantaHat.height() * HAT_SINK);
+            }
+        }
+
+        /** Der Buchstabe, auf dem die Mütze sitzt, in seiner Versalhöhe; {@code null} ohne Mütze. */
+        Rectangle hatLetter() {
+            String text = getText();
+            if (text == null || text.isBlank() || !Season.christmasNow()) {
+                return null;
+            }
+            int at = text.stripTrailing().lastIndexOf(' ') + 1;
+            String letter = text.substring(at, at + 1);
+            java.awt.FontMetrics metrics = getFontMetrics(getFont());
+            int x = getInsets().left + metrics.stringWidth(text.substring(0, at));
+            int width = metrics.stringWidth(letter);
+            if (x + width > getWidth() - getInsets().right) {
+                return null;
+            }
+            int baseline = (getHeight() - metrics.getHeight()) / 2 + metrics.getAscent();
+            int capHeight = (int) Math.round(getFont().createGlyphVector(metrics.getFontRenderContext(),
+                    letter).getVisualBounds().getHeight());
+            return new Rectangle(x, baseline - capHeight, width, capHeight);
+        }
+    }
+
+    /** Wie weit die Mütze links über den Buchstaben ragt und wie tief sie in ihn sinkt, als Anteil ihrer Maße. */
+    static final double HAT_OVERHANG = 0.2;
+    static final double HAT_SINK = 0.25;
+
+    /** Wo im Titel die Mütze sitzt (für Tests); {@code null} ohne Mütze. */
+    java.awt.Rectangle hatLetter() {
+        return title.hatLetter();
     }
 
     /** Der Name im Titel (für Tests). */

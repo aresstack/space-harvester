@@ -211,6 +211,11 @@ public final class SettingsView implements View {
     static final String RAIL_TITLE = "Knopfleiste der Seitenleisten";
     static final String RAIL_HINT = "Farben der senkrechten Knopfleiste, die auf dem Trenner einer Seitenleiste "
             + "sitzt. Gilt sofort.";
+    /** Zeile der Platte „Darstellung“ (Angelo 28.11.2026): die Weihnachtsgestaltung lässt sich abschalten. */
+    static final String SEASON_TITLE = "Saisonale Gestaltung";
+    static final String SEASON_HINT = "Vom 1. Advent bis einschließlich 6. Januar trägt der Titel eine Weihnachtsmütze, "
+            + "und in der Titelleiste liegt etwas Schnee. Gilt sofort.";
+    final javax.swing.JCheckBox season = Comic.checkBox("Weihnachtszeit zeigen");
     /** Auswahl „Knopfleiste der Seitenleisten“; Einträge in der Reihenfolge von {@link RailLook}. */
     final JComboBox<String> rail = Comic.combo();
     /** Was die Auswahl zeigt; eine Wahl desselben Werts schreibt nichts. */
@@ -350,6 +355,10 @@ public final class SettingsView implements View {
         SettingDialogs.Rows displayRows = new SettingDialogs.Rows();
         displayRows.add(VIEWER_TITLE, viewer, VIEWER_HINT);
         displayRows.add(RAIL_TITLE, rail, RAIL_HINT);
+        season.setSelected(com.aresstack.spaceharvester.app.ui.controls.Season.enabled());
+        season.addActionListener(e -> com.aresstack.spaceharvester.app.ui.controls.Season.enabled(
+                season.isSelected()));
+        displayRows.add(SEASON_TITLE, season, SEASON_HINT);
         SettingDialogs.Rows analyticsRows = new SettingDialogs.Rows();
         analyticsRows.add("Zeitraum", analyticsPeriod, "Bis heute zurück; Analytics bewahrt standardmäßig 12 Monate "
                 + "auf.");
