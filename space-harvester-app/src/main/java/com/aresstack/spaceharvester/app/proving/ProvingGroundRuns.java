@@ -46,6 +46,8 @@ public final class ProvingGroundRuns implements AutoCloseable {
         return worker;
     });
     private final AtomicReference<RunningBrowser> running = new AtomicReference<>();
+    /** Playwright of the exported JUnit test that runs now: Abbrechen schließt es. */
+    private final AtomicReference<AutoCloseable> junitRunning = new AtomicReference<>();
     private volatile boolean busy;
 
     public boolean busy() {
@@ -79,10 +81,15 @@ public final class ProvingGroundRuns implements AutoCloseable {
             try {
                 Setup current = setup.get();
                 if (junit != null) {
-                    done.accept(new ProjectRunner().run(project, directory, user -> {
-                        throw new IllegalStateException("Der JUnit-Test startet seinen Browser selbst");
-                    }, credentials.get(), RunOptions.defaults().withOnly(only).withActionTimeout(current.actionTimeout())
-                            .withOutputDirectory(outputDirectory).withJunit(junit)));
+                    try {
+                        done.accept(new ProjectRunner().run(project, directory, user -> {
+                            throw new IllegalStateException("Der JUnit-Test startet seinen Browser selbst");
+                        }, credentials.get(), RunOptions.defaults().withOnly(only)
+                                .withActionTimeout(current.actionTimeout()).withOutputDirectory(outputDirectory)
+                                .withJunit(junit, junitRunning::set)));
+                    } finally {
+                        junitRunning.set(null);
+                    }
                     return;
                 }
                 BrowserRuntime runtime = new BrowserRuntime(BrowserRuntimeConfig.of(BrowserChannel.of(current.channel()),
@@ -208,6 +215,19 @@ public final class ProvingGroundRuns implements AutoCloseable {
         RunningBrowser browser = running.getAndSet(null);
         if (browser != null) {
             browser.abandon();
+        }
+        AutoCloseable junit = junitRunning.getAndSet(null);
+        if (junit != null) {
+            // like RunningBrowser.abandon: from another thread, the test then ends with an error at its open step
+            Thread cutter = new Thread(() -> {
+                try {
+                    junit.close();
+                } catch (Exception ignored) {
+                    // already gone
+                }
+            }, "proving-ground-junit-abandon");
+            cutter.setDaemon(true);
+            cutter.start();
         }
     }
 

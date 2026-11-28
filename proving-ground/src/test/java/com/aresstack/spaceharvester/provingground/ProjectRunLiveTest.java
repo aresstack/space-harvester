@@ -241,8 +241,8 @@ class ProjectRunLiveTest {
     /** The project on disk; {@code pageChecks}: hooks that read the page after the case. */
     private TestProject project(Path project, boolean pageChecks) throws IOException {
         TestCase login = new TestCase("Anmelden", List.of(
-                step("page@login", "openPage", null, "url", "{{start}}login",
-                        "Page page = context.newPage();\npage.navigate(\"{{start}}login\");"),
+                step("page@login", "openPage", null, "url", "{{anmeldung}}",
+                        "Page page = context.newPage();\npage.navigate(\"{{anmeldung}}\");"),
                 step("page@login", "fill", "#user", "text", "{{user.login}}",
                         "page.locator(\"#user\").fill(\"{{user.login}}\");"),
                 step("page@login", "fill", "#pw", "text", "{{secret.Passwort}}",
@@ -275,7 +275,9 @@ class ProjectRunLiveTest {
 
         String switchStep = twoUsers.step(2).id();
         String checkStep = twoUsers.step(3).id();
+        // a template of the precondition itself: its steps resolve it also inside the case's JUnit test
         TestCaseEntry loginEntry = TestCaseEntry.of("login", "Anmelden", "anmeldung/login.jsonl")
+                .withScope(Scope.EMPTY.withTemplates(List.of(ScopeEntry.variable("anmeldung", "{{start}}login"))))
                 .withBinding(login.step(0).id(), StepBinding.NONE.withRole(StepRole.GIVEN)
                         .withDescription("Anmeldeseite öffnen"));
         TestCaseEntry twoUsersEntry = TestCaseEntry.of("zwei", "Zwei Benutzer", "konto/zwei.jsonl")

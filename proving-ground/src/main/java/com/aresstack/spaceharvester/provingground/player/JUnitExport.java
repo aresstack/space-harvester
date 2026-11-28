@@ -23,8 +23,25 @@ import java.util.Locale;
  */
 public final class JUnitExport {
 
-    /** How the exported test starts the browser: Playwright type, channel and executable. */
-    public record Launch(boolean firefox, String channel, String executable) {
+    /**
+     * How the exported test starts the browser: Playwright type, channel and executable; {@code timeoutMillis} is each
+     * context's default timeout for actions (0 = Playwright's default).
+     */
+    public record Launch(boolean firefox, String channel, String executable, long timeoutMillis) {
+
+        public Launch(boolean firefox, String channel, String executable) {
+            this(firefox, channel, executable, 0);
+        }
+    }
+
+    /**
+     * What the one running the exported test hands in: {@code values} ({{...}}-text and user → value), {@code parts}
+     * (told which test case the following steps come from: a precondition or the case itself; may be null) and
+     * {@code started} (gets the test's Playwright as soon as it runs, to close it when the run is stopped; may be null).
+     */
+    public record Hooks(java.util.function.BiFunction<String, String, String> values,
+                        java.util.function.Consumer<String> parts,
+                        java.util.function.Consumer<AutoCloseable> started) {
     }
 
     /** The exported class and what it could not take over. */
@@ -45,25 +62,48 @@ public final class JUnitExport {
      * @param stepUsers the user each step runs as (by index; null = without user), as the run decides it
      */
     public static Result export(TestCase testCase, List<String> stepUsers, Launch launch) {
+        return export(testCase, stepUsers, null, launch);
+    }
+
+    /**
+     * @param stepUsers the user each step runs as (by index; null = without user), as the run decides it
+     * @param stepParts the test case each step comes from (by index; a precondition or the case), null = one case
+     */
+    public static Result export(TestCase testCase, List<String> stepUsers, List<String> stepParts, Launch launch) {
         String className = className(testCase.name());
         List<String> notExported = new ArrayList<>();
         java.util.Set<String> users = new java.util.LinkedHashSet<>();
+        java.util.Set<String> parts = new java.util.LinkedHashSet<>();
         for (int i = 0; i < testCase.size(); i++) {
             users.add(userAt(stepUsers, i));
+            parts.add(stepParts == null ? null : userAt(stepParts, i));
         }
         boolean switching = users.size() > 1;
+        boolean joined = parts.size() > 1;
+        String timeout = launch.timeoutMillis() > 0 ? "context.setDefaultTimeout(" + launch.timeoutMillis() + ");\n" : "";
+        String firstUser = users.isEmpty() ? null : users.iterator().next();
         StringBuilder body = new StringBuilder();
         java.util.Set<String> declared = new java.util.HashSet<>();
         java.util.Map<String, String> renames = new java.util.HashMap<>();
+        // which user's context a page variable belongs to, and each user's variable for a recorded page
+        java.util.Map<String, String> owners = new java.util.HashMap<>();
+        java.util.Map<String, String> ofUser = new java.util.HashMap<>();
         String current = null;
+        String part = null;
         boolean first = true;
         for (int i = 0; i < testCase.size(); i++) {
             TestStep step = testCase.step(i);
             String user = userAt(stepUsers, i);
+            String stepPart = stepParts == null ? null : userAt(stepParts, i);
+            if (joined && (first || !java.util.Objects.equals(stepPart, part))) {
+                body.append("part(").append(stepPart == null ? "null" : TestStep.javaString(stepPart)).append(");\n");
+            }
+            part = stepPart;
             if (switching && (first || !java.util.Objects.equals(user, current))) {
                 // each user in an own browser context, as Proving Ground runs it
                 body.append("user = ").append(user == null ? "null" : TestStep.javaString(user)).append(";\n")
-                        .append("context = contexts.computeIfAbsent(String.valueOf(user), name -> browser.newContext());\n");
+                        .append("context = contexts.computeIfAbsent(String.valueOf(user), name -> browser.newContext());\n")
+                        .append(timeout);
             }
             current = user;
             first = false;
@@ -77,20 +117,43 @@ public final class JUnitExport {
                 body.append(NOT_EXPORTED).append(note.replace('\n', ' ')).append('\n');
                 continue;
             }
+            List<String> own = PlaywrightCode.declaredPages(code);
             // steps of a precondition and of the case both declare "page": the later one gets a fresh name
-            for (String alias : PlaywrightCode.declaredPages(code)) {
+            for (String alias : own) {
                 if (declared.contains(alias)) {
-                    String fresh = alias;
-                    for (int n = 2; declared.contains(fresh) || renames.containsValue(fresh); n++) {
-                        fresh = alias + "_" + n;
+                    renames.put(alias, fresh(alias, declared, renames));
+                }
+                String variable = renames.getOrDefault(alias, alias);
+                declared.add(variable);
+                owners.put(variable, String.valueOf(user));
+                ofUser.put(alias + "\n" + user, variable);
+            }
+            if (switching) {
+                // a step of another user on a page recorded before: that user's page, as Proving Ground plays it
+                for (String alias : PlaywrightCode.otherPages(code, own)) {
+                    String variable = renames.getOrDefault(alias, alias);
+                    if (!declared.contains(variable)) {
+                        // a page the test opens at the start (case without openPage): the first user's
+                        owners.put(variable, String.valueOf(firstUser));
+                        ofUser.putIfAbsent(alias + "\n" + firstUser, variable);
                     }
-                    renames.put(alias, fresh);
+                    String owner = owners.get(variable);
+                    if (java.util.Objects.equals(owner, String.valueOf(user))) {
+                        continue;
+                    }
+                    String mine = ofUser.get(alias + "\n" + user);
+                    if (mine == null) {
+                        mine = fresh(alias, declared, renames);
+                        body.append("Page ").append(mine)
+                                .append(" = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);\n");
+                        declared.add(mine);
+                        owners.put(mine, String.valueOf(user));
+                        ofUser.put(alias + "\n" + user, mine);
+                    }
+                    renames.put(alias, mine);
                 }
             }
-            String renamed = renamed(code.strip(), renames);
-            declared.addAll(PlaywrightCode.declaredPages(code));
-            declared.addAll(renames.values());
-            body.append(PlaywrightCode.withVariables(renamed, "v")).append('\n');
+            body.append(PlaywrightCode.withVariables(renamed(code.strip(), renames), "v")).append('\n');
         }
         String steps = body.toString();
         StringBuilder pages = new StringBuilder();
@@ -101,16 +164,25 @@ public final class JUnitExport {
         if (switching) {
             // the first user's context comes first, then the pages a case without openPage needs
             int afterFirst = steps.indexOf('\n', steps.indexOf("context = ")) + 1;
+            afterFirst = timeout.isEmpty() ? afterFirst : steps.indexOf('\n', afterFirst) + 1;
             steps = steps.substring(0, afterFirst) + pages + steps.substring(afterFirst);
             start = "Map<String, BrowserContext> contexts = new HashMap<>();\nBrowserContext context;\n";
         } else {
-            String only = users.isEmpty() ? null : users.iterator().next();
-            start = (only == null ? "" : "user = " + TestStep.javaString(only) + ";\n")
-                    + "BrowserContext context = browser.newContext();\n" + pages;
+            start = (firstUser == null ? "" : "user = " + TestStep.javaString(firstUser) + ";\n")
+                    + "BrowserContext context = browser.newContext();\n" + timeout + pages;
         }
         String source = TEMPLATE.formatted(testCase.name().replace("*/", "* /"), className,
                 launch.firefox() ? "firefox" : "chromium", launchOptions(launch), indent(start + steps, "      "));
         return new Result(className, source, notExported);
+    }
+
+    /** A page variable name not used yet ({@code page_2}, {@code page_3}, …; never matched as a recorded page). */
+    private static String fresh(String alias, java.util.Set<String> declared, java.util.Map<String, String> renames) {
+        String fresh = alias;
+        for (int n = 2; declared.contains(fresh) || renames.containsValue(fresh); n++) {
+            fresh = alias + "_" + n;
+        }
+        return fresh;
     }
 
     /** What the exported code uses directly; their JARs make the compiler's class path. */
@@ -125,6 +197,11 @@ public final class JUnitExport {
      */
     public static void run(Result result, java.util.function.BiFunction<String, String, String> values)
             throws Throwable {
+        run(result, new Hooks(values, null, null));
+    }
+
+    /** Runs the exported test as JUnit would call it, with what {@code hooks} hands in (see {@link Hooks}). */
+    public static void run(Result result, Hooks hooks) throws Throwable {
         if (!result.notExported().isEmpty()) {
             throw new IllegalStateException("nicht als JUnit-Test ausführbar: " + String.join(" · ", result.notExported()));
         }
@@ -136,7 +213,9 @@ public final class JUnitExport {
                     .collect(java.util.stream.Collectors.joining(" · "))));
         }
         Class<?> type = compiled.type();
-        type.getField("values").set(null, values);
+        type.getField("values").set(null, hooks.values());
+        type.getField("parts").set(null, hooks.parts());
+        type.getField("started").set(null, hooks.started());
         java.lang.reflect.Method test = type.getDeclaredMethod("test");
         test.setAccessible(true);
         try {
@@ -210,6 +289,9 @@ public final class JUnitExport {
               @Test
               void test() {
                 try (Playwright playwright = Playwright.create()) {
+                  if (started != null) {
+                    started.accept(playwright);
+                  }
                   Browser browser = playwright.%s().launch(%s);
             %s    }
               }
@@ -222,6 +304,18 @@ public final class JUnitExport {
                * sonst gelten die Umgebungsvariablen.
                */
               public static java.util.function.BiFunction<String, String, String> values;
+
+              /** Erfährt, aus welchem Testfall die folgenden Schritte stammen (Vorbedingung oder der Fall); darf fehlen. */
+              public static java.util.function.Consumer<String> parts;
+
+              /** Erhält Playwright beim Start, um den Lauf abbrechen zu können; darf fehlen. */
+              public static java.util.function.Consumer<AutoCloseable> started;
+
+              private static void part(String name) {
+                if (parts != null) {
+                  parts.accept(name);
+                }
+              }
 
               /** Ersetzt jedes {{...}} in text (siehe Klassenkommentar). */
               private String v(String text) {

@@ -97,6 +97,28 @@ class JUnitExportTest {
     }
 
     @Test
+    void anotherUserOnAPageRecordedBeforeGetsAPageOfTheirOwnContext() throws Exception {
+        TestCase switching = new TestCase("Wechsel", List.of(
+                step("openPage", "Page page = context.newPage();\npage.navigate(\"{{start}}\");"),
+                step("fill", "page.locator(\"#user\").fill(\"{{user.login}}\");"),
+                step("fill", "page.locator(\"#user\").fill(\"{{user.login}}\");"),
+                step("click", "page.locator(\"#ok\").click();")));
+        JUnitExport.Result result = JUnitExport.export(switching, List.of("sb", "sb", "pr", "sb"),
+                List.of("anmeldung/login", "anmeldung/login", "konto/zwei", "konto/zwei"),
+                new JUnitExport.Launch(false, "chrome", "", 5000));
+        String source = result.source();
+        assertTrue(source.contains("user = \"pr\";\n      context = contexts.computeIfAbsent(String.valueOf(user), name -> "
+                + "browser.newContext());\n      context.setDefaultTimeout(5000);\n      Page page_2 = context.pages().isEmpty()"
+                + " ? context.newPage() : context.pages().get(0);\n      page_2.locator(\"#user\")"), source);
+        assertTrue(source.contains("user = \"sb\";\n      context = contexts.computeIfAbsent(String.valueOf(user), name -> "
+                + "browser.newContext());\n      context.setDefaultTimeout(5000);\n      page.locator(\"#ok\").click();"),
+                "back to the first user's page: " + source);
+        assertTrue(source.contains("part(\"anmeldung/login\");"), source);
+        assertTrue(source.contains("part(\"konto/zwei\");"), source);
+        assertEquals("", compile(result), source);
+    }
+
+    @Test
     void stepsOfAnotherUserRunInTheirOwnContextAndTheCodeStaysPlaywrights() throws Exception {
         TestCase twoUsers = new TestCase("Zwei Benutzer", List.of(
                 step("openPage", "Page page = context.newPage();\npage.navigate(\"{{start}}\");"),
