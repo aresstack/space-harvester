@@ -217,15 +217,13 @@ spring:
 - **Protokoll:** `%USERPROFILE%\.space-harvester\logs\space-harvester-app.log` (sieben Tage), anderer Ort über
   `SPACE_HARVESTER_LOG_DIR`. Geheimnisse erscheinen dort nie. Die Datei bekommt alle Meldungen, auch die aus
   `java.util.logging` und `System.Logger` (Quellen aus dem Enterprise AI Client, KeePass, Core; `ConsoleLogging`).
-- **Große lokale Ordner** (Angelo 27.11.2026): Vor jedem Abgleich einer Ordner-Quelle, den ein Klick startet
+- **Große lokale Ordner** (Angelo 27./28.11.2026): Vor jedem Abgleich einer Ordner-Quelle, den ein Klick startet
   (Indexieren, Bestand abgleichen, Initialisieren, Änderungen prüfen, Nachholen), zählt die App die Größe des Ordners.
-  Liegen darin Unterordner über `space-harvester-app.large-folder-size` (Vorgabe 5GB, `0` nie; **Einstellungen ›
-  Allgemein › Ablage › Große Ordner nachfragen ab**), fragt „Großer Ordner“ nach und nennt die engsten solchen Unterordner,
-  ohne Kreuz; **Synchronisieren** schließt die angekreuzten über „Ausschließen“ aus (wieder einblenden unter
-  Wissensquellen › Ausgeschlossen), **Abbrechen** startet nichts. Ohne Kreuz fragt die App für diesen Ordner bis zum
-  Neustart nicht wieder. Es ist nur eine Warnung, keine Grenze auf Ordnerebene. Auf Dateiebene gilt wie bei allen
-  Quellen **Große Dateien ganz laden bis** (`cache.max-text-file-size`, einstellbar, 0 = ohne Grenze): größere Dateien
-  liest der Abgleich auch bei lokalen Ordnern nicht, er legt nur ihre Kopfdaten ab.
+  Liegt sie über `space-harvester-app.large-folder-size` (Vorgabe 5GB, `0` nie; **Einstellungen › Allgemein › Ablage ›
+  Hinweis auf große Ordner ab**), weist „Großer Ordner“ darauf hin, dass das Indexieren lange dauern kann, nennt die
+  größten Unterordner und fragt „… wirklich synchronisieren?“ mit **Ja**/**Nein**. Es ist nur ein Hinweis: Ja startet
+  den Abgleich unverändert, blockiert oder ausgeschlossen wird nichts. Unterordner weglassen geht wie immer per
+  Rechtsklick › Ausschließen. Nach Ja fragt die App für diesen Ordner bis zum Neustart nicht wieder.
 - **Terminal-Ausgabe:** Das Terminal, aus dem die App gestartet wurde, bleibt ohne Angabe still.
   `logging.threshold.console` (derselbe Schlüssel wie beim Dienst: `off`, `error`, `warn`, `info` oder `all`) bzw.
   **Einstellungen › Allgemein › Terminal-Ausgabe** legt fest, ab welcher Stufe Meldungen dort erscheinen; „Warnungen“

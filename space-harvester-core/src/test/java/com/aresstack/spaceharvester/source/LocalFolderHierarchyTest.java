@@ -427,34 +427,6 @@ class LocalFolderHierarchyTest {
     }
 
     @Test
-    void referenceStorageLeavesFilesOverTheLargeFileLimitUnreadWithTheirMetadata() throws IOException {
-        Files.writeString(directory.resolve("gross.txt"), "x".repeat(4096));
-        KnowledgeSourceHarvestSource source = open();
-        Path storeDirectory = directory.resolve(".extraction-store");
-        var store = new com.aresstack.spaceharvester.persistence.files.FileSystemExtractionStore(storeDirectory);
-        var storage = new com.aresstack.spaceharvester.application.snapshot.LocalOriginalStorage(
-                new com.aresstack.spaceharvester.application.assets.DirectDocumentExtractions(
-                        new com.aresstack.spaceharvester.application.assets.DocumentExtractions(
-                                new TikaDocumentStructure(), store,
-                                com.aresstack.spaceharvester.application.assets.ExtractionLimits.DEFAULTS)),
-                LocalFilesTextProjector::readable, () -> 1024);
-        var snapshots = new com.aresstack.spaceharvester.application.snapshot.SourceSnapshots(catalog(source), storage);
-
-        var large = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
-                .read(snapshots.fetch("docs", source.pageMetadata(id("gross.txt"))).payload()).orElseThrow();
-        var small = com.aresstack.spaceharvester.application.snapshot.LocalOriginalReference
-                .read(snapshots.fetch("docs", source.pageMetadata(id("notiz.txt"))).payload()).orElseThrow();
-
-        assertThat(large.status()).isEqualTo(
-                com.aresstack.spaceharvester.application.assets.ExtractionStatus.EXCLUDED);
-        assertThat(large.reason()).isEqualTo(
-                com.aresstack.spaceharvester.application.assets.StatusReason.TOO_LARGE);
-        assertThat(large.originalSha256()).isNull();
-        assertThat(large.extractionKey()).isNull();
-        assertThat(small.status()).isEqualTo(com.aresstack.spaceharvester.application.assets.ExtractionStatus.OK);
-    }
-
-    @Test
     void fullTextFindsTermsBeyondTheBoundedPreviewAndReplacesAllOldSections() throws IOException {
         Path original = directory.resolve("notiz.txt");
         Files.writeString(original, "Beginning\n" + "ordinary paragraph\n\n".repeat(7000) + "Zielbegriff");

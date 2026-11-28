@@ -628,9 +628,9 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      *                        ({@code cache.large-file-timeout})
      * @param queryLimits     Stapelgrößen der Abfragen ({@code query.max-page-limit}, {@code query.max-term-scan})
      * @param sourceTimeouts  Netz-Fristen der Quellen ({@code network.timeouts.*})
-     * @param largeFolderBytes ab dieser Größe fragt die App vor dem Abgleich eines lokalen Ordners nach und bietet an,
-     *                        Unterordner über dieser Größe auszuschließen ({@code space-harvester-app.large-folder-size},
-     *                        nur die App); {@code 0} nie
+     * @param largeFolderBytes ab dieser Größe weist die App vor dem Abgleich eines lokalen Ordners darauf hin, dass das
+     *                        Indexieren lange dauern kann, und fragt „wirklich?“; blockiert nichts
+     *                        ({@code space-harvester-app.large-folder-size}, nur die App); {@code 0} nie
      */
     public record Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
                           long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
@@ -641,8 +641,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           long largeFolderBytes) {
 
         /**
-         * Vorgabe für {@link #largeFolderBytes}: 5 GiB (Angelo 27.11.2026: ein 33-GB-Unterordner ist nicht sinnvoll
-         * zu indexieren). Einstellbar unter Einstellungen › Allgemein › Ablage.
+         * Vorgabe für {@link #largeFolderBytes}: 5 GiB, ab dann ein Hinweis (Angelo 27.11.2026: 40-GB-Ordner lief im
+         * Schneckentempo). Einstellbar unter Einstellungen › Allgemein › Ablage.
          */
         public static final long DEFAULT_LARGE_FOLDER_BYTES = 5L * 1024 * 1024 * 1024;
 

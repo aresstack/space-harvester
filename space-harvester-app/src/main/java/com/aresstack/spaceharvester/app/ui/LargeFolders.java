@@ -28,22 +28,24 @@ import java.util.function.Predicate;
 import javax.swing.SwingUtilities;
 
 /**
- * Rückfrage vor dem Abgleich eines sehr großen lokalen Ordners (Angelo 27.11.2026: ein Ordner mit 40 GB, davon ein
- * Unterordner mit 33 GB, lief im Schneckentempo). Vor jedem Abgleich einer Ordner-Quelle, den ein Klick startet
- * (Indexieren, Abgleich, Initialisierung, Nachholen), zählt die App die Größe des Ordners. Liegen darin Unterordner über
- * der Grenze ({@link AppSettings.Storage#largeFolderBytes}, {@value AppSettingsLoader#LARGE_FOLDER_KEY}), fragt sie
- * nach: Die angekreuzten Unterordner schließt sie über die vorhandene Funktion „Ausschließen“ aus ({@link Exclusions};
- * wieder einblenden unter Wissensquellen › Ausgeschlossen), dann startet der Abgleich.
+ * Hinweis vor dem Abgleich eines sehr großen lokalen Ordners (Angelo 27./28.11.2026: ein Ordner mit 40 GB lief im
+ * Schneckentempo; der Nutzer soll erfahren, dass das Indexieren gefährlich lange dauern kann, verboten oder blockiert
+ * wird nichts). Vor jedem Abgleich einer Ordner-Quelle, den ein Klick startet (Indexieren, Abgleich, Initialisierung,
+ * Nachholen), zählt die App die Größe des Ordners. Liegt sie über der einstellbaren Hinweisgrenze
+ * ({@link AppSettings.Storage#largeFolderBytes}, {@value AppSettingsLoader#LARGE_FOLDER_KEY}, {@code 0} nie), fragt sie
+ * „wirklich synchronisieren?“ mit Ja/Nein und nennt die größten Unterordner; Ja startet den Abgleich unverändert, Nein
+ * startet ihn nicht. Ausschließen bleibt Sache des Nutzers (Rechtsklick › Ausschließen, {@link Exclusions}).
  *
- * <p>Genannt werden die engsten Unterordner über der Grenze: einer, in dem kein Unterordner selbst über der Grenze liegt.
- * So fällt nur heraus, was wirklich groß ist. Versteckte Ordner, Punkt-Ordner, Ausschlussmuster der Quelle und schon
- * ausgeschlossene Ordner zählen nicht mit, weil der Abgleich sie ohnehin nicht liest. Es ist nur eine Warnung (Angelo
- * 27.11.2026: keine Grenze auf Ordnerebene): Nichts ist vorangekreuzt, ohne Kreuz liest der Abgleich alles. Einzelne
- * Dateien über „Große Dateien ganz laden bis“ (einstellbar) liest der Abgleich nicht ganz.
+ * <p>Genannt werden die engsten Unterordner über der Grenze (keiner ihrer Unterordner liegt selbst darüber). Versteckte
+ * Ordner, Punkt-Ordner, Muster der Quelle und schon ausgeschlossene Ordner zählen nicht mit, weil der Abgleich sie
+ * ohnehin nicht liest.
  */
 final class LargeFolders {
 
-    /** Ordner, zu denen in dieser Sitzung schon „alles synchronisieren“ gewählt wurde: nicht bei jedem Abgleich fragen. */
+    /** So viele große Unterordner nennt der Hinweis; Darstellung, keine Grenze. */
+    private static final int SHOWN_FOLDERS = 5;
+
+    /** Ordner, zu denen in dieser Sitzung schon „Ja“ gewählt wurde: nicht bei jedem Abgleich fragen. */
     private static final Set<String> ACCEPTED = ConcurrentHashMap.newKeySet();
 
     private LargeFolders() {
@@ -94,60 +96,60 @@ final class LargeFolders {
             return true;
         }
         SourceSettingsConfig config = config(settings, sourceId).orElseThrow();
+        // Dieselben Muster wie die Quelle (LocalFilesSourceAdapter): Einschluss nur, wenn der Dateifilter an ist.
+        String include = com.aresstack.spaceharvester.application.sources.LocalFileFilter.enabled(
+                config.options().get("include"), config.options().get("includeEnabled"))
+                ? config.options().get("include") : null;
         com.aresstack.enterpriseai.source.api.files.FilePatterns patterns =
-                new com.aresstack.enterpriseai.source.api.files.FilePatterns(List.of(),
+                new com.aresstack.enterpriseai.source.api.files.FilePatterns(
+                        com.aresstack.enterpriseai.source.api.files.FilePatterns.split(include),
                         com.aresstack.enterpriseai.source.api.files.FilePatterns.split(
                                 config.options().get("exclude")));
         Report report;
         try {
             report = scan(root.get(), start, limit, relative -> !patterns.entersFolder(relative)
-                    || excludedIds.contains(LocalFilesSourceAdapter.folderPageId(Path.of(relative))));
+                    || excludedIds.contains(LocalFilesSourceAdapter.folderPageId(Path.of(relative))),
+                    patterns::acceptsFile);
         } catch (IOException unreadable) {
             // Der Abgleich meldet einen unlesbaren Ordner selbst, mit Grund; die Rückfrage hält ihn nicht auf.
             return true;
         }
-        if (report.large().isEmpty()) {
+        if (report.totalBytes() <= limit) {
             return true;
         }
-        boolean[] chosen = ask(config, start, limit, report);
-        if (chosen == null) {
-            return false;
-        }
-        boolean any = false;
-        for (int i = 0; i < chosen.length; i++) {
-            if (chosen[i]) {
-                any = true;
-                context.runtime().workspace().exclude(sourceId, sourceId,
-                        LocalFilesSourceAdapter.folderPageId(Path.of(report.large().get(i).path())));
-            }
-        }
-        if (!any) {
+        boolean go = ask(config, start, report);
+        if (go) {
             ACCEPTED.add(sourceId + "|" + start);
         }
-        return true;
+        return go;
     }
 
-    private static boolean[] ask(SourceSettingsConfig config, Path start, long limit, Report report) {
+    /** Die Rückfrage „wirklich“ mit Ja/Nein auf dem EDT; nur ein Hinweis, Ja startet den Abgleich wie immer. */
+    private static boolean ask(SourceSettingsConfig config, Path start, Report report) {
         String name = config.title() != null && !config.title().isBlank() ? config.title()
                 : String.valueOf(start.getFileName());
-        String text = "„" + name + "“ ist " + Texts.bytes(report.totalBytes()) + " groß. "
-                + (report.large().size() == 1 ? "Dieser Unterordner ist" : "Diese Unterordner sind")
-                + " größer als " + Texts.bytes(limit) + ". Wer will, kreuzt welche zum Ausschließen an; wieder einblenden unter "
-                + "Wissensquellen › Ausgeschlossen. Die Grenze steht unter Einstellungen › Allgemein › Ablage.\n\n"
-                + "Wirklich synchronisieren?";
-        List<String> options = report.large().stream()
-                .map(folder -> folder.path() + " (" + Texts.bytes(folder.bytes()) + ")").toList();
-        // Nur eine Warnung (Angelo 27.11.2026): keine Grenze auf Ordnerebene, ausgeschlossen wird nur, was er ankreuzt.
-        boolean[] initial = new boolean[options.size()];
-        boolean[][] result = {null};
+        StringBuilder text = new StringBuilder("„" + name + "“ ist " + Texts.bytes(report.totalBytes())
+                + " groß. Das Indexieren kann sehr lange dauern und den Rechner stark belasten.");
+        if (!report.large().isEmpty()) {
+            text.append("\n\nGroße Unterordner:");
+            report.large().stream().limit(SHOWN_FOLDERS).forEach(folder -> text.append("\n• ").append(folder.path())
+                    .append(" (").append(Texts.bytes(folder.bytes())).append(")"));
+            if (report.large().size() > SHOWN_FOLDERS) {
+                text.append("\n• … und ").append(report.large().size() - SHOWN_FOLDERS).append(" weitere");
+            }
+        }
+        text.append("\n\nWer einzelne Unterordner weglassen will, schließt sie im Baum per Rechtsklick › Ausschließen "
+                + "aus. Ab welcher Größe dieser Hinweis kommt, steht unter Einstellungen › Allgemein › Ablage.\n\n"
+                + "„" + name + "“ wirklich synchronisieren?");
+        boolean[] result = {false};
         try {
             SwingUtilities.invokeAndWait(() -> {
                 Component parent = KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow();
-                result[0] = Dialogs.confirm(parent, "Großer Ordner", text, options, initial, "Synchronisieren");
+                result[0] = Dialogs.confirm(parent, "Großer Ordner", text.toString());
             });
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return null;
+            return false;
         } catch (InvocationTargetException e) {
             throw e.getCause() instanceof RuntimeException failure ? failure : new IllegalStateException(e.getCause());
         }
@@ -163,7 +165,17 @@ final class LargeFolders {
      * @param skip  relative Ordnerpfade, die der Abgleich nicht liest (Muster, Ausschlüsse)
      */
     static Report scan(Path root, Path start, long limit, Predicate<String> skip) throws IOException {
+        return scan(root, start, limit, skip, relative -> true);
+    }
+
+    /**
+     * Wie {@link #scan(Path, Path, long, Predicate)}; es zählen nur Dateien, die {@code counted} annimmt (Dateimuster
+     * der Quelle), denn nur sie liest der Abgleich.
+     */
+    static Report scan(Path root, Path start, long limit, Predicate<String> skip, Predicate<String> counted)
+            throws IOException {
         Objects.requireNonNull(skip, "skip");
+        Objects.requireNonNull(counted, "counted");
         if (limit <= 0) {
             throw new IllegalArgumentException("limit muss größer als 0 sein");
         }
@@ -192,7 +204,7 @@ final class LargeFolders {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
                 if (attributes.isRegularFile() && !sizes.isEmpty()
-                        && !file.getFileName().toString().startsWith(".")) {
+                        && !file.getFileName().toString().startsWith(".") && counted.test(relative(base, file))) {
                     sizes.peek()[0] += attributes.size();
                 }
                 return FileVisitResult.CONTINUE;

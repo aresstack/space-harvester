@@ -57,4 +57,16 @@ class LargeFoldersTest {
         assertThat(report.totalBytes()).isEqualTo(200);
         assertThat(report.large()).containsExactly(new LargeFolders.Folder("projekt/daten", 200));
     }
+
+    @Test
+    void countsOnlyFilesTheSourceReads() throws IOException {
+        file("logs/riesig.tmp", 500);
+        file("logs/notiz.txt", 10);
+
+        LargeFolders.Report report = LargeFolders.scan(root, root, 100, relative -> false,
+                relative -> !relative.endsWith(".tmp"));
+
+        assertThat(report.totalBytes()).isEqualTo(10);
+        assertThat(report.large()).isEmpty();
+    }
 }

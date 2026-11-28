@@ -142,25 +142,9 @@ public final class Dialogs {
      */
     public static boolean[] confirm(Component parent, String title, String text, List<String> options,
                                     String action) {
-        return confirm(parent, title, text, options, new boolean[options.size()], action);
-    }
-
-    /**
-     * Wie {@link #confirm(Component, String, String, List, String)}, die Ankreuzfelder anfangs wie {@code initial}.
-     *
-     * @return {@code null} ohne Bestätigung, sonst je Feld, ob es angekreuzt war
-     */
-    public static boolean[] confirm(Component parent, String title, String text, List<String> options,
-                                    boolean[] initial, String action) {
-        if (initial.length != options.size()) {
-            throw new IllegalArgumentException("Ein Anfangswert je Ankreuzfeld");
-        }
         boolean[][] result = {null};
         JDialog dialog = dialog(parent, title);
         List<javax.swing.JCheckBox> boxes = options.stream().map(Comic::checkBox).toList();
-        for (int i = 0; i < initial.length; i++) {
-            boxes.get(i).setSelected(initial[i]);
-        }
         ComposerButton yes = Comic.danger(action, null);
         ComposerButton no = Comic.button("Abbrechen", null);
         yes.addActionListener(e -> {

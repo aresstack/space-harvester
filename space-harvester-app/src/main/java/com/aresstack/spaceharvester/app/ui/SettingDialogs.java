@@ -645,7 +645,7 @@ final class SettingDialogs {
 
     static final String PAGE_SIZE_TITLE = "Größte Datei im Cache";
     static final String TEXT_SIZE_TITLE = "Große Dateien ganz laden bis";
-    static final String LARGE_FOLDER_TITLE = "Große Ordner nachfragen ab";
+    static final String LARGE_FOLDER_TITLE = "Hinweis auf große Ordner ab";
     static final String CHECK_TIMEOUT_TITLE = "Frist der Prüfung gegen die Quelle";
     static final String LARGE_TIMEOUT_TITLE = "Frist für große Dateien";
 
@@ -724,9 +724,9 @@ final class SettingDialogs {
                 : AppSettings.Storage.DEFAULT_LARGE_FOLDER_BYTES;
         JTextField folderSize = Comic.field(10);
         folderSize.setText(sizeText(currentFolder));
-        rows.add(LARGE_FOLDER_TITLE, folderSize, "Vor dem Abgleich eines lokalen Ordners nennt die App Unterordner über "
-                + "dieser Größe und schließt die angekreuzten aus (wieder einblenden unter Wissensquellen › "
-                + "Ausgeschlossen). Eine Größe wie 5GB oder 500MB, 0 nie; Vorgabe "
+        rows.add(LARGE_FOLDER_TITLE, folderSize, "Ist ein lokaler Ordner größer, weist die App vor dem Abgleich darauf hin, "
+                + "dass das Indexieren lange dauern kann, und fragt „wirklich?“; blockiert wird nichts. Eine Größe "
+                + "wie 5GB oder 500MB, 0 nie; Vorgabe "
                 + Texts.bytes(AppSettings.Storage.DEFAULT_LARGE_FOLDER_BYTES));
         rows.add(CHECK_TIMEOUT_TITLE, check, "So lange wartet das Öffnen oder Beschaffen einer Seite auf die Quelle, "
                 + "z. B. 30s oder 2m; Vorgabe " + ConfigFileEditor.duration(AppSettings.Storage.DEFAULT_CHECK_TIMEOUT));
