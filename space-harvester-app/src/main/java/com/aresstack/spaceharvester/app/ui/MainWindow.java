@@ -808,7 +808,18 @@ public final class MainWindow implements AppContext.Navigator {
         chatSplit.setMinimumSize(new Dimension(320, 0));
         ComicDivider.install(chatSplit, Comic.PALETTE);
         rightRail = com.aresstack.spaceharvester.app.ui.controls.DividerRail.install(chatSplit, sideSwitch, edges,
-                edges.right());
+                edges.right()).spanning();
+        // Leiste und Kugeln sitzen auf dem Trenner je auf Höhe ihres eigenen Bereichs.
+        sideDock.centres(tool -> {
+            JComponent area = sideDock.ball(tool) ? sideArea(sideModeOf(tool)) : sideDeck;
+            return sideShown() && sideStack.shown().contains(area) && (sideDock.ball(tool) || chatOpen)
+                    ? area.getY() + area.getHeight() / 2 : null;
+        });
+        sideDock.onLayout(() -> rightRail.rests());
+        sideStack.onLayout(() -> {
+            edges.revalidate();
+            edges.repaint();
+        });
         // Zur Seite zieht die Knopfleiste ihren Trenner, nach oben oder unten löst sich ein Symbol als Kugel.
         sideDock.carrier(edges);
         sideDock.sideways(rightRail::onDivider, rightRail::dragging);
@@ -1111,13 +1122,17 @@ public final class MainWindow implements AppContext.Navigator {
         if (!sideDock.ball(switchOf(sideMode))) {
             sideModes.show(sideDeck, sideMode);
         }
+        // Die Bereiche stehen in der Reihenfolge ihrer Gruppen: Die oberste Kugel hat den oberen Bereich.
         java.util.List<java.awt.Component> areas = new java.util.ArrayList<>();
-        // Ist rechts alles zu, bleibt der Bereich der Knopfleiste der eine, der mit der Leiste auf null schrumpft.
-        if (chatOpen || sideDock.openBalls().isEmpty()) {
-            areas.add(sideDeck);
-        }
-        for (String tool : sideDock.openBalls()) {
-            areas.add(sideArea(sideModeOf(tool)));
+        for (String unit : sideDock.units()) {
+            if (com.aresstack.spaceharvester.app.ui.controls.SideDock.RAIL.equals(unit)) {
+                // Ist rechts alles zu, bleibt der Bereich der Leiste der eine, der mit ihr auf null schrumpft.
+                if (chatOpen || sideDock.openBalls().isEmpty()) {
+                    areas.add(sideDeck);
+                }
+            } else if (sideDock.open(unit)) {
+                areas.add(sideArea(sideModeOf(unit)));
+            }
         }
         sideStack.show(areas);
     }

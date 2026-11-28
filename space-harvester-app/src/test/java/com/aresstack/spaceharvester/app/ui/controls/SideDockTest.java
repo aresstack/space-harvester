@@ -58,9 +58,10 @@ class SideDockTest {
             threeTools();
             int railHeight = rail.getPreferredSize().height;
 
-            dock.detach(ANALYSES, 0);
+            dock.detach(ANALYSES, 1);
 
             assertThat(rail.names()).containsExactly(CHAT, JOBS);
+            assertThat(dock.units()).containsExactly(SideDock.RAIL, ANALYSES);
             assertThat(dock.balls()).containsExactly(ANALYSES);
             assertThat(dock.ball(ANALYSES)).isTrue();
             assertThat(dock.open(ANALYSES)).as("war nicht gewählt: die Kugel ist zu").isFalse();
@@ -70,7 +71,7 @@ class SideDockTest {
             assertThat(ball.getPreferredSize().width).as("eine Kugel ist so hoch wie breit")
                     .isEqualTo(ball.getPreferredSize().height);
             assertThat(((SegmentedToggle) ball.getParent()).glassy()).as("Kugeln sind leicht durchscheinend").isTrue();
-            assertThat(changes).containsExactly("1:0");
+            assertThat(changes).containsExactly("R,1:0");
 
             // Ein Klick öffnet den eigenen Bereich, ein zweiter schließt ihn; die Leiste bleibt unberührt.
             ball.doClick();
@@ -115,26 +116,34 @@ class SideDockTest {
     void ballsAreSortedAndRememberedWithTheirOpenAreas() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             threeTools();
-            dock.detach(CHAT, 0);
-            dock.detach(JOBS, 1);
+            dock.detach(CHAT, 1);
+            dock.detach(JOBS, 2);
             dock.open(JOBS, true);
-            assertThat(dock.balls()).containsExactly(CHAT, JOBS);
+            assertThat(dock.units()).containsExactly(SideDock.RAIL, CHAT, JOBS);
 
+            // Die Reihenfolge der Gruppen ist die ihrer Bereiche: Die unterste Kugel nach oben geschoben steht über
+            // der Leiste.
             dock.order(JOBS, 0);
 
+            assertThat(dock.units()).containsExactly(JOBS, SideDock.RAIL, CHAT);
             assertThat(dock.balls()).containsExactly(JOBS, CHAT);
-            assertThat(dock.placement()).isEqualTo("2:1,0:0");
+            assertThat(dock.placement()).isEqualTo("2:1,R,0:0");
             assertThat(dock.openBalls()).containsExactly(JOBS);
 
             // Ein neues Fenster stellt dieselben Kugeln wieder her; Unlesbares bleibt in der Leiste.
             SegmentedToggle otherRail = new SegmentedToggle();
             SideDock other = new SideDock(otherRail);
             other.tool(CHAT, Glyph.STAR, "").tool(ANALYSES, Glyph.TABLE, "").tool(JOBS, Glyph.CROSSHAIR, "");
-            other.restore("2:1,0:0,kaputt,9:1");
-            assertThat(other.balls()).containsExactly(JOBS, CHAT);
+            other.restore("2:1,R,0:0,kaputt,9:1");
+            assertThat(other.units()).containsExactly(JOBS, SideDock.RAIL, CHAT);
             assertThat(other.open(JOBS)).isTrue();
             assertThat(other.open(CHAT)).isFalse();
             assertThat(otherRail.names()).containsExactly(ANALYSES);
+
+            // Das letzte Symbol bleibt in der Leiste: Allein ist sie selbst eine Kugel und wechselt nur den Platz.
+            dock.detach(ANALYSES, 0);
+            assertThat(rail.names()).containsExactly(ANALYSES);
+            assertThat(dock.units()).containsExactly(SideDock.RAIL, JOBS, CHAT);
 
             dock.closeBalls();
             assertThat(dock.openBalls()).isEmpty();

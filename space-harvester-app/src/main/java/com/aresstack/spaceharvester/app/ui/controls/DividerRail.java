@@ -94,6 +94,40 @@ public final class DividerRail {
         int length = Math.max(rail.getPreferredSize().height,
                 slot.getComponentCount() == 0 ? 0 : slot.getPreferredSize().height);
         ComicDivider.gap(pane, active ? before : 0, active ? length - before : 0);
+        // Verteilt sich der Platz selbst über den Trenner, ruht die Linie hinter jedem seiner Teile.
+        ComicDivider.gaps(pane, active && spanning && slot.getComponentCount() > 0
+                && slot.getComponent(0) instanceof Beads beads && onDivider() ? beads.rests() : java.util.List.of());
+    }
+
+    /** Etwas, das sich selbst über die Länge eines Trenners verteilt und sagt, wo es die Linie verdeckt. */
+    public interface Beads {
+        /** Je Teil Anfang und Ende entlang des Trenners, von vorn nach hinten. */
+        java.util.List<int[]> rests();
+    }
+
+    private boolean spanning;
+
+    /**
+     * Der Platz erstreckt sich über den ganzen Trenner, und was auf ihm steht, verteilt sich selbst darüber
+     * ({@link SideDock}: die Leiste und jede Kugel auf Höhe ihres Bereichs).
+     */
+    public DividerRail spanning() {
+        spanning = true;
+        overlay.span(slot, this::line);
+        follow();
+        return this;
+    }
+
+    /** Die Linie des sichtbaren Trenners in der Fläche {@code overlay}; {@code null} ohne sichtbaren Trenner. */
+    private java.awt.Rectangle line() {
+        Component divider = divider();
+        return center() == null || divider == null ? null
+                : SwingUtilities.convertRectangle(divider.getParent(), divider.getBounds(), overlay);
+    }
+
+    /** Die Lücken der Linie neu bestimmen, nachdem sich etwas auf dem Platz bewegt hat. */
+    public void rests() {
+        gap();
     }
 
     /** Die Höhe im Platz, die auf der Mitte des Trenners liegt: die Mitte der Knopfleiste. */

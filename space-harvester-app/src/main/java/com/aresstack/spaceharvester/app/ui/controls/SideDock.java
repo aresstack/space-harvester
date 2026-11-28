@@ -42,7 +42,11 @@ public final class SideDock {
     private final SegmentedToggle rail;
     private final Column column = new Column();
     private final Map<String, Tool> tools = new LinkedHashMap<>();
-    private final List<String> balls = new ArrayList<>();
+    /** Kennung der Knopfleiste in der Reihenfolge der Gruppen ({@link #units}) und in {@link #placement}. */
+    public static final String RAIL = "R";
+
+    /** Die Gruppen von oben nach unten: die Knopfleiste ({@link #RAIL}) und jede Kugel mit ihrem Namen. */
+    private final List<String> units = new ArrayList<>(List.of(RAIL));
     private final Map<String, SegmentedToggle> views = new HashMap<>();
     private final Set<String> open = new LinkedHashSet<>();
     private final List<Runnable> listeners = new ArrayList<>();
@@ -51,6 +55,8 @@ public final class SideDock {
     private BooleanSupplier sideways = () -> false;
     private BooleanSupplier railBusy = () -> false;
     private boolean carrying;
+    private java.util.function.Function<String, Integer> centre = name -> null;
+    private Runnable laidOut = () -> { };
 
     /** Ein Werkzeug: sein Name, sein Symbol und sein Tooltip, gleich wo es gerade steht. */
     private static final class Tool {
@@ -105,6 +111,21 @@ public final class SideDock {
         this.railBusy = railBusy;
     }
 
+    /**
+     * Auf welcher Höhe der Spalte der Bereich eines Werkzeugs seine Mitte hat, oder {@code null}, wenn er nicht zu
+     * sehen ist. Ist die Spalte über einen Trenner gestreckt, sitzt die Knopfleiste auf Höhe des Bereichs ihres
+     * gewählten Symbols und jede offene Kugel auf Höhe ihres eigenen Bereichs: Man sieht, was wozu gehört. Was
+     * keinen offenen Bereich hat, steht oben, wo die Leiste auch zugeklappt steht.
+     */
+    public void centres(java.util.function.Function<String, Integer> centre) {
+        this.centre = centre;
+    }
+
+    /** Meldet, wenn Leiste und Kugeln ihren Platz in der Spalte bekommen haben. */
+    public void onLayout(Runnable laidOut) {
+        this.laidOut = laidOut;
+    }
+
     /** Ob gerade ein Symbol getragen wird. */
     public boolean carrying() {
         return carrying;
@@ -129,17 +150,28 @@ public final class SideDock {
 
     /** Ob das Werkzeug als einzelne Kugel steht. */
     public boolean ball(String name) {
-        return balls.contains(name);
+        return views.containsKey(name);
+    }
+
+    /**
+     * Die Gruppen von oben nach unten: {@link #RAIL} für die Knopfleiste, sonst der Name der Kugel. In dieser
+     * Reihenfolge stehen auch ihre Bereiche untereinander (Angelo 28.11.2026: die oberste Kugel hat den oberen
+     * Bereich); eine Kugel umzusortieren tauscht also die Plätze der Bereiche.
+     */
+    public List<String> units() {
+        return List.copyOf(units);
     }
 
     /** Die Kugeln von oben nach unten. */
     public List<String> balls() {
-        return List.copyOf(balls);
+        List<String> result = new ArrayList<>(units);
+        result.remove(RAIL);
+        return result;
     }
 
     /** Die Kugeln, deren Bereich offen ist, von oben nach unten. */
     public List<String> openBalls() {
-        List<String> result = new ArrayList<>(balls);
+        List<String> result = balls();
         result.retainAll(open);
         return result;
     }
@@ -177,11 +209,17 @@ public final class SideDock {
     }
 
     /**
-     * Löst ein Werkzeug aus der Knopfleiste und stellt es als Kugel an Platz {@code index}. War es das gewählte der
-     * Leiste, bleibt sein Bereich offen, nun als der der Kugel; die Leiste zeigt dann keine Wahl mehr.
+     * Löst ein Werkzeug aus der Knopfleiste und stellt es als Kugel an Platz {@code index} der Gruppen
+     * ({@link #units}; die Leiste zählt mit). War es das gewählte der Leiste, bleibt sein Bereich offen, nun als der
+     * der Kugel; die Leiste zeigt dann keine Wahl mehr. Das letzte Symbol der Leiste bleibt in ihr: Allein ist sie
+     * selbst schon eine Kugel und wechselt nur ihren Platz ({@link #order}).
      */
     public void detach(String name, int index) {
         if (!tools.containsKey(name) || ball(name)) {
+            return;
+        }
+        if (rail.names().size() == 1) {
+            order(RAIL, index);
             return;
         }
         boolean wasOpen = name.equals(rail.selected());
@@ -201,7 +239,7 @@ public final class SideDock {
         view.onAgain(chosen -> open(chosen, false));
         dress(view, name);
         views.put(name, view);
-        balls.add(Math.max(0, Math.min(balls.size(), index)), name);
+        units.add(Math.max(0, Math.min(units.size(), index)), name);
         if (shown) {
             open.add(name);
         }
@@ -227,7 +265,7 @@ public final class SideDock {
             return;
         }
         boolean wasOpen = open.remove(name);
-        balls.remove(name);
+        units.remove(name);
         views.remove(name);
         rail.segment(name, tools.get(name).icon, index);
         dress(rail, name);
@@ -235,14 +273,20 @@ public final class SideDock {
         attached.accept(name, wasOpen);
     }
 
-    /** Stellt eine Kugel an Platz {@code index} unter den Kugeln. */
-    public void order(String name, int index) {
-        if (!ball(name)) {
+    /**
+     * Stellt eine Kugel oder die Knopfleiste ({@link #RAIL}) an Platz {@code index} der Gruppen ({@link #units}), gezählt
+     * ohne sie selbst.
+     */
+    public void order(String unit, int index) {
+        if (!units.contains(unit)) {
             return;
         }
-        balls.remove(name);
-        balls.add(Math.max(0, Math.min(balls.size(), index)), name);
-        changed();
+        int before = units.indexOf(unit);
+        units.remove(unit);
+        units.add(Math.max(0, Math.min(units.size(), index)), unit);
+        if (units.indexOf(unit) != before) {
+            changed();
+        }
     }
 
     /** Der Knopf des Werkzeugs, in der Leiste oder als Kugel. */
@@ -273,17 +317,25 @@ public final class SideDock {
     }
 
     /**
-     * Die Plätze zum Merken: je Kugel von oben nach unten die Nummer des Werkzeugs (in der Reihenfolge der Anmeldung)
-     * und ob ihr Bereich offen ist, etwa {@code "2:1,0:0"}; leer ohne Kugeln.
+     * Die Plätze zum Merken: die Gruppen von oben nach unten, {@link #RAIL} für die Knopfleiste und je Kugel die
+     * Nummer des Werkzeugs (in der Reihenfolge der Anmeldung) und ob ihr Bereich offen ist, etwa {@code "2:1,R,0:0"};
+     * leer ohne Kugeln.
      */
     public String placement() {
+        if (views.isEmpty()) {
+            return "";
+        }
         List<String> names = new ArrayList<>(tools.keySet());
         StringBuilder text = new StringBuilder();
-        for (String name : balls) {
+        for (String unit : units) {
             if (text.length() > 0) {
                 text.append(',');
             }
-            text.append(names.indexOf(name)).append(':').append(open.contains(name) ? 1 : 0);
+            if (RAIL.equals(unit)) {
+                text.append(RAIL);
+            } else {
+                text.append(names.indexOf(unit)).append(':').append(open.contains(unit) ? 1 : 0);
+            }
         }
         return text.toString();
     }
@@ -294,45 +346,72 @@ public final class SideDock {
             return;
         }
         List<String> names = new ArrayList<>(tools.keySet());
+        boolean railSeen = false;
         for (String part : placement.split(",")) {
             String[] fields = part.trim().split(":");
+            if (RAIL.equals(fields[0])) {
+                // Die Leiste steht hinter allem, was bis hierher Kugel wurde.
+                units.remove(RAIL);
+                units.add(RAIL);
+                railSeen = true;
+                continue;
+            }
             try {
                 int number = Integer.parseInt(fields[0]);
-                if (number < 0 || number >= names.size() || ball(names.get(number))) {
+                // Das letzte Symbol bleibt in der Leiste.
+                if (number < 0 || number >= names.size() || ball(names.get(number)) || rail.names().size() == 1) {
                     continue;
                 }
                 rail.remove(names.get(number));
-                place(names.get(number), balls.size(), fields.length > 1 && "1".equals(fields[1]));
+                place(names.get(number), units.size(), fields.length > 1 && "1".equals(fields[1]));
             } catch (NumberFormatException unreadable) {
                 // Ein unlesbarer Eintrag bleibt in der Leiste.
             }
+        }
+        if (!railSeen) {
+            units.remove(RAIL);
+            units.add(0, RAIL);
         }
         changed();
     }
 
     /**
-     * Wohin ein an {@code point} (in der Spalte) losgelassenes Symbol gehört: Nahe der Knopfleiste oder über ihr
-     * schnappt es in die Leiste, sonst zwischen die Kugeln nach seiner Höhe.
+     * Wohin ein an {@code point} (in der Spalte) losgelassenes Symbol gehört: Auf der Knopfleiste schnappt es in die
+     * Leiste. Sonst wird es eine Kugel und steht nach seiner Höhe zwischen den anderen Gruppen: Über dem Bereich einer
+     * anderen Gruppe losgelassen, tauscht es mit ihr den Platz.
      */
     void drop(String name, Point point) {
         Rectangle bar = rail.getBounds();
+        boolean alone = !ball(name) && rail.names().size() == 1;
         boolean near = point.x >= -column.getWidth() && point.x <= 2 * column.getWidth();
-        if (near && point.y < bar.y + bar.height + GAP / 2) {
+        if (!alone && near && point.y >= bar.y - GAP / 2 && point.y < bar.y + bar.height + GAP / 2) {
             int height = bar.height / Math.max(1, rail.getComponentCount());
             // Die nächste Fuge zwischen zwei Symbolen der Leiste.
             int index = height <= 0 ? 0 : Math.round((point.y - bar.y) / (float) height);
             attach(name, Math.max(0, index));
             return;
         }
+        Component own = ball(name) ? views.get(name) : rail;
+        int from = own.getY() + own.getHeight() / 2;
+        String self = ball(name) ? name : alone ? RAIL : null;
         int index = 0;
-        for (String other : balls) {
-            SegmentedToggle view = views.get(other);
-            if (!other.equals(name) && view.getY() + view.getHeight() / 2 < point.y) {
+        for (String unit : units) {
+            if (unit.equals(self)) {
+                continue;
+            }
+            Component other = RAIL.equals(unit) ? rail : views.get(unit);
+            // Die Grenze zu einer anderen Gruppe liegt mittig zwischen ihr und dem alten Platz: bei gleich hohen
+            // Bereichen genau auf der Linie zwischen beiden.
+            int middle = other.getY() + other.getHeight() / 2;
+            // Ein Symbol, das gerade erst aus der Leiste kommt, hat noch keinen eigenen Platz: Es ordnet sich nach
+            // den Mitten der anderen ein.
+            int border = self == null ? middle : (middle + from) / 2;
+            if (border < point.y) {
                 index++;
             }
         }
-        if (ball(name)) {
-            order(name, index);
+        if (self != null) {
+            order(self, index);
         } else {
             detach(name, index);
         }
@@ -396,7 +475,30 @@ public final class SideDock {
     }
 
     /** Knopfleiste und Kugeln untereinander, waagerecht mittig; eine leere Leiste nimmt keinen Platz. */
-    private final class Column extends JPanel {
+    private final class Column extends JPanel implements DividerRail.Beads {
+
+        @Override
+        public List<int[]> rests() {
+            List<int[]> rests = new ArrayList<>();
+            for (Component part : parts()) {
+                rests.add(new int[] {part.getY(), part.getY() + part.getHeight()});
+            }
+            rests.sort(java.util.Comparator.comparingInt(rest -> rest[0]));
+            return rests;
+        }
+
+        /** Das Werkzeug, dessen Bereich zu diesem Teil gehört: das gewählte der Leiste oder das der Kugel. */
+        private String toolOf(Component part) {
+            if (part == rail) {
+                return rail.selected();
+            }
+            for (String name : views.keySet()) {
+                if (views.get(name) == part) {
+                    return open.contains(name) ? name : null;
+                }
+            }
+            return null;
+        }
 
         private Column() {
             super(null);
@@ -405,9 +507,8 @@ public final class SideDock {
 
         private void rebuild() {
             removeAll();
-            add(rail);
-            for (String name : balls) {
-                add(views.get(name));
+            for (String unit : units) {
+                add(RAIL.equals(unit) ? rail : views.get(unit));
             }
             revalidate();
             repaint();
@@ -439,12 +540,21 @@ public final class SideDock {
         @Override
         public void doLayout() {
             rail.setBounds(0, 0, 0, 0);
-            int y = 0;
+            // Gestreckt über einen Trenner: Was offen ist, sitzt auf Höhe seines Bereichs; der Rest steht oben.
+            boolean stretched = getHeight() > getPreferredSize().height;
+            int y = stretched ? HeadBar.HEIGHT + EdgeOverlay.HEAD_GAP : 0;
             for (Component part : parts()) {
                 Dimension size = part.getPreferredSize();
-                part.setBounds((getWidth() - size.width) / 2, y, size.width, size.height);
-                y += size.height + GAP;
+                String tool = stretched ? toolOf(part) : null;
+                Integer middle = tool == null ? null : centre.apply(tool);
+                if (middle != null) {
+                    part.setBounds((getWidth() - size.width) / 2, middle - size.height / 2, size.width, size.height);
+                } else {
+                    part.setBounds((getWidth() - size.width) / 2, y, size.width, size.height);
+                    y += size.height + GAP;
+                }
             }
+            laidOut.run();
         }
 
         /** Zwischen den Teilen fängt die Spalte keine Maus: Dort liegt der Trenner. */

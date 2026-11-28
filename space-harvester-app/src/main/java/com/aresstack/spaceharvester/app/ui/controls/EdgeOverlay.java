@@ -34,6 +34,9 @@ public final class EdgeOverlay extends JPanel {
     private final java.util.Map<JComponent, java.util.function.Supplier<Point>> anchors = new java.util.HashMap<>();
     /** Je Platz die Höhe in ihm, die auf seiner Mitte liegt; ohne Eintrag seine halbe Höhe. */
     private final java.util.Map<JComponent, java.util.function.IntSupplier> focuses = new java.util.HashMap<>();
+    /** Je Platz die Strecke, über die er sich ganz erstreckt (etwa ein Trenner); {@code null}: nicht gesetzt. */
+    private final java.util.Map<JComponent, java.util.function.Supplier<java.awt.Rectangle>> spans =
+            new java.util.HashMap<>();
     /** Was gerade mit der Maus getragen wird ({@link #carry}), oder {@code null}. */
     private JComponent carried;
 
@@ -54,7 +57,13 @@ public final class EdgeOverlay extends JPanel {
         JPanel slot = new JPanel(new BorderLayout()) {
             @Override
             public boolean contains(int x, int y) {
-                return getComponentCount() > 0 && super.contains(x, y);
+                // Nur wo wirklich ein Teil steht: Ein Platz kann länger sein als das, was auf ihm steht.
+                for (Component part : getComponents()) {
+                    if (part.contains(x - part.getX(), y - part.getY())) {
+                        return true;
+                    }
+                }
+                return false;
             }
         };
         slot.setOpaque(false);
@@ -93,6 +102,15 @@ public final class EdgeOverlay extends JPanel {
             java.util.function.IntSupplier focus) {
         anchors.put(slot, center);
         focuses.put(slot, focus);
+    }
+
+    /**
+     * Streckt einen Platz über eine ganze Strecke, etwa die Linie eines Trenners: Solange {@code line} ein Rechteck
+     * liefert, ist der Platz so hoch wie es und steht waagerecht mittig darauf. Was auf ihm steht, verteilt sich
+     * selbst über die Höhe ({@link SideDock}: jede Kugel auf Höhe ihres Bereichs).
+     */
+    public void span(JComponent slot, java.util.function.Supplier<java.awt.Rectangle> line) {
+        spans.put(slot, line);
     }
 
     /**
@@ -171,5 +189,14 @@ public final class EdgeOverlay extends JPanel {
         Dimension rightSize = right.getComponentCount() == 0 ? new Dimension() : right.getPreferredSize();
         Point rightAt = place(right, rightSize, getWidth() - FRAME_LINE - rightSize.width, top);
         right.setBounds(rightAt.x, rightAt.y, rightSize.width, rightSize.height);
+        for (JComponent slot : new JComponent[] {left, right}) {
+            java.util.function.Supplier<java.awt.Rectangle> span = spans.get(slot);
+            java.awt.Rectangle line = span == null || slot.getComponentCount() == 0 ? null : span.get();
+            if (line != null) {
+                int width = slot.getPreferredSize().width;
+                slot.setBounds(Math.max(FRAME_LINE, Math.min(getWidth() - FRAME_LINE - width,
+                        line.x + line.width / 2 - width / 2)), line.y, width, line.height);
+            }
+        }
     }
 }

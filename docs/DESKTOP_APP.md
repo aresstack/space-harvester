@@ -246,10 +246,14 @@ Kugeln der rechten Seitenleiste (Angelo, 28.11.2026, `SideDock`, `AreaStack`): J
 (Chat, Analysen, Aufträge) lässt sich mit der Maus herausziehen und steht dann als eigene Kugel unter der Leiste;
 auf die Leiste zurückgeschoben, gehört es wieder zu ihr. Sitzt die Leiste auf ihrem Trenner, zieht eine Bewegung zur
 Seite weiter den Trenner, nach oben oder unten löst sich das Symbol; am Fensterrand löst es sich in jede Richtung.
-Kugeln lassen sich untereinander umsortieren. Die Symbole der Leiste schalten nur um (höchstens eines offen), jede
-Kugel öffnet und schließt ihren eigenen Bereich; die offenen Bereiche stehen untereinander und teilen sich die Höhe
-gleich. Kugeln sind wie die Leiste leicht durchscheinend und unter der Maus voll deckend. Kugeln und ihre offenen
-Bereiche sind gemerkt (`sidebar.right.balls`). Noch nicht gebaut: Kugeln an den linken Rand verschieben und die
+Die Symbole der Leiste schalten nur um (höchstens eines offen) und bleiben eine verschmolzene Leiste; das letzte
+Symbol bleibt in ihr. Jede Kugel öffnet und schließt ihren eigenen Bereich; die offenen Bereiche stehen untereinander
+und teilen sich die Höhe gleich. Die Leiste und jede offene Kugel sitzen auf dem senkrechten Trenner mittig auf Höhe
+ihres eigenen Bereichs und wandern mit ihm; hinter ihnen ruht die Linie. Was keinen offenen Bereich hat, steht oben am
+Trenner, wo die Leiste auch zugeklappt steht. Die Reihenfolge der Gruppen ist die ihrer Bereiche: Eine Kugel (oder
+die Leiste aus einem Symbol) über dem Bereich einer anderen losgelassen tauscht mit ihr den Platz, die Größen bleiben.
+Kugeln sind wie die Leiste leicht durchscheinend und unter der Maus voll deckend. Reihenfolge, Kugeln und ihre
+offenen Bereiche sind gemerkt (`sidebar.right.balls`). Noch nicht gebaut: Kugeln an den linken Rand verschieben und die
 Symbole der linken Leiste herausziehen.
 
 Aufbau des Hauptfensters (Angelo, 13.11.2026: der Baum links wählt, die Reiter oben entscheiden, wie die Mitte das

@@ -660,7 +660,7 @@ class MainWindowTest {
                 assertThat(chatArea.getHeight()).isEqualTo(full);
 
                 // Der offene Chat wird zur Kugel: Sein Bereich bleibt offen, die Leiste zeigt keine Wahl mehr.
-                dock.detach(chat, 0);
+                dock.detach(chat, 1);
                 layoutAll(surface);
                 assertThat(window.chatOpen()).isTrue();
                 assertThat(window.chatToggle().isSelected()).isTrue();
@@ -670,7 +670,7 @@ class MainWindowTest {
                 assertThat(chatArea.getHeight()).as("allein hat er die ganze Höhe").isEqualTo(full);
                 assertThat(window.chatSplit().getDividerSize())
                         .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.ComicDivider.THICKNESS);
-                assertThat(AppState.shared().get(MainWindow.SIDE_BALLS_KEY)).isEqualTo("0:1");
+                assertThat(AppState.shared().get(MainWindow.SIDE_BALLS_KEY)).isEqualTo("R,0:1");
 
                 // Die Leiste schaltet daneben weiter um: Analysen und Chat teilen sich die Höhe.
                 window.analysesToggle().doClick();
@@ -684,6 +684,45 @@ class MainWindowTest {
                         org.assertj.core.data.Offset.offset(1));
                 assertThat(shown.get(0).getHeight() + shown.get(1).getHeight()
                         + com.aresstack.spaceharvester.app.ui.controls.AreaStack.GAP).isEqualTo(full);
+                // Jede Gruppe sitzt auf dem Trenner auf Höhe ihres eigenen Bereichs: die verschmolzene Leiste (Analysen
+                // und Aufträge) am oberen, die Kugel des Chats am unteren. Zwei Gruppen, zwei Bereiche, ein Trenner.
+                layoutAll(surface);
+                layoutAll(surface);
+                java.awt.Rectangle railAt = SwingUtilities.convertRectangle(window.sideSwitch().getParent(),
+                        window.sideSwitch().getBounds(), surface);
+                Component ballView = window.chatToggle().getParent();
+                java.awt.Rectangle ballAt = SwingUtilities.convertRectangle(ballView.getParent(),
+                        ballView.getBounds(), surface);
+                java.awt.Rectangle upper = SwingUtilities.convertRectangle(window.sideStack(),
+                        shown.get(0).getBounds(), surface);
+                java.awt.Rectangle lower = SwingUtilities.convertRectangle(window.sideStack(),
+                        shown.get(1).getBounds(), surface);
+                assertThat(railAt.y + railAt.height / 2).isCloseTo(upper.y + upper.height / 2,
+                        org.assertj.core.data.Offset.offset(1));
+                assertThat(ballAt.y + ballAt.height / 2).isCloseTo(lower.y + lower.height / 2,
+                        org.assertj.core.data.Offset.offset(1));
+                assertThat(((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle) window.sideSwitch())
+                        .names()).as("die übrigen Symbole bleiben eine verschmolzene Leiste").hasSize(2);
+                Component line = ((javax.swing.plaf.basic.BasicSplitPaneUI) window.chatSplit().getUI()).getDivider();
+                java.awt.Rectangle lineAt = SwingUtilities.convertRectangle(line.getParent(), line.getBounds(),
+                        surface);
+                assertThat(railAt.x + railAt.width / 2).isEqualTo(lineAt.x + lineAt.width / 2);
+                assertThat(ballAt.x + ballAt.width / 2).isEqualTo(lineAt.x + lineAt.width / 2);
+                assertThat(com.aresstack.spaceharvester.app.ui.controls.ComicDivider.gaps(window.chatSplit()))
+                        .as("die Linie ruht hinter Leiste und Kugel").hasSize(2);
+
+                // Die Kugel über die Leiste geschoben: Die Bereiche tauschen die Plätze, die Größen bleiben.
+                dock.order(chat, 0);
+                layoutAll(surface);
+                layoutAll(surface);
+                assertThat(window.sideStack().shown().get(0)).isSameAs(chatArea);
+                assertThat(chatArea.getY()).isZero();
+                ballView = window.chatToggle().getParent();
+                ballAt = SwingUtilities.convertRectangle(ballView.getParent(), ballView.getBounds(), surface);
+                assertThat(ballAt.y + ballAt.height / 2).as("die Kugel sitzt jetzt oben, auf Höhe ihres Bereichs")
+                        .isCloseTo(upper.y + upper.height / 2, org.assertj.core.data.Offset.offset(1));
+                dock.order(chat, 1);
+                layoutAll(surface);
                 window.analysesToggle().doClick();
                 window.jobsToggle().doClick();
                 layoutAll(surface);

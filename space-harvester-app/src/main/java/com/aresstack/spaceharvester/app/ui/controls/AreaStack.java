@@ -28,6 +28,9 @@ public final class AreaStack extends JPanel {
     private static final int LINE_WIDTH = 2;
 
     private final List<Component> shown = new ArrayList<>();
+    private final List<Runnable> listeners = new ArrayList<>();
+    /** Die zuletzt gestellten Rechtecke, um nur echte Änderungen zu melden. */
+    private List<java.awt.Rectangle> placed = List.of();
 
     public AreaStack() {
         super(null);
@@ -49,6 +52,11 @@ public final class AreaStack extends JPanel {
         }
         revalidate();
         repaint();
+    }
+
+    /** Meldet, wenn die gezeigten Bereiche einen neuen Platz bekommen haben (wer auf ihrer Höhe sitzt, zieht nach). */
+    public void onLayout(Runnable listener) {
+        listeners.add(listener);
     }
 
     /** Die gezeigten Bereiche von oben nach unten. */
@@ -117,9 +125,6 @@ public final class AreaStack extends JPanel {
         @Override
         public void layoutContainer(Container parent) {
             int count = shown.size();
-            if (count == 0) {
-                return;
-            }
             Insets insets = getInsets();
             int width = getWidth() - insets.left - insets.right;
             int room = getHeight() - insets.top - insets.bottom - GAP * (count - 1);
@@ -129,6 +134,16 @@ public final class AreaStack extends JPanel {
                 int height = room / count + (index < room % count ? 1 : 0);
                 shown.get(index).setBounds(insets.left, y, width, Math.max(0, height));
                 y += height + GAP;
+            }
+            List<java.awt.Rectangle> now = new ArrayList<>();
+            for (Component area : shown) {
+                now.add(area.getBounds());
+            }
+            if (!now.equals(placed)) {
+                placed = now;
+                for (Runnable listener : List.copyOf(listeners)) {
+                    listener.run();
+                }
             }
         }
     }
