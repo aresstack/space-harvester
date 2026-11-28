@@ -518,6 +518,35 @@ class SearchViewTest {
         loadAll(view[0], table, more, 2 * PAGES_PER_SOURCE);
     }
 
+    /**
+     * Lädt die erste Quelle beim Bereichswechsel noch Seiten in den Cache, folgt die Ansicht ihrem Stapel nicht
+     * weiter: Sonst sortiert ihre nächste Meldung mit der alten Anfrage neu und nimmt der nachgesuchten Quelle
+     * „Weitere laden“ (roter Lauf auf main, 28.11.2026).
+     */
+    @Test
+    void choosingAnotherAreaStopsFollowingThePreviousBatch() throws Exception {
+        start(false);
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
+        await(() -> context.runtime() != null);
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].scope(List.of(new Explorer.Scope("beta", null)));
+            view[0].search("betrieb");
+        });
+        JTable table = find(whole(view[0]), JTable.class).get(0);
+        AbstractButton more = button(whole(view[0]), "Weitere laden");
+        loadAll(view[0], table, more, PAGES_PER_SOURCE);
+        String[] followed = new String[1];
+        SwingUtilities.invokeAndWait(() -> {
+            // Der Zustand des Wettlaufs, fest hergestellt: der Stapel der ersten Quelle lädt noch.
+            view[0].progressId = "stapel-der-ersten-quelle";
+            view[0].scope(List.of(new Explorer.Scope("alpha", null)));
+            followed[0] = view[0].progressId;
+        });
+        assertThat(followed[0]).as("dem alten Stapel wird nicht mehr gefolgt").isNull();
+        loadAll(view[0], table, more, PAGES_PER_SOURCE);
+    }
+
     /** Ein anderer Bereich links (Angelo 21./23.11.2026): die fehlende Quelle wird nachgesucht, die Liste gefiltert. */
     @Test
     void choosingAnotherAreaSearchesTheSameTextThere() throws Exception {

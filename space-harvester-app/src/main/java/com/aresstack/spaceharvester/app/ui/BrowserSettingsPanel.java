@@ -21,7 +21,8 @@ import java.util.List;
  * Websuche im Chat je Profil. Jeder Chat nutzt Extern (Vorgabe) oder Intern (Umschalter im Menü am Pfeil der
  * Weltkugel); beide Profile haben dieselben Felder: Modus (standardmäßig blockieren mit Whitelist oder
  * standardmäßig erlauben mit Blacklist), beide Regellisten und die Suchmaschinen des Profils (Tabelle aus Ask AI;
- * Intern nur Suchseiten des Hauses). {@code browser_search} sucht damit im Suchbrowser, nicht im Fenster des Chats.
+ * Intern nur Suchseiten des Hauses). {@code browser_search} sucht damit in Tabs des Browsers des Chats (Angelo 28.11.2026:
+ * ein Browser); nur Google läuft in einem eigenen Suchbrowser.
  * Jede Änderung (Auswahl oder Verlassen eines Felds) wird sofort gespeichert. Nur auf dem EDT.
  */
 public final class BrowserSettingsPanel {
@@ -31,13 +32,13 @@ public final class BrowserSettingsPanel {
     static final String ALLOW_LABEL = "Standardmäßig erlauben — nur Websites aus der Blacklist werden blockiert.";
     static final String RULE_HINT = "Eine Regel je Zeile: example.org = genau dieser Host, *.example.org = "
             + "Subdomains; Blacklist gewinnt immer";
-    static final String ENGINES_HINT = "Der Chat sucht damit im eigenen Suchbrowser; Priorität 0 zuerst, Zeilen "
-            + "gleicher Priorität zusammen. Das Fenster des Chats öffnet danach nur die Treffer.";
+    static final String ENGINES_HINT = "Der Chat sucht damit in Tabs seines Browsers, die danach wieder schließen; "
+            + "Priorität 0 zuerst, Zeilen gleicher Priorität zusammen.";
     static final String INTERNAL_ENGINES_HINT = "Nur Suchseiten des Hauses (etwa das Unternehmensportal), keine "
             + "öffentlichen Suchmaschinen. Weiß man nicht, wo etwas steht: mehrere mit gleicher Priorität.";
-    static final String SEARCH_WINDOW_LABEL = "Suchbrowser sichtbar";
-    static final String SEARCH_WINDOW_HINT = "Zeigt das Fenster, in dem der Chat sucht (etwa um eine Sicherheitsabfrage "
-            + "zu lösen). Gilt ab dem nächsten Start des Suchbrowsers.";
+    static final String SEARCH_WINDOW_LABEL = "Google-Suchbrowser sichtbar";
+    static final String SEARCH_WINDOW_HINT = "Nur Google sucht in einem eigenen Browser: zeigt dessen Fenster (etwa um "
+            + "eine Sicherheitsabfrage zu lösen). Gilt ab seinem nächsten Start.";
     static final String NOTE = "Jeder Chat nutzt das Profil Extern oder Intern (Umschalter im Menü am Pfeil der "
             + "Weltkugel, Standard Extern). Bei „Standardmäßig blockieren“ fragt der Chat bei unbekannten Websites "
             + "nach: Einmal erlauben, Immer erlauben, Immer verbieten oder Abbrechen. „Immer“ trägt den Host in das "

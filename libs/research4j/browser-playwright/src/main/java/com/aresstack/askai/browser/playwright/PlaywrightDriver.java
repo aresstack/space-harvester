@@ -94,6 +94,18 @@ interface PlaywrightDriver extends AutoCloseable {
     default void closeSearchTabs() {
     }
 
+    /**
+     * Gives the whole coming search a tab of its own and makes it the current page, so that no engine, not even one
+     * asked by URL template, navigates the page the session was on (a chat's tab). Undone by {@link #endSearchTab}.
+     */
+    default void beginSearchTab() throws BrowserException {
+        throw new BrowserException("SEARCH_TABS_UNSUPPORTED — this driver has no tabs");
+    }
+
+    /** Closes the tab of {@link #beginSearchTab} (unless a parked challenge waits in it) and returns to the page before. */
+    default void endSearchTab() {
+    }
+
     // ------------------------------------------------------------------ search-page guards (SERP only)
     // These stay driver-level so SERP details (consent, challenge DOM) never leak into the research loop.
 

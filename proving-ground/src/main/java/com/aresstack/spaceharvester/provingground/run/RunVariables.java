@@ -64,6 +64,16 @@ public final class RunVariables {
         levels.pop();
     }
 
+    /** Ends the innermost level and keeps it (values and templates), to {@link #enter(Level)} it again later. */
+    Level leaveKeeping() {
+        return levels.pop();
+    }
+
+    /** Puts a level kept by {@link #leaveKeeping()} back on top. */
+    void enter(Level level) {
+        levels.push(level);
+    }
+
     /** Resolves {@code entries} as {@code user} and sets them on the innermost level, in order (later see earlier). */
     public void set(List<ScopeEntry> entries, TestUser user) throws ExpressionException {
         for (ScopeEntry entry : entries) {
@@ -129,7 +139,7 @@ public final class RunVariables {
         return result;
     }
 
-    private static final class Level {
+    static final class Level {
         final String label;
         final Map<String, String> values = new LinkedHashMap<>();
         final Map<String, String> templates = new LinkedHashMap<>();

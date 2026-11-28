@@ -4,7 +4,9 @@ import com.aresstack.askai.browser.playwright.TestBrowserLauncher;
 import com.aresstack.askai.browser.search.LegacyBrowserSearchDefaults;
 import com.aresstack.askai.browser.search.engine.BrowserSearchEngineSelection;
 import com.aresstack.askai.browser.search.engine.EngineAcquisitionMode;
+import com.aresstack.askai.browser.playwright.PlaywrightChatEngine;
 import com.aresstack.enterpriseai.astu.chat.ChatConversationId;
+import com.aresstack.enterpriseai.browser.api.engine.BrowserInstance;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.Test;
 
@@ -12,6 +14,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
@@ -25,7 +28,7 @@ import static org.junit.Assume.assumeTrue;
 public class SearchBrowserWebSearchLiveTest {
 
     @Test
-    public void aSearchPageOfTheHostsOwnIsSearchedInTheSearchBrowser() throws Exception {
+    public void aSearchPageOfTheHostsOwnIsSearchedInTabsOfTheChatsBrowser() throws Exception {
         TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
         assumeTrue("SKIPPED (environment-gated): " + launcher.readiness().render(),
                 launcher.readiness().render().startsWith("READY"));
@@ -52,13 +55,16 @@ public class SearchBrowserWebSearchLiveTest {
                         Collections.<String>emptyList())), EngineAcquisitionMode.FIRST_USABLE);
         SearchBrowserWebSearch search = new SearchBrowserWebSearch(launcher, () -> true,
                 LegacyBrowserSearchDefaults::create, chat -> selection);
+        BrowserInstance chatBrowser = chatBrowser(launcher);
         try {
-            String hits = search.search(new ChatConversationId("chat-1"), "Trennungsgeld", null,
+            String hits = search.search(new ChatConversationId("chat-1"), chatBrowser, "Trennungsgeld", null,
                     url -> url.contains("/gesperrt"));
 
             assertTrue(hits, hits.contains(base + "/a") && hits.contains("Trennungsgeld Merkblatt"));
             assertFalse(hits, hits.contains("/gesperrt"));
+            assertEquals("the search tabs close again; the chat's own tab stays", 1, tabs(chatBrowser));
         } finally {
+            chatBrowser.stop();
             search.close();
             portal.stop(0);
             content.stop(0);
@@ -106,21 +112,48 @@ public class SearchBrowserWebSearchLiveTest {
                         Collections.<String>emptyList())), EngineAcquisitionMode.FIRST_USABLE);
         SearchBrowserWebSearch search = new SearchBrowserWebSearch(launcher, () -> true,
                 LegacyBrowserSearchDefaults::create, chat -> selection);
+        BrowserInstance chatBrowser = chatBrowser(launcher);
+        BrowserInstance nextChatBrowser = null;
         try {
-            String first = search.search(new ChatConversationId("chat-1"), "Trennungsgeld", null, url -> false);
+            String first = search.search(new ChatConversationId("chat-1"), chatBrowser, "Trennungsgeld", null,
+                    url -> false);
             assertTrue(first, first.contains(base + "/a"));
             int startPageVisits = java.util.Collections.frequency(visited, "/");
             assertTrue(visited.toString(), startPageVisits >= 1);
 
-            String second = search.search(new ChatConversationId("chat-1"), "Reisekosten", null, url -> false);
+            // The chat's browser ends with the answer; the next one still knows the result URL.
+            chatBrowser.stop();
+            nextChatBrowser = chatBrowser(launcher);
+            String second = search.search(new ChatConversationId("chat-1"), nextChatBrowser, "Reisekosten", null,
+                    url -> false);
             assertTrue(second, second.contains(base + "/c"));
             assertTrue("remembered result URL, no second visit of the page: " + visited,
                     java.util.Collections.frequency(visited, "/") == startPageVisits
                             && visited.contains("/find?text=Reisekosten"));
         } finally {
+            chatBrowser.stop();
+            if (nextChatBrowser != null) {
+                nextChatBrowser.stop();
+            }
             search.close();
             portal.stop(0);
             content.stop(0);
+        }
+    }
+
+    /** A chat's browser as the chat runtime starts it, on a profile folder of its own. */
+    private static BrowserInstance chatBrowser(TestBrowserLauncher launcher) throws Exception {
+        return new PlaywrightChatEngine(launcher, true, 30_000L).start(
+                java.nio.file.Files.createTempDirectory("chat-profile"));
+    }
+
+    /** How many tabs the chat's browser has open. */
+    private static int tabs(BrowserInstance browser) throws Exception {
+        com.aresstack.enterpriseai.browser.api.engine.BrowserConnection connection = browser.connect();
+        try {
+            return connection.tabs().size();
+        } finally {
+            connection.disconnect();
         }
     }
 

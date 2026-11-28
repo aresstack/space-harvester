@@ -13,6 +13,7 @@ import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.PlaywrightException;
 import com.aresstack.spaceharvester.provingground.run.Credentials;
 import com.aresstack.spaceharvester.provingground.run.ProjectRunResult;
+import com.aresstack.spaceharvester.provingground.player.JUnitExport;
 import com.aresstack.spaceharvester.provingground.run.ProjectRunner;
 import com.aresstack.spaceharvester.provingground.run.RunOptions;
 
@@ -45,6 +46,8 @@ public final class ProvingGroundRuns implements AutoCloseable {
         return worker;
     });
     private final AtomicReference<RunningBrowser> running = new AtomicReference<>();
+    /** Playwright of the exported JUnit test that runs now: Abbrechen schließt es. */
+    private final AtomicReference<AutoCloseable> junitRunning = new AtomicReference<>();
     private volatile boolean busy;
 
     public boolean busy() {
@@ -58,6 +61,17 @@ public final class ProvingGroundRuns implements AutoCloseable {
     public void run(TestProject project, Path directory, List<String> only, Supplier<Setup> setup,
                     Supplier<Credentials> credentials, Path outputDirectory, Consumer<ProjectRunResult> done,
                     Consumer<String> failed) {
+        run(project, directory, only, setup, credentials, outputDirectory, null, done, failed);
+    }
+
+    /**
+     * Wie {@link #run(TestProject, Path, List, Supplier, Supplier, Path, Consumer, Consumer)}; mit {@code junit} läuft
+     * jeder Testfall als sein exportierter JUnit-Test (startet seinen Browser selbst), Benutzer, Passwörter und
+     * Einmalcodes übergibt Space Harvester aus {@code credentials} (KeePass).
+     */
+    public void run(TestProject project, Path directory, List<String> only, Supplier<Setup> setup,
+                    Supplier<Credentials> credentials, Path outputDirectory, JUnitExport.Launch junit,
+                    Consumer<ProjectRunResult> done, Consumer<String> failed) {
         if (busy) {
             failed.accept("Es läuft schon ein Test");
             return;
@@ -66,6 +80,18 @@ public final class ProvingGroundRuns implements AutoCloseable {
         thread.execute(() -> {
             try {
                 Setup current = setup.get();
+                if (junit != null) {
+                    try {
+                        done.accept(new ProjectRunner().run(project, directory, user -> {
+                            throw new IllegalStateException("Der JUnit-Test startet seinen Browser selbst");
+                        }, credentials.get(), RunOptions.defaults().withOnly(only)
+                                .withActionTimeout(current.actionTimeout()).withOutputDirectory(outputDirectory)
+                                .withJunit(junit, junitRunning::set)));
+                    } finally {
+                        junitRunning.set(null);
+                    }
+                    return;
+                }
                 BrowserRuntime runtime = new BrowserRuntime(BrowserRuntimeConfig.of(BrowserChannel.of(current.channel()),
                         current.executable(), current.dataDirectory(), current.browserStart()));
                 try (RunningBrowser browser = runtime.ephemeral(current.headless(), null, false)) {
@@ -189,6 +215,19 @@ public final class ProvingGroundRuns implements AutoCloseable {
         RunningBrowser browser = running.getAndSet(null);
         if (browser != null) {
             browser.abandon();
+        }
+        AutoCloseable junit = junitRunning.getAndSet(null);
+        if (junit != null) {
+            // like RunningBrowser.abandon: from another thread, the test then ends with an error at its open step
+            Thread cutter = new Thread(() -> {
+                try {
+                    junit.close();
+                } catch (Exception ignored) {
+                    // already gone
+                }
+            }, "proving-ground-junit-abandon");
+            cutter.setDaemon(true);
+            cutter.start();
         }
     }
 

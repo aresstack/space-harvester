@@ -32,6 +32,11 @@ public enum BrowserChannel {
         return this == FIREFOX || this == CAMOUFOX;
     }
 
+    /** The channel Playwright's launch options take ({@code moz-firefox} for the Firefox family). */
+    public String launchChannel() {
+        return firefoxFamily() ? FIREFOX_BIDI_CHANNEL : id;
+    }
+
     /** The channel of a settings value; an unknown or empty value fails readably. */
     public static BrowserChannel of(String id) {
         String wanted = id == null ? "" : id.trim().toLowerCase(Locale.ROOT);

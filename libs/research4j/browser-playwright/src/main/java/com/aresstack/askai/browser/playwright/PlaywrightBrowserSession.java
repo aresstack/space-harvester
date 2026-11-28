@@ -48,8 +48,11 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
     /** Monotonic per navigation — the stale-reference guard of every rendered-page snapshot. */
     private long snapshotGeneration;
 
-    /** The typed configuration contract; defaults come ONLY from LegacyBrowserSearchDefaults. */
-    private final com.aresstack.askai.browser.search.LegacyBrowserSearchSettings settings;
+    /**
+     * The typed configuration contract; defaults come ONLY from LegacyBrowserSearchDefaults. A host that searches in a
+     * browser it also uses otherwise (the chat's) hands in the engine table of each search ({@link #useSearchSettings}).
+     */
+    private volatile com.aresstack.askai.browser.search.LegacyBrowserSearchSettings settings;
 
     /** Public-suffix aware domain families; tests may inject a fake (e.g. host:port for local worlds). */
     private com.aresstack.askai.browser.domain.DomainKeyResolver domainKeys =
@@ -348,18 +351,28 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
         List<BrowserLink> linksBefore = currentLinks;
         long linksGenerationBefore = linksGeneration;
         boolean hadPage = hasPage;
+        PlaywrightPageState documentBefore = currentDocument; // a downloaded PDF lives only here, not in the tab
         searchTabsUsed = false;
+        boolean ownTab = searchInOwnTab;
+        if (ownTab) {
+            driver.beginSearchTab(); // a browser shared with a chat: not even a URL-template engine touches its tab
+            searchTabsUsed = true;
+        }
         try {
             return navigateAndCapture(query, consumer);
         } finally {
             searchTabs = null;
             driver.closeSearchTabs(); // a parked challenge tab stays open; the session returns to its own page
+            if (ownTab) {
+                driver.endSearchTab();
+            }
             if (searchTabsUsed) {
-                // The result pages were read in the tabs that are gone now: links and "has a page" are again those
+                // The result pages were read in the tabs that are gone now: links, "has a page" and the read document are again those
                 // of the page the session is back on, so a follow_link never resolves an id of a closed tab.
                 currentLinks = linksBefore;
                 linksGeneration = linksGenerationBefore;
                 hasPage = hadPage;
+                currentDocument = documentBefore;
             }
         }
     }
@@ -378,8 +391,27 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
      * with {@code {query}} for the words, so the next search opens it directly. A result URL that cannot be opened or
      * delivers nothing is forgotten and found again through the field.
      */
-    private final java.util.Map<String, SearchUrl> derivedSearchUrls =
+    /** Whether every search runs in a tab of its own: the browser is shared with a chat's tabs. */
+    private volatile boolean searchInOwnTab;
+
+    private volatile java.util.Map<String, SearchUrl> derivedSearchUrls =
             new java.util.concurrent.ConcurrentHashMap<String, SearchUrl>();
+
+    /**
+     * The settings of the next searches (the chat's engine table with its pages and pauses) and where the result URLs
+     * of search pages are remembered: in a browser that comes and goes with the chat, the host keeps them, so a page
+     * learnt once is not asked through its field again in the next browser.
+     */
+    void useSearchSettings(com.aresstack.askai.browser.search.LegacyBrowserSearchSettings next,
+                           SearchUrlMemory memory) {
+        searchInOwnTab = true; // the browser is the chat's: every search runs in a tab of its own
+        if (next != null) {
+            settings = next;
+        }
+        if (memory != null) {
+            derivedSearchUrls = memory.urls;
+        }
+    }
 
     /** Per engine id: its tab, the start page's load problem (null = loaded) and what typing the query did. */
     private static final class SearchTabs {

@@ -89,6 +89,46 @@ public final class TestStep {
         return action(pageGuid, action);
     }
 
+    /** Action name of the screenshot comparison (Playwright's recorder has none; Playwright Test's toHaveScreenshot). */
+    public static final String ASSERT_SCREENSHOT = "assertScreenshot";
+    /** Field of the screenshot name. */
+    public static final String SNAPSHOT = "snapshot";
+
+    /**
+     * {@code assertScreenshot}: the page (or, with {@code selector}, the element) looks like the reference image
+     * {@code snapshot}. Its code takes the screenshot with Playwright and compares like Playwright Test's
+     * {@code toHaveScreenshot} (see {@code player.Screenshots}).
+     */
+    public static TestStep assertScreenshot(String pageGuid, String selector, String snapshot) {
+        JsonObject action = new JsonObject();
+        action.addProperty("name", ASSERT_SCREENSHOT);
+        if (selector != null && !selector.isBlank()) {
+            action.addProperty("selector", selector);
+        }
+        action.addProperty(SNAPSHOT, snapshot);
+        return action(pageGuid, action).withCode(screenshotCode(selector, snapshot));
+    }
+
+    /** The code of a screenshot comparison: Playwright's screenshot without animations and caret, then compared. */
+    public static String screenshotCode(String selector, String snapshot) {
+        boolean element = selector != null && !selector.isBlank();
+        String options = element ? "Locator.ScreenshotOptions" : "Page.ScreenshotOptions";
+        String subject = element ? "page.locator(" + QUOTE.toJson(selector) + ")" : "page";
+        return "screenshots.expect(" + QUOTE.toJson(snapshot) + ", () -> " + subject + ".screenshot(new " + options
+                + "()" + (element ? "" : ".setFullPage(true)")
+                + "\n    .setAnimations(ScreenshotAnimations.DISABLED).setCaret(ScreenshotCaret.HIDE)));";
+    }
+
+    /** {@code text} as a Java string literal, quoted as Playwright's generator quotes. */
+    public static String javaString(String text) {
+        return QUOTE.toJson(text);
+    }
+
+    /** The reference image name of {@code assertScreenshot}, or null. */
+    public String snapshot() {
+        return string(action(), SNAPSHOT);
+    }
+
     /** {@code navigate} to {@code url}. */
     public static TestStep navigate(String pageGuid, String url) {
         JsonObject action = new JsonObject();
@@ -198,7 +238,11 @@ public final class TestStep {
     /** Another element: Playwright's code of the step no longer fits and is dropped (record the step again). */
     public TestStep withSelector(String selector) {
         TestStep changed = withActionField("selector", selector);
-        return java.util.Objects.equals(selector, selector()) ? changed : changed.withCode(null);
+        if (java.util.Objects.equals(selector, selector())) {
+            return changed;
+        }
+        // Our own code (not Playwright's recording) is simply written again for the new element.
+        return changed.withCode(ASSERT_SCREENSHOT.equals(name()) ? screenshotCode(selector, snapshot()) : null);
     }
 
     public TestStep withText(String text) {
@@ -263,6 +307,9 @@ public final class TestStep {
         }
         if (value() != null) {
             line.append(" = \"").append(value()).append('"');
+        }
+        if (snapshot() != null) {
+            line.append(" Referenzbild ").append(snapshot());
         }
         return line.toString();
     }
