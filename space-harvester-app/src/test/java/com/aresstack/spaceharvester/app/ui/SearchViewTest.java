@@ -115,6 +115,9 @@ class SearchViewTest {
         // läuft (Ring über der Liste); die Zeile unter der Liste gilt erst mit dem fertigen Stapel.
         await(() -> table.getRowCount() > 0 && !view[0].overlay.isBusy());
         assertThat(view[0].statusText()).contains("Dateien: " + SearchView.NOT_ONLINE_SEARCHABLE).doesNotContain("Bestand");
+        // Angelo 28.11.2026: Der Begriff landet im Suchverlauf des Felds und bleibt über einen Neustart gemerkt.
+        assertThat(view[0].recentTerms.terms()).startsWith("betrieb");
+        assertThat(AppState.shared().get(SearchView.STATE_RECENT_TERMS)).startsWith("betrieb");
         // Angelo 27.11.2026: Eine nicht indexierte Quelle ohne Online-Suche bekommt einmal die Rückfrage; „Nein“ startet
         // nichts, und weitere Stapel fragen nicht erneut.
         await(() -> !offered.isEmpty());
@@ -746,11 +749,19 @@ class SearchViewTest {
             assertThat(view[0].modeIcon.getToolTipText()).isEqualTo(SearchView.WORD_MODE_TIP);
             assertThat(AppState.shared().get(SearchView.STATE_MODE)).isEqualTo(SearchView.STATE_WORDS);
             assertThat(view[0].modeLabel.getText()).isEqualTo(SearchView.WORDS_MODE);
+            // Statt der Dateitypen nur Seiten und Anhänge (Angelo 27.11.2026).
             assertThat(find(view[0].options, javax.swing.JLabel.class)).extracting(javax.swing.JLabel::getText)
-                    .contains("WISSENSQUELLEN", "DATEITYPEN", "WORTTYPEN", "SUCHMETHODEN");
+                    .contains("WISSENSQUELLEN", "SEITEN UND ANHÄNGE", "WORTTYPEN", "SUCHMETHODEN")
+                    .doesNotContain("DATEITYPEN");
             List<String> items = find(view[0].options, AbstractButton.class).stream().map(AbstractButton::getText)
                     .toList();
-            assertThat(items).contains("Alpha", "PDF", "Akronyme", "Bezeichner", "Verben", SearchView.TECHNICAL_TERMS,
+            assertThat(items).doesNotContain("PDF", "Word");
+            assertThat(view[0].wordPages.isSelected()).isTrue();
+            assertThat(view[0].wordDocuments.isSelected()).isTrue();
+            view[0].wordDocuments.doClick();
+            assertThat(AppState.shared().getBoolean(SearchView.STATE_WORD_DOCUMENTS, true)).isFalse();
+            view[0].wordDocuments.doClick();
+            assertThat(items).contains("Alpha", SearchView.WORD_PAGES, SearchView.WORD_DOCUMENTS, "Akronyme", "Bezeichner", "Verben", SearchView.TECHNICAL_TERMS,
                     SearchView.SYNONYMS, SearchView.HEADINGS_ONLY).doesNotContain(SearchView.SEMANTIC, SearchView.NEIGHBORS,
                     SearchView.TERM_PAGES);
             assertThat(view[0].wordKindBoxes.get(WordSearch.Kind.ACRONYMS).isSelected()).isTrue();

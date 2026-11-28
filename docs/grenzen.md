@@ -611,6 +611,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `ReaderImageStore.MAX_PIXELS` | `40_000_000L` | fest | Speicher-/Ressourcenbudget | einstellbar |
 | `ReadingPane.MAX_IMAGES` | `200` | fest | Bestandsgrenze | beseitigen |
 | `ReadingPane.MAX_WIDTH` | `720` | fest | Invariante/Darstellung | im Code belassen |
+| `RecentTerms.MAX_TERMS` | `BackButton.MAX_ENTRIES` | fest | Cache-Aufbewahrung | einstellbar: folgt dem Verlauf am Zurück-Knopf |
 | `RelationTab.RELATION_LIMIT` | `TermRelations.MAX_LIMIT` | fest | Stapel-/Seitengröße | einstellbar |
 | `ScreenText.MAX_ROWS` | `300` | fest | Ressourcen- oder Ergebnisgrenze (prüfen) | prüfen |
 | `SearchBarLayout.MAX_WIDTH` | `360` | fest | Invariante/Darstellung | im Code belassen |

@@ -8,7 +8,7 @@ import java.util.Map;
  * How a test case is played back.
  *
  * @param actionTimeout     how long one action or assertion may wait for its element; zero = Playwright's default
- * @param variables         values of the {@code ${name}} references in the steps (passwords: {@code secret.<field>});
+ * @param variables         values of the {@code {{name}}} references in the steps (passwords: {@code secret.<field>});
  *                          secrets never appear in results or logs
  * @param traceFile         where the Playwright trace of the run goes (open it in the Playwright Trace Viewer), or null
  * @param screenshotOnFailure where the screenshot of the page at the failing step goes, or null

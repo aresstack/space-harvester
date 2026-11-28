@@ -52,6 +52,7 @@ class RecordAndPlayLiveTest {
     private static final String FORM = """
             <!doctype html><html lang="de"><head><meta charset="utf-8"><title>Anmeldung</title></head><body>
             <h1>Anmeldung</h1>
+            <iframe title="Rahmen" src="/rahmen"></iframe>
             <div id="app"></div>
             <script>
               // Renders like a small React app: the form appears after the page loaded, the result after a delay.
@@ -82,6 +83,11 @@ class RecordAndPlayLiveTest {
             <body><h1>Hilfe zur Anmeldung</h1></body></html>
             """;
 
+    private static final String FRAME = """
+            <!doctype html><html lang="de"><head><meta charset="utf-8"><title>Rahmen</title></head><body>
+            <button type="button" onclick="this.textContent='Bestätigt'">Bestätigen</button></body></html>
+            """;
+
     @TempDir
     Path data;
 
@@ -99,7 +105,8 @@ class RecordAndPlayLiveTest {
         assumeTrue(readiness.isReady(), "SKIPPED (environment-gated live test): " + readiness.render());
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext("/", exchange -> {
-            byte[] body = (exchange.getRequestURI().getPath().startsWith("/hilfe") ? HELP : FORM)
+            String path = exchange.getRequestURI().getPath();
+            byte[] body = (path.startsWith("/hilfe") ? HELP : path.startsWith("/rahmen") ? FRAME : FORM)
                     .getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
             exchange.sendResponseHeaders(200, body.length);
@@ -133,6 +140,9 @@ class RecordAndPlayLiveTest {
             page.getByLabel("Passwort").click();
             page.keyboard().type("geheim");
             recorder.processPending();
+            page.frameLocator("iframe").getByRole(com.microsoft.playwright.options.AriaRole.BUTTON,
+                    new com.microsoft.playwright.FrameLocator.GetByRoleOptions().setName("Bestätigen")).click();
+            recorder.processPending();
             page.getByLabel("Land").selectOption("at");
             page.getByLabel("AGB gelesen").check();
             page.getByRole(com.microsoft.playwright.options.AriaRole.BUTTON,
@@ -150,10 +160,18 @@ class RecordAndPlayLiveTest {
         TestStep password = recorded.steps().stream()
                 .filter(step -> "fill".equals(step.name()) && step.selector().contains("Passwort")).findFirst()
                 .orElseThrow();
-        assertEquals("${secret.Passwort}", password.text(), "the password is not in the recording");
+        assertEquals("{{secret.Passwort}}", password.text(), "the password is not in the recording");
         assertEquals(2, recorded.steps().stream().filter(step -> "fill".equals(step.name())).count(),
                 "one fill per field, both fields kept");
         assertTrue(recorded.steps().stream().anyMatch(step -> step.signal("popup") != null), "popup noticed");
+        // Playwright 1.62 folds the frame path into the selector (microsoft/playwright#34157 is not an issue here).
+        TestStep inFrame = recorded.steps().stream()
+                .filter(step -> step.selector() != null && step.selector().contains("Bestätigen")).findFirst()
+                .orElseThrow();
+        assertTrue(inFrame.selector().contains("internal:control=enter-frame"), inFrame.selector());
+        String nameStepId = recorded.steps().stream()
+                .filter(step -> "fill".equals(step.name()) && step.selector().contains("Name")).findFirst()
+                .orElseThrow().id();
 
         // 5: save and load again.
         Path file = data.resolve("tests").resolve("anmeldung" + TestCaseFile.EXTENSION);
@@ -169,8 +187,15 @@ class RecordAndPlayLiveTest {
         String pageGuid = loaded.step(save).pageGuid();
         loaded.insert(save + 1, TestStep.assertText(pageGuid, "internal:role=status", "Gespeichert: Bea", false));
         loaded.insert(save + 2, TestStep.assertChecked(pageGuid, "internal:label=\"AGB gelesen\"i", true));
+        // The new tab: a check on the page the click opened (the popup's page id from Playwright's signal).
+        String helpPage = loaded.steps().stream().filter(step -> step.signal("popup") != null).findFirst()
+                .orElseThrow().signal("popup").get("popupPageGuid").getAsString();
+        loaded.add(TestStep.assertText(helpPage, "internal:role=heading", "Hilfe zur Anmeldung", false));
         TestCaseFile.write(loaded, file);
         TestCase edited = TestCaseFile.read(file);
+        // The step ids survive editing, inserting and saving: subject matter keeps its link to the action.
+        assertEquals(nameStep, edited.indexOf(nameStepId));
+        assertEquals("Bea", edited.step(edited.indexOf(nameStepId)).text());
 
         // 7-8: play back over the Playwright Java API, with trace; green.
         Path trace = data.resolve("runs").resolve("trace.zip");

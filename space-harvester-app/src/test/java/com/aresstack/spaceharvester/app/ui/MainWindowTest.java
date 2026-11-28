@@ -839,7 +839,6 @@ class MainWindowTest {
         });
     }
 
-    /** Ob das Bauteil und alle seine Vorfahren sichtbar sind und es eine Fläche hat (ohne Fenster gemessen). */
     /**
      * Angelo 27.11.2026: Das „?“ der Seitenansicht steht unten rechts in der Ecke der Werkzeugleiste, wie die Lupe links
      * fest an der Leiste und auch bei aufgeklappter Suche; an seiner früheren Stelle im Kopf steht „Seite neu laden“.
@@ -891,6 +890,7 @@ class MainWindowTest {
         });
     }
 
+    /** Ob das Bauteil und alle seine Vorfahren sichtbar sind und es eine Fläche hat (ohne Fenster gemessen). */
     private static boolean shownInTree(java.awt.Component component) {
         for (java.awt.Component up = component; up != null; up = up.getParent()) {
             if (!up.isVisible()) {

@@ -8,7 +8,7 @@ import java.time.Duration;
  * @param testIdAttribute     the attribute Playwright's locator generator prefers as test id ({@code data-testid} when
  *                            empty, Playwright's own default)
  * @param maskPasswords       whether text typed into a password field is replaced by a variable reference
- *                            ({@code ${secret.<field>}}) instead of being stored
+ *                            ({@code {{secret.<field>}}}) instead of being stored
  * @param passwordCheckTimeout how long the check "is this field a password field?" may wait for the element; zero =
  *                            Playwright's default timeout of the context
  */
