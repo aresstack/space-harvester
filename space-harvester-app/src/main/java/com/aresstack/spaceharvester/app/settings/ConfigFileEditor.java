@@ -434,6 +434,32 @@ public final class ConfigFileEditor {
         return new Draft(text, settings);
     }
 
+    /**
+     * Der Entwurf {@code base} mit neuer Grenze großer lokaler Ordner ({@value AppSettingsLoader#LARGE_FOLDER_KEY}, nur
+     * die App, {@code 0} nie); nur dieser Wert ändert sich. Die Vorgabe entfernt den Schlüssel.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withLargeFolder(Path file, Draft base, long bytes) {
+        String value = bytes == AppSettings.Storage.DEFAULT_LARGE_FOLDER_BYTES ? null
+                : "large-folder-size: " + largeSize(bytes);
+        String text = appValue(base.text(), AppSettingsLoader.normalize("large-folder-size"), value);
+        AppSettings settings = loader.read(file, text);
+        List<String> before = loader.read(file, base.text()).problems();
+        boolean newProblem = settings.problems().stream().anyMatch(problem -> !before.contains(problem));
+        if (newProblem || settings.storage().largeFolderBytes() != Math.max(0, bytes)) {
+            throw new IllegalArgumentException("Die Grenze großer Ordner ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte " + AppSettingsLoader.LARGE_FOLDER_KEY + " von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Wie {@link #size(long)}, große Werte in GB. */
+    private static String largeSize(long bytes) {
+        return bytes > 0 && bytes % (1L << 30) == 0 ? (bytes >> 30) + "GB" : size(bytes);
+    }
+
     /** Eine Größe, wie sie {@code AppSettingsLoader} liest: in MB oder KB, wenn sie sich darin ausdrücken lässt. */
     private static String size(long bytes) {
         return bytes > 0 && bytes % (1L << 20) == 0 ? (bytes >> 20) + "MB"

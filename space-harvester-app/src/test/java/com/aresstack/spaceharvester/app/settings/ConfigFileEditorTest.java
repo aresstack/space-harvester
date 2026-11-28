@@ -923,6 +923,28 @@ class ConfigFileEditorTest {
         assertThat(loader.load(file).viewerBackground()).isEqualTo(ViewerBackground.THEME);
     }
 
+    /** Angelo 27.11.2026: die Grenze großer lokaler Ordner ist einstellbar, 0 heißt nie nachfragen. */
+    @Test
+    void theLargeFolderLimitIsWrittenUnderTheAppRootAndRemovedForTheDefault() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester-app:\n  output-directory: D:\\out   # bleibt\nspace-harvester:\n"
+                + "  sources: []\n");
+        assertThat(loader.load(file).storage().largeFolderBytes())
+                .isEqualTo(AppSettings.Storage.DEFAULT_LARGE_FOLDER_BYTES);
+
+        editor.save(file, editor.withLargeFolder(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                2L << 30));
+        assertThat(Files.readString(file)).contains("  large-folder-size: 2GB\n", "# bleibt");
+        assertThat(loader.load(file).storage().largeFolderBytes()).isEqualTo(2L << 30);
+
+        editor.save(file, editor.withLargeFolder(file, new ConfigFileEditor.Draft(Files.readString(file), null), 0));
+        assertThat(loader.load(file).storage().largeFolderBytes()).isZero();
+
+        editor.save(file, editor.withLargeFolder(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                AppSettings.Storage.DEFAULT_LARGE_FOLDER_BYTES));
+        assertThat(Files.readString(file)).doesNotContain("large-folder-size").contains("sources: []");
+    }
+
     @Test
     void theWhisperModelIsWrittenUnderTheAppRootAndRemovedForTheDefault() throws Exception {
         Path file = home.resolve("app.yml");

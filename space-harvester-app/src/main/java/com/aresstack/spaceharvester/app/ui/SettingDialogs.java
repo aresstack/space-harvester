@@ -645,6 +645,7 @@ final class SettingDialogs {
 
     static final String PAGE_SIZE_TITLE = "Größte Datei im Cache";
     static final String TEXT_SIZE_TITLE = "Große Dateien ganz laden bis";
+    static final String LARGE_FOLDER_TITLE = "Hinweis auf große Ordner ab";
     static final String CHECK_TIMEOUT_TITLE = "Frist der Prüfung gegen die Quelle";
     static final String LARGE_TIMEOUT_TITLE = "Frist für große Dateien";
 
@@ -661,6 +662,12 @@ final class SettingDialogs {
             case "h" -> java.time.Duration.ofHours(amount);
             default -> java.time.Duration.ofSeconds(amount);
         };
+    }
+
+    /** Eine Größe zum Bearbeiten: in GB oder MB, wenn sie sich darin ausdrücken lässt, sonst in Bytes. */
+    static String sizeText(long bytes) {
+        return bytes > 0 && bytes % (1L << 30) == 0 ? (bytes >> 30) + "GB"
+                : bytes > 0 && bytes % (1L << 20) == 0 ? (bytes >> 20) + "MB" : String.valueOf(bytes);
     }
 
     /** Eine Größe wie 20MB, 512KB oder Bytes ohne Einheit; sonst {@code -1}. */
@@ -713,6 +720,14 @@ final class SettingDialogs {
                 + "von Bildern, PDF und Office direkt aus der Quelle, ohne sie abzulegen. Darüber und für Archive, "
                 + "Figma oder Videos nur die Kopfdaten. 0 nie; Vorgabe "
                 + Texts.bytes(AppSettings.Storage.DEFAULT_MAX_TEXT_FILE_BYTES));
+        long currentFolder = storage != null ? storage.largeFolderBytes()
+                : AppSettings.Storage.DEFAULT_LARGE_FOLDER_BYTES;
+        JTextField folderSize = Comic.field(10);
+        folderSize.setText(sizeText(currentFolder));
+        rows.add(LARGE_FOLDER_TITLE, folderSize, "Ist ein lokaler Ordner größer, weist die App vor dem Abgleich darauf hin, "
+                + "dass das Indexieren lange dauern kann, und fragt „wirklich?“; blockiert wird nichts. Eine Größe "
+                + "wie 5GB oder 500MB, 0 nie; Vorgabe "
+                + Texts.bytes(AppSettings.Storage.DEFAULT_LARGE_FOLDER_BYTES));
         rows.add(CHECK_TIMEOUT_TITLE, check, "So lange wartet das Öffnen oder Beschaffen einer Seite auf die Quelle, "
                 + "z. B. 30s oder 2m; Vorgabe " + ConfigFileEditor.duration(AppSettings.Storage.DEFAULT_CHECK_TIMEOUT));
         rows.add(LARGE_TIMEOUT_TITLE, large, "Dieselbe Frist für eine Datei über der Grenze, deren Textauszug das "
@@ -733,6 +748,9 @@ final class SettingDialogs {
             if (pageSize(textSize.getText()) < 0) {
                 problems.add("Der Textauszug gilt bis zu einer Größe wie 200MB; 0 heißt nie.");
             }
+            if (pageSize(folderSize.getText()) < 0) {
+                problems.add("Die Grenze großer Ordner ist eine Größe wie 5GB; 0 heißt nie.");
+            }
             if (timeout(check.getText()) == null || timeout(large.getText()) == null) {
                 problems.add("Die Fristen sind Dauern wie 30s, 2m oder 1h, größer als 0.");
             }
@@ -744,8 +762,10 @@ final class SettingDialogs {
             ConfigFileEditor.Draft written = editor.withLargeFiles(context.configFile(),
                     new ConfigFileEditor.Draft(text, null), pageSize(size.getText()), pageSize(textSize.getText()),
                     timeout(check.getText()), timeout(large.getText()));
+            written = editor.withLargeFolder(context.configFile(), written, pageSize(folderSize.getText()));
             editor.save(context.configFile(), written, !editor.fileHasPlaintextSecret(context.configFile()));
         }, () -> pageSize(size.getText()) == current && pageSize(textSize.getText()) == currentText
+                && pageSize(folderSize.getText()) == currentFolder
                 && currentCheck.equals(timeout(check.getText())) && currentLarge.equals(timeout(large.getText())),
                 context, saved);
         return shell;
