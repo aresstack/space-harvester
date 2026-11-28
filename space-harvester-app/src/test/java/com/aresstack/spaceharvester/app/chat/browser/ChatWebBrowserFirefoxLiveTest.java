@@ -119,6 +119,10 @@ class ChatWebBrowserFirefoxLiveTest {
             assertThat(hits).contains("Reisekosten Merkblatt");
             assertThat(asked).hasSize(1);
         } finally {
+            Path failures = data.resolve("logs").resolve("browser-start-failures.log");
+            if (java.nio.file.Files.exists(failures)) {
+                System.out.println("[chat-browser] " + failures + ":\n" + java.nio.file.Files.readString(failures));
+            }
             browser.endTurn("chat-1", turn);
             browser.shutdown();
             round.shutdownNow();
