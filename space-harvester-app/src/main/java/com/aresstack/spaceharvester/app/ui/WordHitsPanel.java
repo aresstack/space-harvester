@@ -25,7 +25,7 @@ import java.util.function.Consumer;
 final class WordHitsPanel extends JPanel {
 
     static final String NO_WORDS = "Keine Wörter gefunden";
-    static final String ROW_TIP = "Klick zeigt die Seiten mit diesem Wort";
+    static final String ROW_TIP = "Klick zeigt die Seiten mit diesem Wort, Doppelklick öffnet die erste";
     static final String PREVIEW_CLICK = "; ein Klick zeigt die Seite in der Vorschau.";
 
     /** Führt Arbeit im Hintergrund aus und meldet das Ergebnis auf dem EDT; in Tests sofort. */
@@ -178,12 +178,14 @@ final class WordHitsPanel extends JPanel {
                 return;
             }
             boolean preview = previewing.getAsBoolean();
+            // Der Doppelklick öffnet wie in der Seitensuche die Seite ganz, hier die erste des Worts.
+            if (open && !places.isEmpty()) {
+                popup.setVisible(false);
+                onOpen.accept(places.get(0));
+                return;
+            }
             if (preview && !places.isEmpty()) {
                 popup.setVisible(false);
-                if (open) {
-                    onOpen.accept(places.get(0));
-                    return;
-                }
                 onPreview.accept(places.get(0));
                 if (places.size() == 1) {
                     return;
