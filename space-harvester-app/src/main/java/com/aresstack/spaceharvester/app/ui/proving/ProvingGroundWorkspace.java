@@ -305,6 +305,13 @@ public final class ProvingGroundWorkspace extends JPanel {
 
     /** Zählt die Leseaufträge von {@link #open}; nur das Ergebnis des letzten gilt (nur im EDT gelesen/geschrieben). */
     private long openRequests;
+    /** Ob das zuletzt angeforderte Öffnen noch liest (dann gibt es kein Angebot in der Mitte). */
+    private boolean opening;
+
+    /** Der Ordner des gezeigten Testprojekts. */
+    Path directory() {
+        return directory;
+    }
 
     /** Liest das Testprojekt im Ordner, im Hintergrund. */
     void open(Path chosen) {
@@ -313,6 +320,10 @@ public final class ProvingGroundWorkspace extends JPanel {
         }
         AppState.shared().put(PROJECT_KEY, chosen.toString());
         long request = ++openRequests;
+        // Until the new folder is read, the offer in the middle would act on the folder shown before (CI main
+        // ffdd05e: „Testprojekt anlegen“ wrote into the remembered folder while the chosen one was still loading).
+        opening = true;
+        noOffer();
         CompletableFuture.supplyAsync(() -> {
             try {
                 return Files.exists(chosen.resolve(ProjectFile.FILE_NAME)) ? ProjectFile.read(chosen) : null;
@@ -323,6 +334,7 @@ public final class ProvingGroundWorkspace extends JPanel {
             if (request != openRequests) {
                 return; // a later open() was asked for; an earlier read finishing last must not win
             }
+            opening = false;
             directory = chosen;
             results.clear();
             if (failure != null) {
@@ -368,7 +380,7 @@ public final class ProvingGroundWorkspace extends JPanel {
     /** Das Angebot in der Mitte führt Schritt für Schritt: Projekt anlegen, Suite anlegen, Testfall aufnehmen. */
     private void updateOffer() {
         Node node = selectedNode();
-        boolean busy = recording != null || !run.isEnabled();
+        boolean busy = recording != null || !run.isEnabled() || opening;
         if (directory == null || busy) {
             noOffer();
         } else if (project == null) {

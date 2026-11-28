@@ -118,7 +118,9 @@ class ProvingGroundWorkspaceTest {
         AtomicReference<ProvingGroundWorkspace> workspace = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> workspace.set(new ProvingGroundWorkspace(() -> null, () -> directory)));
         SwingUtilities.invokeAndWait(() -> workspace.get().open(directory));
-        await(() -> ((com.aresstack.spaceharvester.app.ui.controls.StatusLabel) workspace.get().statusLine()).note()
+        // the remembered folder of the constructor may show first; wait for this one
+        await(() -> directory.equals(workspace.get().directory())
+                && ((com.aresstack.spaceharvester.app.ui.controls.StatusLabel) workspace.get().statusLine()).note()
                 .text().equals(ProvingGroundWorkspace.NO_PROJECT));
         assertThat(workspace.get().offer().offered()).isTrue();
         assertThat(workspace.get().offer().button().getText()).isEqualTo(ProvingGroundWorkspace.OFFER_PROJECT);
@@ -133,6 +135,33 @@ class ProvingGroundWorkspaceTest {
         await(() -> ProvingGroundWorkspace.OFFER_RECORD.equals(workspace.get().offer().button().getText()));
         assertThat(workspace.get().offer().offered()).isTrue();
         assertThat(ProjectFile.read(directory).suite("anmeldung")).isNotNull();
+    }
+
+    @Test
+    void whileAnotherFolderIsStillReadTheOfferCannotActOnTheFolderShownBefore() throws Exception {
+        // CI main ffdd05e: the remembered folder was shown, the chosen one still loading, and „Testprojekt anlegen“
+        // wrote into the remembered folder.
+        Path before = directory.resolve("vorher");
+        Path chosen = directory.resolve("gewaehlt");
+        Files.createDirectories(before);
+        Files.createDirectories(chosen);
+        AtomicReference<ProvingGroundWorkspace> workspace = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            workspace.set(new ProvingGroundWorkspace(() -> null, () -> directory));
+            workspace.get().open(before);
+        });
+        await(() -> before.equals(workspace.get().directory()) && workspace.get().offer().offered());
+
+        AtomicReference<Boolean> offeredWhileLoading = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            workspace.get().open(chosen);
+            offeredWhileLoading.set(workspace.get().offer().offered());
+        });
+        assertThat(offeredWhileLoading.get()).isFalse();
+        await(() -> chosen.equals(workspace.get().directory()) && workspace.get().offer().offered());
+        SwingUtilities.invokeAndWait(() -> workspace.get().offer().button().doClick());
+        await(() -> Files.exists(chosen.resolve(ProjectFile.FILE_NAME)));
+        assertThat(before.resolve(ProjectFile.FILE_NAME)).doesNotExist();
     }
 
     @Test
