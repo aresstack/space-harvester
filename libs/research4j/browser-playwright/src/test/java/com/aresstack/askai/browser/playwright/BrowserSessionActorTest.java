@@ -263,6 +263,50 @@ public class BrowserSessionActorTest {
     }
 
     @Test
+    public void stopDuringALaunchEndsTheStartAndClosesTheBrowserOnceItIsUp() throws Exception {
+        final RecordingSession session = new RecordingSession();
+        final CountDownLatch launching = new CountDownLatch(1);
+        final CountDownLatch browserUp = new CountDownLatch(1);
+        final AtomicReference<Throwable> starterSaw = new AtomicReference<Throwable>();
+        Thread starter = new Thread(new Runnable() {
+            public void run() {
+                try {
+                    BrowserSessionActor.start(new Supplier<BrowserSession>() {
+                        public BrowserSession get() {
+                            launching.countDown();
+                            try {
+                                browserUp.await(); // the browser still starting: no limit, no interrupt here
+                            } catch (InterruptedException ex) {
+                                Thread.currentThread().interrupt();
+                            }
+                            return session;
+                        }
+                    });
+                    starterSaw.set(new AssertionError("the start must end on Stop"));
+                } catch (IllegalStateException expected) {
+                    starterSaw.set(expected);
+                }
+            }
+        }, "starter");
+        starter.start();
+        assertTrue(launching.await(5, TimeUnit.SECONDS));
+
+        starter.interrupt(); // Stop
+        starter.join(5000);
+        assertFalse("Stop must end the start while the browser is still coming up", starter.isAlive());
+        assertTrue(String.valueOf(starterSaw.get()), starterSaw.get() instanceof IllegalStateException);
+        assertFalse(session.closed);
+
+        browserUp.countDown(); // the browser finishes starting after Stop
+        long until = System.currentTimeMillis() + 5000;
+        while (!session.closed && System.currentTimeMillis() < until) {
+            Thread.sleep(10);
+        }
+        assertTrue("a browser that comes up after Stop must not stay running", session.closed);
+        assertEquals(BrowserSessionActor.OWNER_THREAD_NAME, session.closeThread);
+    }
+
+    @Test
     public void factoryFailurePropagatesFromStart() {
         try {
             BrowserSessionActor.start(new Supplier<BrowserSession>() {

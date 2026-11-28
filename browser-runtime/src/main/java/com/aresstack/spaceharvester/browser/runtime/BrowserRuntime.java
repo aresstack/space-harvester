@@ -60,6 +60,9 @@ public final class BrowserRuntime {
             new java.util.concurrent.atomic.AtomicInteger();
     private static final java.util.concurrent.atomic.AtomicInteger MOST_LAUNCHES_AT_ONCE =
             new java.util.concurrent.atomic.AtomicInteger();
+    /** How many browser processes this process launched; a live test checks that one page opens one browser. */
+    private static final java.util.concurrent.atomic.AtomicInteger LAUNCHES =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     private final BrowserRuntimeConfig config;
     private final BrowserProbe probe;
@@ -216,6 +219,7 @@ public final class BrowserRuntime {
             stage = "BROWSER_LAUNCH_QUEUE";
             LAUNCHING.lockInterruptibly();
             MOST_LAUNCHES_AT_ONCE.accumulateAndGet(LAUNCHES_RUNNING.incrementAndGet(), Math::max);
+            LAUNCHES.incrementAndGet();
             try {
                 stage = "BROWSER_LAUNCH";
                 long launchStarted = System.nanoTime();
@@ -247,9 +251,7 @@ public final class BrowserRuntime {
                         case FIREFOX -> firefoxLaunchOptions(executable, headless, acceptRepost);
                         case CHROME, EDGE -> chromiumLaunchOptions(channel, headless);
                     };
-                    if (config.startTimeout().toMillis() > 0) {
-                        options.setTimeout(config.startTimeout().toMillis());
-                    }
+                    options.setTimeout(startTimeoutMillis());
                     browser = channel.firefoxFamily() ? playwright.firefox().launch(options)
                             : playwright.chromium().launch(options);
                 }
@@ -303,6 +305,11 @@ public final class BrowserRuntime {
         return MOST_LAUNCHES_AT_ONCE.get();
     }
 
+    /** How many browser processes this process has launched so far, every channel and profile together. */
+    public static int launches() {
+        return LAUNCHES.get();
+    }
+
     /** The driver JARs of the host package, then the pathing JAR for a long class path. */
     private void prepareDriver() throws IOException {
         PlaywrightDriverJars.prepare(config.dataDirectory());
@@ -333,10 +340,17 @@ public final class BrowserRuntime {
 
     private BrowserType.LaunchPersistentContextOptions withStartTimeout(
             BrowserType.LaunchPersistentContextOptions options) {
-        if (config.startTimeout().toMillis() > 0) {
-            options.setTimeout(config.startTimeout().toMillis());
-        }
+        options.setTimeout(startTimeoutMillis());
         return options;
+    }
+
+    /**
+     * The start limit for Playwright; 0 is Playwright's "no limit". The first start of a browser on a machine can take
+     * longer than any fixed wait (measured in CI: 20 s until Firefox listened, 10 s more for the session, the second
+     * start under 2 s); a limit there closed a browser in the middle of its start.
+     */
+    private double startTimeoutMillis() {
+        return Math.max(0L, config.startTimeout().toMillis());
     }
 
     /** The installed Firefox on its own profile: a real window (no viewport emulation), no downloads. */

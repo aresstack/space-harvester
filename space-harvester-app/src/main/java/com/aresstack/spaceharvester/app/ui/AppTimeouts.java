@@ -24,7 +24,9 @@ public final class AppTimeouts {
                         + "Datenstrom endet über „Abbrechen“", 60, 1, 86_400),
         // Schlüssel aus der Firefox-Zeit, damit eingestellte Werte bleiben (ADR 0046: der Browser ist jetzt Edge o. a.).
         BROWSER_START("firefox-start-seconds", "Browser-Start für den Chat (Sekunden)",
-                "So lange darf der Start des Browsers dauern, wenn der Chat Webseiten liest", 30, 1, 86_400),
+                "So lange darf der Start des Browsers dauern, wenn der Chat Webseiten liest. 0 = ohne Frist: Der Start "
+                        + "endet, wenn der Browser bereit ist oder sich beendet (geschlossen, abgestürzt) oder bei Stopp",
+                0, 0, 86_400),
         BROWSER_NAVIGATION("browser-navigation-seconds", "Seitenaufruf im Chat-Browser (Sekunden)",
                 "So lange darf eine Seite im Browser des Chats laden, bevor der Aufruf als zu langsam scheitert", 30,
                 1, 86_400),
