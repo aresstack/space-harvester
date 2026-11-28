@@ -52,7 +52,7 @@ class JUnitExportTest {
         String source = result.source();
         assertTrue(source.contains("public class AnmeldenPruefenTest"), source);
         assertTrue(source.contains("try (Playwright playwright = Playwright.create())"), source);
-        assertTrue(source.contains("playwright.firefox().launch(new BrowserType.LaunchOptions()"), source);
+        assertTrue(source.contains("playwright.firefox().launchPersistentContext(profile, new BrowserType.LaunchPersistentContextOptions()"), source);
         assertTrue(source.contains(".setChannel(\"moz-firefox\")"), source);
         assertTrue(source.contains("\"C:\\\\Programme\\\\Mozilla Firefox\\\\firefox.exe\""), source);
         assertTrue(source.contains("page.navigate(v(\"{{start}}login\"));"), source);
@@ -108,10 +108,10 @@ class JUnitExportTest {
                 new JUnitExport.Launch(false, "chrome", "", 5000));
         String source = result.source();
         assertTrue(source.contains("user = \"pr\";\n      context = contexts.computeIfAbsent(String.valueOf(user), name -> "
-                + "browser.newContext());\n      context.setDefaultTimeout(5000);\n      Page page_2 = context.pages().isEmpty()"
+                + "newContext(browser, start));\n      context.setDefaultTimeout(5000);\n      Page page_2 = context.pages().isEmpty()"
                 + " ? context.newPage() : context.pages().get(0);\n      page_2.locator(\"#user\")"), source);
         assertTrue(source.contains("user = \"sb\";\n      context = contexts.computeIfAbsent(String.valueOf(user), name -> "
-                + "browser.newContext());\n      context.setDefaultTimeout(5000);\n      page.locator(\"#ok\").click();"),
+                + "newContext(browser, start));\n      context.setDefaultTimeout(5000);\n      page.locator(\"#ok\").click();"),
                 "back to the first user's page: " + source);
         assertTrue(source.contains("part(\"anmeldung/login\");"), source);
         assertTrue(source.contains("part(\"konto/zwei\");"), source);
@@ -130,9 +130,9 @@ class JUnitExportTest {
         String source = result.source();
         assertTrue(result.notExported().isEmpty(), result.notExported().toString());
         assertTrue(source.contains("user = \"sb\";\n      context = contexts.computeIfAbsent(String.valueOf(user),"
-                + " name -> browser.newContext());\n      Page page = context.newPage();"), source);
+                + " name -> newContext(browser, start));\n      Page page = context.newPage();"), source);
         assertTrue(source.contains("user = \"pr\";\n      context = contexts.computeIfAbsent(String.valueOf(user),"
-                + " name -> browser.newContext());\n      Page page1 = context.newPage();"), source);
+                + " name -> newContext(browser, start));\n      Page page1 = context.newPage();"), source);
         assertTrue(source.contains("page1.locator(\"#code\").fill(v(\"{{otp()}}\"));"), source);
         Map<String, byte[]> classes = new HashMap<>();
         assertEquals("", compile(result, classes), source);

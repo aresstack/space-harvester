@@ -42,8 +42,8 @@ public final class TestPlayer {
      */
     public RunResult playInFreshBrowser(BrowserRuntime runtime, boolean headless, Browser.NewContextOptions contextOptions,
                                         TestCase testCase, PlaybackOptions options) throws BrowserStartException {
-        try (RunningBrowser browser = runtime.ephemeral(headless, null, false);
-             BrowserContext context = browser.browser().newContext(contextOptions)) {
+        try (RunningBrowser browser = runtime.forTestRun(headless, false);
+             BrowserContext context = browser.newTestContext(contextOptions)) {
             return play(testCase, context, options);
         }
     }
