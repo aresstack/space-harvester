@@ -57,8 +57,18 @@ class BrowserSettingsTest {
 
     @Test
     void theProfileRuleNamesTheProfileAndSearchesInTheSearchBrowser() {
-        assertThat(BrowserRules.browserProfile("Extern")).contains("Aktives Browserprofil: Extern")
+        assertThat(BrowserRules.browserProfile(BrowserProfile.EXTERNAL)).contains("Aktives Browserprofil: Extern")
                 .contains("browser_navigate").contains("browser_search");
+    }
+
+    @Test
+    void theInternRuleSaysTheSearchCoversTheIntranetWithoutAnAddress() {
+        // Angelo 28.11.: „im Intranet nach Reisekosten suchen“ – das Modell suchte eine Intranet-Adresse und gab auf.
+        assertThat(BrowserRules.browserProfile(BrowserProfile.INTERNAL)).contains("Aktives Browserprofil: Intern")
+                .contains("browser_search durchsucht in diesem Profil die Suchseiten des Hauses, also das Intranet")
+                .contains("eine Intranet-Adresse oder Zugangsdaten brauchst du dafür nicht")
+                .contains("auch wenn die Aufgabe keine Adresse nennt")
+                .doesNotContain("freie Websuche");
     }
 
     @Test

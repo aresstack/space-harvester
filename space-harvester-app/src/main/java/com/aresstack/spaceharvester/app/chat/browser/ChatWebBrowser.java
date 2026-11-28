@@ -238,7 +238,7 @@ public final class ChatWebBrowser {
 
     /** Die Regel des Browserprofils für den Systemhinweis. */
     public String profileRule(String chatId) {
-        return BrowserRules.browserProfile(profile(new ChatConversationId(chatId)).label());
+        return BrowserRules.browserProfile(profile(new ChatConversationId(chatId)));
     }
 
     /** Das Profil eines Chats, ohne Wahl Extern. */
