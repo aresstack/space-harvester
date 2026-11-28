@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.control;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import com.aresstack.enterpriseai.ui.comic.theme.ComicPalette;
 
 import javax.swing.JButton;
@@ -80,13 +81,13 @@ public class ComicWindowCloseButton extends JButton {
                     RenderingHints.VALUE_ANTIALIAS_ON);
             Ellipse2D chip = new Ellipse2D.Float(2f, 2f, getWidth() - 5f, getHeight() - 5f);
             boolean hot = isHot();
-            g2.setColor(hot ? palette.getAccentRed() : Color.WHITE);
+            g2.setColor(hot ? palette.getAccentRed() : ThemeColor.of("comic.buttonPlate"));
             g2.fill(chip);
             g2.setColor(palette.getInk());
             g2.setStroke(new BasicStroke(1.6f));
             g2.draw(chip);
             // the ✕ strokes
-            g2.setColor(hot ? Color.WHITE : palette.getInk());
+            g2.setColor(hot ? ThemeColor.of("comic.buttonPlate") : palette.getInk());
             g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             int cx = getWidth() / 2;
             int cy = getHeight() / 2;

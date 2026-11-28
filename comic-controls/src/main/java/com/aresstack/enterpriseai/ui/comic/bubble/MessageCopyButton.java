@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.bubble;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import com.aresstack.enterpriseai.ui.comic.paint.StrokeIcon;
 
 import javax.swing.Icon;
@@ -107,7 +108,7 @@ public final class MessageCopyButton extends JButton {
     }
 
     static Color overlay(Color foreground) {
-        return new Color(foreground.getRed(), foreground.getGreen(), foreground.getBlue(), 36);
+        return ThemeColor.withAlpha(foreground, 36); // derived live: the hover wash follows a theme switch
     }
 
     /** Ob gerade die Bestätigung „Kopiert“ steht. */

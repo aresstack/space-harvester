@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.control;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 
 import javax.swing.AbstractButton;
@@ -21,9 +22,9 @@ import java.awt.RenderingHints;
  */
 final class ComposerButtonStyle {
 
-    static final Color DISABLED_FILL = new Color(0xB7BBC1);
-    static final Color DISABLED_TEXT = new Color(0xA5A9AE);
-    static final Color HOVER_WASH = new Color(0, 0, 0, 18);
+    static final Color DISABLED_FILL = ThemeColor.of("chat.composerButtonDisabledFill");
+    static final Color DISABLED_TEXT = ThemeColor.of("chat.composerButtonDisabledText");
+    static final Color HOVER_WASH = ThemeColor.withAlpha(ThemeColor.of("chat.composerButtonHoverShade"), 18);
     static final int FILLED_ARC = 14;
     static final int HOVER_ARC = 12;
     static final int MIN_HEIGHT = 28;
@@ -80,7 +81,7 @@ final class ComposerButtonStyle {
                 }
                 g2.setColor(fill);
                 g2.fillRoundRect(0, 0, button.getWidth(), button.getHeight(), FILLED_ARC, FILLED_ARC);
-                button.setForeground(Color.WHITE);
+                button.setForeground(ThemeColor.of("bubble.userForeground"));
             } else if (!enabled) {
                 button.setForeground(DISABLED_TEXT);
             } else if (hovered) {
@@ -91,7 +92,7 @@ final class ComposerButtonStyle {
                 button.setForeground(flatTint != null ? flatTint : flatForeground());
             }
             if (button.isFocusOwner()) {
-                paintFocusRing(g2, button, filled && enabled ? Color.WHITE : active, filled ? FILLED_ARC : HOVER_ARC);
+                paintFocusRing(g2, button, filled && enabled ? ThemeColor.of("bubble.userForeground") : active, filled ? FILLED_ARC : HOVER_ARC);
             }
         } finally {
             g2.dispose();

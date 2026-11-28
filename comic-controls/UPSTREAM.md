@@ -6,7 +6,7 @@ Unveränderte Kopie der Swing-/Java2D-Comic-Bibliothek `comic-controls` aus
 ohne dessen Oberfläche oder Fachlogik zu kopieren.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
-`cc86c149837d22ee32a1e60eed4bf6784ee75e99` (EAC-main mit #266 Höhe der Aktivitätsblase, dazu der noch offene EAC #240 Kopf-Knöpfe und QR-Knopf).
+`a14fd96800d546af1b06dab43e0f75981056e13f` (EAC-main mit #268 Theme-Mechanik: `AskAiTheme`, `ThemeColor`).
 
 ## Inhalt und Lizenz
 
