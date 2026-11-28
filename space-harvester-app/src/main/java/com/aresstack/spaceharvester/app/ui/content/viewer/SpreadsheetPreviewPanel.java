@@ -48,7 +48,7 @@ final class SpreadsheetPreviewPanel extends JPanel {
         for (int column = 1; column < model.getColumnCount(); column++) {
             table.getColumnModel().getColumn(column).setPreferredWidth(150);
         }
-        JScrollPane scroll = new JScrollPane(table);
+        JScrollPane scroll = com.aresstack.spaceharvester.app.ui.Comic.comicBars(new JScrollPane(table));
         scroll.setBorder(BorderFactory.createEmptyBorder());
         content.add(scroll, BorderLayout.CENTER);
         if (sheet.truncated) {

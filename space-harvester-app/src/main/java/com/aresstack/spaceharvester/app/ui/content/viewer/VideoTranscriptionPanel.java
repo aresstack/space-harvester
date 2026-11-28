@@ -91,7 +91,8 @@ public final class VideoTranscriptionPanel extends JPanel {
     private final JTextArea transcript = new JTextArea();
     private final JLabel status = new JLabel("Transkription noch nicht gestartet.");
     private final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay storedLoading =
-            new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(new JScrollPane(transcript));
+            new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(
+                    com.aresstack.spaceharvester.app.ui.Comic.comicBars(new JScrollPane(transcript)));
     private VideoTranscriptSource videoSource;
     private ModelGate modelGate = (model, progress, then) -> then.run();
 
