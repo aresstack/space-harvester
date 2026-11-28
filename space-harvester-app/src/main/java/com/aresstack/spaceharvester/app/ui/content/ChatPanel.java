@@ -3083,7 +3083,7 @@ public final class ChatPanel extends JPanel {
         /** Die gelbe Gedankenblase dieser Antwort (Wissen, Schritte, Quellen, Balken); {@code null} nur in Tests. */
         KnowledgeCard card;
         /** Laufende Werkzeugaufrufe außer dem Browser: Kennung und Text, für die Schritte der Gedankenblase. */
-        private final java.util.Map<String, String> steps = new java.util.HashMap<>();
+        private final java.util.Map<String, String> steps = new java.util.LinkedHashMap<>();
         /** Die Browser-Werkzeuge dieser Antwort, {@code null} ohne Websuche. */
         com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools browserTools;
         /** Die Zeile der Antwortblase; wartet unsichtbar hinter den Wolken, bis Text kommt (EAC). */
@@ -3269,6 +3269,9 @@ public final class ChatPanel extends JPanel {
             String step = steps.remove(key);
             if (step != null && card != null && !detached) {
                 card.stepDone(step);
+                // Sonst bliebe der fertige Schritt als „läuft“ stehen, während schon das Modell arbeitet (Angelo
+                // 28.11.2026: „Sucht NDV-Objekte“ sah aus wie ein Hänger). Läuft noch ein Werkzeug, steht es da.
+                card.step(steps.isEmpty() ? KnowledgeCard.THINKING : steps.values().iterator().next());
             }
             var cloud = clouds.remove(key);
             if (cloud == null || detached) {

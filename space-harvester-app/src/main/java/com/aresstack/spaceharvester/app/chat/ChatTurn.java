@@ -54,8 +54,11 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class ChatTurn {
 
-    /** Beginn und Dauer jedes Browser-Werkzeugs im App-Log, damit ein hängender Schritt dort sichtbar ist. */
-    private static final System.Logger BROWSER_LOG = System.getLogger(ChatTurn.class.getName() + ".browser");
+    /**
+     * Beginn und Dauer jedes Werkzeugs im App-Log (Browser, NDV, Wissen …), damit ein hängender Schritt dort sichtbar
+     * ist: „beginnt“ ohne „fertig“ heißt, das Werkzeug wartet noch; steht „fertig“ da, arbeitet das Modell.
+     */
+    private static final System.Logger TOOL_LOG = System.getLogger(ChatTurn.class.getName() + ".tools");
 
     /** Bis so viele Seiten gehen die Seiten ganz mit, statt zu suchen. */
     static final int WHOLE_PAGES = 3;
@@ -1138,16 +1141,20 @@ public final class ChatTurn {
                         listener.toolStarted(key, call.name(), what);
                     });
                     long started = System.nanoTime();
-                    if (browser) {
-                        BROWSER_LOG.log(System.Logger.Level.INFO, "Browser-Werkzeug " + call.name() + " beginnt");
-                    }
+                    String kind = browser ? "Browser-Werkzeug " : "Werkzeug ";
+                    TOOL_LOG.log(System.Logger.Level.INFO, kind + call.name() + " beginnt");
                     try {
-                        results[index] = ChatRoom.within(room, () -> toolset.run(call));
+                        // Zwischenstände (etwa Fundzahl einer NDV-Suche) laufen in die Statuszeile der Blase.
+                        results[index] = ToolProgress.within(
+                                now -> onUi(() -> {
+                                    if (!browser) {
+                                        listener.using(now);
+                                    }
+                                }),
+                                () -> ChatRoom.within(room, () -> toolset.run(call)));
                     } finally {
-                        if (browser) {
-                            BROWSER_LOG.log(System.Logger.Level.INFO, "Browser-Werkzeug " + call.name()
-                                    + " fertig nach " + (System.nanoTime() - started) / 1_000_000L + " ms");
-                        }
+                        TOOL_LOG.log(System.Logger.Level.INFO, kind + call.name()
+                                + " fertig nach " + (System.nanoTime() - started) / 1_000_000L + " ms");
                         onUi(() -> listener.toolFinished(key));
                     }
                 };

@@ -102,10 +102,14 @@ public final class NdvChatTools implements ChatToolset {
         }
     }
 
-    private List<NdvObject> objects(String library, String pattern) throws IOException {
+    /** @param doing was in der Statuszeile der Blase steht, solange die Auflistung läuft */
+    private List<NdvObject> objects(String library, String pattern, String doing) throws IOException {
         List<NdvObject> found = new ArrayList<>();
+        // Lebenszeichen je Seite der Auflistung (Angelo 28.11.2026); eine Gesamtzahl kennt der Server vorab nicht.
+        ToolProgress.report(doing + " …");
         session.objects(library, pattern, (page, total) -> {
             found.addAll(page);
+            ToolProgress.report(doing + " · " + found.size() + " gefunden");
             return found.size() < MAX_OBJECTS;
         });
         return found.size() > MAX_OBJECTS ? found.subList(0, MAX_OBJECTS) : found;
@@ -115,7 +119,7 @@ public final class NdvChatTools implements ChatToolset {
         if (library.isEmpty()) {
             return "Abgelehnt: bibliothek fehlt.";
         }
-        List<NdvObject> found = objects(library, pattern);
+        List<NdvObject> found = objects(library, pattern, "Sucht NDV-Objekte in " + library);
         if (found.isEmpty()) {
             return "Keine Objekte in " + library + " passen zu " + pattern + ".";
         }
@@ -141,13 +145,14 @@ public final class NdvChatTools implements ChatToolset {
         String key = library + "/" + name;
         String text = read.get(key);
         if (text == null) {
-            NdvObject object = objects(library, name).stream()
+            NdvObject object = objects(library, name, "Sucht " + library + "/" + name).stream()
                     .filter(candidate -> candidate.name().equalsIgnoreCase(name)
                             || candidate.displayName().equalsIgnoreCase(name))
                     .filter(NdvObject::source).findFirst().orElse(null);
             if (object == null) {
                 return "Kein Objekt " + name + " mit Quelltext in " + library + ".";
             }
+            ToolProgress.report("Liest " + library + "/" + object.displayName() + " …");
             text = session.read(object);
             read.put(key, text);
         }
