@@ -62,13 +62,26 @@ class BrowserSettingsTest {
     }
 
     @Test
-    void theInternRuleSaysTheSearchCoversTheIntranetWithoutAnAddress() {
-        // Angelo 28.11.: „im Intranet nach Reisekosten suchen“ – das Modell suchte eine Intranet-Adresse und gab auf.
+    void theInternRuleSearchesTheIntranetWithoutAnAddress() {
+        // Angelo 28.11.: ohne Adresse suchte das Modell eine Intranet-Adresse und gab auf.
         assertThat(BrowserRules.browserProfile(BrowserProfile.INTERNAL)).contains("Aktives Browserprofil: Intern")
-                .contains("browser_search durchsucht in diesem Profil die Suchseiten des Hauses, also das Intranet")
-                .contains("eine Intranet-Adresse oder Zugangsdaten brauchst du dafür nicht")
-                .contains("auch wenn die Aufgabe keine Adresse nennt")
-                .doesNotContain("freie Websuche");
+                .contains("Nennt die Aufgabe keine Adresse, suche mit browser_search")
+                .contains("die Suchseiten des Hauses, also das Intranet")
+                .contains("eine Intranet-Adresse oder Zugangsdaten brauchst du dafür nicht");
+    }
+
+    @Test
+    void aNamedAddressComesFirstInBothProfiles() {
+        // Angelo 28.11.: „suche nach reisekosten in https://…“ – die Suchseite ist keine Pflicht, die Adresse gilt.
+        for (BrowserProfile profile : BrowserProfile.values()) {
+            String rule = BrowserRules.browserProfile(profile);
+            assertThat(rule).as(profile.label())
+                    .contains("Nennt die Aufgabe eine Adresse, hat sie Vorrang: öffne sie mit browser_navigate und "
+                            + "suche mit der Suche dieser Website")
+                    .doesNotContain("immer zuerst");
+            assertThat(rule.indexOf("hat sie Vorrang")).as(profile.label() + ": die Adresse kommt vor der Suche")
+                    .isLessThan(rule.indexOf("browser_search"));
+        }
     }
 
     @Test

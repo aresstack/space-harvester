@@ -27,23 +27,21 @@ public final class BrowserRules {
      * Die Regel des Browserprofils eines Chats: nennt das Profil; gesucht wird mit {@link BrowserMcpTools#SEARCH} in
      * den Suchmaschinen dieses Profils, die Treffer öffnet der Browser des Chats. Intern sind diese Suchmaschinen die
      * Suchseiten des Hauses: Das Modell braucht dafür keine Adresse des Intranets, die Suchseite fragt das Programm
-     * selbst beim Benutzer ab, wenn noch keine eingestellt ist. Ohne diesen Satz las das Modell „im Intranet suchen“
-     * nicht als Websuche, suchte eine Intranet-Adresse und gab ohne Suche auf.
+     * selbst beim Benutzer ab, wenn noch keine eingestellt ist. Eine Adresse in der Aufgabe hat in beiden Profilen
+     * Vorrang: Sie wird geöffnet und dort gesucht, die Suchmaschinen gelten nur ohne Adresse. Ohne den Intern-Satz las
+     * das Modell „im Intranet suchen“ nicht als Websuche, suchte eine Intranet-Adresse und gab ohne Suche auf.
      */
     public static String browserProfile(BrowserProfile profile) {
         String rules = "[Browserprofil] Aktives Browserprofil: " + profile.label() + ". Die Freigaben "
-                + "(Whitelist/Blacklist) dieses Profils gelten für jede Adresse. ";
+                + "(Whitelist/Blacklist) dieses Profils gelten für jede Adresse. Nennt die Aufgabe eine Adresse, hat "
+                + "sie Vorrang: öffne sie mit " + BrowserMcpTools.NAVIGATE + " und suche mit der Suche dieser Website. ";
         if (profile == BrowserProfile.INTERNAL) {
-            return rules + BrowserMcpTools.SEARCH + " durchsucht in diesem Profil die Suchseiten des Hauses, also das "
-                    + "Intranet; eine Intranet-Adresse oder Zugangsdaten brauchst du dafür nicht (ist noch keine "
-                    + "Suchseite eingestellt, fragt das Programm den Benutzer selbst danach). Suche interne Inhalte "
-                    + "deshalb immer zuerst mit " + BrowserMcpTools.SEARCH + ", auch wenn die Aufgabe keine Adresse "
-                    + "nennt, und öffne die passenden Treffer: Sie sind Seiten des Intranets. Nennt die Aufgabe eine "
-                    + "Adresse, öffne sie mit " + BrowserMcpTools.NAVIGATE + " und nutze die Suche dieser Website.";
+            return rules + "Nennt die Aufgabe keine Adresse, suche mit " + BrowserMcpTools.SEARCH + ": Es durchsucht "
+                    + "in diesem Profil die Suchseiten des Hauses, also das Intranet; eine Intranet-Adresse oder "
+                    + "Zugangsdaten brauchst du dafür nicht (ist noch keine Suchseite eingestellt, fragt das Programm "
+                    + "den Benutzer selbst danach). Öffne die passenden Treffer: Sie sind Seiten des Intranets.";
         }
-        return rules + "Braucht die Aufgabe eine freie Websuche und nennt keine Einstiegsseite, suche mit "
-                + BrowserMcpTools.SEARCH + " (die Suchmaschinen dieses Profils) und öffne die passenden Treffer. "
-                + "Nennt die Aufgabe eine Adresse, öffne sie mit " + BrowserMcpTools.NAVIGATE + " und nutze die Suche "
-                + "dieser Website.";
+        return rules + "Braucht die Aufgabe eine freie Websuche und nennt keine Adresse, suche mit "
+                + BrowserMcpTools.SEARCH + " (die Suchmaschinen dieses Profils) und öffne die passenden Treffer.";
     }
 }
