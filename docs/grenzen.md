@@ -137,7 +137,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `AiQueryExpansion.MAX_VARIANT_CHARS` | `200` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS` | `8192` | Vorgabe | Modellkontext | aus Modellfähigkeit ableiten |
 | `AiServiceSettings.DEFAULT_DEADLINE_MAX_TOKENS` | `8192` | Vorgabe | Modellkontext | aus Modellfähigkeit ableiten |
-| `AiServiceSettings.DEFAULT_SOURCE_CODE_MAX_TOKENS` | `DEFAULT_CHAT_MAX_TOKENS` (8192, wie Text-Modell) | Vorgabe | Modellkontext | aus Modellfähigkeit ableiten |
+| `AiServiceSettings.DEFAULT_SOURCE_CODE_MAX_TOKENS` | `DEFAULT_CHAT_MAX_TOKENS` | Vorgabe (wie Text-Modell) | Modellkontext | aus Modellfähigkeit ableiten |
 | `FlowLabels.Layout.DEFAULT` | `140` / `600` / `44` Zeichen | Vorgabe | Lesbarkeit der Diagrammknoten | Einstellungen › Diagramme |
 | `AiServiceSettings.DEFAULT_IMAGE_MAX_TOKENS` | `16384` | Vorgabe | Modellkontext | aus Modellfähigkeit ableiten |
 | `AiServiceSettings.DEFAULT_IMAGE_PLAN_MAX_TOKENS` | `16384` | Vorgabe | Modellkontext | aus Modellfähigkeit ableiten |
