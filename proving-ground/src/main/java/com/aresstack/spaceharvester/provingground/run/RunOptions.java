@@ -12,8 +12,10 @@ import java.util.List;
  * @param outputDirectory where traces ({@code <suite>/<case>/<user>.zip}) and failure screenshots go; null = none
  * @param only            the test cases to run as {@code <suite>/<case>}; empty = all
  * @param clock           the clock for one-time codes and dates
+ * @param junit           run each test case as its exported JUnit test, started this way (null = play the steps)
  */
-public record RunOptions(Duration actionTimeout, Path outputDirectory, List<String> only, Clock clock) {
+public record RunOptions(Duration actionTimeout, Path outputDirectory, List<String> only, Clock clock,
+                         com.aresstack.spaceharvester.provingground.player.JUnitExport.Launch junit) {
 
     public RunOptions {
         actionTimeout = actionTimeout == null ? Duration.ZERO : actionTimeout;
@@ -22,22 +24,26 @@ public record RunOptions(Duration actionTimeout, Path outputDirectory, List<Stri
     }
 
     public static RunOptions defaults() {
-        return new RunOptions(Duration.ZERO, null, List.of(), null);
+        return new RunOptions(Duration.ZERO, null, List.of(), null, null);
     }
 
     public RunOptions withActionTimeout(Duration value) {
-        return new RunOptions(value, outputDirectory, only, clock);
+        return new RunOptions(value, outputDirectory, only, clock, junit);
     }
 
     public RunOptions withOutputDirectory(Path value) {
-        return new RunOptions(actionTimeout, value, only, clock);
+        return new RunOptions(actionTimeout, value, only, clock, junit);
     }
 
     public RunOptions withOnly(List<String> value) {
-        return new RunOptions(actionTimeout, outputDirectory, value, clock);
+        return new RunOptions(actionTimeout, outputDirectory, value, clock, junit);
     }
 
     public RunOptions withClock(Clock value) {
-        return new RunOptions(actionTimeout, outputDirectory, only, value);
+        return new RunOptions(actionTimeout, outputDirectory, only, value, junit);
+    }
+
+    public RunOptions withJunit(com.aresstack.spaceharvester.provingground.player.JUnitExport.Launch value) {
+        return new RunOptions(actionTimeout, outputDirectory, only, clock, value);
     }
 }

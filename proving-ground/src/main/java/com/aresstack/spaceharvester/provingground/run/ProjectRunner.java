@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.provingground.run;
 
+import com.aresstack.spaceharvester.provingground.player.JUnitExport;
+
 import com.aresstack.spaceharvester.provingground.expressions.ExpressionException;
 import com.aresstack.spaceharvester.provingground.model.ScopeEntry;
 import com.aresstack.spaceharvester.provingground.model.StepBinding;
@@ -13,6 +15,7 @@ import com.aresstack.spaceharvester.provingground.model.TestUser;
 import com.aresstack.spaceharvester.provingground.player.PlaybackOptions;
 import com.aresstack.spaceharvester.provingground.player.Pages;
 import com.aresstack.spaceharvester.provingground.player.RunResult;
+import com.aresstack.spaceharvester.provingground.player.StepResult;
 import com.aresstack.spaceharvester.provingground.player.StepEnvironment;
 import com.aresstack.spaceharvester.provingground.player.TestPlayer;
 import com.microsoft.playwright.BrowserContext;
@@ -157,6 +160,7 @@ public final class ProjectRunner {
             variables.enter(reference, entry.scope().templates());
             pages = new Pages();
             List<RunResult> preconditions = new ArrayList<>();
+            List<TestCaseEntry> before = new ArrayList<>();
             RunResult steps = null;
             String error = null;
             List<CheckResult> checks = new ArrayList<>();
@@ -184,6 +188,15 @@ public final class ProjectRunner {
                                 ready = false;
                                 break;
                             }
+                            if (options.junit() != null) {
+                                // one exported test, so a login in a precondition carries over to the case
+                                before.add(other);
+                                checks.addAll(check(precondition + " · afterEach", other.scope().afterEach(),
+                                        userOf(other)));
+                                checks.addAll(check(precondition + " · afterAll", other.scope().afterAll(),
+                                        userOf(other)));
+                                continue;
+                            }
                             RunResult played = play(other, sessions, output, "vorbedingung-" + other.id());
                             preconditions.add(played);
                             checks.addAll(check(precondition + " · afterEach", other.scope().afterEach(),
@@ -198,7 +211,9 @@ public final class ProjectRunner {
                             variables.leave();
                         }
                     }
-                    if (ready) {
+                    if (ready && options.junit() != null) {
+                        steps = asJUnit(before, entry);
+                    } else if (ready) {
                         steps = play(entry, sessions, output, "fehler");
                     }
                 }
@@ -225,6 +240,47 @@ public final class ProjectRunner {
             return player.play(testCase, new Environment(entry, sessions), pages, playback);
         }
 
+        /**
+         * The test case, after the steps of its preconditions, as one exported JUnit test, run with this run's values:
+         * users, passwords and one-time codes as the steps would get them (from the application's vault), handed into
+         * the test. The test never reads the vault itself.
+         */
+        private RunResult asJUnit(List<TestCaseEntry> preconditions, TestCaseEntry entry) throws IOException {
+            List<TestStep> steps = new ArrayList<>();
+            List<String> users = new ArrayList<>();
+            List<TestCaseEntry> all = new ArrayList<>(preconditions);
+            all.add(entry);
+            for (TestCaseEntry part : all) {
+                TestCase read = source.read(part);
+                for (int i = 0; i < read.size(); i++) {
+                    steps.add(read.step(i));
+                    users.add(project.userName(part, read.step(i)));
+                }
+            }
+            TestCase testCase = new TestCase(entry.name(), steps);
+            JUnitExport.Result exported = JUnitExport.export(testCase, users, options.junit());
+            String description = "JUnit-Test " + exported.className();
+            long started = System.nanoTime();
+            try {
+                JUnitExport.run(exported, (text, user) -> {
+                    try {
+                        return variables.resolve(text, project.user(user));
+                    } catch (ExpressionException missing) {
+                        throw new IllegalStateException(missing.getMessage(), missing);
+                    }
+                });
+                return new RunResult(testCase.name(), List.of(new StepResult(0, description, StepResult.Status.PASSED,
+                        (System.nanoTime() - started) / 1_000_000L, null)), null, null);
+            } catch (Throwable failed) {
+                if (failed instanceof Error error && !(failed instanceof AssertionError)) {
+                    throw error;
+                }
+                String message = failed.getMessage() == null ? failed.toString() : failed.getMessage();
+                return new RunResult(testCase.name(), List.of(new StepResult(0, description, StepResult.Status.FAILED,
+                        (System.nanoTime() - started) / 1_000_000L, variables.redact(message.strip()))), null, null);
+            }
+        }
+
         /** Project, suite and own preconditions with theirs, deepest first, each once, never the test case itself. */
         private List<String> preconditionsOf(TestSuite suite, TestCaseEntry entry) {
             String self = TestProject.reference(suite, entry);
@@ -244,12 +300,11 @@ public final class ProjectRunner {
         }
 
         private TestUser userOf(TestCaseEntry entry) {
-            return project.user(entry.user() != null ? entry.user() : project.defaultUser());
+            return project.user(project.userName(entry, null));
         }
 
         private TestUser userOf(TestCaseEntry entry, TestStep step) {
-            String name = entry.binding(step.id()).user();
-            return name != null ? project.user(name) : userOf(entry);
+            return project.user(project.userName(entry, step));
         }
 
         /** Before entries onto the innermost level; answers the failed ones. */

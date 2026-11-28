@@ -5,34 +5,19 @@ import com.aresstack.spaceharvester.provingground.model.TestStep;
 import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.Page;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import javax.tools.Diagnostic;
-import javax.tools.DiagnosticCollector;
-import javax.tools.FileObject;
-import javax.tools.ForwardingJavaFileManager;
-import javax.tools.JavaCompiler;
-import javax.tools.JavaFileManager;
-import javax.tools.JavaFileObject;
-import javax.tools.SimpleJavaFileObject;
-import javax.tools.StandardJavaFileManager;
-import javax.tools.ToolProvider;
 
 /**
  * The Java code Playwright's own generator wrote for the steps of a test case (recorder language {@code java}),
@@ -49,7 +34,7 @@ final class PlaywrightCode {
 
     static final String NO_CODE = "Schritt ohne Playwright-Code (vor dem Umstieg auf Playwrights Java-Code aufgenommen)"
             + " – bitte neu aufnehmen";
-    static final String NO_COMPILER = "Zum Abspielen wird ein JDK gebraucht (der Java-Compiler fehlt)";
+    static final String NO_COMPILER = InMemoryCompiler.NO_COMPILER;
 
     private static final Pattern DECLARED_PAGE = Pattern.compile("\\bPage\\s+(page\\d*)\\s*=");
     private static final Pattern USED_PAGE = Pattern.compile("\\b(page\\d*)\\s*\\.");
@@ -133,75 +118,26 @@ final class PlaywrightCode {
         if (lines.isEmpty()) {
             return new PlaywrightCode(null, Map.of(), problems, declared);
         }
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        if (compiler == null) {
-            lines.forEach(range -> problems.put(range[0], NO_COMPILER));
-            return new PlaywrightCode(null, Map.of(), problems, declared);
-        }
-        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-        Map<String, ByteArrayOutputStream> classes = new HashMap<>();
-        try (StandardJavaFileManager standard = compiler.getStandardFileManager(diagnostics, Locale.GERMAN,
-                StandardCharsets.UTF_8)) {
-            // Packaged app: Playwright lies in nested JARs the compiler cannot open; the loader that loaded it reads them.
-            JavaFileManager loaded = new LoaderClassPath(standard, runtime, ANCHORS);
-            JavaFileManager memory = new ForwardingJavaFileManager<>(loaded) {
-                @Override
-                public JavaFileObject getJavaFileForOutput(Location location, String className, JavaFileObject.Kind kind,
-                                                           FileObject sibling) {
-                    return new SimpleJavaFileObject(URI.create("mem:///" + className.replace('.', '/') + kind.extension),
-                            kind) {
-                        @Override
-                        public OutputStream openOutputStream() {
-                            return classes.computeIfAbsent(className, name -> new ByteArrayOutputStream());
-                        }
-                    };
-                }
-            };
-            JavaFileObject unit = new SimpleJavaFileObject(URI.create("string:///" + CLASS_NAME + ".java"),
-                    JavaFileObject.Kind.SOURCE) {
-                @Override
-                public CharSequence getCharContent(boolean ignoreEncodingErrors) {
-                    return source;
-                }
-            };
-            boolean compiled = compiler.getTask(null, memory, diagnostics,
-                    List.of("-classpath", fileClasspath, "-proc:none", "-nowarn", "-g"), null, List.of(unit)).call();
-            if (!compiled) {
-                for (Diagnostic<? extends JavaFileObject> diagnostic : diagnostics.getDiagnostics()) {
-                    if (diagnostic.getKind() != Diagnostic.Kind.ERROR) {
-                        continue;
-                    }
-                    long line = diagnostic.getLineNumber();
-                    for (int[] range : lines) {
-                        if (line >= range[1] && line <= range[2]) {
-                            problems.putIfAbsent(range[0], "Playwright-Code nicht übersetzbar: "
-                                    + diagnostic.getMessage(Locale.GERMAN).lines().findFirst().orElse(""));
-                        }
+        InMemoryCompiler.Compiled compiled = InMemoryCompiler.compile(CLASS_NAME, source, runtime, fileClasspath,
+                ANCHORS);
+        if (compiled.type() == null) {
+            for (InMemoryCompiler.Error error : compiled.errors()) {
+                for (int[] range : lines) {
+                    if (error.line() >= range[1] && error.line() <= range[2]) {
+                        problems.putIfAbsent(range[0], "Playwright-Code nicht übersetzbar: " + error.message());
                     }
                 }
-                boolean attributed = lines.stream().anyMatch(range -> problems.containsKey(range[0]));
-                if (!attributed) {
-                    lines.forEach(range -> problems.put(range[0], "Playwright-Code nicht übersetzbar"));
-                }
-                return new PlaywrightCode(null, Map.of(), problems, declared);
             }
-        } catch (java.io.IOException broken) {
-            lines.forEach(range -> problems.put(range[0], "Java-Compiler: " + broken.getMessage()));
+            boolean attributed = lines.stream().anyMatch(range -> problems.containsKey(range[0]));
+            if (!attributed) {
+                String why = InMemoryCompiler.NO_COMPILER.equals(compiled.failure()) ? NO_COMPILER
+                        : "Playwright-Code " + (compiled.failure() == null ? "nicht übersetzbar" : compiled.failure());
+                lines.forEach(range -> problems.put(range[0], why));
+            }
             return new PlaywrightCode(null, Map.of(), problems, declared);
         }
         try {
-            ClassLoader loader = new ClassLoader(runtime) {
-                @Override
-                protected Class<?> findClass(String name) throws ClassNotFoundException {
-                    ByteArrayOutputStream bytes = classes.get(name);
-                    if (bytes == null) {
-                        throw new ClassNotFoundException(name);
-                    }
-                    byte[] data = bytes.toByteArray();
-                    return defineClass(name, data, 0, data.length);
-                }
-            };
-            Class<?> type = loader.loadClass(CLASS_NAME);
+            Class<?> type = compiled.type();
             Map<Integer, Method> methods = new HashMap<>();
             for (int[] range : lines) {
                 methods.put(range[0], type.getMethod("step" + range[0], BrowserContext.class, Page.class,
@@ -322,7 +258,7 @@ final class PlaywrightCode {
     }
 
     /** Where Playwright Java is (and the rest of the class path), for the compiler. */
-    private static String classpath() {
+    static String classpath() {
         Set<String> entries = new LinkedHashSet<>();
         for (Class<?> type : ANCHORS) {
             try {
