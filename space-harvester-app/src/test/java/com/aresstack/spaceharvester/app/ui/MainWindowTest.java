@@ -1326,11 +1326,12 @@ class MainWindowTest {
                     .as("scrollt nicht mit").isNull();
             assertThat(SwingUtilities.getAncestorOfClass(javax.swing.JScrollPane.class, settings.navRows().get(0)))
                     .isNotNull();
-            assertThat(librariesY).isGreaterThan(ys.get(13) + settings.navRows().get(13).getHeight());
+            assertThat(librariesY).isGreaterThan(ys.get(ys.size() - 2) + settings.navRows().get(ys.size() - 2).getHeight());
             assertThat(settings.selected()).isEqualTo(SettingsView.GENERAL);
 
             // Ein Klick auf „Netzwerk“ zeigt rechts nur diesen Bereich und markiert die Zeile.
-            SettingsNavRow network = settings.navRows().get(4);
+            SettingsNavRow network = settings.navRows().stream()
+                    .filter(row -> SettingsView.NETWORK.equals(row.title())).findFirst().orElseThrow();
             network.dispatchEvent(new MouseEvent(network, MouseEvent.MOUSE_PRESSED, 0, MouseEvent.BUTTON1_DOWN_MASK,
                     5, 5, 1, false, MouseEvent.BUTTON1));
             assertThat(settings.selected()).isEqualTo(SettingsView.NETWORK);
