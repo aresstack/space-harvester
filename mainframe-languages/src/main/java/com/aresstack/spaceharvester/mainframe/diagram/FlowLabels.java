@@ -110,7 +110,7 @@ public final class FlowLabels {
 
     /** Ob die KI an diesem Diagramm mitschreibt. */
     public boolean ai() {
-        return ai != null;
+        return ai != null && enabled(ai);
     }
 
     Layout layout() {
@@ -153,7 +153,7 @@ public final class FlowLabels {
 
     /** KI-Beschreibung der Quelltextzeilen {@code from}…{@code to} zu einem Zweck oder {@code null}. */
     String describeLines(int from, int to, String purpose) {
-        if (ai == null || lines.length == 0 || from < 1 || to < from) {
+        if (!ai() || lines.length == 0 || from < 1 || to < from) {
             return null;
         }
         String code = range(from, Math.min(to, lines.length));
@@ -170,7 +170,7 @@ public final class FlowLabels {
 
     /** Die Verzweigung der Zeilen {@code from}…{@code to} als Frage (KI), sonst {@code fact}. */
     String question(String fact, int from, int to) {
-        if (ai == null || lines.length == 0 || from < 1) {
+        if (!ai() || lines.length == 0 || from < 1) {
             return fact;
         }
         String question = ask(range(from, Math.min(Math.max(from, to), lines.length)), DECISION_PURPOSE, false);
@@ -179,7 +179,7 @@ public final class FlowLabels {
 
     /** KI-Beschreibung eines Blocks oder {@code null}. */
     String describeBlock(String code) {
-        if (ai == null || code == null || code.isBlank()) {
+        if (!ai() || code == null || code.isBlank()) {
             return null;
         }
         try {
@@ -195,7 +195,7 @@ public final class FlowLabels {
     /** Beschriftung einer Verzweigung (IF, DECIDE): mit KI eine Frage, sonst die Bedingung aus dem Quelltext. */
     String decision(JclElement e) {
         String fallback = decisionFact(e);
-        if (ai == null) {
+        if (!ai()) {
             return fallback;
         }
         int line = e.getLineNumber();
@@ -251,7 +251,14 @@ public final class FlowLabels {
                     depth--;
                     continue;
                 }
-                return describeBranch(clause, rest, trimmed);
+                String upper = trimmed.toUpperCase(Locale.ROOT);
+                if (upper.startsWith("IF") || upper.startsWith("DECIDE")) {
+                    return describeBranch(clause, rest, trimmed);
+                }
+                // Schleifen und Lesebefehle sind kein Zweig: weiter nach außen zur umgebenden Verzweigung
+                clause = null;
+                rest = "";
+                continue;
             }
             if (depth == 0 && clause == null) {
                 Matcher m = BRANCH.matcher(text);
@@ -312,7 +319,7 @@ public final class FlowLabels {
             return null;
         }
         List<String> parts = new ArrayList<>();
-        if (ai != null) {
+        if (ai()) {
             String where = callText == null || callText.isBlank() ? target : callText;
             String condition = branch == null ? "" : " (Zweig: " + branch + ")";
             String purpose = String.format(Locale.ROOT, CALLEE_PURPOSE, target, where, condition);
@@ -372,7 +379,7 @@ public final class FlowLabels {
     // ---- Hilfen ----------------------------------------------------------------------------------------------------
 
     private String ask(String code, String purpose, boolean sentence) {
-        if (ai == null || code == null || code.isBlank()) {
+        if (!ai() || code == null || code.isBlank()) {
             return null;
         }
         try {

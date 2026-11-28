@@ -2150,7 +2150,15 @@ public final class OutlineToMermaidConverter {
         // Phase 2 — Walk elements, classify, and build collapsed flow
         for (JclElement e : all) {
             if (isSkippedInCollapsedFlow(e)) {
-                if (detailBuffer.isEmpty()) afterLine = Math.max(afterLine, e.getLineNumber());
+                if (e.getType() == JclElementType.NAT_END) {
+                    // Programmende: offene Zeilen davor (MOVE, WRITE …) noch als Block beschreiben
+                    prevId = emitCollapsedDetailBlock(sb, detailBuffer, frequentTargets, usedIds, prevId, labels,
+                            blockStart(lastShown, afterLine), e.getLineNumber() - 1);
+                    detailBuffer.clear();
+                    afterLine = Math.max(afterLine, e.getLineNumber());
+                } else if (detailBuffer.isEmpty()) {
+                    afterLine = Math.max(afterLine, e.getLineNumber());
+                }
                 continue;
             }
 
