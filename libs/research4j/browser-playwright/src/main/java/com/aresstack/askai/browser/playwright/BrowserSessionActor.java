@@ -82,20 +82,33 @@ final class BrowserSessionActor implements BrowserSession, EngineGroupSession {
      * Spawn the owner thread, run {@code factory} ON it (Playwright and every object below it must be
      * created on the thread that will use them), and return once the session exists. A factory failure is
      * rethrown here and the thread ends.
+     * <p>
+     * An interrupt of the starter (the user pressed Stop) ends the start at once, even while the browser is
+     * still coming up: the starter gets an {@link IllegalStateException}, and the session the owner thread is
+     * still creating is closed the moment it exists, so no browser is left running that nobody owns.
      */
     static BrowserSessionActor start(final Supplier<BrowserSession> factory) {
         final CompletableFuture<BrowserSessionActor> created =
                 new CompletableFuture<BrowserSessionActor>();
         Thread thread = new Thread(new Runnable() {
             public void run() {
-                BrowserSessionActor actor;
+                BrowserSession session;
                 try {
-                    actor = new BrowserSessionActor(Thread.currentThread(), factory.get());
+                    session = factory.get();
                 } catch (RuntimeException ex) {
                     created.completeExceptionally(ex);
                     return;
                 }
-                created.complete(actor);
+                BrowserSessionActor actor = new BrowserSessionActor(Thread.currentThread(), session);
+                if (!created.complete(actor)) {
+                    // The starter gave up (Stop) while the browser was coming up: nobody owns it, so close it.
+                    try {
+                        session.close();
+                    } catch (RuntimeException ignored) {
+                        // best effort — the starter has already been told the start ended
+                    }
+                    return;
+                }
                 actor.runLoop();
             }
         }, OWNER_THREAD_NAME);
@@ -105,6 +118,13 @@ final class BrowserSessionActor implements BrowserSession, EngineGroupSession {
             return created.get();
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
+            if (!created.cancel(false)) {
+                // The session came up just as the starter gave up: end it here, without waiting on the owner.
+                BrowserSessionActor late = created.getNow(null);
+                if (late != null) {
+                    late.terminate();
+                }
+            }
             throw new IllegalStateException("Interrupted while starting the browser owner thread.", ex);
         } catch (ExecutionException ex) {
             Throwable cause = ex.getCause();
