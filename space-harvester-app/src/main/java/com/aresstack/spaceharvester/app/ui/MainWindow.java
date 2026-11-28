@@ -1227,8 +1227,14 @@ public final class MainWindow implements AppContext.Navigator {
         return settingsOver != null || perspectives.isCurrent(Perspectives.HARVESTER);
     }
 
+    /**
+     * Die Seitenleiste der gezeigten Perspektive außerhalb des Space Harvester. Auch Perspektiven ohne eigenen
+     * Umschalter (Proving Ground) klappen ihre Leiste über das Logo wieder auf: Zugeklappt hat sie keinen Trenner
+     * mehr, an dem das ginge.
+     */
     private com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane activeDeckSidebar() {
-        return perspectives.isCurrent(Perspectives.COMMAND_DECK) ? commandDeck.activeSidebar() : null;
+        return perspectives.isCurrent(Perspectives.COMMAND_DECK) ? commandDeck.activeSidebar()
+                : com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane.activeIn(stage);
     }
 
     private void refreshDrawerToggle() {
