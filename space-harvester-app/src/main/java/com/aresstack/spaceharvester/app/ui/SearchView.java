@@ -153,6 +153,11 @@ public final class SearchView implements View {
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 12));
     private final com.aresstack.spaceharvester.app.ui.content.PagePreview preview;
+    /** Unten in der Vorschau: die Seite eines Treffers oder die Textausschnitte eines Worts. */
+    private static final String PAGE_CARD = "page";
+    private static final String EXCERPTS_CARD = "excerpts";
+    private final com.aresstack.spaceharvester.app.ui.content.ExcerptList wordExcerpts;
+    private final JPanel below = new JPanel(new java.awt.CardLayout());
     private final javax.swing.JSplitPane previewSplit = new javax.swing.JSplitPane(
             javax.swing.JSplitPane.VERTICAL_SPLIT);
     private final IconButton previewToggle = new IconButton(
@@ -464,8 +469,18 @@ public final class SearchView implements View {
         wordsPanel = new WordHitsPanel(place -> context.navigator().openPage(place.sourceId(), place.pageId()),
                 this::wordStatus, error -> feedback.problem(error));
         preview = new com.aresstack.spaceharvester.app.ui.content.PagePreview(context::runtime);
-        wordsPanel.onPreview(() -> previewOpen,
-                place -> preview.show(place.sourceId(), place.pageId(), place.title()));
+        wordExcerpts = new com.aresstack.spaceharvester.app.ui.content.ExcerptList(
+                place -> context.navigator().openPage(place.sourceId(), place.pageId()));
+        wordsPanel.onPreview(() -> previewOpen, place -> {
+            preview.show(place.sourceId(), place.pageId(), place.title());
+            below(PAGE_CARD);
+        }, (word, pager) -> {
+            wordExcerpts.show(word.text(), pager);
+            below(EXCERPTS_CARD);
+        });
+        below.setOpaque(false);
+        below.add(preview, PAGE_CARD);
+        below.add(wordExcerpts, EXCERPTS_CARD);
         AppState state = AppState.shared();
         words = STATE_WORDS.equals(state.get(STATE_MODE));
         modeIcon.word(words);
@@ -627,7 +642,7 @@ public final class SearchView implements View {
         center.add(termsPanel, TERMS_CARD);
         center.add(wordsPanel, WORDS_CARD);
         previewSplit.setTopComponent(center);
-        previewSplit.setBottomComponent(preview);
+        previewSplit.setBottomComponent(below);
         previewSplit.setOpaque(false);
         previewSplit.setResizeWeight(1);
         previewSplit.setContinuousLayout(true);
@@ -645,11 +660,15 @@ public final class SearchView implements View {
         model.addTableModelListener(e -> {
             if (model.getRowCount() == 0) {
                 preview.clear();
+                wordExcerpts.clear();
+                below(PAGE_CARD);
             }
         });
         wordsPanel.model.addTableModelListener(e -> {
             if (wordsPanel.model.getRowCount() == 0) {
                 preview.clear();
+                wordExcerpts.clear();
+                below(PAGE_CARD);
             }
         });
         previewToggle.getAccessibleContext().setAccessibleName(PREVIEW_SHOW);
@@ -1048,7 +1067,7 @@ public final class SearchView implements View {
                 : com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronUp());
         previewToggle.setToolTipText(open ? PREVIEW_HIDE : PREVIEW_SHOW);
         previewToggle.getAccessibleContext().setAccessibleName(open ? PREVIEW_HIDE : PREVIEW_SHOW);
-        preview.setVisible(open);
+        below.setVisible(open);
         previewSplit.setDividerSize(open ? com.aresstack.spaceharvester.app.ui.controls.ComicDivider.THICKNESS : 0);
         if (open) {
             previewSelected();
@@ -1082,7 +1101,22 @@ public final class SearchView implements View {
         if (previewOpen && row >= 0 && table.getSelectedRowCount() == 1) {
             Hit hit = model.rows.get(table.convertRowIndexToModel(row));
             preview.show(hit.sourceId(), hit.pageId(), hit.title());
+            below(PAGE_CARD);
         }
+    }
+
+    /** Zeigt unten die Seite oder die Textausschnitte eines Worts. */
+    private void below(String card) {
+        ((java.awt.CardLayout) below.getLayout()).show(below, card);
+    }
+
+    /** Der Bereich unter den Treffern: die Seite eines Treffers oder die Ausschnitte eines Worts. */
+    JPanel previewArea() {
+        return below;
+    }
+
+    com.aresstack.spaceharvester.app.ui.content.ExcerptList excerptList() {
+        return wordExcerpts;
     }
 
     boolean previewOpen() {
