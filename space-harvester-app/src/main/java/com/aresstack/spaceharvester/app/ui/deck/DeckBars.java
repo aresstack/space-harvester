@@ -20,7 +20,7 @@ import javax.swing.JPanel;
 public final class DeckBars {
 
     /** Höhe der Kopfleiste samt Linie darunter. */
-    public static final int HEAD_HEIGHT = ChatSidebar.HEAD_HEIGHT;
+    public static final int HEAD_HEIGHT = com.aresstack.spaceharvester.app.ui.controls.HeadBar.HEIGHT;
     /** Höhe der Fußleiste samt Linie darüber: wie die Fußleiste des Hauptfensters (Lupe, Suchfeld). */
     public static final int FOOT_HEIGHT = Comic.FOOT_HEIGHT;
     private static final int SIDE = 12;
@@ -129,11 +129,16 @@ public final class DeckBars {
     }
 
     private static JPanel bar(JComponent main, JComponent east, int height, boolean head) {
-        JPanel bar = new JPanel(new Row(main, east, height));
-        bar.setOpaque(false);
-        bar.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createMatteBorder(head ? 0 : 1, 0, head ? 1 : 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(0, SIDE, 0, SIDE)));
+        JPanel bar;
+        if (head) {
+            // Die Kopfleiste ist überall dieselbe (HeadBar): Höhe und Linie stehen nur dort.
+            bar = new com.aresstack.spaceharvester.app.ui.controls.HeadBar(new Row(main, east, height), SIDE, SIDE);
+        } else {
+            bar = new JPanel(new Row(main, east, height));
+            bar.setOpaque(false);
+            bar.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
+                    BorderFactory.createEmptyBorder(0, SIDE, 0, SIDE)));
+        }
         if (main != null) {
             bar.add(main);
         }

@@ -67,7 +67,7 @@ public final class AppContext {
          * Klick auf den gewählten Knopf oder Enter im Suchfeld führt dorthin.
          */
         public boolean button() {
-            return toolbar() && this != CONTENT && this != SEARCH;
+            return toolbar() && this != CONTENT && this != SEARCH && this != ACTIVITIES;
         }
 
         /**

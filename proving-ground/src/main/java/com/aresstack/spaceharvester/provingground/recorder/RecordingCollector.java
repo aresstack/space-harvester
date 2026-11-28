@@ -15,7 +15,7 @@ import java.util.regex.Pattern;
  * itself is Playwright's ({@code shouldMergeAction}: same action AND same selector), so typing into two fields in a
  * row keeps both.
  *
- * <p>Text typed into a password field never reaches the test case: it becomes {@code ${secret.<field>}}, a variable
+ * <p>Text typed into a password field never reaches the test case: it becomes {@code {{secret.<field>}}}, a variable
  * the player resolves at run time.</p>
  */
 final class RecordingCollector {
@@ -108,7 +108,7 @@ final class RecordingCollector {
         if (!lastIsSecret || !"fill".equals(step.name())) {
             return step;
         }
-        return step.withText("${" + SECRET_PREFIX + fieldName(step.selector()) + "}");
+        return step.withText("{{" + SECRET_PREFIX + fieldName(step.selector()) + "}}");
     }
 
     /** A variable name for the field of {@code selector}: its accessible name or label, else "password". */

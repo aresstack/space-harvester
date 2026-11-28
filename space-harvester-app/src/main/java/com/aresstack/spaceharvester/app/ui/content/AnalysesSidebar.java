@@ -35,6 +35,12 @@ public final class AnalysesSidebar extends JPanel {
                     com.aresstack.spaceharvester.app.ui.Glyph.FILTER, null, FILTER);
     private final IconButton enlarge = new IconButton(ChatSidebar.enlargeIcon(false), ChatSidebar.ENLARGE);
     private Runnable collapse = () -> { };
+    private final JPanel switchSlot = new JPanel(new java.awt.GridBagLayout());
+
+    /** Platz für den Umschalter der rechten Leiste (Chat | Analysen | Aufträge); das Hauptfenster stellt ihn hinein. */
+    public javax.swing.JComponent switchSlot() {
+        return switchSlot;
+    }
 
     AnalysesSidebar(PageDetailPanel detail) {
         super(new BorderLayout());
@@ -48,15 +54,13 @@ public final class AnalysesSidebar extends JPanel {
         filter.getAccessibleContext().setAccessibleName(FILTER);
         com.aresstack.spaceharvester.app.ui.controls.InputFrame.gate(detail.analyses(), false);
         filter.addActionListener(e -> filter(filter.isSelected()));
-        JLabel title = new JLabel(TITLE);
-        title.setFont(Comic.semiBold(14f));
-        title.setForeground(Comic.TEXT);
-        JPanel head = new JPanel(new BorderLayout(8, 0));
-        head.setOpaque(false);
-        head.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(0, 12, 0, 8)));
-        head.setPreferredSize(new Dimension(0, ChatSidebar.HEAD_HEIGHT));
-        head.add(title, BorderLayout.CENTER);
+        // Links der Umschalter der Leiste; sein gewähltes Symbol sagt, dass hier die Analysen stehen.
+        switchSlot.setOpaque(false);
+        JPanel leading = new JPanel(new BorderLayout());
+        leading.setOpaque(false);
+        leading.add(switchSlot, BorderLayout.WEST);
+        JPanel head = new com.aresstack.spaceharvester.app.ui.controls.HeadBar(new BorderLayout(8, 0), 12, 8);
+        head.add(leading, BorderLayout.CENTER);
         JPanel centered = new JPanel(new java.awt.GridBagLayout());
         centered.setOpaque(false);
         centered.add(Comic.row(detail.analysesActions(), enlarge, filter, more));

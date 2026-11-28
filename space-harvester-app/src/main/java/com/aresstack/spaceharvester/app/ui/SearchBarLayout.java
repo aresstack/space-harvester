@@ -9,16 +9,17 @@ import java.awt.Insets;
 import java.awt.LayoutManager;
 
 /**
- * Setzt die Suchleiste mittig in den freien Raum der Kopfzeile (#515): links und rechts gleich viel Abstand, das Feld
- * wächst mit dem Fenster bis {@link #MAX_WIDTH} und schrumpft bis {@link #MIN_WIDTH}; nie über die Icon-Gruppen, denn
- * es bekommt nur den Raum zwischen ihnen. Ein zweites Kind (Zurück/Vor, Angelo 24.11.2026) klebt direkt links am
- * Feld; Feld und Knöpfe stehen dann gemeinsam mittig, der freie Platz liegt links davor.
+ * Setzt die Suchleiste rechtsbündig in den freien Raum der Kopfzeile (#515; Angelo 27.11.2026: ganz rechts, direkt vor
+ * der Gruppe rechts, und auch im großen Fenster nicht breit, denn es kommt wenig Text hinein). Das Feld wächst mit
+ * dem Fenster bis {@link #MAX_WIDTH} und schrumpft bis {@link #MIN_WIDTH}; nie über die Icon-Gruppen, denn es bekommt
+ * nur den Raum zwischen ihnen. Ein zweites Kind (Zurück/Vor, Angelo 24.11.2026) klebt direkt links am Feld; der freie
+ * Platz liegt links davor.
  */
 final class SearchBarLayout implements LayoutManager {
 
-    static final int MAX_WIDTH = 560;
+    static final int MAX_WIDTH = 360;
     static final int MIN_WIDTH = 140;
-    /** Mindestabstand zu den Icon-Gruppen links und rechts. */
+    /** Mindestabstand zur Icon-Gruppe links. */
     static final int GAP = 16;
     /** Abstand zwischen Zurück/Vor und dem Suchfeld. */
     static final int LEADING_GAP = 4;
@@ -58,11 +59,11 @@ final class SearchBarLayout implements LayoutManager {
         Insets in = parent.getInsets();
         int lead = leadingWidth(parent);
         int free = parent.getWidth() - in.left - in.right - lead;
-        int width = Math.max(Math.min(MAX_WIDTH, free - 2 * GAP), Math.min(MIN_WIDTH, Math.max(0, free)));
+        int width = Math.max(Math.min(MAX_WIDTH, free - GAP), Math.min(MIN_WIDTH, Math.max(0, free)));
         width = Math.min(width, Math.max(0, free));
         int inner = parent.getHeight() - in.top - in.bottom;
         int height = Math.min(bar.getPreferredSize().height, inner);
-        int x = in.left + lead + (free - width) / 2;
+        int x = in.left + lead + free - width;
         bar.setBounds(x, in.top + (inner - height) / 2, width, height);
         if (lead > 0) {
             Component leading = parent.getComponent(1);
@@ -80,7 +81,7 @@ final class SearchBarLayout implements LayoutManager {
                 height = Math.max(height, child.getPreferredSize().height);
             }
         }
-        return new Dimension(MIN_WIDTH + 2 * GAP + leadingWidth(parent), height);
+        return new Dimension(MIN_WIDTH + GAP + leadingWidth(parent), height);
     }
 
     @Override

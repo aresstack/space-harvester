@@ -17,7 +17,8 @@ import javax.swing.text.JTextComponent;
 public final class SideHead extends JPanel {
 
     private final JLabel heading;
-    private final JPanel title = new JPanel(new BorderLayout(4, 0));
+    /** Die Kopfleiste der Seitenleiste: dieselbe wie über Mitte und rechter Leiste ({@link HeadBar}). */
+    private final JPanel title = new HeadBar(new BorderLayout(4, 0), 4, 2);
     private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
 
     /**
@@ -27,15 +28,19 @@ public final class SideHead extends JPanel {
     public SideHead(String caption, JTextComponent filter) {
         super(new BorderLayout(0, 6));
         setOpaque(false);
-        setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 2));
+        // Oben ohne Abstand: Die Kopfleiste beginnt an der Oberkante wie die der anderen Bereiche.
+        setBorder(BorderFactory.createEmptyBorder(0, 0, 4, 0));
         heading = Comic.caption(caption);
-        title.setOpaque(false);
         title.add(heading, BorderLayout.CENTER);
         actions.setOpaque(false);
         title.add(actions, BorderLayout.EAST);
         add(title, BorderLayout.NORTH);
         if (filter != null) {
-            add(InputFrame.search(filter), BorderLayout.CENTER);
+            JPanel field = new JPanel(new BorderLayout());
+            field.setOpaque(false);
+            field.setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 2));
+            field.add(InputFrame.search(filter), BorderLayout.CENTER);
+            add(field, BorderLayout.CENTER);
         }
     }
 

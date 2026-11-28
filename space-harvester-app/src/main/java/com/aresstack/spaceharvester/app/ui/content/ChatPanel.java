@@ -476,9 +476,6 @@ public final class ChatPanel extends JPanel {
         chat = freshChat(null);
         // Wechselt das aktive Projekt (Ecke unten) oder ändert sich eine Gruppe, folgt der Chat (ADR 0027, ohne Abfragen).
         projects.addListener(() -> SwingUtilities.invokeLater(this::projectsChanged));
-        JLabel heading = new JLabel("Chat:");
-        heading.setFont(Comic.semiBold(16f));
-        heading.setForeground(Comic.INK);
         chatName.setFont(Comic.regular(15f));
         chatName.setForeground(Comic.INK);
         chatName.setToolTipText(NAME_TIP);
@@ -535,7 +532,6 @@ public final class ChatPanel extends JPanel {
         // Die Zeile gehört in die Kopfzeile des Inhaltsbereichs (Angelo, 17.11.2026): mittig statt der
         // Seitenüberschrift; hier oben steht nichts mehr.
         header.setOpaque(false);
-        header.add(heading, BorderLayout.WEST);
         header.add(nameHolder, BorderLayout.CENTER);
         header.add(chats, BorderLayout.EAST);
         showChatName();

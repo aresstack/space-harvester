@@ -121,10 +121,13 @@ class MainWindowPerspectiveTest {
 
             // War der Explorer zu, bleibt er nach dem Ausflug zu.
             var logo = (javax.swing.AbstractButton) window.perspectiveSwitcher().logo();
-            assertThat(logo.getToolTipText()).isEqualTo("Seitenleiste einklappen");
+            // Im Space Harvester klappt der Umschalter der Leiste sie zu (zweiter Klick auf das gewählte Symbol,
+            // Angelo 27.11.2026); das Logo tut es nur noch für Leisten ohne eigenen Umschalter.
+            assertThat(logo.getToolTipText()).isNull();
             logo.doClick();
+            assertThat(window.split().isLeftCollapsed()).isFalse();
+            window.explorer().view.button(window.explorer().view.selected()).doClick();
             assertThat(window.split().isLeftCollapsed()).isTrue();
-            assertThat(logo.getToolTipText()).isEqualTo("Seitenleiste ausklappen");
             perspectives.select(Perspectives.COMMAND_DECK);
             assertThat(window.commandDeck().sessions().all()).as("Wechsel verbindet nicht").isEmpty();
             assertThat(window.commandDeck().area()).as("Wechsel landet auf Home")
@@ -204,10 +207,8 @@ class MainWindowPerspectiveTest {
             assertThat(visible(window.stage())).isSameAs(window.commandDeck().perspective().workspace());
             // Direkt in eine andere Perspektive gewechselt: Ein zugeklappter Explorer bleibt zu.
             perspectives.select(Perspectives.HARVESTER);
-            assertThat(logo.getToolTipText()).isEqualTo("Seitenleiste einklappen");
-            logo.doClick();
+            window.explorer().view.button(window.explorer().view.selected()).doClick();
             assertThat(window.split().isLeftCollapsed()).isTrue();
-            assertThat(logo.getToolTipText()).isEqualTo("Seitenleiste ausklappen");
             perspectives.select(Perspectives.COMMAND_DECK);
             window.show(AppContext.Section.SETTINGS);
             perspectives.select(Perspectives.MISSION_CONTROL);

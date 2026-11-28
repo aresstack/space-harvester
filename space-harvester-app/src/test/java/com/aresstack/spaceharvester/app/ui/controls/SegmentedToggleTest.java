@@ -34,4 +34,56 @@ class SegmentedToggleTest {
             assertThat(icons.selected()).isEqualTo("Favoriten");
         });
     }
+
+    @Test
+    void aSecondClickGoesToItsReceiverAndTheToggleCanShowNoChoice() throws Exception {
+        // Angelo 27.11.2026: Der Umschalter der rechten Leiste klappt sie mit dem zweiten Klick zu; zugeklappt ist keine
+        // Hälfte gewählt, und ein Klick wählt wieder.
+        SwingUtilities.invokeAndWait(() -> {
+            java.util.List<String> events = new java.util.ArrayList<>();
+            SegmentedToggle toggle = new SegmentedToggle().segment("Chat", Glyph.STAR).segment("Aufträge", Glyph.STAR);
+            toggle.onSelect(name -> events.add("wahl " + name));
+            toggle.onAgain(name -> events.add("nochmal " + name));
+
+            toggle.button("Aufträge").doClick();
+            toggle.button("Aufträge").doClick();
+            toggle.clear();
+            assertThat(toggle.selected()).isNull();
+            assertThat(toggle.button("Chat").isSelected()).isFalse();
+            assertThat(toggle.button("Aufträge").isSelected()).isFalse();
+            toggle.button("Aufträge").doClick();
+            toggle.show("Chat");
+
+            assertThat(events).containsExactly("wahl Aufträge", "nochmal Aufträge", "wahl Aufträge");
+            assertThat(toggle.selected()).isEqualTo("Chat");
+        });
+    }
+
+    @Test
+    void theVerticalToggleStacksItsSymbolsAndIsGlassUntilTheMouseIsOverIt() throws Exception {
+        // Angelo 27.11.2026: Am Fensterrand steht der Umschalter einer zugeklappten Leiste senkrecht und leicht
+        // durchscheinend; unter der Maus ist er voll deckend.
+        SwingUtilities.invokeAndWait(() -> {
+            SegmentedToggle toggle = new SegmentedToggle().segment("Chat", Glyph.STAR).segment("Aufträge", Glyph.STAR);
+            java.awt.Dimension flat = toggle.getPreferredSize();
+            assertThat(toggle.glassy()).isFalse();
+
+            toggle.vertical(true);
+            java.awt.Dimension tall = toggle.getPreferredSize();
+            assertThat(tall.height).isGreaterThan(tall.width);
+            assertThat(tall.width).isLessThan(flat.width / 2);
+            assertThat(toggle.glassy()).isTrue();
+            javax.swing.JToggleButton chat = toggle.button("Chat");
+            chat.dispatchEvent(new java.awt.event.MouseEvent(chat, java.awt.event.MouseEvent.MOUSE_ENTERED, 0, 0, 2, 2,
+                    0, false));
+            assertThat(toggle.glassy()).isFalse();
+            chat.dispatchEvent(new java.awt.event.MouseEvent(chat, java.awt.event.MouseEvent.MOUSE_EXITED, 0, 0, -1, -1,
+                    0, false));
+            assertThat(toggle.glassy()).isTrue();
+
+            toggle.vertical(false);
+            assertThat(toggle.glassy()).isFalse();
+            assertThat(toggle.getPreferredSize()).isEqualTo(flat);
+        });
+    }
 }
