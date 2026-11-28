@@ -45,10 +45,13 @@ public enum RailLook {
         this.chosenMark = chosenMark;
     }
 
-    /** Die gewählte Fassung; ohne Wahl {@link #INK}. */
+    /** Die Vorgabe: Sie hält das Gelb des Griffs der übrigen Trenner als Erkennungsmerkmal. */
+    public static final RailLook DEFAULT = INK_YELLOW_EDGE;
+
+    /** Die gewählte Fassung; ohne Wahl {@link #DEFAULT}. */
     public static RailLook current() {
-        int index = WindowSizes.recallInt(KEY, INK.ordinal());
-        return index >= 0 && index < values().length ? values()[index] : INK;
+        int index = WindowSizes.recallInt(KEY, DEFAULT.ordinal());
+        return index >= 0 && index < values().length ? values()[index] : DEFAULT;
     }
 
     /** Merkt die Wahl und zeichnet alle Knopfleisten neu. */

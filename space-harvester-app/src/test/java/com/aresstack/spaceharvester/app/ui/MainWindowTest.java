@@ -1305,6 +1305,7 @@ class MainWindowTest {
             assertThat(settings.drawer().isVisible()).isTrue();
             assertThat(window.explorer().component().isVisible()).isFalse();
             assertThat(settings.navRows()).extracting(SettingsNavRow::title).containsExactly(SettingsView.GENERAL,
+                    SettingsView.APPEARANCE,
                     SettingsView.AI, SettingsView.MODELS, SettingsView.WORDS, SettingsView.NETWORK, SettingsView.CACHE,
                     SettingsView.VIDEO, SettingsView.TERMINAL, SettingsView.NDV, SettingsView.BETAVIEW,
                     SettingsView.BROWSER, SettingsView.DIAGRAMS, SettingsView.SECURITY, SettingsView.DIAGNOSIS, SettingsView.LIBRARIES);
@@ -1315,8 +1316,8 @@ class MainWindowTest {
             }
             assertThat(ys).as("untereinander").isSorted().doesNotHaveDuplicates();
             // „Bibliotheken“ klebt am Boden des Drawers: unter dem Scrollbereich der Bereiche, über „Zurück“.
-            SettingsNavRow libraries = settings.navRows().get(14);
-            int librariesY = ys.get(14);
+            SettingsNavRow libraries = settings.navRows().get(settings.navRows().size() - 1);
+            int librariesY = ys.get(ys.size() - 1);
             int backY = SwingUtilities.convertPoint(settings.back.getParent(), settings.back.getLocation(),
                     settings.drawer()).y;
             assertThat(librariesY + libraries.getHeight()).isLessThanOrEqualTo(backY);
