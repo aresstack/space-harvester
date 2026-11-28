@@ -165,6 +165,8 @@ public final class MainWindow implements AppContext.Navigator {
      * der Knopfleiste, dann Chat, Aufträge und Analysen ({@link #SIDE_MODES}).
      */
     static final String SIDE_SHARES_KEY = "sidebar.right.shares";
+    /** Wie {@link #SIDE_SHARES_KEY} für die linke Leiste: der Explorer und die Bereiche der Kugeln am linken Rand. */
+    static final String LEFT_SHARES_KEY = "sidebar.left.shares";
     private static final int SHARE_SCALE = 1000;
     private String sideMode = SIDE_CHAT;
     /** Die Leiste über die ganze Arbeitsfläche („Groß anzeigen“); der Explorer bleibt. */
@@ -839,7 +841,7 @@ public final class MainWindow implements AppContext.Navigator {
                 edges.right()).spanning();
         // Leiste und Kugeln sitzen auf dem Trenner je auf Höhe ihres eigenen Bereichs.
         sidePearls.centres(tool -> {
-            JComponent area = sidePearls.pearl(tool) ? sideArea(sideModeOf(tool)) : sideDeck;
+            JComponent area = sidePearls.pearl(tool) ? pearlArea(tool) : sideDeck;
             return sideShown() && sideStack.shown().contains(area) && (sidePearls.pearl(tool) || chatOpen)
                     ? area.getY() + area.getHeight() / 2 : null;
         });
@@ -848,7 +850,8 @@ public final class MainWindow implements AppContext.Navigator {
             edges.revalidate();
             edges.repaint();
         });
-        sideStack.onShares(this::rememberShares);
+        sideStack.onShares(() -> rememberShares(sideStack, sideDeck, SIDE_SHARES_KEY));
+        leftStack.onShares(() -> rememberShares(leftStack, side, LEFT_SHARES_KEY));
         // Zur Seite zieht die Knopfleiste ihren Trenner, nach oben oder unten löst sich ein Symbol als Kugel.
         sidePearls.carrier(edges);
         sidePearls.sideways(rightRail::onDivider, rightRail::dragging);
@@ -882,7 +885,8 @@ public final class MainWindow implements AppContext.Navigator {
         chatLarge = WindowSizes.recallInt(CHAT_LARGE_KEY, 0) == 1;
         int recalled = WindowSizes.recallInt(SIDE_JOBS_KEY, 0);
         sideMode = recalled >= 0 && recalled < SIDE_MODES.size() ? SIDE_MODES.get(recalled) : SIDE_CHAT;
-        recallShares();
+        recallShares(sideStack, sideDeck, SIDE_SHARES_KEY);
+        recallShares(leftStack, side, LEFT_SHARES_KEY);
         placePearls();
         selectSideToggles();
         placeChat();
@@ -902,10 +906,17 @@ public final class MainWindow implements AppContext.Navigator {
                 point -> point.x < edges.getWidth() / 2 ? leftPearls : sidePearls;
         leftPearls.sides(sides);
         sidePearls.sides(sides);
+        // Favoriten und Artefakte lassen sich wie Chat und Aufträge herausziehen; die Wissensquellen sind die
+        // Leiste selbst und bleiben in ihr.
+        explorer.string(leftPearls);
+        for (String tab : explorer.standaloneTabs()) {
+            // Dieselben Ränder wie der Explorer, damit die Fußleisten untereinander in einer Flucht stehen.
+            explorer.area(tab).setBorder(side.getBorder());
+        }
         leftPearls.centres(tool -> {
-            JComponent area = sideTool(tool) ? sideArea(sideModeOf(tool)) : side;
+            JComponent area = leftPearls.pearl(tool) ? pearlArea(tool) : side;
             return leftStack.shown().contains(area) && split.getDividerSize() > 0
-                    && (sideTool(tool) || !split.isLeftCollapsed()) ? area.getY() + area.getHeight() / 2 : null;
+                    && (area != side || !split.isLeftCollapsed()) ? area.getY() + area.getHeight() / 2 : null;
         });
         leftPearls.onLayout(() -> leftRail.rests());
         leftStack.onLayout(() -> {
@@ -1155,6 +1166,21 @@ public final class MainWindow implements AppContext.Navigator {
                 : SIDE_ANALYSES.equals(mode) ? analysesSidebar : chatSidebar;
     }
 
+    /** Der Bereich, den eine Kugel öffnet, gleich von welcher Leiste ihr Werkzeug stammt. */
+    private JComponent pearlArea(String tool) {
+        return sideTool(tool) ? sideArea(sideModeOf(tool)) : explorer.area(tool);
+    }
+
+    /** Stellt einen Bereich in den Stapel seines Rands. */
+    private static void seat(JComponent area, java.awt.Container home) {
+        if (area.getParent() != home) {
+            if (area.getParent() != null) {
+                area.getParent().remove(area);
+            }
+            home.add(area);
+        }
+    }
+
     /** Die Kugeln der rechten Leiste (für Tests). */
     com.aresstack.spaceharvester.app.ui.controls.PearlString sidePearls() {
         return sidePearls;
@@ -1191,6 +1217,14 @@ public final class MainWindow implements AppContext.Navigator {
             // Groß wird nur die rechte Leiste (die Arbeitsfläche weicht ihr); am linken Rand gibt es das nicht.
             enlargeOf(mode).setVisible(home != leftStack);
         }
+        // Die herausgezogenen Hälften des Explorers stehen ebenso am Rand ihrer Kugel, sonst in seinem Stapel.
+        if (leftPearls != null) {
+            for (String tab : explorer.standaloneTabs()) {
+                if (leftPearls.pearl(tab)) {
+                    seat(explorer.area(tab), leftPearls.host(tab) == leftPearls ? leftStack : sideStack);
+                }
+            }
+        }
         if (chatOpen && sidePearls.pearl(switchOf(sideMode))) {
             chatOpen = false;
             WindowSizes.rememberInt(CHAT_OPEN_KEY, 0);
@@ -1207,7 +1241,7 @@ public final class MainWindow implements AppContext.Navigator {
                     areas.add(sideDeck);
                 }
             } else if (sidePearls.open(unit)) {
-                areas.add(sideArea(sideModeOf(unit)));
+                areas.add(pearlArea(unit));
             }
         }
         sideStack.show(areas);
@@ -1228,6 +1262,7 @@ public final class MainWindow implements AppContext.Navigator {
             return;
         }
         boolean any = !leftPearls.openPearls().isEmpty();
+        boolean guests = leftPearls.openPearls().stream().anyMatch(MainWindow::sideTool);
         split.extras(any);
         java.util.List<java.awt.Component> areas = new java.util.ArrayList<>();
         for (String unit : leftPearls.units()) {
@@ -1236,11 +1271,11 @@ public final class MainWindow implements AppContext.Navigator {
                     areas.add(side);
                 }
             } else if (leftPearls.open(unit)) {
-                areas.add(sideArea(sideModeOf(unit)));
+                areas.add(pearlArea(unit));
             }
         }
         leftStack.show(areas);
-        fitLeftWidth(any);
+        fitLeftWidth(guests);
     }
 
     /** Die Breite, die die linke Leiste hatte, bevor ein Bereich der rechten sie breiter brauchte; sonst -1. */
@@ -1304,6 +1339,9 @@ public final class MainWindow implements AppContext.Navigator {
             for (String tool : sidePearls.tools()) {
                 sidePearls.home(tool);
             }
+            for (String tool : leftPearls.tools()) {
+                leftPearls.home(tool);
+            }
             String stored = perspective == null ? null : AppState.shared().get(PEARLS_KEY + "." + perspective);
             if (stored == null) {
                 String first = AppState.shared().get(SIDE_PEARLS_KEY);
@@ -1326,34 +1364,43 @@ public final class MainWindow implements AppContext.Navigator {
         arrangedFor = perspective;
     }
 
-    /** Die Bereiche der rechten Leiste in der Reihenfolge von {@link #SIDE_SHARES_KEY}. */
-    private java.util.List<JComponent> shareAreas() {
+    /**
+     * Die Bereiche, die in einer Leiste untereinander stehen können, in der Reihenfolge der gemerkten Anteile
+     * ({@link #SIDE_SHARES_KEY}, {@link #LEFT_SHARES_KEY}): zuerst der eigene Inhalt der Leiste, dann die Bereiche
+     * der Kugeln beider Ränder. Neue kommen hinten an, damit Gemerktes lesbar bleibt.
+     */
+    private java.util.List<JComponent> shareAreas(JComponent own) {
         java.util.List<JComponent> areas = new java.util.ArrayList<>();
-        areas.add(sideDeck);
+        areas.add(own);
         for (String mode : SIDE_MODES) {
             areas.add(sideArea(mode));
+        }
+        for (String tab : explorer.standaloneTabs()) {
+            areas.add(explorer.area(tab));
         }
         return areas;
     }
 
-    private void rememberShares() {
+    private void rememberShares(com.aresstack.spaceharvester.app.ui.controls.AreaStack stack, JComponent own,
+                                String key) {
         StringBuilder text = new StringBuilder();
-        for (JComponent area : shareAreas()) {
-            text.append(text.length() > 0 ? "," : "").append(Math.round(sideStack.share(area) * SHARE_SCALE));
+        for (JComponent area : shareAreas(own)) {
+            text.append(text.length() > 0 ? "," : "").append(Math.round(stack.share(area) * SHARE_SCALE));
         }
-        AppState.shared().put(SIDE_SHARES_KEY, text.toString());
+        AppState.shared().put(key, text.toString());
     }
 
-    private void recallShares() {
-        String text = AppState.shared().get(SIDE_SHARES_KEY);
+    private void recallShares(com.aresstack.spaceharvester.app.ui.controls.AreaStack stack, JComponent own,
+                              String key) {
+        String text = AppState.shared().get(key);
         if (text == null || text.isBlank()) {
             return;
         }
         String[] parts = text.split(",");
-        java.util.List<JComponent> areas = shareAreas();
+        java.util.List<JComponent> areas = shareAreas(own);
         for (int index = 0; index < Math.min(parts.length, areas.size()); index++) {
             try {
-                sideStack.share(areas.get(index), Integer.parseInt(parts[index].trim()) / (double) SHARE_SCALE);
+                stack.share(areas.get(index), Integer.parseInt(parts[index].trim()) / (double) SHARE_SCALE);
             } catch (NumberFormatException unreadable) {
                 // Ein unlesbarer Anteil bleibt gleich groß wie die anderen.
             }

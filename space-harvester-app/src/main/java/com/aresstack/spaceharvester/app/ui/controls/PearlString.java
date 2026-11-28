@@ -52,6 +52,7 @@ public final class PearlString {
     private final List<String> units = new ArrayList<>(List.of(RAIL));
     private final Map<String, SegmentedToggle> views = new HashMap<>();
     private final Set<String> open = new LinkedHashSet<>();
+    private final Set<String> kept = new java.util.HashSet<>();
     private final List<Runnable> listeners = new ArrayList<>();
     private BiConsumer<String, Boolean> attached = (name, wasOpen) -> { };
     private EdgeOverlay overlay;
@@ -146,6 +147,9 @@ public final class PearlString {
     private static final class Tool {
         private Icon icon;
         private String tip;
+        private int count;
+        private java.awt.Color tone;
+        private String countTip;
 
         private Tool(Icon icon, String tip) {
             this.icon = icon;
@@ -165,6 +169,33 @@ public final class PearlString {
         rail.segment(name, icon);
         dress(rail, name);
         return this;
+    }
+
+    /**
+     * Meldet ein Symbol als Werkzeug an, das schon in der Knopfleiste steht (etwa die Hälften eines Umschalters, den
+     * sein Besitzer selbst gebaut hat): Es lässt sich danach wie jedes andere herausziehen.
+     */
+    public PearlString adopt(String name, Icon icon, String tip) {
+        if (!rail.names().contains(name)) {
+            return tool(name, icon, tip);
+        }
+        tools.put(name, new Tool(icon, tip));
+        dress(rail, name);
+        return this;
+    }
+
+    /**
+     * Dieses Werkzeug bleibt in der Knopfleiste, weil sein Bereich der der Leiste selbst ist: Es zu ziehen verschiebt
+     * die ganze Leiste, wie beim letzten Symbol.
+     */
+    public PearlString keep(String name) {
+        kept.add(name);
+        return this;
+    }
+
+    /** Ob dieses Symbol der Leiste sie nicht verlassen kann: das letzte oder ein festes ({@link #keep}). */
+    private boolean stays(String name) {
+        return rail.names().size() == 1 || kept.contains(name);
     }
 
     /** Symbol und Tooltip eines Werkzeugs, gleich ob es dieser Kette gehört oder hier zu Gast ist. */
@@ -195,7 +226,11 @@ public final class PearlString {
 
     private void dress(SegmentedToggle holder, String name) {
         AbstractButton button = holder.button(name);
-        button.setToolTipText(spec(name).tip);
+        Tool tool = spec(name);
+        button.setToolTipText(tool.tip);
+        if (tool.count > 0) {
+            holder.count(name, tool.count, tool.tone, tool.countTip, tool.tip);
+        }
         Carry carry = new Carry(name);
         button.addMouseListener(carry);
         button.addMouseMotionListener(carry);
@@ -252,6 +287,14 @@ public final class PearlString {
     }
 
     private void changed() {
+        tell();
+        // Auch wer ein Werkzeug hierher verliehen hat, erfährt davon: Sein Bereich geht hier auf und zu.
+        for (PearlString origin : new LinkedHashSet<>(guests.values())) {
+            origin.tell();
+        }
+    }
+
+    private void tell() {
         column.rebuild();
         for (Runnable listener : List.copyOf(listeners)) {
             listener.run();
@@ -332,7 +375,7 @@ public final class PearlString {
         if (!tools.containsKey(name) || pearl(name)) {
             return;
         }
-        if (rail.names().size() == 1) {
+        if (stays(name)) {
             order(RAIL, index);
             return;
         }
@@ -435,7 +478,7 @@ public final class PearlString {
             units.remove(name);
             views.remove(name);
             guests.remove(name);
-        } else if (tools.containsKey(name) && rail.names().contains(name) && rail.names().size() > 1) {
+        } else if (tools.containsKey(name) && rail.names().contains(name) && !stays(name)) {
             wasOpen = name.equals(rail.selected());
             rail.remove(name);
         } else {
@@ -470,6 +513,22 @@ public final class PearlString {
             }
         }
         attach(name, index);
+    }
+
+    /**
+     * Eine Zahl am Symbol eines eigenen Werkzeugs ({@link SegmentedToggle#count}); sie wandert mit, wenn es Kugel
+     * wird oder in die Leiste zurückkommt.
+     */
+    public void count(String name, int count, java.awt.Color tone, String tip, String idleTip) {
+        Tool tool = tools.get(name);
+        if (tool == null) {
+            return;
+        }
+        tool.count = Math.max(0, count);
+        tool.tone = tone;
+        tool.countTip = tip;
+        tool.tip = idleTip;
+        holder(name).count(name, count, tone, tip, idleTip);
     }
 
     /** Die eigenen Werkzeuge in der Reihenfolge ihrer Anmeldung. */
@@ -555,7 +614,7 @@ public final class PearlString {
                 int number = Integer.parseInt(guest ? fields[0].substring(GUEST.length()) : fields[0]);
                 // Das letzte Symbol bleibt in der Leiste.
                 if (number < 0 || number >= names.size() || origin.pearl(names.get(number))
-                        || origin.rail.names().size() == 1) {
+                        || origin.stays(names.get(number))) {
                     continue;
                 }
                 origin.move(names.get(number), this, units.size());
@@ -590,6 +649,8 @@ public final class PearlString {
         boolean here = from == this;
         boolean inRail = here && !views.containsKey(name);
         boolean alone = inRail && rail.names().size() == 1;
+        // Ein festes Symbol sortiert sich in seiner Leiste um; daneben losgelassen, verschiebt es die ganze Leiste.
+        boolean fixed = inRail && stays(name);
         boolean near = point.x >= -column.getWidth() && point.x <= 2 * column.getWidth();
         if (tools.containsKey(name) && railShown && !alone && near && point.y >= bar.y - GAP / 2
                 && point.y < bar.y + bar.height + GAP / 2) {
@@ -602,7 +663,7 @@ public final class PearlString {
             attach(name, Math.max(0, index));
             return;
         }
-        String self = !here ? null : views.containsKey(name) ? name : alone ? RAIL : null;
+        String self = !here ? null : views.containsKey(name) ? name : fixed ? RAIL : null;
         Component own = self == null ? null : RAIL.equals(self) ? rail : views.get(name);
         int from0 = own == null ? 0 : own.getY() + own.getHeight() / 2;
         int index = 0;
