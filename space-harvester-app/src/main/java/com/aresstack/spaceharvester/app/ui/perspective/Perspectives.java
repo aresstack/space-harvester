@@ -69,20 +69,6 @@ public final class Perspectives {
     }
 
     /**
-     * Proving Ground (#1153): Webtests aufzeichnen, bearbeiten, ausführen und auswerten. Bis zur ersten Ausbaustufe
-     * nur ein Platzhalter mit ruhig treibenden Sternen; die Animation läuft nur, solange die Fläche zu sehen ist.
-     */
-    public static Perspective provingGround() {
-        Starfield stars = new Starfield(Starfield.Mode.DRIFT)
-                .headline("PROVING GROUND")
-                .caption("In Vorbereitung · Webtests aufzeichnen, bearbeiten, ausführen und auswerten")
-                .cockpit(true);
-        quietMouseNavigation(stars);
-        return Perspective.of(PROVING_GROUND, "Proving Ground",
-                "Webtests aufzeichnen, bearbeiten, ausführen und auswerten", false, null, stars, null);
-    }
-
-    /**
      * Mission Control (früher Mission Protocol, #1141) ist zurückgestellt: keine Workflow-Engine, keine Bedienung, nur
      * ein Blick aus dem Cockpit auf vorbeiziehende Sterne. Die Animation läuft nur, solange die Fläche zu sehen ist.
      */

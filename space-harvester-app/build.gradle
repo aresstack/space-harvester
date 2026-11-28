@@ -80,6 +80,7 @@ dependencies {
     // Serp4j-Suchbrowser, die übrigen Suchmaschinen und Suchseiten des Hauses über die Recherche-Suche.
     implementation libs.research4j.agent.runtime
     implementation project(':browser-runtime')
+    implementation project(':proving-ground')
     playwrightDriver project(path: ':browser-runtime', configuration: 'driverProcess')
     implementation libs.snakeyaml
     // Chat-Antworten als Markdown wie im Enterprise AI Client (app.ui.markdown, Kopie von exedra.ui.markdown): flexmark

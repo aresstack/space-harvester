@@ -78,7 +78,7 @@ class MainWindowPerspectiveTest {
             window.show(AppContext.Section.CONTENT);
             Perspectives perspectives = window.perspectives();
 
-            // Menü: genau vier Einträge in dieser Reihenfolge, Proving Ground und Mission Control als Platzhalter.
+            // Menü: genau vier Einträge in dieser Reihenfolge, Mission Control als Platzhalter.
             var menu = window.perspectiveSwitcher().menu();
             assertThat(menu.getComponents()).hasSize(4);
             assertThat(((JMenuItem) menu.getComponent(0)).getAccessibleContext().getAccessibleName())
@@ -87,7 +87,7 @@ class MainWindowPerspectiveTest {
             assertThat(((JMenuItem) menu.getComponent(1)).getAccessibleContext().getAccessibleName())
                     .isEqualTo("Command Deck");
             assertThat(((JMenuItem) menu.getComponent(2)).getAccessibleContext().getAccessibleName())
-                    .isEqualTo("Proving Ground, in Vorbereitung");
+                    .isEqualTo("Proving Ground");
             assertThat(((JMenuItem) menu.getComponent(3)).getAccessibleContext().getAccessibleName())
                     .isEqualTo("Mission Control, in Vorbereitung");
             assertThat(window.perspectiveSwitcher().shownTitle()).isEqualTo("Space Harvester");
@@ -171,7 +171,8 @@ class MainWindowPerspectiveTest {
             assertThat(window.viewStatus().isVisible()).as("ohne eigenen Stand").isFalse();
             perspectives.select(Perspectives.PROVING_GROUND);
             assertThat(window.perspectiveSwitcher().shownTitle()).isEqualTo("Proving Ground");
-            assertThat(visible(window.stage())).isInstanceOf(Starfield.class);
+            assertThat(visible(window.stage()))
+                    .isInstanceOf(com.aresstack.spaceharvester.app.ui.proving.ProvingGroundWorkspace.class);
             perspectives.select(Perspectives.HARVESTER);
             assertThat(window.split().isLeftCollapsed()).isTrue();
             assertThat(window.split().getDividerSize()).isEqualTo(MainWindow.COLLAPSED_DIVIDER);
