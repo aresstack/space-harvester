@@ -30,6 +30,8 @@ public final class EdgeOverlay extends JPanel {
     private final JPanel left = slot();
     private final JPanel right = slot();
     private JComponent bar;
+    /** Je Platz die Mitte, um die er steht (negativ: am Fensterrand); ohne Eintrag steht er am Rand. */
+    private final java.util.Map<JComponent, java.util.function.IntSupplier> anchors = new java.util.HashMap<>();
 
     public EdgeOverlay() {
         super(new BorderLayout() {
@@ -70,6 +72,24 @@ public final class EdgeOverlay extends JPanel {
         return right;
     }
 
+    /**
+     * Hängt einen Platz an eine Mitte, etwa die eines Trenners ({@link DividerRail}): Solange {@code center} nicht
+     * negativ ist, steht der Platz mittig darum statt am Fensterrand.
+     */
+    public void anchor(JComponent slot, java.util.function.IntSupplier center) {
+        anchors.put(slot, center);
+    }
+
+    /** Linke Kante eines Platzes der Breite {@code width}: um seine Mitte, sonst an {@code edge}. */
+    private int placeX(JComponent slot, int width, int edge) {
+        java.util.function.IntSupplier anchor = anchors.get(slot);
+        int center = anchor == null ? -1 : anchor.getAsInt();
+        if (center < 0) {
+            return edge;
+        }
+        return Math.max(FRAME_LINE, Math.min(getWidth() - FRAME_LINE - width, center - width / 2));
+    }
+
     /** Stellt {@code part} auf einen Platz ({@code null} leert ihn) und zeichnet neu. */
     public void place(JComponent slot, JComponent part) {
         if (part == null ? slot.getComponentCount() == 0 : part.getParent() == slot) {
@@ -98,9 +118,9 @@ public final class EdgeOverlay extends JPanel {
         Point origin = SwingUtilities.convertPoint(bar.getParent(), bar.getLocation(), this);
         int top = origin.y + bar.getHeight() + HeadBar.HEIGHT + HEAD_GAP;
         Dimension leftSize = left.getComponentCount() == 0 ? new Dimension() : left.getPreferredSize();
-        left.setBounds(FRAME_LINE, top, leftSize.width, leftSize.height);
+        left.setBounds(placeX(left, leftSize.width, FRAME_LINE), top, leftSize.width, leftSize.height);
         Dimension rightSize = right.getComponentCount() == 0 ? new Dimension() : right.getPreferredSize();
-        right.setBounds(getWidth() - FRAME_LINE - rightSize.width, top, rightSize.width,
-                rightSize.height);
+        right.setBounds(placeX(right, rightSize.width, getWidth() - FRAME_LINE - rightSize.width), top,
+                rightSize.width, rightSize.height);
     }
 }

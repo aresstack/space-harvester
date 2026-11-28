@@ -3050,14 +3050,9 @@ public final class Explorer {
         view.vertical(true);
     }
 
-    /** Die Leiste ist offen: Der Umschalter steht in ihrem Kopf und zeigt, was sie zeigt. */
+    /** Die Leiste ist offen: Der Umschalter steht als Knopfleiste auf ihrem Trenner und zeigt, was sie zeigt. */
     void switchHome() {
-        if (view.getParent() != viewHolder) {
-            view.vertical(false);
-            viewHolder.add(view);
-            viewHolder.revalidate();
-            viewHolder.repaint();
-        }
+        view.vertical(true);
         view.show(shownTab);
     }
 

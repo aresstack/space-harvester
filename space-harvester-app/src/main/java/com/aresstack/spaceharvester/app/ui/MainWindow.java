@@ -90,6 +90,9 @@ public final class MainWindow implements AppContext.Navigator {
     private com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane split;
     /** Arbeitsfläche links, Chat-Seitenleiste rechts (Angelo, 21.11.2026). */
     private javax.swing.JSplitPane chatSplit;
+    /** Die Knopfleisten als Griffe der Trenner beider Seitenleisten. */
+    private com.aresstack.spaceharvester.app.ui.controls.DividerRail leftRail;
+    private com.aresstack.spaceharvester.app.ui.controls.DividerRail rightRail;
     private com.aresstack.spaceharvester.app.ui.content.ChatSidebar chatSidebar;
     /**
      * Der Umschalter der rechten Seitenleiste (Angelo 27.11.2026): Chat | Analysen | Aufträge, nur Symbole, wie der
@@ -774,6 +777,8 @@ public final class MainWindow implements AppContext.Navigator {
         chatSplit.setContinuousLayout(true);
         chatSplit.setMinimumSize(new Dimension(320, 0));
         ComicDivider.install(chatSplit, Comic.PALETTE);
+        rightRail = com.aresstack.spaceharvester.app.ui.controls.DividerRail.install(chatSplit, sideSwitch, edges,
+                edges.right());
         if (chatSplit.getUI() instanceof javax.swing.plaf.basic.BasicSplitPaneUI basic) {
             basic.getDivider().addMouseListener(new java.awt.event.MouseAdapter() {
                 @Override
@@ -804,6 +809,8 @@ public final class MainWindow implements AppContext.Navigator {
         split = new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
                 side, chatSplit, 200, 520, WindowSizes.recallInt(LEFT_WIDTH_KEY, SIDEBAR_WIDTH));
         split.setLeftWidthListener(width -> WindowSizes.rememberInt(LEFT_WIDTH_KEY, width));
+        leftRail = com.aresstack.spaceharvester.app.ui.controls.DividerRail.install(split, explorer.view, edges,
+                edges.left());
         if (WindowSizes.recallInt(LEFT_OPEN_KEY, 1) == 0) {
             collapseDrawer();
         }
@@ -1022,42 +1029,33 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /**
-     * Zeigt am Umschalter, welche Leiste offen ist, und stellt ihn an seinen Platz: in den Kopf der gezeigten Leiste
-     * oder, zugeklappt, ohne gewähltes Symbol senkrecht an den rechten Fensterrand, direkt unter die Kopfleiste.
+     * Zeigt am Umschalter, welche Leiste offen ist. Er steht immer senkrecht als Knopfleiste: offen als Griff auf dem
+     * Trenner der Leiste ({@link com.aresstack.spaceharvester.app.ui.controls.DividerRail}), zugeklappt ohne
+     * gewähltes Symbol am rechten Fensterrand.
      */
     private void selectSideToggles() {
-        JComponent slot = null;
         if (!chatOpen) {
             sideSwitch.clear();
-        } else if (SIDE_JOBS.equals(sideMode)) {
-            sideSwitch.show(SWITCH_JOBS);
-            slot = activities.switchSlot();
-        } else if (SIDE_ANALYSES.equals(sideMode)) {
-            sideSwitch.show(SWITCH_ANALYSES);
-            slot = analysesSidebar.switchSlot();
         } else {
-            sideSwitch.show(SWITCH_CHAT);
-            slot = chatSidebar.switchSlot();
+            sideSwitch.show(SIDE_JOBS.equals(sideMode) ? SWITCH_JOBS
+                    : SIDE_ANALYSES.equals(sideMode) ? SWITCH_ANALYSES : SWITCH_CHAT);
         }
-        if (slot == null) {
-            sideSwitch.vertical(true);
-            edges.place(edges.right(), sideSwitch);
-            return;
-        }
-        java.awt.Container old = sideSwitch.getParent();
-        if (old != slot) {
-            sideSwitch.vertical(false);
-            slot.add(sideSwitch);
-            slot.revalidate();
-            slot.repaint();
-            edges.place(edges.right(), null);
-            if (old != null && old != edges.right()) {
-                old.revalidate();
-                old.repaint();
-            }
-        }
+        sideSwitch.vertical(true);
+        edges.place(edges.right(), sideSwitch);
+        edges.revalidate();
+        edges.repaint();
     }
 
+
+    /** Die Knopfleiste am Trenner der linken Leiste (für Tests). */
+    com.aresstack.spaceharvester.app.ui.controls.DividerRail leftRail() {
+        return leftRail;
+    }
+
+    /** Die Knopfleiste am Trenner der rechten Leiste (für Tests). */
+    com.aresstack.spaceharvester.app.ui.controls.DividerRail rightRail() {
+        return rightRail;
+    }
 
     /** Der Umschalter der rechten Leiste (für Tests). */
     JComponent sideSwitch() {
@@ -1077,18 +1075,20 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /**
-     * Stellt den Umschalter der linken Leiste an seinen Platz: in ihren Kopf oder, zugeklappt, ohne gewähltes Symbol
-     * senkrecht an den linken Fensterrand, direkt unter die Kopfleiste.
+     * Stellt den Umschalter der linken Leiste an seinen Platz: als Knopfleiste auf ihren Trenner oder, zugeklappt,
+     * ohne gewähltes Symbol an den linken Fensterrand. Leisten ohne Umschalter behalten den gelben Griff.
      */
     private void placeExplorerSwitch() {
-        boolean collapsed = explorerDrawer() && split.isLeftCollapsed();
-        if (collapsed) {
+        boolean drawer = explorerDrawer();
+        if (drawer && split.isLeftCollapsed()) {
             explorer.switchAway();
-            edges.place(edges.left(), explorer.view);
         } else {
-            edges.place(edges.left(), null);
             explorer.switchHome();
         }
+        edges.place(edges.left(), drawer ? explorer.view : null);
+        leftRail.active(drawer);
+        edges.revalidate();
+        edges.repaint();
     }
 
     /**
