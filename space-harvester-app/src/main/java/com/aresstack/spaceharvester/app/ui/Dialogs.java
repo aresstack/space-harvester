@@ -298,7 +298,17 @@ public final class Dialogs {
      * @return der Text ohne Rand oder {@code null}, wenn abgebrochen wurde
      */
     public static String askText(Component parent, String title, String text, String current) {
-        return askText(parent, title, text, current, false);
+        return askText(parent, title, text, current, false, false);
+    }
+
+    /**
+     * Wie {@link #askText(Component, String, String, String)}, aber ein leeres Feld ist eine gültige Antwort
+     * („leer lassen, um …“): „Übernehmen“ geht immer.
+     *
+     * @return der Text ohne Rand (auch leer) oder {@code null}, wenn abgebrochen wurde
+     */
+    public static String askOptionalText(Component parent, String title, String text, String current) {
+        return askText(parent, title, text, current, false, true);
     }
 
     /**
@@ -308,10 +318,11 @@ public final class Dialogs {
      * Frage, die niemand sah.
      */
     public static String askTextInFront(Component parent, String title, String text, String current) {
-        return askText(parent, title, text, current, true);
+        return askText(parent, title, text, current, true, false);
     }
 
-    private static String askText(Component parent, String title, String text, String current, boolean inFront) {
+    private static String askText(Component parent, String title, String text, String current, boolean inFront,
+                                  boolean emptyAllowed) {
         String[] result = {null};
         JDialog dialog = dialog(parent, title);
         dialog.setAlwaysOnTop(inFront);
@@ -319,7 +330,7 @@ public final class Dialogs {
         Comic.style(field);
         ComposerButton ok = Comic.primary("Übernehmen", null);
         ComposerButton cancel = Comic.button("Abbrechen", null);
-        Runnable check = () -> ok.setEnabled(!field.getText().isBlank());
+        Runnable check = () -> ok.setEnabled(accepts(field.getText(), emptyAllowed));
         field.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             @Override
             public void insertUpdate(javax.swing.event.DocumentEvent event) {
@@ -338,7 +349,7 @@ public final class Dialogs {
         });
         check.run();
         ok.addActionListener(e -> {
-            if (!field.getText().isBlank()) {
+            if (accepts(field.getText(), emptyAllowed)) {
                 result[0] = field.getText().strip();
                 dialog.dispose();
             }
@@ -355,6 +366,11 @@ public final class Dialogs {
         });
         show(dialog, title, body, cancel, ok);
         return result[0];
+    }
+
+    /** Ob „Übernehmen“ einer Textabfrage geht: mit Text immer, leer nur, wenn ihr Hinweis „leer lassen“ anbietet. */
+    static boolean accepts(String text, boolean emptyAllowed) {
+        return emptyAllowed || (text != null && !text.isBlank());
     }
 
     /**

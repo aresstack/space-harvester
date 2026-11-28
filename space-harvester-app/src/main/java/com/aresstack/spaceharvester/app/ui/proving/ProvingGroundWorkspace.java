@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.app.ui.controls.ComicTreeRenderer;
 import com.aresstack.spaceharvester.app.ui.controls.FolderField;
 import com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane;
+import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
 import com.aresstack.spaceharvester.app.ui.controls.SideHead;
 import com.aresstack.spaceharvester.app.ui.controls.StatusLabel;
 import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
@@ -37,6 +38,7 @@ import com.aresstack.spaceharvester.provingground.store.ProjectFile;
 import com.aresstack.spaceharvester.provingground.store.TestCaseFile;
 
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.FlowLayout;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -52,6 +54,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 import javax.swing.DefaultCellEditor;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -106,6 +109,12 @@ public final class ProvingGroundWorkspace extends JPanel {
     static final String OFFER_PROJECT = "Testprojekt anlegen";
     static final String OFFER_SUITE = "Erste Suite anlegen";
     static final String OFFER_RECORD = "Testfall aufnehmen";
+    static final String STEPS = "Schritte";
+    static final String HOOKS = "Hooks";
+    static final String PRECONDITIONS = "Vorbedingungen";
+    static final String USERS = "Benutzer";
+    /** Benutzer des Testfalls „Standard“: der Standardbenutzer des Projekts. */
+    static final String STANDARD_USER = "Standard des Projekts";
     /** Rolle „automatisch“: aus der Aktion (Assertion = Then, sonst When). */
     static final String AUTO = "automatisch";
 
@@ -121,6 +130,8 @@ public final class ProvingGroundWorkspace extends JPanel {
     private final StepsModel steps = new StepsModel();
     private final JTable table = Comic.table(new JTable(steps));
     private final JTextArea report = Comic.code();
+    /** Bericht des letzten Laufs, sichtbar bei Projekt und Suite. */
+    private String lastRun = "";
     private final IconButton run = new IconButton(ComposerIcons.play(), RUN_TIP).compact();
     private final IconButton stop = new IconButton(ComposerIcons.stop(), STOP_TIP).compact();
     private final IconButton create = new IconButton(ComposerIcons.plus(12), CREATE_TIP).compact();
@@ -137,6 +148,20 @@ public final class ProvingGroundWorkspace extends JPanel {
     });
     private CenterOffer offer;
     private Runnable offerAction = () -> { };
+    private final ScopeEditor hooks = new ScopeEditor();
+    private final PreconditionsEditor preconditions = new PreconditionsEditor();
+    private final UsersEditor users = new UsersEditor();
+    private final JComboBox<String> caseUser = Comic.combo();
+    private final CardLayout cards = new CardLayout();
+    private final JPanel views = new JPanel(cards);
+    private final JPanel viewSwitch = new JPanel(new BorderLayout());
+    private final SegmentedToggle projectViews = toggle(HOOKS, PRECONDITIONS, USERS);
+    private final SegmentedToggle suiteViews = toggle(HOOKS, PRECONDITIONS);
+    private final SegmentedToggle caseViews = toggle(STEPS, HOOKS, PRECONDITIONS);
+    /** Während die Ansicht gefüllt wird, sind Änderungen der Auswahlfelder keine Bearbeitung. */
+    private boolean filling;
+    /** Die Umschaltung, die zum gewählten Knoten gehört, oder null. */
+    private SegmentedToggle currentViews;
     private ProvingGroundRuns.Recording recording;
     /** Ergebnisse des letzten Laufs je Testfall ({@code <suite>/<fall>}). */
     private final Map<String, CaseRunResult> results = new HashMap<>();
@@ -208,18 +233,35 @@ public final class ProvingGroundWorkspace extends JPanel {
         }
         table.getColumnModel().getColumn(1).setCellEditor(new DefaultCellEditor(roles));
         report.setEditable(false);
-        JSplitPane center = new JSplitPane(JSplitPane.VERTICAL_SPLIT, Comic.scroll(table), Comic.scroll(report));
+        caseUser.addActionListener(event -> caseUserChosen());
+        JPanel userRow = new JPanel(new BorderLayout(8, 0));
+        userRow.setOpaque(false);
+        userRow.add(Comic.text("Testfall läuft als"), BorderLayout.WEST);
+        userRow.add(caseUser, BorderLayout.CENTER);
+        JPanel stepsView = new JPanel(new BorderLayout(0, 6));
+        stepsView.setOpaque(false);
+        stepsView.add(userRow, BorderLayout.NORTH);
+        stepsView.add(Comic.scroll(table), BorderLayout.CENTER);
+        views.setOpaque(false);
+        views.add(stepsView, STEPS);
+        views.add(hooks, HOOKS);
+        views.add(preconditions, PRECONDITIONS);
+        views.add(users, USERS);
+        for (SegmentedToggle toggle : List.of(projectViews, suiteViews, caseViews)) {
+            toggle.onSelect(name -> cards.show(views, name));
+        }
+        viewSwitch.setOpaque(false);
+        // The report under every view: a run of the project or a suite shows its result there, too (Codex #1770).
+        JSplitPane center = new JSplitPane(JSplitPane.VERTICAL_SPLIT, views, Comic.scroll(report));
         center.setResizeWeight(0.65);
         center.setBorder(null);
         ComicDivider.install(center, Comic.PALETTE);
-        JPanel centerBox = new JPanel(new BorderLayout());
-        centerBox.setOpaque(false);
-        centerBox.add(center, BorderLayout.CENTER);
-        offer = new CenterOffer(centerBox, OFFER_PROJECT, CREATE_TIP).onAccept(() -> offerAction.run());
+        offer = new CenterOffer(center, OFFER_PROJECT, CREATE_TIP).onAccept(() -> offerAction.run());
         JPanel content = new JPanel(new BorderLayout());
         content.setOpaque(false);
         JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         tools.setOpaque(false);
+        tools.add(viewSwitch);
         tools.add(up);
         tools.add(down);
         tools.add(delete);
@@ -245,12 +287,16 @@ public final class ProvingGroundWorkspace extends JPanel {
                 null, status);
     }
 
+    /** Zählt die Leseaufträge von {@link #open}; nur das Ergebnis des letzten gilt (nur im EDT gelesen/geschrieben). */
+    private long openRequests;
+
     /** Liest das Testprojekt im Ordner, im Hintergrund. */
     void open(Path chosen) {
         if (chosen == null) {
             return;
         }
         AppState.shared().put(PROJECT_KEY, chosen.toString());
+        long request = ++openRequests;
         CompletableFuture.supplyAsync(() -> {
             try {
                 return Files.exists(chosen.resolve(ProjectFile.FILE_NAME)) ? ProjectFile.read(chosen) : null;
@@ -258,6 +304,9 @@ public final class ProvingGroundWorkspace extends JPanel {
                 throw new IllegalStateException(broken.getMessage(), broken);
             }
         }).whenComplete((read, failure) -> SwingUtilities.invokeLater(() -> {
+            if (request != openRequests) {
+                return; // a later open() was asked for; an earlier read finishing last must not win
+            }
             directory = chosen;
             results.clear();
             if (failure != null) {
@@ -305,17 +354,17 @@ public final class ProvingGroundWorkspace extends JPanel {
         Node node = selectedNode();
         boolean busy = recording != null || !run.isEnabled();
         if (directory == null || busy) {
-            offer.offer(false);
+            noOffer();
         } else if (project == null) {
             offer(OFFER_PROJECT, CREATE_TIP, this::createProject);
         } else if (project.suites().isEmpty()) {
             offer(OFFER_SUITE, SUITE_TIP, this::askSuite);
         } else if (node != null && node.testCase() != null) {
-            offer.offer(false);
+            noOffer();
         } else if (node != null && node.suite() != null && !node.suite().cases().isEmpty()) {
-            offer.offer(false);
+            noOffer();
         } else if (node != null && node.suite() == null && count(project) > 0) {
-            offer.offer(false);
+            noOffer();
         } else {
             offer(OFFER_RECORD, RECORD_TIP, this::startRecording);
         }
@@ -326,6 +375,17 @@ public final class ProvingGroundWorkspace extends JPanel {
         offer.button().setToolTipText(tip);
         offerAction = action;
         offer.offer(true);
+        // solange der Weg geführt wird: leere Schrittansicht, keine Editoren
+        viewSwitch.setVisible(false);
+        cards.show(views, STEPS);
+    }
+
+    private void noOffer() {
+        offer.offer(false);
+        viewSwitch.setVisible(true);
+        if (currentViews != null) {
+            cards.show(views, currentViews.selected());
+        }
     }
 
     private void askSuite() {
@@ -379,8 +439,10 @@ public final class ProvingGroundWorkspace extends JPanel {
         shownCase = null;
         shownEntry = null;
         shownSuite = node == null ? null : node.suite();
-        report.setText("");
+        // Project and suite show the report of the last run, a test case its own result (below)
+        report.setText(node == null || node.testCase() == null ? lastRun : "");
         updateUsers();
+        showEditors(node);
         updateOffer();
         if (node == null || node.testCase() == null || directory == null) {
             return;
@@ -404,8 +466,8 @@ public final class ProvingGroundWorkspace extends JPanel {
             }
             CaseRunResult result = results.get(reference);
             shownCase = testCase;
-            shownEntry = entry;
-            steps.show(testCase, entry, result);
+            shownEntry = project.suite(node.suite().id()).testCase(entry.id());
+            steps.show(testCase, shownEntry, result);
             report.setText(result == null ? "" : result.render());
         }));
     }
@@ -466,10 +528,8 @@ public final class ProvingGroundWorkspace extends JPanel {
         status.show(new StatusNote(result.passed() ? "Bestanden: " + Texts.count(result.cases().size(), "Testfall", "Testfälle")
                 : failed + " von " + result.cases().size() + " Testfällen fehlgeschlagen",
                 result.passed() ? StatusNote.Tone.PLAIN : StatusNote.Tone.ERROR, null, null));
+        lastRun = result.render() + "\nTraces und Bildschirmfotos: " + output;
         selected();
-        if (selectedNode() == null || selectedNode().testCase() == null) {
-            report.setText(result.render() + "\nTraces und Bildschirmfotos: " + output);
-        }
         tree.repaint();
     }
 
@@ -489,6 +549,146 @@ public final class ProvingGroundWorkspace extends JPanel {
             project.users().forEach(user -> users.addItem(user.name()));
         }
         table.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(users));
+    }
+
+    private static SegmentedToggle toggle(String... names) {
+        SegmentedToggle toggle = new SegmentedToggle();
+        for (String name : names) {
+            toggle.segment(name);
+        }
+        return toggle;
+    }
+
+    /** Zeigt zum gewählten Knoten die passenden Ansichten: Projekt, Suite oder Testfall. */
+    private void showEditors(Node node) {
+        viewSwitch.removeAll();
+        currentViews = null;
+        if (project == null || node == null) {
+            cards.show(views, STEPS);
+            viewSwitch.revalidate();
+            viewSwitch.repaint();
+            return;
+        }
+        SegmentedToggle toggle;
+        if (node.testCase() != null) {
+            toggle = caseViews;
+            TestCaseEntry entry = project.suite(node.suite().id()).testCase(node.testCase().id());
+            String self = TestProject.reference(node.suite(), entry);
+            hooks.show(entry.scope(), true, scope -> editCase(entry.id(), c -> c.withScope(scope)));
+            preconditions.show(project, entry.preconditions(), self,
+                    list -> editCase(entry.id(), c -> c.withPreconditions(list)));
+            fillCaseUser(entry);
+        } else if (node.suite() != null) {
+            toggle = suiteViews;
+            TestSuite suite = project.suite(node.suite().id());
+            hooks.show(suite.scope(), false, scope -> editSuite(suite.id(), s -> s.withScope(scope)));
+            preconditions.show(project, suite.preconditions(), null,
+                    list -> editSuite(suite.id(), s -> s.withPreconditions(list)));
+        } else {
+            toggle = projectViews;
+            hooks.show(project.scope(), false, scope -> edit(p -> p.withScope(scope)));
+            preconditions.show(project, project.preconditions(), null, list -> edit(p -> p.withPreconditions(list)));
+            users.show(project.users(), project.defaultUser(), (list, standard, renamed) -> {
+                edit(p -> p.withUsers(list, standard, renamed));
+                updateUsers();
+            });
+            loadVaultEntries();
+        }
+        viewSwitch.add(toggle, BorderLayout.CENTER);
+        currentViews = toggle;
+        cards.show(views, toggle.selected());
+        viewSwitch.revalidate();
+        viewSwitch.repaint();
+    }
+
+    /** Die Auswahl „Testfall läuft als“: Standard des Projekts oder einer der Benutzer. */
+    private void fillCaseUser(TestCaseEntry entry) {
+        filling = true;
+        try {
+            caseUser.removeAllItems();
+            caseUser.addItem(STANDARD_USER);
+            project.users().forEach(user -> caseUser.addItem(user.name()));
+            caseUser.setSelectedItem(entry.user() == null ? STANDARD_USER : entry.user());
+        } finally {
+            filling = false;
+        }
+    }
+
+    private void caseUserChosen() {
+        if (filling || shownSuite == null || selectedNode() == null || selectedNode().testCase() == null) {
+            return;
+        }
+        Object chosen = caseUser.getSelectedItem();
+        String user = chosen == null || STANDARD_USER.equals(chosen) ? null : chosen.toString();
+        String caseId = selectedNode().testCase().id();
+        editCase(caseId, c -> c.withUser(user));
+        if (shownEntry != null && shownEntry.id().equals(caseId)) {
+            steps.show(shownCase, shownEntry, results.get(TestProject.reference(shownSuite, shownEntry)));
+        }
+    }
+
+    /** Die Titel der KeePass-Einträge für die Benutzer-Tabelle, still gelesen; ohne Kopplung bleibt nur Eintippen. */
+    private void loadVaultEntries() {
+        CompletableFuture.supplyAsync(() -> {
+            KeePassLink link = keePass.get();
+            if (link == null || !link.paired()) {
+                return List.<String>of();
+            }
+            try {
+                return link.entriesSilently().stream().map(e -> e.title())
+                        .filter(t -> t != null && !t.isBlank()).sorted().toList();
+            } catch (Exception unavailable) {
+                return List.<String>of();
+            }
+        }).thenAccept(titles -> SwingUtilities.invokeLater(() -> users.entries(titles)));
+    }
+
+    /** Ändert das Projekt und speichert es; der gezeigte Testfall folgt der Änderung. */
+    void edit(UnaryOperator<TestProject> change) {
+        if (project == null || directory == null) {
+            return;
+        }
+        TestProject changed = change.apply(project);
+        project = changed;
+        if (shownSuite != null) {
+            shownSuite = changed.suite(shownSuite.id());
+            if (shownEntry != null && shownSuite != null) {
+                shownEntry = shownSuite.testCase(shownEntry.id());
+            }
+        }
+        Path base = directory;
+        List<String> problems = changed.problems();
+        save(() -> ProjectFile.write(changed, base), problems.isEmpty() ? "Gespeichert"
+                : "Gespeichert – noch offen: " + String.join(" · ", problems));
+    }
+
+    private void editSuite(String suiteId, UnaryOperator<TestSuite> change) {
+        edit(p -> p.withSuite(change.apply(p.suite(suiteId))));
+    }
+
+    private void editCase(String caseId, UnaryOperator<TestCaseEntry> change) {
+        Node node = selectedNode();
+        if (node == null || node.suite() == null) {
+            return;
+        }
+        String suiteId = node.suite().id();
+        editSuite(suiteId, s -> s.withCase(change.apply(s.testCase(caseId))));
+    }
+
+    ScopeEditor hooks() {
+        return hooks;
+    }
+
+    PreconditionsEditor preconditions() {
+        return preconditions;
+    }
+
+    UsersEditor users() {
+        return users;
+    }
+
+    TestProject project() {
+        return project;
     }
 
     // ---- Aufnehmen ----
@@ -531,7 +731,8 @@ public final class ProvingGroundWorkspace extends JPanel {
             return;
         }
         String remembered = AppState.shared().get(START_URL_KEY);
-        String url = Dialogs.askText(this, "Neuer Testfall", "Startadresse – leer lassen, um sie im Browser einzugeben",
+        String url = Dialogs.askOptionalText(this, "Neuer Testfall",
+                "Startadresse – leer lassen, um sie im Browser einzugeben",
                 remembered == null ? "" : remembered);
         if (url == null) {
             return;

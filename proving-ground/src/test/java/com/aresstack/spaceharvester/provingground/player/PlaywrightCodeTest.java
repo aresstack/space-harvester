@@ -33,6 +33,21 @@ class PlaywrightCodeTest {
     }
 
     @Test
+    void compilesWhenPlaywrightIsOnlyReachableThroughTheClassLoaderAsInThePackagedApp() {
+        // Angelo 28.11.: in the app JAR (Spring Boot, Playwright nested in BOOT-INF/lib) step 1 "Page page =
+        // context.newPage();" failed with "Symbol nicht gefunden": the compiler only saw the outer JAR. Here the
+        // compiler gets no file class path at all; the classes come through the class loader (jar: URLs).
+        TestCase test = new TestCase("t", List.of(
+                TestStep.navigate("p", "about:blank").withCode("Page page = context.newPage();"),
+                TestStep.assertText("p", "h1", "Titel", false).withCode(
+                        "assertThat(page.getByRole(AriaRole.HEADING, new Page.GetByRoleOptions().setName(\"T\")))"
+                                + ".hasText(\"Titel\");")));
+        PlaywrightCode code = PlaywrightCode.compile(test, PlaywrightCodeTest.class.getClassLoader(), "");
+        assertNull(code.problem(0), code.problem(0));
+        assertNull(code.problem(1), code.problem(1));
+    }
+
+    @Test
     void playwrightsCodeCompilesWithTheJdkAndAnUnfitStepSaysWhy() {
         TestCase test = new TestCase("t", List.of(
                 TestStep.navigate("p", "{{start}}").withCode("Page page = context.newPage();\npage.navigate(\"{{start}}\");"),

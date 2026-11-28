@@ -109,6 +109,38 @@ class ProvingGroundWorkspaceTest {
     }
 
     @Test
+    void anEarlierOpenThatFinishesLastDoesNotReplaceTheFolderOpenedAfterIt() throws Exception {
+        // The workspace opens the remembered folder in its constructor, the caller then opens another one. A slow
+        // first read (large project file) finishes last; it must not take the folder back (CI #1770: project written
+        // into the remembered folder of an earlier test).
+        Path slow = directory.resolve("frueher");
+        ProjectFile.write(TestProject.of("Früher", List.of()), slow);
+        Path big = slow.resolve(ProjectFile.FILE_NAME);
+        String json = Files.readString(big);
+        Files.writeString(big, json.substring(0, json.lastIndexOf('}')) + " ".repeat(40_000_000) + "}\n");
+        Path chosen = directory.resolve("neu");
+        Files.createDirectories(chosen);
+
+        AtomicReference<ProvingGroundWorkspace> workspace = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            workspace.set(new ProvingGroundWorkspace(() -> null, () -> directory));
+            workspace.get().open(slow);
+            workspace.get().open(chosen);
+        });
+        await(() -> ProvingGroundWorkspace.OFFER_PROJECT.equals(workspace.get().offer().button().getText())
+                && ((com.aresstack.spaceharvester.app.ui.controls.StatusLabel) workspace.get().statusLine()).note()
+                .text().equals(ProvingGroundWorkspace.NO_PROJECT));
+        // let the slow read finish (open() reads in the common pool), then the offer must still be for the chosen folder
+        java.util.concurrent.ForkJoinPool.commonPool().awaitQuiescence(1, java.util.concurrent.TimeUnit.MINUTES);
+        SwingUtilities.invokeAndWait(() -> { });
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(workspace.get().offer().button().getText()).isEqualTo(ProvingGroundWorkspace.OFFER_PROJECT);
+        SwingUtilities.invokeAndWait(() -> workspace.get().offer().button().doClick());
+        await(() -> Files.exists(chosen.resolve(ProjectFile.FILE_NAME)));
+        assertThat(ProjectFile.read(chosen).name()).isEqualTo("neu");
+    }
+
+    @Test
     void withoutAChosenFolderTheProjectGoesBelowTheDataDirectory() throws Exception {
         String before = com.aresstack.spaceharvester.app.ui.AppState.shared().get(ProvingGroundWorkspace.PROJECT_KEY);
         com.aresstack.spaceharvester.app.ui.AppState.shared().put(ProvingGroundWorkspace.PROJECT_KEY, "");
