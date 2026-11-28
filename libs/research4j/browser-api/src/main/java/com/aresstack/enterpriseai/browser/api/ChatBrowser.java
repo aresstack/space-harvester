@@ -130,8 +130,8 @@ public interface ChatBrowser {
     boolean isRunning();
 
     /**
-     * Searches {@code query} in the search browser ({@link WebSearchPort}) with the search engines of this chat and
-     * answers the hits as text; the chat's tabs stay as they are. {@code engines}: ids of the chat's engines for this
+     * Searches {@code query} in tabs of this chat's browser ({@link WebSearchPort}) with the search engines of this
+     * chat and answers the hits as text; the search tabs close again, the chat's tabs stay as they are. {@code engines}: ids of the chat's engines for this
      * call, {@code null} for all of them.
      */
     default String search(String query, List<String> engines) throws BrowserException {

@@ -1168,6 +1168,53 @@ final class Playwright4jDriver implements PlaywrightDriver {
         return hash < 0 ? url : url.substring(0, hash);
     }
 
+    /** The tab of the running search ({@link #beginSearchTab}) and the page the driver was on before it. */
+    private Page searchOwnTab;
+    private Page pageBeforeSearchTab;
+
+    @Override
+    public void beginSearchTab() throws BrowserException {
+        owner.check();
+        requireOpen();
+        endSearchTab();
+        Page tab;
+        try {
+            tab = context.newPage(); // never brought to the front: the user keeps watching the tab they chose
+            tab.onPopup(popupCloser());
+            watchNavigations(tab);
+        } catch (PlaywrightException failed) {
+            throw asBrowserException("The search tab could not be opened", failed);
+        }
+        pageBeforeSearchTab = page;
+        searchOwnTab = tab;
+        page = tab;
+    }
+
+    @Override
+    public void endSearchTab() {
+        owner.check();
+        Page tab = searchOwnTab;
+        if (tab == null) {
+            return;
+        }
+        searchOwnTab = null;
+        if (tab != challengePage) { // a parked challenge stays open for the user, still bound to its add-on tab
+            pageKeys.remove(tab);
+            navigationCounts.remove(tab);
+            lastNavigationMethods.remove(tab);
+            tabPointers.remove(tab);
+            try {
+                if (!tab.isClosed()) {
+                    tab.close();
+                }
+            } catch (RuntimeException ignored) {
+                // already gone
+            }
+        }
+        page = pageBeforeSearchTab;
+        pageBeforeSearchTab = null;
+    }
+
     @Override
     public void closeSearchTabs() {
         owner.check();

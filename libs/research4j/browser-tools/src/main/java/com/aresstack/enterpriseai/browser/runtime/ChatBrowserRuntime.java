@@ -89,7 +89,7 @@ public final class ChatBrowserRuntime implements ChatBrowserPort {
         this(engine, profiles, guard, WebSearchPort.NONE);
     }
 
-    /** @param webSearch the search of the chats, in a search browser of its own ({@link WebSearchPort#NONE}: none) */
+    /** @param webSearch the search of the chats, in tabs of their browsers ({@link WebSearchPort#NONE}: none) */
     public ChatBrowserRuntime(BrowserEngine engine, BrowserProfileStore profiles, BrowserAccessGuard guard,
                               WebSearchPort webSearch) {
         if (engine == null || profiles == null || guard == null || webSearch == null) {
@@ -232,10 +232,21 @@ public final class ChatBrowserRuntime implements ChatBrowserPort {
 
         @Override
         public String search(final String query, final List<String> engines) throws BrowserException {
-            // In the search browser, not in this chat's tabs (no lock of this browser is held while it searches).
-            // The block lists of the chat's profile (Intern/Extern) hold for the search too: refused engines are
-            // not visited and refused hits never reach the model.
-            return webSearch.search(conversation, query, engines, url -> guard.refuses(conversation, url));
+            // In tabs of this chat's browser (one browser, Angelo 28.11.2026): started like for any other operation,
+            // then searched without holding this slot's lock; the browser's owner thread orders the calls. The block
+            // lists of the chat's profile (Intern/Extern) hold for the search too: refused engines are not visited and
+            // refused hits never reach the model.
+            return webSearch.search(conversation, running(), query, engines,
+                    url -> guard.refuses(conversation, url));
+        }
+
+        /** This chat's browser, started (or reconnected) now if it does not run. */
+        private synchronized BrowserInstance running() throws BrowserException {
+            if (closed) {
+                throw new BrowserException(BrowserException.Kind.INVALID_REQUEST, "Der Browser dieses Chats ist beendet");
+            }
+            ensureConnected();
+            return instance;
         }
 
         @Override
@@ -805,10 +816,7 @@ public final class ChatBrowserRuntime implements ChatBrowserPort {
         }
 
         private <T> T call(Operation<T> operation, boolean repeatable) throws BrowserException {
-            if (closed) {
-                throw new BrowserException(BrowserException.Kind.INVALID_REQUEST, "Der Browser dieses Chats ist beendet");
-            }
-            ensureConnected();
+            running();
             try {
                 return operation.run(connection);
             } catch (BrowserException first) {

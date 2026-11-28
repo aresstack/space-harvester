@@ -27,7 +27,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * Der erste Browser-Schritt eines Chats im Profil Intern so, wie die App ihn ausführt: {@link ChatWebBrowser#start} mit
+ * Der erste Browser-Schritt eines Chats im Profil Intern so, wie die App ihn ausführt (die Suche als Tab im Browser des
+ * Chats, kein eigener Suchbrowser): {@link ChatWebBrowser#start} mit
  * der Browser-Laufzeit und dem installierten Browser, die Werkzeuge über {@link BrowserChatTools} und, wie der Chat
  * mit mehreren Werkzeugen einer Runde, Seite öffnen und Websuche gleichzeitig. Jeder Aufruf muss zurückkommen; sonst
  * nennt der Test den Aufruf und die Stacks der wartenden Threads. Nur mit {@value #CHANNEL_ENV} (CI: Firefox, auch unter
@@ -105,6 +106,7 @@ class ChatWebBrowserFirefoxLiveTest {
             thread.setDaemon(true);
             return thread;
         });
+        int before = com.aresstack.spaceharvester.browser.runtime.BrowserRuntime.launches();
         long turn = browser.beginTurn("chat-1", progress -> { });
         try {
             Future<String> opened = round.submit(() -> tools.run("browser_navigate",
@@ -118,6 +120,9 @@ class ChatWebBrowserFirefoxLiveTest {
             assertThat(page).contains("Inhalt /start");
             assertThat(hits).contains("Reisekosten Merkblatt");
             assertThat(asked).hasSize(1);
+            // Angelo 28.11.: ein Browser, die Suche als Tab – Suchen und Öffnen starten zusammen genau einen Browser.
+            assertThat(com.aresstack.spaceharvester.browser.runtime.BrowserRuntime.launches() - before)
+                    .as("Browserstarts für Suchen und Öffnen").isEqualTo(1);
         } finally {
             Path failures = data.resolve("logs").resolve("browser-start-failures.log");
             if (java.nio.file.Files.exists(failures)) {
