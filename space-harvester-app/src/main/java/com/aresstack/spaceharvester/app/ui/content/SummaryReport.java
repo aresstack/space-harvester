@@ -32,6 +32,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.IntConsumer;
 import java.util.function.Supplier;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Die KI-Zusammenfassung eines Bereichs als Bericht (ADR 0034, Abschnitt 7, Paket 5a): oben der Überblick, darunter die
@@ -71,7 +72,7 @@ final class SummaryReport {
     }
 
     /** Gelb wie die Treffer der Suche (ReaderFind). */
-    static final Color PODCAST_MARK = new Color(0xFFF59D);
+    static final Color PODCAST_MARK = AppColors.of("app.SummaryReport.podcastMark");
     /** Schlüssel der Gruppe „Über mehrere Spaces“; kein Space-Schlüssel kann so heißen. */
     static final String ACROSS_SPACES = "\u0000mehrere";
     /** Bis zu so vielen Seiten stehen die Verweise eines Themas offen da, darüber zugeklappt. */

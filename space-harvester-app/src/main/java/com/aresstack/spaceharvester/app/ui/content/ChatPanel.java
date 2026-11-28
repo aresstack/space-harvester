@@ -98,6 +98,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Reiter „Chat“ (Angelo, 13. und 16.11.2026) nach {@code ChatShellPanel}, {@code ChatComposerPanel},
@@ -641,7 +642,7 @@ public final class ChatPanel extends JPanel {
                     int top = status.getHeight();
                     RoundRectangle2D shape = new RoundRectangle2D.Float(1, top + 1, getWidth() - 2,
                             getHeight() - top - 2, ARC, ARC);
-                    g2.setColor(Color.WHITE);
+                    g2.setColor(AppColors.of("app.ChatPanel.paintComponent"));
                     g2.fill(shape);
                     boolean dictating = dictationPhase != DictationPhase.IDLE;
                     g2.setColor(dictating ? ResearchUiPalette.RECORDING_ORANGE

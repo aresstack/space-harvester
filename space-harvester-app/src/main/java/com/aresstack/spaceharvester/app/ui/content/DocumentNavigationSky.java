@@ -28,6 +28,7 @@ import java.awt.event.MouseWheelEvent;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der Navigationsbanner über dem Dokument im Lesebereich: der Wolkenhimmel aus askai-java8 arch
@@ -1021,7 +1022,7 @@ public final class DocumentNavigationSky extends JPanel {
             Graphics2D g2 = ResearchUiPainter.prepare(graphics);
             try {
                 if (hovered) {
-                    g2.setColor(ResearchUiPainter.mix(ResearchUiPalette.SKY_BAR_SURFACE, java.awt.Color.WHITE,
+                    g2.setColor(ResearchUiPainter.mix(ResearchUiPalette.SKY_BAR_SURFACE, AppColors.of("app.DocumentNavigationSky.paintComponent"),
                             0.35f));
                     g2.fillOval(0, 0, getWidth(), getHeight());
                 }

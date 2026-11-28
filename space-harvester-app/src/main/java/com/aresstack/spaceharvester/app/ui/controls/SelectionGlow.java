@@ -127,7 +127,7 @@ public final class SelectionGlow extends JPanel {
             g.setClip(area);
             g.setPaint(new java.awt.LinearGradientPaint(0f, Math.max(0f, front - SHEEN), 0f, front + 1f,
                     new float[] {0f, 0.7f, 1f}, new java.awt.Color[] {new java.awt.Color(255, 255, 255, 0),
-                    new java.awt.Color(255, 255, 255, SHEEN_ALPHA), new java.awt.Color(255, 255, 255, 0)}));
+                    com.aresstack.enterpriseai.ui.comic.theme.ThemeColor.withAlpha(AppColors.of("app.SelectionGlow.sheen"), SHEEN_ALPHA), new java.awt.Color(255, 255, 255, 0)}));
             g.fillRect(0, (int) Math.max(0f, front - SHEEN), getWidth(), SHEEN + 2);
         } finally {
             g.dispose();

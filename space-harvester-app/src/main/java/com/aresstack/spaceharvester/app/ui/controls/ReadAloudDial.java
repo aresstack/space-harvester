@@ -28,6 +28,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.function.DoubleConsumer;
 import java.util.function.IntConsumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Die Skala rund um einen Vorlese-Knopf ({@link PodcastOrb}), wie ein Zifferblatt mit zwei Zeigern (Angelo 27.11.2026:
@@ -341,7 +342,7 @@ public final class ReadAloudDial extends JComponent {
             double ringOuter = outer();
             double middle = (ringInner + ringOuter) / 2;
             // Ring als Scheibe mit Loch: hell, dünner Rand wie die übrigen Steuerelemente
-            g.setColor(new Color(255, 255, 255, 235));
+            g.setColor(AppColors.of("app.ReadAloudDial.paintComponent"));
             g.setStroke(new BasicStroke((float) (ringOuter - ringInner)));
             g.draw(new Ellipse2D.Double(cx - middle, cy - middle, 2 * middle, 2 * middle));
             g.setColor(Comic.LINE);
@@ -400,7 +401,7 @@ public final class ReadAloudDial extends JComponent {
         double y = cy - Math.cos(radians) * radius;
         g.setColor(color);
         g.fill(new Ellipse2D.Double(x - KNOB, y - KNOB, 2 * KNOB, 2 * KNOB));
-        g.setColor(Color.WHITE);
+        g.setColor(AppColors.of("app.ReadAloudDial.knob"));
         g.setStroke(new BasicStroke(1.5f));
         g.draw(new Ellipse2D.Double(x - KNOB, y - KNOB, 2 * KNOB, 2 * KNOB));
     }
@@ -417,7 +418,7 @@ public final class ReadAloudDial extends JComponent {
         double height = metrics.getHeight();
         RoundRectangle2D shape = new RoundRectangle2D.Double(cx - width / 2, cy - height / 2, width, height,
                 height, height);
-        g.setColor(Color.WHITE);
+        g.setColor(AppColors.of("app.ReadAloudDial.pill"));
         g.fill(shape);
         g.setColor(color);
         g.setStroke(new BasicStroke(1f));

@@ -12,6 +12,7 @@ import java.awt.Graphics2D;
 import java.awt.GridBagLayout;
 import java.awt.RenderingHints;
 import java.util.Objects;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Ein Angebot mitten in einer leeren Fläche (Angelo 28.11.2026): Fehlt einer Ansicht die Voraussetzung, etwa die
@@ -26,8 +27,8 @@ public final class CenterOffer extends JPanel {
     static final int PAD_Y = 9;
     static final float FONT_SIZE = 14f;
     /** Fläche des Knopfs in Ruhe und unter der Maus: hell und grau, damit er im Hintergrund bleibt. */
-    static final Color REST = new Color(0xECEDEF);
-    static final Color HOVER = new Color(0xDDDFE3);
+    static final Color REST = AppColors.of("app.CenterOffer.rest");
+    static final Color HOVER = AppColors.of("app.CenterOffer.hover");
 
     private final JButton button = new Pill();
     private final JPanel layer = new JPanel(new GridBagLayout()) {

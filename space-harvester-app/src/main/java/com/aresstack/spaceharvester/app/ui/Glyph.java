@@ -13,6 +13,7 @@ import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Kleine Vektorsymbole für Icon-Knöpfe (16 × 16, skaliert mit der Bildschirmauflösung): Aktualisieren, Stift,
@@ -83,8 +84,8 @@ public enum Glyph implements Icon {
 
     private static final int SIZE = 16;
     /** Das Favoriten-Gelb des EAC ({@code ResearchUiPalette.FAVORITE_YELLOW}). */
-    static final Color FAVORITE = new Color(0xFFC800);
-    static final Color FAVORITE_EDGE = new Color(0xC99A00);
+    static final Color FAVORITE = AppColors.of("app.Glyph.favorite");
+    static final Color FAVORITE_EDGE = AppColors.of("app.Glyph.favoriteEdge");
 
     @Override
     public void paintIcon(Component c, Graphics graphics, int x, int y) {

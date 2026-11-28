@@ -24,6 +24,7 @@ import java.awt.event.FocusEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.beans.PropertyChangeListener;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Eingabefeld mit integrierten Knöpfen. Aufbau und Verhalten (Lupe links, flache Knöpfe rechts im Feld, ✕ erscheint
@@ -43,7 +44,7 @@ import java.beans.PropertyChangeListener;
  */
 public class InputFrame extends JPanel {
 
-    private static final Color ICON = new Color(0x666666);
+    private static final Color ICON = AppColors.of("app.InputFrame.icon");
 
     private final JComponent field;
     private final JPanel eastPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
@@ -62,7 +63,7 @@ public class InputFrame extends JPanel {
         // Aussehen wie die übrigen Felder der App (Comic.style): weiß, schlichter abgerundeter Rahmen; nur
         // Verhalten und Aufbau kommen aus AskAI, nicht dessen Stil.
         setBorder(com.aresstack.spaceharvester.app.ui.Comic.fieldBorder());
-        setBackground(Color.WHITE);
+        setBackground(AppColors.of("app.InputFrame.inputFrame"));
         setOpaque(true);
         if (field instanceof JTextComponent text) {
             text.setBorder(new EmptyBorder(2, 4, 2, 4));

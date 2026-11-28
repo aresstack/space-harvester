@@ -18,6 +18,7 @@ import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.function.Consumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Move a single, already-running video view into a full-screen window and back.
@@ -90,7 +91,7 @@ final class VideoFullScreenController implements AutoCloseable {
 
         JFrame window = new JFrame("Video-Vollbild");
         window.setUndecorated(true);
-        window.setBackground(Color.BLACK);
+        window.setBackground(AppColors.of("app.VideoFullScreenController.enter"));
         window.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         window.addWindowListener(new WindowAdapter() {
             @Override
@@ -100,7 +101,7 @@ final class VideoFullScreenController implements AutoCloseable {
         });
 
         placeholder = new JPanel(new BorderLayout());
-        placeholder.setBackground(Color.BLACK);
+        placeholder.setBackground(AppColors.of("app.VideoFullScreenController.windowClosing"));
         fullScreenWindow = window;
         transferring = true;
         try {
@@ -108,7 +109,7 @@ final class VideoFullScreenController implements AutoCloseable {
             originalParent.remove(videoView);
             putBack(originalParent, placeholder);
             window.getContentPane().setLayout(new BorderLayout());
-            window.getContentPane().setBackground(Color.BLACK);
+            window.getContentPane().setBackground(AppColors.of("app.VideoFullScreenController.windowClosing"));
             window.getContentPane().add(videoView, BorderLayout.CENTER);
             originalParent.revalidate();
             originalParent.repaint();

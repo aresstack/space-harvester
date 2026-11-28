@@ -13,6 +13,7 @@ import java.awt.event.MouseEvent;
 import java.util.function.Consumer;
 import javax.accessibility.AccessibleContext;
 import javax.swing.JComponent;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Die Farbwahl einer farbigen Gruppe (UX-Strang, 27.11.2026): eine Zeile runder Farbfelder (18 px, Abstand 6), das
@@ -139,7 +140,7 @@ public final class ColorSwatches extends JComponent {
                 if (colors[i] == selected) {
                     g.setStroke(new BasicStroke(2f));
                     g.drawOval(x - RING, y - RING, SWATCH + 2 * RING - 1, SWATCH + 2 * RING - 1);
-                    g.setColor(Color.WHITE);
+                    g.setColor(AppColors.of("app.ColorSwatches.paintComponent"));
                     g.drawPolyline(new int[] {x + 5, x + 8, x + 13}, new int[] {y + 9, y + 12, y + 6}, 3);
                 }
                 if (colors[i] == selected && isFocusOwner()) {

@@ -19,6 +19,7 @@ import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
 import java.util.List;
 import java.util.Objects;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Zurück wie im Browser (Angelo, 24.11.2026): ein runder, plastisch hervorstehender Knopf mit Pfeil – das eine
@@ -39,10 +40,10 @@ public final class BackButton extends JButton {
     public static final int MAX_ENTRIES = 15;
     /** Platz unter dem Knopf für den Schatten. */
     private static final int SHADOW = 2;
-    private static final Color TOP = Color.WHITE;
-    private static final Color BOTTOM = new Color(0xDCE1E8);
-    private static final Color SHADOW_COLOR = new Color(0, 0, 0, 46);
-    private static final Color DISABLED_FILL = new Color(0xF1F3F6);
+    private static final Color TOP = AppColors.of("app.BackButton.top");
+    private static final Color BOTTOM = AppColors.of("app.BackButton.bottom");
+    private static final Color SHADOW_COLOR = AppColors.of("app.BackButton.shadowColor");
+    private static final Color DISABLED_FILL = AppColors.of("app.BackButton.disabledFill");
     private static final float ARROW_STROKE = 2.2f;
     private static final float RIM_STROKE = 1.6f;
 

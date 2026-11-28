@@ -9,6 +9,7 @@ import java.awt.RenderingHints;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.RoundRectangle2D;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Die Weihnachtsmütze (Angelo 28.11.2026): rot mit weißem Rand und weißer Bommel, leicht schräg. Sie sitzt in der
@@ -24,7 +25,7 @@ public final class SantaHat {
     /** Neigung der Mütze nach links, in Grad. */
     static final double TILT_DEGREES = -18;
     static final Color RED = Comic.RED;
-    static final Color FUR = Color.WHITE;
+    static final Color FUR = AppColors.of("app.SantaHat.fur");
 
     private SantaHat() {
     }

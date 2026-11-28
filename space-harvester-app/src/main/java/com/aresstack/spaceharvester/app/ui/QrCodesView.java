@@ -28,6 +28,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * QR-Codes am Bildschirm, zum Abscannen mit dem Telefon: die vertrauten Zertifikate einer Quelle (Strang ZX) oder eine
@@ -279,7 +280,7 @@ public final class QrCodesView {
         protected void paintComponent(Graphics graphics) {
             Graphics2D g = (Graphics2D) graphics.create();
             try {
-                g.setColor(Color.WHITE);
+                g.setColor(AppColors.of("app.QrCodesView.paintComponent"));
                 g.fillRect(0, 0, getWidth(), getHeight());
                 if (image == null) {
                     return;

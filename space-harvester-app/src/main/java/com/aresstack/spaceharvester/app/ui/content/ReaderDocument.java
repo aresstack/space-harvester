@@ -17,6 +17,7 @@ import javax.swing.text.StyledDocument;
 import java.awt.Color;
 import java.awt.Font;
 import java.util.List;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der Lesetext einer Seite mit den Akronymen aus dem Core-Ergebnis {@code acronyms} (#115). Markiert wird nur, was
@@ -28,7 +29,7 @@ final class ReaderDocument {
     static final String NO_PREVIEW = "Für dieses Format gibt es keine Lesevorschau. Die Originaldaten zeigen den "
             + "vollständigen Inhalt.";
 
-    private static final Color UNKNOWN_MARK = new Color(0x9E, 0x9E, 0x9E, 60);
+    private static final Color UNKNOWN_MARK = AppColors.of("app.ReaderDocument.unknownMark");
 
     private final StyledDocument document;
     private final PageText text;

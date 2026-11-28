@@ -54,6 +54,7 @@ import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Overlay „Belege“ einer Verb-Kante der Fachsicht (Paket W1): Kopf „Antragsteller stellt Antrag“ mit Zahl, je Beleg der
@@ -242,7 +243,7 @@ public final class EvidencePopup extends JPopupMenu {
 
     public EvidencePopup() {
         setOpaque(true);
-        setBackground(java.awt.Color.WHITE);
+        setBackground(AppColors.of("app.EvidencePopup.evidencePopup"));
         setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Comic.INK, 2),
                 BorderFactory.createEmptyBorder(10, 12, 12, 12)));
         setLayout(new BorderLayout(0, 8));

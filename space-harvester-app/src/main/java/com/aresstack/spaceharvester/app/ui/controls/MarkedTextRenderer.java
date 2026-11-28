@@ -14,6 +14,7 @@ import java.util.function.IntFunction;
 import javax.swing.BorderFactory;
 import javax.swing.JTable;
 import javax.swing.table.DefaultTableCellRenderer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Tabellenzelle mit einer klickbaren Marke vorn (gedämpfte Pille) und dem Text dahinter, etwa der Treffergrund vor dem
@@ -37,7 +38,7 @@ public final class MarkedTextRenderer extends DefaultTableCellRenderer {
     private static final int HEIGHT = 18;
     /** So viel Platz bleibt dem Text mindestens, sonst wird die Marke kurz. */
     private static final int TEXT_ROOM = 220;
-    private static final Color FILL = new Color(0xEEF1F5);
+    private static final Color FILL = AppColors.of("app.MarkedTextRenderer.fill");
 
     private final IntFunction<Mark> marks;
     private String painted;

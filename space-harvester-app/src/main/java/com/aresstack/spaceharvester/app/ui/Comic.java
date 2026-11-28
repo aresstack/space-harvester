@@ -39,6 +39,7 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Rectangle;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Die Designsprache des Enterprise AI Client für den Harvester: ruhige helle Flächen, Tintenkonturen, Platten mit
@@ -67,26 +68,26 @@ public final class Comic {
      */
     public static final int FOOT_HEIGHT = 43;
     /** Fläche einer Meldungsplatte mit Hinweis (helles Gelb, Rand {@link #YELLOW}). */
-    public static final Color NOTICE = new Color(0xFFF6D5);
+    public static final Color NOTICE = AppColors.of("app.Comic.notice");
     /** Markierung eines neuen Absatzes in der Leseansicht (wie bei Git grün). */
-    public static final Color CHANGE_ADDED = new Color(0xDFF5E1);
+    public static final Color CHANGE_ADDED = AppColors.of("app.Comic.changeAdded");
     /** Markierung eines geänderten Absatzes in der Leseansicht (blau). */
-    public static final Color CHANGE_CHANGED = new Color(0xDCEBFB);
+    public static final Color CHANGE_CHANGED = AppColors.of("app.Comic.changeChanged");
     /** Markierung eines entfernten Absatzes in der Leseansicht (rot, durchgestrichen). */
-    public static final Color CHANGE_REMOVED = new Color(0xFADBD8);
+    public static final Color CHANGE_REMOVED = AppColors.of("app.Comic.changeRemoved");
     /**
      * Hinterlegung dessen, wovon der ganze Podcast nie erzählt (Angelo 27.11.2026: „hellgrau hinterlegt …, damit man
      * sofort sehen kann, was nicht abgedeckt war im Podcast“); das Gelb der laufenden Stelle liegt nie darauf.
      */
-    public static final Color PODCAST_GAP = new Color(0xE6E8EB);
+    public static final Color PODCAST_GAP = AppColors.of("app.Comic.podcastGap");
     /** Stand einer Aussage (ADR 0032): „gilt“ grün. Jede Marke trägt dazu ihr Wort, nie nur die Farbe. */
-    public static final Color STANDING_CURRENT = new Color(0x2E7D4F);
+    public static final Color STANDING_CURRENT = AppColors.of("app.Comic.standingCurrent");
     /** Stand „geplant“: blau. */
-    public static final Color STANDING_PLANNED = new Color(0x2F6DB5);
+    public static final Color STANDING_PLANNED = AppColors.of("app.Comic.standingPlanned");
     /** Stand „unklar“: Ocker, Aufmerksamkeit ohne Fehler. */
-    public static final Color STANDING_UNCLEAR = new Color(0xA86A12);
+    public static final Color STANDING_UNCLEAR = AppColors.of("app.Comic.standingUnclear");
     /** Stand „überholt“: grau und blass, nie Rot (Rot heißt Fehler). */
-    public static final Color STANDING_OUTDATED = new Color(0x8A8F98);
+    public static final Color STANDING_OUTDATED = AppColors.of("app.Comic.standingOutdated");
 
     /**
      * Die Farben des Bildbetrachters zur Einstellung „Hintergrund des Bildbetrachters“ (Angelo 17.11.2026), alle aus
@@ -208,7 +209,7 @@ public final class Comic {
         ComicScrollPane scroll = new ComicScrollPane(view, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
                 ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED, PALETTE);
         scroll.getVerticalScrollBar().setUnitIncrement(16);
-        scroll.getViewport().setBackground(view instanceof JTable ? Color.WHITE : SURFACE);
+        scroll.getViewport().setBackground(view instanceof JTable ? AppColors.of("app.Comic.scroll") : SURFACE);
         scroll.setBorder(BorderFactory.createEmptyBorder());
         // Liegt die Fläche in einer Seite, die selbst scrollt (Einstellungen), reicht sie das Rad weiter, sobald
         // sie nichts mehr zu scrollen hat; sonst verschluckt eine Tabelle das Rad.
@@ -438,7 +439,7 @@ public final class Comic {
         field.setBorder(fieldBorder());
         field.setForeground(INK);
         field.setCaretColor(INK);
-        field.setBackground(Color.WHITE);
+        field.setBackground(AppColors.of("app.Comic.style"));
         field.setFont(regular(13f));
         field.setOpaque(true);
     }
@@ -449,7 +450,7 @@ public final class Comic {
         area.setEditable(false);
         area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         area.setForeground(INK);
-        area.setBackground(Color.WHITE);
+        area.setBackground(AppColors.of("app.Comic.code"));
         area.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
         return area;
     }
@@ -485,8 +486,8 @@ public final class Comic {
         table.setFont(regular(13f));
         table.setRowHeight(26);
         table.setForeground(INK);
-        table.setBackground(Color.WHITE);
-        table.setGridColor(new Color(0xE6E8EC));
+        table.setBackground(AppColors.of("app.Comic.table"));
+        table.setGridColor(AppColors.of("app.Comic.table2"));
         table.setShowVerticalLines(false);
         table.setSelectionBackground(YELLOW);
         table.setSelectionForeground(INK);

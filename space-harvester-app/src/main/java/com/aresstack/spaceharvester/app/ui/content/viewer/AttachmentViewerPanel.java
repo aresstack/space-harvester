@@ -55,6 +55,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der Anhang-Viewer im Comic-Overlay über dem Reiter „Anhänge“: zeigt einen Dateianhang der Seite. Bilder über den
@@ -203,7 +204,7 @@ public final class AttachmentViewerPanel extends JPanel {
         sharpen.setRepeats(false);
         setOpaque(false);
 
-        busy.setForeground(new Color(255, 255, 255, 210));
+        busy.setForeground(AppColors.of("app.AttachmentViewerPanel.init"));
         busy.setFont(busy.getFont().deriveFont(Font.ITALIC, 14f));
 
         textArea.setEditable(false);
@@ -216,7 +217,7 @@ public final class AttachmentViewerPanel extends JPanel {
         textPane.setVisible(false);
         documentArea.setEditable(false);
         documentArea.setBorder(BorderFactory.createEmptyBorder(16, 20, 16, 20));
-        documentArea.setBackground(Color.WHITE);
+        documentArea.setBackground(AppColors.of("app.AttachmentViewerPanel.init2"));
         documentPane = com.aresstack.spaceharvester.app.ui.Comic.scroll(documentArea);
         documentPane.setBorder(BorderFactory.createEmptyBorder());
         documentPane.setVisible(false);
@@ -242,7 +243,7 @@ public final class AttachmentViewerPanel extends JPanel {
         layers.add(canvas, JLayeredPane.DEFAULT_LAYER);
         layers.add(busy, JLayeredPane.MODAL_LAYER);
         spinner.setHighlight(com.aresstack.spaceharvester.app.ui.Comic.BLUE);
-        spinner.setCaptionColor(new Color(255, 255, 255, 210));
+        spinner.setCaptionColor(AppColors.of("app.AttachmentViewerPanel.init"));
         layers.add(spinner, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 1));
         for (JComponent button : new JComponent[] {previous, next, download, zoomOut, zoomIn, zoomFit}) {
             layers.add(button, JLayeredPane.PALETTE_LAYER);
@@ -1813,7 +1814,7 @@ public final class AttachmentViewerPanel extends JPanel {
         List<java.awt.geom.Rectangle2D> marks = List.of();
 
         Canvas() {
-            setBackground(new Color(30, 30, 30));
+            setBackground(AppColors.of("app.AttachmentViewerPanel.canvas"));
             addComponentListener(new ComponentAdapter() {
                 @Override
                 public void componentResized(ComponentEvent e) {
@@ -1982,7 +1983,7 @@ public final class AttachmentViewerPanel extends JPanel {
             Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setToolTipText(tooltip);
             JLabel label = new JLabel(icon, SwingConstants.CENTER);
-            label.setForeground(new Color(255, 255, 255, 220));
+            label.setForeground(AppColors.of("app.AttachmentViewerPanel.viewerButton"));
             add(label, BorderLayout.CENTER);
             addMouseListener(new MouseAdapter() {
                 @Override
@@ -2004,7 +2005,7 @@ public final class AttachmentViewerPanel extends JPanel {
             try {
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.5f));
-                g2.setColor(Color.BLACK);
+                g2.setColor(AppColors.of("app.AttachmentViewerPanel.paintComponent"));
                 g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
             } finally {
                 g2.dispose();

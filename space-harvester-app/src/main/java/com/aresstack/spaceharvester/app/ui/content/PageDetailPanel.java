@@ -86,6 +86,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Eine Seite: zuerst ihr lesbarer Text (statische Projektion, kein ausgeführtes HTML und keine nachgeladenen Bilder),
@@ -7137,7 +7138,7 @@ public final class PageDetailPanel extends JPanel {
 
     private static JPanel padded(JComponent content) {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBackground(java.awt.Color.WHITE);
+        panel.setBackground(AppColors.of("app.PageDetailPanel.padded"));
         panel.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
         panel.add(content, BorderLayout.NORTH);
         return panel;

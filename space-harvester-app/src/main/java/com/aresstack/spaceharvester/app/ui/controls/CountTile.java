@@ -11,6 +11,7 @@ import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Eine Kennzahl als großer quadratischer Umschaltknopf (Angelo 24.11.2026): oben groß die Zahl, darunter klein ihre
@@ -126,7 +127,7 @@ public final class CountTile extends JToggleButton {
                 g.fillRoundRect(0, 0, width - 1, height - 1, ARC, ARC);
             }
             if (counting) {
-                Color tone = on ? Color.WHITE : Comic.INK;
+                Color tone = on ? AppColors.of("app.CountTile.tone") : Comic.INK;
                 int alpha = (int) Math.round((on ? 70 : 38) * breathNow());
                 g.setColor(new Color(tone.getRed(), tone.getGreen(), tone.getBlue(), alpha));
                 g.fillRoundRect(0, 0, width - 1, height - 1, ARC, ARC);
@@ -134,7 +135,7 @@ public final class CountTile extends JToggleButton {
             g.setColor(on ? Comic.INK : Comic.LINE);
             g.drawRoundRect(0, 0, width - 1, height - 1, ARC, ARC);
             if (isFocusOwner()) {
-                g.setColor(on ? Color.WHITE : Comic.INK);
+                g.setColor(on ? AppColors.of("app.CountTile.paintComponent") : Comic.INK);
                 g.setStroke(new BasicStroke(1f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 1f,
                         new float[] {2f, 2f}, 0f));
                 g.drawRoundRect(4, 4, width - 9, height - 9, ARC - 4, ARC - 4);
@@ -147,10 +148,10 @@ public final class CountTile extends JToggleButton {
             int block = bigMetrics.getHeight() + GAP + smallMetrics.getHeight();
             int top = (height - block) / 2;
             g.setFont(big);
-            g.setColor(on ? Color.WHITE : Comic.INK);
+            g.setColor(on ? AppColors.of("app.CountTile.paintComponent") : Comic.INK);
             g.drawString(getText(), (width - bigMetrics.stringWidth(getText())) / 2, top + bigMetrics.getAscent());
             g.setFont(small);
-            g.setColor(on ? Color.WHITE : Comic.MUTED);
+            g.setColor(on ? AppColors.of("app.CountTile.paintComponent") : Comic.MUTED);
             g.drawString(caption, (width - smallMetrics.stringWidth(caption)) / 2,
                     top + bigMetrics.getHeight() + GAP + smallMetrics.getAscent());
         } finally {

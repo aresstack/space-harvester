@@ -19,6 +19,7 @@ import java.util.function.IntConsumer;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JPanel;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * PF-Tastenleiste am unteren Rand des Terminals, übernommen aus MainframeMate (TerminalConnectionTab.createFkeyPanel
@@ -44,7 +45,7 @@ public final class FunctionKeyBar extends JPanel {
         super(new GridLayout(0, 1, 0, 0));
         this.press = press;
         setOpaque(false);
-        setBackground(new Color(240, 240, 240));
+        setBackground(AppColors.of("app.FunctionKeyBar.functionKeyBar"));
         setBorder(BorderFactory.createEmptyBorder(2, 8, 4, 8));
         getAccessibleContext().setAccessibleName("PF-Tasten");
         show(Map.of());
@@ -177,31 +178,31 @@ public final class FunctionKeyBar extends JPanel {
 
     /** Gruppenfarbe aus MainframeMate (getFkeyColor). */
     static Color color(int key) {
-        Color yellow = new Color(255, 230, 80);
-        Color orange = new Color(255, 165, 50);
-        Color red = new Color(220, 70, 60);
-        Color green = new Color(90, 200, 90);
-        Color teal = new Color(60, 190, 190);
-        Color blue = new Color(80, 120, 210);
+        Color yellow = AppColors.of("app.FunctionKeyBar.yellow");
+        Color orange = AppColors.of("app.FunctionKeyBar.orange");
+        Color red = AppColors.of("app.FunctionKeyBar.red");
+        Color green = AppColors.of("app.FunctionKeyBar.green");
+        Color teal = AppColors.of("app.FunctionKeyBar.teal");
+        Color blue = AppColors.of("app.FunctionKeyBar.blue");
         if (key >= 1 && key <= 4) {
             return blend(yellow, orange, (key - 1) / 3f * 0.25f);
         } else if (key >= 5 && key <= 8) {
             return blend(orange, red, (key - 5) / 3f * 0.25f);
         } else if (key >= 9 && key <= 12) {
-            return blend(red, new Color(180, 50, 50), (key - 9) / 3f * 0.15f);
+            return blend(red, AppColors.of("app.FunctionKeyBar.color"), (key - 9) / 3f * 0.15f);
         } else if (key >= 13 && key <= 16) {
             return blend(green, teal, (key - 13) / 3f * 0.25f);
         } else if (key >= 17 && key <= 20) {
             return blend(teal, blue, (key - 17) / 3f * 0.25f);
         } else if (key >= 21 && key <= 24) {
-            return blend(blue, new Color(60, 80, 180), (key - 21) / 3f * 0.15f);
+            return blend(blue, AppColors.of("app.FunctionKeyBar.color2"), (key - 21) / 3f * 0.15f);
         }
-        return new Color(200, 200, 200);
+        return AppColors.of("app.FunctionKeyBar.color3");
     }
 
     /** Blasse Gruppenfarbe für unbelegte Tasten: 75 % Richtung Weiß. */
     static Color pale(int key) {
-        return blend(color(key), Color.WHITE, 0.75f);
+        return blend(color(key), AppColors.of("app.FunctionKeyBar.pale"), 0.75f);
     }
 
     private static Color blend(Color a, Color b, float t) {
@@ -221,7 +222,7 @@ public final class FunctionKeyBar extends JPanel {
             boolean assigned = label != null;
             fill = assigned ? color(number) : pale(number);
             float brightness = (fill.getRed() * 299 + fill.getGreen() * 587 + fill.getBlue() * 114) / 255000f;
-            ink = !assigned ? new Color(160, 160, 160) : brightness > 0.55f ? Color.BLACK : Color.WHITE;
+            ink = !assigned ? AppColors.of("app.FunctionKeyBar.keyCap") : brightness > 0.55f ? AppColors.of("app.FunctionKeyBar.ink") : AppColors.of("app.FunctionKeyBar.ink2");
             setToolTipText(assigned ? "F" + number + " – " + label : "F" + number + " (nicht belegt)");
             setFont(getFont().deriveFont(Font.PLAIN, 11f));
             setMargin(new Insets(1, 4, 1, 4));

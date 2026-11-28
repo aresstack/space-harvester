@@ -25,6 +25,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.geom.Ellipse2D;
 import java.util.Objects;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Ein drehender Punktering über einem Inhalt, der noch nicht fertig ist („das kommt noch, bitte warten“): Der Inhalt
@@ -58,8 +59,8 @@ public final class BusyOverlay extends JPanel {
     /** Durchmesser der Stopp-Fläche: füllt die Mitte des Rings, berührt die Punkte nicht. */
     private static final int STOP_DIAMETER = (int) Math.round(2 * (NORMAL_RADIUS - DOT_RADIUS - 5));
     /** Neutral gedämpfte Fläche in Ruhe (ein Grauton wie die verblassten Punkte) und leuchtendes Rot unter der Maus. */
-    static final Color STOP_MUTED = new Color(128, 132, 140, 150);
-    static final Color STOP_LIT = new Color(224, 32, 32);
+    static final Color STOP_MUTED = AppColors.of("app.BusyOverlay.stopMuted");
+    static final Color STOP_LIT = AppColors.of("app.BusyOverlay.stopLit");
     public static final String CANCEL = "Abbrechen. Was schon gefunden ist, bleibt.";
     /** Beschriftung der Fläche: die Taste selbst. */
     public static final String STOP = "Esc";
@@ -277,7 +278,7 @@ public final class BusyOverlay extends JPanel {
             return highlight;
         }
         Color ui = UIManager.getColor("List.selectionBackground");
-        return ui == null ? new Color(60, 140, 230) : ui;
+        return ui == null ? AppColors.of("app.BusyOverlay.highlight") : ui;
     }
 
     private Color veilColor() {
@@ -285,12 +286,12 @@ public final class BusyOverlay extends JPanel {
             return veilColor;
         }
         Color ui = UIManager.getColor("Panel.background");
-        return ui == null ? Color.LIGHT_GRAY : ui;
+        return ui == null ? AppColors.of("app.BusyOverlay.veilColor") : ui;
     }
 
     private Color ink() {
         Color ui = UIManager.getColor("Label.foreground");
-        return ui == null ? Color.BLACK : ui;
+        return ui == null ? AppColors.of("app.BusyOverlay.ink") : ui;
     }
 
     private static Color withAlpha(Color color, int alpha) {
@@ -455,7 +456,7 @@ public final class BusyOverlay extends JPanel {
                 g.fill(new Ellipse2D.Double(x, y, STOP_DIAMETER, STOP_DIAMETER));
                 g.setFont(font());
                 FontMetrics metrics = g.getFontMetrics();
-                g.setColor(Color.WHITE);
+                g.setColor(AppColors.of("app.BusyOverlay.paintComponent"));
                 g.drawString(STOP, (getWidth() - metrics.stringWidth(STOP)) / 2,
                         (getHeight() - metrics.getHeight()) / 2 + metrics.getAscent());
             } finally {

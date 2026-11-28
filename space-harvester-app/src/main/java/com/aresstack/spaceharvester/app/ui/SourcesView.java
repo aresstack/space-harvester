@@ -68,6 +68,7 @@ import java.util.Optional;
 import java.util.function.UnaryOperator;
 import java.util.function.Consumer;
 import java.util.Arrays;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Wissensquellen, die Verwaltungszentrale: links je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen
@@ -2019,7 +2020,7 @@ public final class SourcesView implements View {
             setBackground(chosen ? Comic.YELLOW : Comic.SURFACE);
             setBorder(BorderFactory.createCompoundBorder(
                     BorderFactory.createLineBorder(chosen ? Comic.INK : entry.config().includeInGlobalSearch()
-                            ? Comic.LINE : new Color(181, 137, 45), chosen ? 2 : 1, true),
+                            ? Comic.LINE : AppColors.of("app.SourcesView.update"), chosen ? 2 : 1, true),
                     BorderFactory.createEmptyBorder(chosen ? 7 : 8, chosen ? 7 : 8, chosen ? 5 : 6, chosen ? 7 : 8)));
             AppContext.Connection connection = context.connection(entry.id());
             boolean waiting = context.runtime() != null && context.runtime().waitingForSecret().contains(entry.id());

@@ -19,6 +19,7 @@ import javax.swing.JPopupMenu;
 import javax.swing.JRadioButtonMenuItem;
 import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der Titel oben links als Umschalter der Perspektiven (#1141, Angelo 22.11.2026): Logo und Name der gewählten
@@ -227,8 +228,8 @@ public final class PerspectiveSwitcher extends JPanel {
                 int y = (getHeight() + metrics.getAscent() - metrics.getDescent()) / 2;
                 int width = metrics.stringWidth(ghost);
                 g2.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.75f * alpha));
-                g2.setPaint(new java.awt.GradientPaint(x, y - metrics.getAscent(), new java.awt.Color(0xB07A45), x,
-                        y, new java.awt.Color(0x6E4A2A)));
+                g2.setPaint(new java.awt.GradientPaint(x, y - metrics.getAscent(), AppColors.of("app.PerspectiveSwitcher.paintComponent"), x,
+                        y, AppColors.of("app.PerspectiveSwitcher.paintComponent2")));
                 g2.drawString(ghost, x, y);
                 // Abgeplatzte Stellen: kleine Flecken in der Hintergrundfarbe lassen die Schrift löchrig wirken.
                 g2.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.9f * alpha));

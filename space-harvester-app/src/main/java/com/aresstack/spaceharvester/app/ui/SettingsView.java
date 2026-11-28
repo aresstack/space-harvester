@@ -218,6 +218,12 @@ public final class SettingsView implements View {
     final javax.swing.JCheckBox season = Comic.checkBox("Weihnachtszeit zeigen");
     /** Auswahl „Knopfleiste der Seitenleisten“; Einträge in der Reihenfolge von {@link RailLook}. */
     final JComboBox<String> rail = Comic.combo();
+    /** Zeile der Platte „Darstellung“: das Farbschema der App (Theme-Mechanik aus askai); vorerst nur das Standard-Theme. */
+    static final String THEME_TITLE = "Farbschema";
+    static final String THEME_HINT = "Die Farben der App. Gilt sofort und beim nächsten Start wieder.";
+    final JComboBox<String> theme = Comic.combo();
+    /** Was die Auswahl zeigt; das Setzen der Auswahl beim Aufbau wählt nichts. */
+    private boolean showingTheme;
     /** Was die Auswahl zeigt; eine Wahl desselben Werts schreibt nichts. */
     private ViewerBackground shownViewer;
     /** Während {@link #renderViewer} die Auswahl setzt, ist das keine Wahl des Benutzers. */
@@ -355,6 +361,16 @@ public final class SettingsView implements View {
         SettingDialogs.Rows displayRows = new SettingDialogs.Rows();
         displayRows.add(VIEWER_TITLE, viewer, VIEWER_HINT);
         displayRows.add(RAIL_TITLE, rail, RAIL_HINT);
+        for (String name : com.aresstack.spaceharvester.app.ui.theme.ThemeSwitcher.names()) {
+            theme.addItem(com.aresstack.spaceharvester.app.ui.theme.ThemeSwitcher.label(name));
+        }
+        showingTheme = true;
+        theme.setSelectedIndex(Math.max(0, com.aresstack.spaceharvester.app.ui.theme.ThemeSwitcher.names().indexOf(
+                com.aresstack.enterpriseai.ui.comic.theme.AskAiTheme.active().name())));
+        showingTheme = false;
+        theme.setToolTipText("Farbschema der App");
+        theme.addActionListener(e -> chooseTheme());
+        displayRows.add(THEME_TITLE, theme, THEME_HINT);
         season.setSelected(com.aresstack.spaceharvester.app.ui.controls.Season.enabled());
         season.addActionListener(e -> com.aresstack.spaceharvester.app.ui.controls.Season.enabled(
                 season.isSelected()));
@@ -994,6 +1010,22 @@ public final class SettingsView implements View {
         shownConsole = chosen;
         context.consoleOutput(chosen, () -> feedback.success(CONSOLE_TITLE + ": " + chosen.label()),
                 feedback::problem);
+    }
+
+    /** Wendet das gewählte Farbschema an und merkt es. */
+    private void chooseTheme() {
+        int index = theme.getSelectedIndex();
+        List<String> names = com.aresstack.spaceharvester.app.ui.theme.ThemeSwitcher.names();
+        if (showingTheme || index < 0 || index >= names.size()) {
+            return;
+        }
+        String chosen = names.get(index);
+        if (chosen.equals(com.aresstack.enterpriseai.ui.comic.theme.AskAiTheme.active().name())) {
+            return;
+        }
+        com.aresstack.spaceharvester.app.ui.theme.ThemeSwitcher.apply(
+                com.aresstack.enterpriseai.ui.comic.theme.AskAiTheme.resolve(chosen));
+        feedback.success(THEME_TITLE + ": " + com.aresstack.spaceharvester.app.ui.theme.ThemeSwitcher.label(chosen));
     }
 
     /** Speichert den gewählten Hintergrund des Bildbetrachters in der Datei, ohne Neustart der Laufzeit. */
