@@ -23,7 +23,6 @@ import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.app.ui.controls.ComicTreeRenderer;
 import com.aresstack.spaceharvester.app.ui.controls.FolderField;
 import com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane;
-import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
 import com.aresstack.spaceharvester.app.ui.controls.SideHead;
 import com.aresstack.spaceharvester.app.ui.controls.StatusLabel;
 import com.aresstack.spaceharvester.app.ui.controls.StatusNote;
@@ -213,14 +212,22 @@ public final class ProvingGroundWorkspace extends JPanel {
     private final java.util.Map<String, HelpButton> helps = new java.util.LinkedHashMap<>();
     private String shownCard = STEPS;
     private final JPanel views = new JPanel(cards);
-    private final JPanel viewSwitch = new JPanel(new BorderLayout());
-    private final SegmentedToggle projectViews = toggle(HOOKS, PRECONDITIONS, USERS);
-    private final SegmentedToggle suiteViews = toggle(HOOKS, PRECONDITIONS);
-    private final SegmentedToggle caseViews = toggle(STEPS, HOOKS, PRECONDITIONS);
+    /**
+     * Die Umschalter der Ansichten unten in der Fußleiste, als Symbolknöpfe wie die Reiter der Analysen (Angelo
+     * 28.11.2026). Projekt, Suite und Testfall zeigen je ihre Auswahl daraus und merken, was zuletzt gewählt war.
+     */
+    private final com.aresstack.spaceharvester.app.ui.FootTabs viewTabs =
+            new com.aresstack.spaceharvester.app.ui.FootTabs(viewIcons());
+    private static final List<String> PROJECT_VIEWS = List.of(HOOKS, PRECONDITIONS, USERS);
+    private static final List<String> SUITE_VIEWS = List.of(HOOKS, PRECONDITIONS);
+    private static final List<String> CASE_VIEWS = List.of(STEPS, HOOKS, PRECONDITIONS);
+    /** Je Art des Knotens (seine Ansichten) die zuletzt gewählte Ansicht. */
+    private final Map<List<String>, String> chosenViews = new HashMap<>();
+    private boolean switchingViews;
     /** Während die Ansicht gefüllt wird, sind Änderungen der Auswahlfelder keine Bearbeitung. */
     private boolean filling;
-    /** Die Umschaltung, die zum gewählten Knoten gehört, oder null. */
-    private SegmentedToggle currentViews;
+    /** Die Ansichten, die zum gewählten Knoten gehören, oder null. */
+    private List<String> currentViews;
     private ProvingGroundRuns.Recording recording;
     /** Ergebnisse des letzten Laufs je Testfall ({@code <suite>/<fall>}). */
     private final Map<String, CaseRunResult> results = new HashMap<>();
@@ -315,10 +322,13 @@ public final class ProvingGroundWorkspace extends JPanel {
         views.add(hooks, HOOKS);
         views.add(preconditions, PRECONDITIONS);
         views.add(users, USERS);
-        for (SegmentedToggle toggle : List.of(projectViews, suiteViews, caseViews)) {
-            toggle.onSelect(this::showCard);
-        }
-        viewSwitch.setOpaque(false);
+        viewTabs.tabs().onSelect(name -> {
+            if (!switchingViews && currentViews != null) {
+                chosenViews.put(currentViews, name);
+                showCard(name);
+            }
+        });
+        viewTabs.bar().setVisible(false);
         // The report under every view: a run of the project or a suite shows its result there, too (Codex #1770).
         JSplitPane center = new JSplitPane(JSplitPane.VERTICAL_SPLIT, views, Comic.scroll(report));
         center.setResizeWeight(0.65);
@@ -329,7 +339,6 @@ public final class ProvingGroundWorkspace extends JPanel {
         content.setOpaque(false);
         JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         tools.setOpaque(false);
-        tools.add(viewSwitch);
         tools.add(up);
         tools.add(down);
         tools.add(screenshot);
@@ -350,6 +359,9 @@ public final class ProvingGroundWorkspace extends JPanel {
             help.add(button);
         }
         findBar.help(help);
+        // Die Umschalter der Ansichten stehen unten in der Fußleiste, wie die Reiter der Analysen (Angelo
+        // 28.11.2026); oben bleiben nur die Aktionen.
+        findBar.tools(viewTabs.bar());
         content.add(findBar, BorderLayout.SOUTH);
         getInputMap(WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(javax.swing.KeyStroke.getKeyStroke(
                 java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_DOWN_MASK), "find");
@@ -477,15 +489,15 @@ public final class ProvingGroundWorkspace extends JPanel {
         offerAction = action;
         offer.offer(true);
         // solange der Weg geführt wird: leere Schrittansicht, keine Editoren
-        viewSwitch.setVisible(false);
+        viewTabs.bar().setVisible(false);
         showCard(STEPS);
     }
 
     private void noOffer() {
         offer.offer(false);
-        viewSwitch.setVisible(true);
+        viewTabs.bar().setVisible(currentViews != null);
         if (currentViews != null) {
-            showCard(currentViews.selected());
+            showCard(viewTabs.tabs().selected());
         }
     }
 
@@ -656,12 +668,18 @@ public final class ProvingGroundWorkspace extends JPanel {
         table.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(users));
     }
 
-    private static SegmentedToggle toggle(String... names) {
-        SegmentedToggle toggle = new SegmentedToggle();
-        for (String name : names) {
-            toggle.segment(name);
-        }
-        return toggle;
+    private static Map<String, javax.swing.Icon> viewIcons() {
+        Map<String, javax.swing.Icon> icons = new java.util.LinkedHashMap<>();
+        icons.put(STEPS, ProvingTabIcons.steps());
+        icons.put(HOOKS, ProvingTabIcons.hooks());
+        icons.put(PRECONDITIONS, ProvingTabIcons.preconditions());
+        icons.put(USERS, ProvingTabIcons.users());
+        return icons;
+    }
+
+    /** Die Umschalter der Ansichten in der Fußleiste (für Tests). */
+    com.aresstack.spaceharvester.app.ui.FootTabs viewTabs() {
+        return viewTabs;
     }
 
     /** Zeigt den Reiter {@code name}; Hilfe und Suche folgen ihm. */
@@ -699,17 +717,15 @@ public final class ProvingGroundWorkspace extends JPanel {
 
     /** Zeigt zum gewählten Knoten die passenden Ansichten: Projekt, Suite oder Testfall. */
     private void showEditors(Node node) {
-        viewSwitch.removeAll();
         currentViews = null;
         if (project == null || node == null) {
             showCard(STEPS);
-            viewSwitch.revalidate();
-            viewSwitch.repaint();
+            viewTabs.bar().setVisible(false);
             return;
         }
-        SegmentedToggle toggle;
+        List<String> toggle;
         if (node.testCase() != null) {
-            toggle = caseViews;
+            toggle = CASE_VIEWS;
             TestCaseEntry entry = project.suite(node.suite().id()).testCase(node.testCase().id());
             String self = TestProject.reference(node.suite(), entry);
             hooks.show(entry.scope(), true, scope -> editCase(entry.id(), c -> c.withScope(scope)));
@@ -717,13 +733,13 @@ public final class ProvingGroundWorkspace extends JPanel {
                     list -> editCase(entry.id(), c -> c.withPreconditions(list)));
             fillCaseUser(entry);
         } else if (node.suite() != null) {
-            toggle = suiteViews;
+            toggle = SUITE_VIEWS;
             TestSuite suite = project.suite(node.suite().id());
             hooks.show(suite.scope(), false, scope -> editSuite(suite.id(), s -> s.withScope(scope)));
             preconditions.show(project, suite.preconditions(), null,
                     list -> editSuite(suite.id(), s -> s.withPreconditions(list)));
         } else {
-            toggle = projectViews;
+            toggle = PROJECT_VIEWS;
             hooks.show(project.scope(), false, scope -> edit(p -> p.withScope(scope)));
             preconditions.show(project, project.preconditions(), null, list -> edit(p -> p.withPreconditions(list)));
             users.show(project.users(), project.defaultUser(), (list, standard, renamed) -> {
@@ -732,11 +748,17 @@ public final class ProvingGroundWorkspace extends JPanel {
             });
             loadVaultEntries();
         }
-        viewSwitch.add(toggle, BorderLayout.CENTER);
         currentViews = toggle;
-        showCard(toggle.selected());
-        viewSwitch.revalidate();
-        viewSwitch.repaint();
+        String chosen = chosenViews.getOrDefault(toggle, toggle.get(0));
+        switchingViews = true;
+        try {
+            viewTabs.tabs().showOnly(toggle);
+            viewTabs.tabs().select(chosen);
+        } finally {
+            switchingViews = false;
+        }
+        viewTabs.bar().setVisible(true);
+        showCard(chosen);
     }
 
     /** Die Auswahl „Testfall läuft als“: Standard des Projekts oder einer der Benutzer. */

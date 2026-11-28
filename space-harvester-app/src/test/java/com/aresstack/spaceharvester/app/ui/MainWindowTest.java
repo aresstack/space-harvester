@@ -488,6 +488,79 @@ class MainWindowTest {
      * Die Analysen sind die dritte Seitenleiste rechts, ihr Knopf steht zwischen Chat und Aufträgen (Angelo
      * 27.11.2026): Er klappt sie auf, blendet Chat und Aufträge aus, ein zweiter Klick klappt zu; die Mitte bleibt.
      */
+    /**
+     * Angelo 28.11.2026: Die Fußleiste der Analysen stand schief, das Fragezeichen hing oben. Jede Fußleiste des
+     * Fensters ist eine {@link com.aresstack.spaceharvester.app.ui.controls.FootBar}, alle sind gleich hoch und
+     * stehen auf einer Linie, auch bei schmaler Seitenleiste; die Lupe der Analysen steht auf der Höhe der Lupe der
+     * Mitte.
+     */
+    @Test
+    void everyFootBarOfTheWindowHasTheSameHeightAndStandsOnOneLine() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            try {
+                surface.setSize(1400, 820);
+                window.analysesToggle().doClick();
+                for (boolean narrow : new boolean[] {false, true}) {
+                    if (narrow) {
+                        window.chatSplit().setDividerLocation(window.chatSplit().getWidth()
+                                - com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH);
+                    }
+                    for (int pass = 0; pass < 3; pass++) {
+                        layoutAll(surface);
+                    }
+                    var feet = find(surface,
+                            com.aresstack.spaceharvester.app.ui.controls.FootBar.class).stream()
+                            .filter(foot -> shownUpTo(foot, surface) && foot.getWidth() > 0).toList();
+                    Component analyses = find((java.awt.Container) window.chatSplit().getRightComponent(),
+                            com.aresstack.spaceharvester.app.ui.content.AnalysesSidebar.class).get(0);
+                    var inSidebar = feet.stream()
+                            .filter(foot -> SwingUtilities.isDescendingFrom(foot, analyses)).toList();
+                    assertThat(inSidebar).as("die Analysen haben genau eine Fußleiste, die gemeinsame").hasSize(1);
+                    assertThat(inSidebar.get(0)).isInstanceOf(FindBar.class);
+                    assertThat(feet.size()).as("Explorer, Mitte, Analysen").isGreaterThanOrEqualTo(3);
+                    java.util.Set<Integer> bottoms = new java.util.HashSet<>();
+                    for (Component foot : feet) {
+                        assertThat(foot.getHeight()).as("narrow " + narrow).isEqualTo(Comic.FOOT_HEIGHT);
+                        bottoms.add(SwingUtilities.convertPoint(foot, 0, foot.getHeight(), surface).y);
+                    }
+                    assertThat(bottoms).as("alle auf einer Linie, schmal: " + narrow).hasSize(1);
+                    FindBar side = (FindBar) inSidebar.get(0);
+                    int magnifier = SwingUtilities.convertPoint(side.findButton(), 0,
+                            side.findButton().getHeight() / 2, surface).y;
+                    assertThat(SwingUtilities.convertPoint(window.findBar().findButton(), 0,
+                            window.findBar().findButton().getHeight() / 2, surface).y).isEqualTo(magnifier);
+                    for (Component help : find(side.helpArea(),
+                            com.aresstack.spaceharvester.app.ui.controls.HelpButton.class)) {
+                        if (help.isVisible()) {
+                            assertThat(SwingUtilities.convertPoint(help, 0, help.getHeight() / 2, surface).y)
+                                    .as("Fragezeichen auf Höhe der Lupe").isBetween(magnifier - 1, magnifier + 1);
+                        }
+                    }
+                }
+            } finally {
+                window.jobsOpen(false);
+                window.chatOpen(false);
+            }
+        });
+    }
+
+    private static boolean shownUpTo(Component component, Component root) {
+        for (Component up = component; up != null && up != root; up = up.getParent()) {
+            if (!up.isVisible()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Test
     void theAnalysesAreASidebarWhoseButtonSitsBetweenChatAndJobs() throws Exception {
         Path config = home.resolve("app.yml");

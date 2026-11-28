@@ -463,11 +463,11 @@ public final class PageDetailPanel extends JPanel {
     private static final String ANALYSES_NONE = "none";
     static final String NO_ANALYSES = "Wähle links eine Seite oder einen Bereich, um die Analysen dazu zu sehen.";
     /**
-     * Die Reiter der Analysen jeder Ebene in der unteren Leiste der Seitenleiste, rechts die ?-Hilfe des gewählten
-     * Reiters, darunter rechts „mit Unterseiten“. Die Reiter brechen um, wenn die Leiste zu schmal ist (viele Reiter
-     * eines Programms), statt abgeschnitten zu werden.
+     * Die Fußleiste der Analysen, dieselbe wie überall: links die Lupe, mittig die Reiter jeder Ebene, rechts die
+     * ?-Hilfe des gewählten Reiters. Reiter ohne Platz (viele Reiter eines Programms) stehen hinter dem Menü am
+     * Ende der Reihe.
      */
-    private JPanel analysisFoot;
+    private com.aresstack.spaceharvester.app.ui.FindBar analysisFoot;
     /** Die Unterreiter von „Begriffe“ (Akronyme, Bezeichner, Verben, Beziehungen) neben denen von „Analysen“. */
     /** Die Unterreiter von „Erweitert“ einer Seite bzw. ohne Seite, in der unteren Leiste. */
     private final TabFoot advancedFoot;
@@ -479,7 +479,7 @@ public final class PageDetailPanel extends JPanel {
      */
     private final JCheckBox folderSubfolders = Subpages.checkBox();
     private final TabFoot folderFoot = new TabFoot(javax.swing.Box.createHorizontalBox(), folderSubfolders);
-    /** Unten rechts in {@link #analysisFoot}: „mit Unterseiten“ der Seite oder des Ordners. */
+    /** Rechts über {@link #analysisFoot}: „mit Unterseiten“ der Seite oder des Ordners. */
     private final JPanel standingTrailing = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
     /** Der gewählte Ordner, sonst {@code null}; seine Stellung zeigt {@link #folderSubfolders}. */
     private ExportPanel.Selection.Collection folder;
@@ -1222,15 +1222,19 @@ public final class PageDetailPanel extends JPanel {
         analysisRow.follow(standing.tabs());
         standing.onConflicts(found -> analysisRow.mark(StandingTab.CONFLICTS, found == 0 ? null : String.valueOf(found)));
         standing.tabs().detachBar();
-        JPanel helps = new JPanel(new BorderLayout());
-        helps.setOpaque(false);
-        helps.add(Comic.row(statementsHelp, standingHelp, glossaryHelp, graphHelp), BorderLayout.NORTH);
-        analysisFoot = new JPanel(new BorderLayout(8, 0));
-        analysisFoot.setOpaque(false);
-        analysisFoot.add(analysisRow.bar(), BorderLayout.CENTER);
-        analysisFoot.add(helps, BorderLayout.EAST);
-        analysisFoot.add(standingTrailing, BorderLayout.SOUTH);
+        // Dieselbe Fußleiste wie überall (Angelo 28.11.2026): links die Lupe, die in den gezeigten Analysen sucht,
+        // mittig die Reiter, rechts die ?-Hilfe des gezeigten Reiters, alles auf einer Höhe.
+        com.aresstack.spaceharvester.app.ui.FindBar bar =
+                new com.aresstack.spaceharvester.app.ui.FindBar(() -> analyses);
+        bar.tools(analysisRow.bar());
+        bar.help(Comic.row(statementsHelp, standingHelp, glossaryHelp, graphHelp));
+        // Anderer Reiter, anderes Filterfeld: Die Leiste räumt das alte und filtert oder sucht im neuen weiter.
+        // Auch derselbe Reiter einer anderen Ebene (Seite statt Knoten) ist eine andere Ansicht.
+        analysisRow.onChange(() -> javax.swing.SwingUtilities.invokeLater(bar::viewChanged));
+        analysisFoot = bar;
         analysesFoot.add(analysisFoot, BorderLayout.CENTER);
+        // „mit Unterseiten“ steht als eigene Zeile über der Fußleiste, nur solange es etwas zu wählen gibt.
+        analysesFoot.add(standingTrailing, BorderLayout.NORTH);
         analyses.add(standing, STAND_CARD);
         deck.add(wideAdvanced, WIDE_ADVANCED_CARD);
         deck.add(sourceView, SOURCE_CARD);
@@ -1738,8 +1742,8 @@ public final class PageDetailPanel extends JPanel {
         return belowSection(tab);
     }
 
-    /** Für Tests: die Unterreiter von „Analysen“ samt „mit Unterseiten“ in der unteren Leiste. */
-    JPanel analysisFoot() {
+    /** Für Tests: die Fußleiste der Analysen mit Lupe, Reitern und ?-Hilfe. */
+    com.aresstack.spaceharvester.app.ui.FindBar analysisFoot() {
         return analysisFoot;
     }
 

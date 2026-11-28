@@ -263,6 +263,24 @@ class ProvingGroundWorkspaceTest {
             String steps = workspace.get().shownHelp().popup().bodyText();
             assertThat(steps).contains("{{secret.PIN}}").contains("{{otp()}}");
         });
+        // Angelo 28.11.2026: Die Ansichten stehen als Symbolknöpfe unten in der Fußleiste neben der Lupe, wie die
+        // Reiter der Analysen; der Name steht im Tooltip. Oben bleiben nur die Aktionen (Aufnehmen, Starten …).
+        SwingUtilities.invokeAndWait(() -> {
+            com.aresstack.spaceharvester.app.ui.PillTabs tabs = workspace.get().viewTabs().tabs();
+            assertThat(tabs.names()).containsExactly(ProvingGroundWorkspace.STEPS, ProvingGroundWorkspace.HOOKS,
+                    ProvingGroundWorkspace.PRECONDITIONS);
+            for (String name : tabs.names()) {
+                assertThat(SwingUtilities.isDescendingFrom(tabs.button(name), workspace.get().findBar())).isTrue();
+                assertThat(tabs.button(name).getIcon()).as(name).isNotNull();
+                assertThat(tabs.button(name).getToolTipText()).isEqualTo(name);
+            }
+            tabs.button(ProvingGroundWorkspace.PRECONDITIONS).doClick();
+            assertThat(workspace.get().shownCard()).isEqualTo(ProvingGroundWorkspace.PRECONDITIONS);
+            tree.setSelectionRow(0);
+        });
+        await(() -> workspace.get().viewTabs().tabs().names().contains(ProvingGroundWorkspace.USERS));
+        SwingUtilities.invokeAndWait(() -> assertThat(workspace.get().viewTabs().tabs().names()).containsExactly(
+                ProvingGroundWorkspace.HOOKS, ProvingGroundWorkspace.PRECONDITIONS, ProvingGroundWorkspace.USERS));
         assertThat(ProvingGroundWorkspace.HELP_USERS).contains("Zusatzfeld „otp“").contains("„PIN“");
         assertThat(ProvingGroundWorkspace.HELP_PRECONDITIONS).contains("Vorbedingungen");
     }

@@ -197,14 +197,18 @@ public final class TermGraphView {
         lines.setOpaque(false);
         lines.add(heading, BorderLayout.NORTH);
         controls.setOpaque(false);
-        controls.add(start);
+        // Das Startfeld ist ein Suchfeld wie in jedem Reiter: In der Seitenleiste steht es nicht oben in der Zeile,
+        // dort tippt man unten in der Fußleiste (Filtern), Enter zeichnet (Angelo 28.11.2026).
+        com.aresstack.spaceharvester.app.ui.controls.InputFrame startFrame =
+                com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(start);
+        startFrame.addButton(showButton);
+        controls.add(startFrame);
         controls.add(depth);
         controls.add(proposals);
         optionsMenu.add(domain);
         optionsMenu.add(checked);
         com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(optionsMenu, options);
         options.addActionListener(e -> optionsMenu.show(options, 0, options.getHeight()));
-        controls.add(showButton);
         controls.add(options);
         head.setOpaque(false);
         head.add(lines, BorderLayout.WEST);
