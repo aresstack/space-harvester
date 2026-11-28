@@ -144,7 +144,7 @@ public final class BrowserSettings implements BrowserPolicyStore, ChangeApproval
 
     /**
      * Die Adresse einer Suchseite des Hauses, wie der Benutzer sie eingibt: nur die Seite, etwa
-     * {@code https://portal.example/} (wie dort gesucht wird, findet der Suchbrowser selbst über ihr Suchfeld), ohne
+     * {@code https://portal.example/} (wie dort gesucht wird, findet die Suche selbst über ihr Suchfeld), ohne
      * Schema mit {@code https://} davor; {@code null} für eine leere Eingabe.
      */
     public static String searchPageAddress(String typed) {
@@ -171,7 +171,7 @@ public final class BrowserSettings implements BrowserPolicyStore, ChangeApproval
         saveEngines(profile, new BrowserSearchEngineSelection(rows, EngineAcquisitionMode.FIRST_USABLE));
     }
 
-    /** Ob das Fenster des Suchbrowsers sichtbar ist (Vorgabe: ja, wie das eigene Suchfenster in Ask AI). */
+    /** Ob das Fenster des Google-Suchbrowsers sichtbar ist (Vorgabe: ja, wie das eigene Suchfenster in Ask AI). */
     static final String SEARCH_WINDOW_KEY = "browser.search.window";
 
     /** Ob der Suchbrowser ein sichtbares Fenster hat; gilt ab seinem nächsten Start. */

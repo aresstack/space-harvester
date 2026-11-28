@@ -92,6 +92,7 @@ public class PlaywrightBrowserSessionTest {
 
         public PlaywrightPageState open(String url) throws BrowserException {
             opened.add(url);
+            ownTabEvents.add("open " + url);
             PlaywrightPageState state = byUrl.get(url);
             if (state == null) {
                 throw new BrowserException("Navigation failed: 404 " + url);
@@ -228,6 +229,19 @@ public class PlaywrightBrowserSessionTest {
             closeTabsCalls++;
         }
 
+        /** begin/end of the search's own tab and every page opened, in order. */
+        final List<String> ownTabEvents = new ArrayList<String>();
+
+        @Override
+        public void beginSearchTab() {
+            ownTabEvents.add("begin");
+        }
+
+        @Override
+        public void endSearchTab() {
+            ownTabEvents.add("end");
+        }
+
         // ---- the engine's own pager: each click shows the next scripted page; none left = no pager
         final java.util.Deque<PlaywrightPageState> pagerPages = new java.util.ArrayDeque<PlaywrightPageState>();
         final List<List<String>> pagerClicks = new ArrayList<List<String>>();
@@ -303,6 +317,39 @@ public class PlaywrightBrowserSessionTest {
         assertTrue("the session's own page was never navigated: " + driver.opened, driver.opened.isEmpty());
         assertEquals("the field was not typed into again", 1, driver.typedQueries.size());
         assertEquals(3, again.getItems().size());
+    }
+
+    /**
+     * In a chat's browser (Angelo 28.11.2026: one browser, the search as a tab) even an engine asked by URL template
+     * opens in the search's own tab; the chat's tab is current again afterwards.
+     */
+    @Test
+    public void inAChatsBrowserEveryEngineSearchesInATabOfItsOwn() throws Exception {
+        FakeDriver driver = new FakeDriver();
+        driver.byUrl.put("http://suche.test/?q=hase", resultsPage("http://suche.test/?q=hase", "hase"));
+        PlaywrightBrowserSession s = session(driver,
+                com.aresstack.askai.browser.search.engine.EngineAcquisitionMode.ALL_ENABLED);
+        s.setSearchEngines(engines("http://suche.test/?q={query}"));
+        s.useSearchSettings(null, new SearchUrlMemory());
+
+        WebSearchResult hits = s.search("hase");
+
+        assertEquals(java.util.Arrays.asList("begin", "open http://suche.test/?q=hase", "end"), driver.ownTabEvents);
+        assertEquals(3, hits.getItems().size());
+    }
+
+    /** Without a chat (the research browser of its own) the search keeps working on the session's page. */
+    @Test
+    public void aBrowserOfItsOwnSearchesWithoutAnExtraTab() throws Exception {
+        FakeDriver driver = new FakeDriver();
+        driver.byUrl.put("http://suche.test/?q=hase", resultsPage("http://suche.test/?q=hase", "hase"));
+        PlaywrightBrowserSession s = session(driver,
+                com.aresstack.askai.browser.search.engine.EngineAcquisitionMode.ALL_ENABLED);
+        s.setSearchEngines(engines("http://suche.test/?q={query}"));
+
+        s.search("hase");
+
+        assertEquals(java.util.Collections.singletonList("open http://suche.test/?q=hase"), driver.ownTabEvents);
     }
 
     /** A remembered result URL that cannot be opened any more is forgotten, and the page's own field asked again. */
