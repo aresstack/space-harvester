@@ -38,6 +38,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Bildbetrachter für die Bilder einer Seite, übernommen aus dem {@code ImageSlideshowPanel} des Enterprise AI Client
@@ -313,7 +314,7 @@ public final class ImageViewer extends JPanel {
         BufferedImage copy = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_RGB);
         Graphics2D g = copy.createGraphics();
         try {
-            g.setColor(Color.WHITE);
+            g.setColor(AppColors.of("app.ImageViewer.paper"));
             g.fillRect(0, 0, copy.getWidth(), copy.getHeight());
             g.drawImage(source, 0, 0, null);
         } finally {
@@ -658,7 +659,7 @@ public final class ImageViewer extends JPanel {
                     // Bei jedem Zoom neu aus dem Vektor gezeichnet: scharf in jeder Größe (Clip begrenzt die Arbeit).
                     g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                     g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-                    g2.setColor(Color.WHITE);
+                    g2.setColor(AppColors.of("app.ImageViewer.paper"));
                     g2.fill(new java.awt.geom.Rectangle2D.Double(offsetX, offsetY, imgW * zoom, imgH * zoom));
                     g2.translate(offsetX, offsetY);
                     vector.paint(g2, zoom);

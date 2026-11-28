@@ -11,6 +11,7 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /** Render PPT/PPTX slides through Apache POI without involving a document conversion service. */
 final class PresentationPages implements RenderedPages {
@@ -53,7 +54,7 @@ final class PresentationPages implements RenderedPages {
         BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         Graphics2D graphics = image.createGraphics();
         try {
-            graphics.setColor(Color.WHITE);
+            graphics.setColor(AppColors.of("app.PresentationPages.paper"));
             graphics.fillRect(0, 0, width, height);
             graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);

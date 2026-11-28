@@ -28,6 +28,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Play source videos through a range bridge without exposing source credentials to VLC.
@@ -116,20 +117,20 @@ public final class VideoViewerPanel extends JPanel implements AutoCloseable {
         this.fileSize = size;
         this.reader = reader;
         setOpaque(true);
-        setBackground(new java.awt.Color(0x171E27));
+        setBackground(AppColors.of("app.VideoViewerPanel.stage"));
         message.setHorizontalAlignment(SwingConstants.CENTER);
         message.setOpaque(true);
-        message.setBackground(new java.awt.Color(0x171E27));
-        message.setForeground(new java.awt.Color(0xE6EDF4));
+        message.setBackground(AppColors.of("app.VideoViewerPanel.stage"));
+        message.setForeground(AppColors.of("app.VideoViewerPanel.messageText"));
         message.setBorder(BorderFactory.createEmptyBorder(9, 8, 9, 8));
         add(message, BorderLayout.NORTH);
         add(transport, BorderLayout.SOUTH);
         display.setOpaque(true);
-        display.setBackground(new Color(0x171E27));
+        display.setBackground(AppColors.of("app.VideoViewerPanel.stage"));
         audioDisplay.setOpaque(true);
-        audioDisplay.setBackground(new Color(0x171E27));
+        audioDisplay.setBackground(AppColors.of("app.VideoViewerPanel.stage"));
         JLabel audioTitle = new JLabel("Nur Audio – Videobild ausgeschaltet", SwingConstants.CENTER);
-        audioTitle.setForeground(new Color(0xD6E8F6));
+        audioTitle.setForeground(AppColors.of("app.VideoViewerPanel.audioTitle"));
         audioTitle.setFont(audioTitle.getFont().deriveFont(Font.BOLD, 17f));
         audioDisplay.add(audioTitle, BorderLayout.CENTER);
         display.add(audioDisplay, AUDIO_CARD);

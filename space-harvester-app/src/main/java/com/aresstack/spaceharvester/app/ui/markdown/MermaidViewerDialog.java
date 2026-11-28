@@ -40,6 +40,7 @@ import java.awt.event.MouseMotionAdapter;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.util.Locale;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Vergrößerter Mermaid-Betrachter (aus askai-java8 {@code MermaidViewerDialog}): dunkle, rahmenlose Fläche mit
@@ -366,7 +367,7 @@ public final class MermaidViewerDialog extends JDialog {
         private boolean fitted;
 
         ZoomableImagePanel() {
-            setBackground(new Color(30, 30, 30));
+            setBackground(AppColors.of("app.MermaidViewerDialog.canvasDark"));
             // Das Bild wird oft gesetzt, bevor die Fläche eine Größe hat; einpassen, sobald eine da ist.
             addComponentListener(new ComponentAdapter() {
                 @Override
@@ -460,7 +461,7 @@ public final class MermaidViewerDialog extends JDialog {
             Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setToolTipText(tooltip);
             JLabel label = new JLabel(symbol, SwingConstants.CENTER);
-            label.setForeground(new Color(255, 255, 255, 210));
+            label.setForeground(AppColors.of("app.MermaidViewerDialog.overlayButton"));
             add(label, BorderLayout.CENTER);
             setPreferredSize(new Dimension(size, size));
         }
@@ -471,7 +472,7 @@ public final class MermaidViewerDialog extends JDialog {
             try {
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.5f));
-                g2.setColor(Color.BLACK);
+                g2.setColor(AppColors.of("app.MermaidViewerDialog.dimVeil"));
                 g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
             } finally {
                 g2.dispose();

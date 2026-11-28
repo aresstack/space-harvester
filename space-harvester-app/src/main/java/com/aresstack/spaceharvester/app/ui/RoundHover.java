@@ -4,6 +4,7 @@ import java.awt.Color;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der einheitliche Stil der Symbolaktionen: schlichtes Symbol, beim Darüberfahren ein heller Kreis mit Tintenrand
@@ -12,7 +13,7 @@ import java.awt.RenderingHints;
 public final class RoundHover {
 
     public static final int SIZE = 26;
-    private static final Color FILL = new Color(255, 255, 255, 170);
+    private static final Color FILL = AppColors.of("app.RoundHover.fill");
 
     private RoundHover() {
     }

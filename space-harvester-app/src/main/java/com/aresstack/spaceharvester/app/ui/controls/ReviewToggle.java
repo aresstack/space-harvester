@@ -22,6 +22,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
 import java.awt.geom.Ellipse2D;
 import java.util.Objects;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Prüfen von Hand mit zwei gezeichneten Icon-Knöpfen nebeneinander, ✓ vor ✕ (UX W3): offen, bestätigt oder
@@ -267,7 +268,7 @@ public final class ReviewToggle extends JPanel {
                 if (set()) {
                     g.setColor(!enabled ? LOCKED_FILL : value == State.CONFIRMED ? CONFIRMED_FILL : REJECTED_FILL);
                     g.fill(circle);
-                    mark = Color.WHITE;
+                    mark = AppColors.of("bubble.userForeground");
                 } else {
                     // Ungesetzt durchsichtig, nur der dünne Rand; unter der Maus hell gelb wie die Pillen.
                     if (enabled && (getModel().isRollover() || getModel().isPressed())) {

@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.WeakHashMap;
 import javax.swing.JComponent;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Das Aussehen der senkrechten Knopfleiste einer Seitenleiste (Angelo 28.11.2026): Sie sitzt als Griff auf dem
@@ -15,11 +16,11 @@ import javax.swing.JComponent;
  */
 public enum RailLook {
     /** Schwarzer Grund, weiße Symbole; gewählt hell. */
-    INK("Schwarz", Comic.INK, Color.WHITE, Comic.INK, 1, Comic.SURFACE, Comic.INK),
+    INK("Schwarz", Comic.INK, AppColors.of("bubble.userForeground"), Comic.INK, 1, Comic.SURFACE, Comic.INK),
     /** Gelber Grund wie der kleine Griff der übrigen Trenner, nur größer; gewählt schwarz. */
-    YELLOW("Gelb", Comic.YELLOW, Comic.INK, Comic.INK, 1, Comic.INK, Color.WHITE),
+    YELLOW("Gelb", Comic.YELLOW, Comic.INK, Comic.INK, 1, Comic.INK, AppColors.of("bubble.userForeground")),
     /** Schwarzer Grund mit gelbem Rand; gewählt gelb. */
-    INK_YELLOW_EDGE("Schwarz mit gelbem Rand", Comic.INK, Color.WHITE, Comic.YELLOW, 2, Comic.YELLOW, Comic.INK);
+    INK_YELLOW_EDGE("Schwarz mit gelbem Rand", Comic.INK, AppColors.of("bubble.userForeground"), Comic.YELLOW, 2, Comic.YELLOW, Comic.INK);
 
     /** Schlüssel der Wahl in den Benutzer-Einstellungen (Platz in {@link #values()}). */
     public static final String KEY = "ui.rail.look";

@@ -10,6 +10,7 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.geom.Path2D;
 import java.awt.geom.RoundRectangle2D;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Farbiges Dateisymbol für die Knöpfe „In PPTX umwandeln“ und „In PDF umwandeln“ am Video (Angelo 20.11.2026): ein
@@ -20,9 +21,9 @@ final class FileFormatIcon implements Icon {
 
     private static final int WIDTH = 24;
     private static final int HEIGHT = 19;
-    private static final Color SHEET = new Color(0xF8FAFC);
-    private static final Color FOLD = new Color(0xCBD5E1);
-    private static final Color DISABLED = new Color(0x64748B);
+    private static final Color SHEET = AppColors.of("app.FileFormatIcon.sheet");
+    private static final Color FOLD = AppColors.of("app.FileFormatIcon.fold");
+    private static final Color DISABLED = AppColors.of("app.FileFormatIcon.disabled");
 
     private final String label;
     private final Color color;
@@ -34,12 +35,12 @@ final class FileFormatIcon implements Icon {
 
     /** PowerPoint: orangerotes Schild mit „P“. */
     static FileFormatIcon powerPoint() {
-        return new FileFormatIcon("P", new Color(0xD24726));
+        return new FileFormatIcon("P", AppColors.of("app.FileFormatIcon.powerPoint"));
     }
 
     /** PDF: rotes Schild mit „PDF“. */
     static FileFormatIcon pdf() {
-        return new FileFormatIcon("PDF", new Color(0xE02424));
+        return new FileFormatIcon("PDF", AppColors.of("app.FileFormatIcon.pdf"));
     }
 
     /** Die Farbe des Schilds, für Tests. */
@@ -73,7 +74,7 @@ final class FileFormatIcon implements Icon {
             sheet.lineTo(23.5, 18.5);
             sheet.lineTo(9, 18.5);
             sheet.closePath();
-            paint.setColor(enabled ? SHEET : new Color(0x94A3B8));
+            paint.setColor(enabled ? SHEET : AppColors.of("app.FileFormatIcon.disabledSheet"));
             paint.fill(sheet);
             Path2D fold = new Path2D.Double();
             fold.moveTo(18, 0.5);
@@ -85,7 +86,7 @@ final class FileFormatIcon implements Icon {
             // Das Schild mit dem Kürzel, links über den Rand des Blatts hinaus.
             paint.setColor(enabled ? color : DISABLED);
             paint.fill(new RoundRectangle2D.Double(0, 6.5, 19, 10, 3, 3));
-            paint.setColor(Color.WHITE);
+            paint.setColor(AppColors.of("app.FileFormatIcon.paper"));
             float size = label.length() > 1 ? 7f : 9.5f;
             paint.setFont(paint.getFont().deriveFont(Font.BOLD, size));
             FontMetrics metrics = paint.getFontMetrics();

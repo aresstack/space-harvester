@@ -13,6 +13,7 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.geom.Ellipse2D;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Das runde Fragezeichen neben dem ✕ einer Kopfzeile (Vorbild: Hilfe-Knopf in askai und MainframeMate), im Stil
@@ -75,7 +76,7 @@ public final class HelpButton extends JButton {
             float diameter = Math.min(getWidth(), getHeight()) - 5f;
             Ellipse2D chip = new Ellipse2D.Float(2f, 2f, diameter, diameter);
             boolean hot = getModel().isRollover() || getModel().isPressed() || popup.isVisible();
-            g2.setColor(hot ? Comic.YELLOW : Color.WHITE);
+            g2.setColor(hot ? Comic.YELLOW : AppColors.of("bubble.userForeground"));
             g2.fill(chip);
             g2.setColor(Comic.INK);
             g2.setStroke(new BasicStroke(1.6f));

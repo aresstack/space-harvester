@@ -50,6 +50,7 @@ import javax.swing.text.DefaultHighlighter;
 import javax.swing.text.Highlighter;
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.fife.ui.rtextarea.RTextScrollPane;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der gemeinsame Editor des Command Deck (#1141/#1142) für ein Dokument, mit den Funktionen des Dateireiters von
@@ -81,8 +82,8 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
     private static final String CUSTOM_CARD = "custom";
     private static final DateTimeFormatter VERSION_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss",
             Locale.GERMANY);
-    private static final Color FIND_MARK = new Color(0xFFE066);
-    private static final Color FIND_CURRENT = new Color(0xFFA94D);
+    private static final Color FIND_MARK = AppColors.of("app.DocumentEditor.findMark");
+    private static final Color FIND_CURRENT = AppColors.of("app.DocumentEditor.findCurrent");
     /** Eine gezeigte Fundstelle ({@link #showPassage}): kräftiges Orange wie der aktuelle Treffer. */
     private static final Color PASSAGE_MARK = FIND_CURRENT;
 
@@ -162,7 +163,7 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
         super(new BorderLayout());
         this.session = session;
         setOpaque(true);
-        setBackground(Color.WHITE);
+        setBackground(AppColors.of("comic.fieldBg"));
         configure(area);
         blocks = new javax.swing.Timer(300, e -> NaturalBlockHighlighter.apply(area));
         blocks.setRepeats(false);
@@ -670,7 +671,7 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
         if (centerSearch != null) {
             String query = findField.getText().trim();
             int count = query.isEmpty() ? 0 : centerSearch.search(query);
-            findField.setBackground(!query.isEmpty() && count == 0 ? Comic.CHANGE_REMOVED : Color.WHITE);
+            findField.setBackground(!query.isEmpty() && count == 0 ? Comic.CHANGE_REMOVED : AppColors.of("comic.fieldBg"));
             findFrame.setBackground(findField.getBackground());
             findCount.setText(query.isEmpty() ? "" : count == 0 ? "kein Treffer" : "1 / " + count);
             findCount.setToolTipText(null);
@@ -681,7 +682,7 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
         matches.clear();
         current = -1;
         Optional<String> problem = TextSearch.problem(regex);
-        findField.setBackground(problem.isPresent() ? Comic.CHANGE_REMOVED : Color.WHITE);
+        findField.setBackground(problem.isPresent() ? Comic.CHANGE_REMOVED : AppColors.of("comic.fieldBg"));
         findFrame.setBackground(findField.getBackground());
         if (regex.isBlank() || problem.isPresent()) {
             RegexFolds.clear(area);

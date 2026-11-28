@@ -13,6 +13,7 @@ import java.awt.FlowLayout;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Consumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /** Reiter als Pillen wie die Kategorien der Client-Einstellungen; der aktive Reiter ist dunkel gefüllt. */
 public final class PillTabs extends JPanel {
@@ -170,7 +171,7 @@ public final class PillTabs extends JPanel {
                 g.fillRoundRect(x, y, width, height, height, height);
                 g.setFont(font);
                 java.awt.FontMetrics metrics = g.getFontMetrics();
-                g.setColor(java.awt.Color.WHITE);
+                g.setColor(AppColors.of("bubble.userForeground"));
                 g.drawString(text, x + (width - metrics.stringWidth(text)) / 2,
                         y + (height - metrics.getHeight()) / 2 + metrics.getAscent());
             } finally {

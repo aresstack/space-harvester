@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Ein Umschalter wie eine Wippe (Angelo 22.11.2026): mehrere Hälften in einem gemeinsamen Rahmen, genau eine ist
@@ -423,7 +424,7 @@ public final class SegmentedToggle extends JPanel {
                 g.setColor(Comic.INK);
                 g.drawRoundRect(x, y, w, h, arc, arc);
                 if (isFocusOwner()) {
-                    g.setColor(on ? Color.WHITE : Comic.INK);
+                    g.setColor(on ? AppColors.of("bubble.userForeground") : Comic.INK);
                     g.setStroke(new java.awt.BasicStroke(1f, java.awt.BasicStroke.CAP_BUTT,
                             java.awt.BasicStroke.JOIN_MITER, 1f, new float[] {2f, 2f}, 0f));
                     g.drawRoundRect(4, 3, width - 9, height - 7, height - 7, height - 7);
@@ -434,21 +435,21 @@ public final class SegmentedToggle extends JPanel {
                 int content = labelWidth(metrics) + (chip > 0 ? CHIP_GAP + chip : 0);
                 int tx = (width - content) / 2;
                 g.setFont(getFont());
-                paintLabel(g, tx, height, on ? Color.WHITE : Comic.INK, on, metrics);
+                paintLabel(g, tx, height, on ? AppColors.of("bubble.userForeground") : Comic.INK, on, metrics);
                 if (chip > 0) {
                     int cx = tx + labelWidth(metrics) + CHIP_GAP;
                     int cy = (height - CHIP_HEIGHT) / 2;
                     g.setColor(tone);
                     g.fillRoundRect(cx, cy, chip, CHIP_HEIGHT, CHIP_HEIGHT, CHIP_HEIGHT);
                     if (on) {
-                        g.setColor(Color.WHITE);
+                        g.setColor(AppColors.of("bubble.userForeground"));
                         g.drawRoundRect(cx, cy, chip - 1, CHIP_HEIGHT - 1, CHIP_HEIGHT, CHIP_HEIGHT);
                     }
                     Font small = chipFont();
                     g.setFont(small);
                     FontMetrics chipMetrics = g.getFontMetrics(small);
                     String text = String.valueOf(count);
-                    g.setColor(Color.WHITE);
+                    g.setColor(AppColors.of("bubble.userForeground"));
                     g.drawString(text, cx + (chip - chipMetrics.stringWidth(text)) / 2,
                             cy + (CHIP_HEIGHT - chipMetrics.getHeight()) / 2 + chipMetrics.getAscent());
                 }

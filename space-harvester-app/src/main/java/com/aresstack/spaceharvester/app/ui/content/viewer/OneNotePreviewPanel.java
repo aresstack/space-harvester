@@ -8,6 +8,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane;
 import javax.swing.*;
 import java.awt.BorderLayout;
 import java.awt.Component;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /** Display extracted note pages without inventing page boundaries. */
 final class OneNotePreviewPanel extends JPanel {
@@ -44,7 +45,7 @@ final class OneNotePreviewPanel extends JPanel {
         text.setEditable(false);
         text.setFont(Comic.regular(14f));
         text.setForeground(Comic.TEXT);
-        text.setBackground(java.awt.Color.WHITE);
+        text.setBackground(AppColors.of("comic.fieldBg"));
         text.setBorder(BorderFactory.createEmptyBorder(18, 24, 18, 24));
         text.setLineWrap(true);
         text.setWrapStyleWord(true);
@@ -54,7 +55,7 @@ final class OneNotePreviewPanel extends JPanel {
             }
         });
         JScrollPane document = Comic.scroll(text);
-        document.getViewport().setBackground(java.awt.Color.WHITE);
+        document.getViewport().setBackground(AppColors.of("comic.fieldBg"));
         if (preview.hasPageBoundaries()) {
             ComicSplitPane split = new ComicSplitPane(Comic.scroll(sections), document, 140, 360, Comic.PALETTE);
             split.setBackground(Comic.SURFACE);

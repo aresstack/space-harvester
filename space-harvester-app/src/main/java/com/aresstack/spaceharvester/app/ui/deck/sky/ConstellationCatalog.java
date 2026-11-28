@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.ui.deck.sky;
 
 import java.awt.Color;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Constellation stick-figure definitions for the cosmic clock.
@@ -53,16 +54,16 @@ public final class ConstellationCatalog {
      */
 
     // ── Pastel colours (low saturation, high brightness) ─────
-    private static final Color ROSE       = new Color(255, 160, 180, 100);
-    private static final Color TURQUOISE  = new Color(100, 230, 220, 100);
-    private static final Color LIGHT_YELLOW = new Color(255, 255, 160, 100);
-    private static final Color LIGHT_ORANGE = new Color(255, 200, 130, 100);
-    private static final Color LIGHT_BLUE   = new Color(140, 180, 255, 100);
-    private static final Color LIGHT_GREEN  = new Color(160, 255, 180, 100);
-    private static final Color LAVENDER     = new Color(200, 170, 255, 100);
-    private static final Color CORAL        = new Color(255, 150, 140, 100);
-    private static final Color MINT         = new Color(150, 255, 210, 100);
-    private static final Color PEACH        = new Color(255, 210, 170, 100);
+    private static final Color ROSE       = AppColors.of("app.ConstellationCatalog.rose");
+    private static final Color TURQUOISE  = AppColors.of("app.ConstellationCatalog.turquoise");
+    private static final Color LIGHT_YELLOW = AppColors.of("app.ConstellationCatalog.lightYellow");
+    private static final Color LIGHT_ORANGE = AppColors.of("app.ConstellationCatalog.lightOrange");
+    private static final Color LIGHT_BLUE   = AppColors.of("app.ConstellationCatalog.lightBlue");
+    private static final Color LIGHT_GREEN  = AppColors.of("app.ConstellationCatalog.lightGreen");
+    private static final Color LAVENDER     = AppColors.of("app.ConstellationCatalog.lavender");
+    private static final Color CORAL        = AppColors.of("app.ConstellationCatalog.coral");
+    private static final Color MINT         = AppColors.of("app.ConstellationCatalog.mint");
+    private static final Color PEACH        = AppColors.of("app.ConstellationCatalog.peach");
 
     public static final Constellation[] CONSTELLATIONS = {
 

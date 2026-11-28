@@ -539,6 +539,7 @@ public final class MainWindow implements AppContext.Navigator {
 
     /** Öffnet das rahmenlose Fenster; Schließen beendet die Laufzeit (Rückfrage bei laufenden Aufträgen). */
     public JFrame open() {
+        com.aresstack.spaceharvester.app.ui.theme.ThemeSwitcher.activateStored();
         ComicTheme.installMenuDefaults(Comic.PALETTE);
         JFrame frame = new JFrame("Space Harvester");
         frame.setUndecorated(true);

@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der Reiter „Graph“ unter Analysen ohne Seite: ein Wissensgraph um einen Startbegriff. Begriffe sind Knoten, Beziehungen Kanten,
@@ -878,7 +879,7 @@ public final class TermGraphView {
 
         public Canvas() {
             setOpaque(true);
-            setBackground(Color.WHITE);
+            setBackground(AppColors.of("comic.fieldBg"));
             setPreferredSize(new Dimension(640, 420));
             setFont(Comic.semiBold(13f));
             javax.swing.ToolTipManager.sharedInstance().registerComponent(this);
@@ -2293,7 +2294,7 @@ public final class TermGraphView {
             FontMetrics metrics = g2.getFontMetrics(font);
             RoundRectangle2D tag = new RoundRectangle2D.Double(box.getX(), box.getY(), box.getWidth(),
                     box.getHeight(), 10, 10);
-            g2.setColor(Color.WHITE);
+            g2.setColor(AppColors.of("comic.buttonPlate"));
             g2.fill(tag);
             g2.setStroke(new BasicStroke(1.2f));
             g2.setColor(color);
@@ -2453,7 +2454,7 @@ public final class TermGraphView {
                     box.getHeight(), 16, 16);
             g2.setColor(Comic.INK);
             g2.fill(shadow);
-            g2.setColor(depth == 0 ? Comic.YELLOW : depth == 1 ? Color.WHITE : Comic.SURFACE);
+            g2.setColor(depth == 0 ? Comic.YELLOW : depth == 1 ? AppColors.of("comic.buttonPlate") : Comic.SURFACE);
             g2.fill(shape);
             g2.setColor(Comic.INK);
             g2.setStroke(new BasicStroke(depth == 0 ? 2.6f : 2f));

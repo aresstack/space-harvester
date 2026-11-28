@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Ein Verzeichnis von Begriffen oder Beziehungen: Überschrift mit Unterzeile, Suchfeld und Tabelle; die letzte Spalte
@@ -27,7 +28,7 @@ import java.util.function.Consumer;
 final class TermDirectory extends JPanel {
 
     /** Hintergrund abgelehnter Zeilen. */
-    static final java.awt.Color REJECTED_BACKGROUND = new java.awt.Color(0xECEDEF);
+    static final java.awt.Color REJECTED_BACKGROUND = AppColors.of("app.TermDirectory.rejectedBackground");
     static final String PENDING = "Das Verzeichnis füllt der Begriffsindex des Core.";
     static final String NO_MATCH = "Kein Begriff passt zur Suche.";
     static final String NO_RUNTIME = "Die Laufzeit ist noch nicht gestartet.";

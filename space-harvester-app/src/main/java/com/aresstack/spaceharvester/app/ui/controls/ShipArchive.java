@@ -29,6 +29,7 @@ import javax.swing.JRootPane;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Ein Fenster des Bordcomputers über der aktuellen Ansicht: dunkler Sternenhimmel, leuchtender Rahmen, eine selbst
@@ -38,9 +39,9 @@ import javax.swing.Timer;
  */
 public final class ShipArchive extends JPanel {
 
-    static final Color GLOW = new Color(0x5FD4FF);
-    static final Color TEXT = new Color(0xD8E6F5);
-    static final Color DIM = new Color(0x7F93AD);
+    static final Color GLOW = AppColors.of("app.ShipArchive.glow");
+    static final Color TEXT = AppColors.of("app.ShipArchive.text");
+    static final Color DIM = AppColors.of("app.ShipArchive.dim");
     private static final int WIDTH = 620;
     private static final int TYPE_DELAY_MS = 14;
 
@@ -256,13 +257,13 @@ public final class ShipArchive extends JPanel {
         hull.lineTo(cx - 40, top + 46);
         hull.lineTo(cx - 110, top + 52);
         hull.closePath();
-        g2.setPaint(new GradientPaint(cx - 150, top, new Color(0x1B3A55), cx + 170, top + 60, new Color(0x0E1F33)));
+        g2.setPaint(new GradientPaint(cx - 150, top, AppColors.of("app.ShipArchive.hullTop"), cx + 170, top + 60, AppColors.of("app.ShipArchive.hullBottom")));
         g2.fill(hull);
         g2.setColor(new Color(GLOW.getRed(), GLOW.getGreen(), GLOW.getBlue(), 150));
         g2.setStroke(new BasicStroke(1.3f));
         g2.draw(hull);
         // Triebwerke und Fensterreihe
-        g2.setColor(new Color(0xFFB45F));
+        g2.setColor(AppColors.of("app.ShipArchive.windowLight"));
         g2.fillOval(cx - 158, top + 38, 8, 8);
         g2.fillOval(cx - 118, top + 46, 6, 6);
         g2.setColor(new Color(GLOW.getRed(), GLOW.getGreen(), GLOW.getBlue(), 200));
@@ -280,7 +281,7 @@ public final class ShipArchive extends JPanel {
     @Override
     protected void paintComponent(Graphics g) {
         Graphics2D g2 = (Graphics2D) g.create();
-        g2.setColor(new Color(4, 8, 18, 110));
+        g2.setColor(AppColors.of("app.ShipArchive.dimVeil"));
         g2.fillRect(0, 0, getWidth(), getHeight());
         g2.dispose();
     }

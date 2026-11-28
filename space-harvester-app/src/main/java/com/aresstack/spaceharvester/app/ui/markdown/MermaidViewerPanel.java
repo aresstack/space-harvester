@@ -33,6 +33,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der einbettbare Mermaid-Betrachter (aus askai-java8 {@code MermaidViewerPanel}): Ziehen zum Verschieben,
@@ -50,7 +51,7 @@ public final class MermaidViewerPanel extends JPanel {
     private static final int HIGH_RES_WIDTH = 2600;
 
     /** The diagram surface color — white like the overlay frame. THE retheme constant. */
-    public static final Color DEFAULT_SURFACE_COLOR = Color.WHITE;
+    public static final Color DEFAULT_SURFACE_COLOR = AppColors.of("app.MermaidViewerPanel.paper");
     /** Surface opacity in percent: 100 = solid, 0 = fully transparent (the frame shines through). */
     public static final int DEFAULT_SURFACE_OPACITY_PERCENT = 100;
 
@@ -87,7 +88,7 @@ public final class MermaidViewerPanel extends JPanel {
         this.renderer = renderer;
         setOpaque(false);
 
-        busy.setForeground(new Color(70, 70, 70, 200)); // legible on the (light) default surface
+        busy.setForeground(AppColors.of("app.MermaidViewerPanel.busyText")); // legible on the (light) default surface
         busy.setFont(busy.getFont().deriveFont(Font.ITALIC, 12f));
 
         final ViewerButton zoomOut = new ViewerButton(DiagramViewerIcons.zoomOut(), 36, "Verkleinern (−)");
@@ -541,7 +542,7 @@ public final class MermaidViewerPanel extends JPanel {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2.setColor(surfaceColor);
             g2.fillOval(1, 1, getWidth() - 3, getHeight() - 3);
-            g2.setColor(new Color(37, 37, 37));
+            g2.setColor(AppColors.of("app.MermaidViewerPanel.buttonRing"));
             g2.setStroke(new java.awt.BasicStroke(1.4f));
             g2.drawOval(1, 1, getWidth() - 3, getHeight() - 3);
             g2.dispose();
@@ -559,7 +560,7 @@ public final class MermaidViewerPanel extends JPanel {
             Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             setToolTipText(tooltip);
             JLabel label = new JLabel(symbol, SwingConstants.CENTER);
-            label.setForeground(new Color(255, 255, 255, 210));
+            label.setForeground(AppColors.of("app.MermaidViewerPanel.viewerButton"));
             add(label, BorderLayout.CENTER);
             setPreferredSize(new Dimension(size, size));
             addMouseListener(new MouseAdapter() {
@@ -581,7 +582,7 @@ public final class MermaidViewerPanel extends JPanel {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.5f));
-            g2.setColor(Color.BLACK);
+            g2.setColor(AppColors.of("app.MermaidViewerPanel.dimVeil"));
             g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
             g2.dispose();
             super.paintComponent(g);

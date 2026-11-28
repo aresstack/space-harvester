@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Die Ansicht „Extraktion“ eines Dokuments (experimentell): eine Tabelle Information · Wert · Stand · Fundstelle,
@@ -446,7 +447,7 @@ public final class ExtractionView extends JPanel {
             setToolTipText(null);
             setForeground(Comic.INK);
             if (!selected) {
-                setBackground(java.awt.Color.WHITE);
+                setBackground(AppColors.of("comic.fieldBg"));
             }
             ExtractionRows.Row shownRow = model.row(row);
             if (shownRow == null) {

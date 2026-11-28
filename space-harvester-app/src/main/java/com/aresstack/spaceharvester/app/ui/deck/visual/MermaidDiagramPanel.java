@@ -24,6 +24,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Reusable Swing panel that renders a Mermaid diagram as an interactive SVG image.
@@ -134,7 +135,7 @@ public class MermaidDiagramPanel extends JPanel {
     public MermaidDiagramPanel(boolean editable) {
         this.editable = editable;
         setLayout(new BorderLayout());
-        setBackground(Color.WHITE);
+        setBackground(AppColors.of("comic.fieldBg"));
 
         // ── Initialise tile cache ──
         File cacheDir = new File(System.getProperty("user.home"),
@@ -149,7 +150,7 @@ public class MermaidDiagramPanel extends JPanel {
                 paintDiagram((Graphics2D) g);
             }
         };
-        imagePanel.setBackground(Color.WHITE);
+        imagePanel.setBackground(AppColors.of("comic.fieldBg"));
         Cursors.set(imagePanel, Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
         imagePanel.setPreferredSize(new Dimension(600, 400));
         setupMouseHandlers();
@@ -173,19 +174,19 @@ public class MermaidDiagramPanel extends JPanel {
         detailArea.setWrapStyleWord(true);
         detailArea.setRows(5);
         detailArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
-        detailArea.setBackground(new Color(255, 255, 230));
+        detailArea.setBackground(AppColors.of("app.MermaidDiagramPanel.detailBackground"));
         detailArea.setBorder(new EmptyBorder(4, 6, 4, 6));
 
         // ── Edit panel (exposed via getEditPanel()) ──
         editPanel = new JPanel();
         editPanel.setLayout(new BoxLayout(editPanel, BoxLayout.Y_AXIS));
-        editPanel.setBackground(new Color(235, 255, 235));
+        editPanel.setBackground(AppColors.of("app.MermaidDiagramPanel.editBackground"));
         editPanel.setBorder(new EmptyBorder(4, 6, 4, 6));
 
         // ── Status label (exposed via getStatusLabel()) ──
         statusLabel = new JLabel(" ");
         statusLabel.setFont(statusLabel.getFont().deriveFont(Font.ITALIC, 10f));
-        statusLabel.setForeground(Color.GRAY);
+        statusLabel.setForeground(AppColors.of("app.MermaidDiagramPanel.mutedText"));
 
         // ── Zoom label ──
         zoomLabel = new JLabel("100 %");
@@ -868,7 +869,7 @@ public class MermaidDiagramPanel extends JPanel {
             }
             if (!msg.isEmpty()) {
                 g.setFont(new Font(Font.SANS_SERIF, Font.ITALIC, 14));
-                g.setColor(Color.GRAY);
+                g.setColor(AppColors.of("app.MermaidDiagramPanel.mutedText"));
                 FontMetrics fm = g.getFontMetrics();
                 int textW = fm.stringWidth(msg);
                 int textH = fm.getHeight();
@@ -879,7 +880,7 @@ public class MermaidDiagramPanel extends JPanel {
             if (tiledMode && loading) {
                 // Show loading for tiled mode too
                 g.setFont(new Font(Font.SANS_SERIF, Font.ITALIC, 14));
-                g.setColor(Color.GRAY);
+                g.setColor(AppColors.of("app.MermaidDiagramPanel.mutedText"));
                 String msg2 = (loadingMessage != null && !loadingMessage.isEmpty())
                         ? loadingMessage
                         : "\u23F3 Diagramm wird geladen\u2026";
@@ -910,7 +911,7 @@ public class MermaidDiagramPanel extends JPanel {
 
         // ── Highlight all search results with a lighter colour ──
         if (!lastSearchResults.isEmpty() && diagram != null) {
-            g2.setColor(new Color(255, 220, 100, 50));
+            g2.setColor(AppColors.of("app.MermaidDiagramPanel.searchHit"));
             for (int i = 0; i < lastSearchResults.size(); i++) {
                 if (i == lastSearchIndex) continue;
                 DiagramNode sr = lastSearchResults.get(i);
@@ -929,9 +930,9 @@ public class MermaidDiagramPanel extends JPanel {
                     selectedEdge.getWidth(), selectedEdge.getHeight(), ox, oy);
         }
         if (hlRect != null) {
-            g2.setColor(new Color(255, 255, 0, 100));
+            g2.setColor(AppColors.of("app.MermaidDiagramPanel.searchCurrent"));
             g2.fillRect(hlRect.x, hlRect.y, hlRect.width, hlRect.height);
-            g2.setColor(new Color(255, 180, 0, 200));
+            g2.setColor(AppColors.of("app.MermaidDiagramPanel.searchCurrentEdge"));
             g2.setStroke(new BasicStroke(2));
             g2.drawRect(hlRect.x, hlRect.y, hlRect.width, hlRect.height);
         }
@@ -939,8 +940,8 @@ public class MermaidDiagramPanel extends JPanel {
         // ── Drag rubber-band line ──
         if (dragging && dragStart != null && dragCurrent != null) {
             Color lineColor = dragEdge != null
-                    ? new Color(255, 140, 0, 200)
-                    : new Color(0, 100, 255, 180);
+                    ? AppColors.of("app.MermaidDiagramPanel.dragLineEdge")
+                    : AppColors.of("app.MermaidDiagramPanel.dragLineFree");
             g2.setColor(lineColor);
             g2.setStroke(new BasicStroke(2.5f, BasicStroke.CAP_ROUND,
                     BasicStroke.JOIN_ROUND, 0, new float[]{6, 4}, 0));
@@ -1004,13 +1005,13 @@ public class MermaidDiagramPanel extends JPanel {
                 }
             } else {
                 // Placeholder: light grey with grid lines
-                g2.setColor(new Color(245, 245, 245));
+                g2.setColor(AppColors.of("app.MermaidDiagramPanel.tilePlaceholder"));
                 g2.fillRect(sx, sy, sw, sh);
-                g2.setColor(new Color(220, 220, 220));
+                g2.setColor(AppColors.of("app.MermaidDiagramPanel.tileGrid"));
                 g2.drawRect(sx, sy, sw, sh);
 
                 if (tile.isRendering()) {
-                    g2.setColor(new Color(150, 150, 150));
+                    g2.setColor(AppColors.of("app.MermaidDiagramPanel.tileLoadingText"));
                     g2.setFont(new Font(Font.SANS_SERIF, Font.ITALIC, 11));
                     String msg = "\u23F3";
                     FontMetrics fm = g2.getFontMetrics();
@@ -1023,14 +1024,14 @@ public class MermaidDiagramPanel extends JPanel {
 
     /** Color palette for simplified node shapes (LOD 0). */
     private static final Color[] LOD0_NODE_COLORS = {
-        new Color(100, 149, 237),  // cornflower blue
-        new Color(60, 179, 113),   // medium sea green
-        new Color(255, 165, 0),    // orange
-        new Color(147, 112, 219),  // medium purple
-        new Color(220, 20, 60),    // crimson
-        new Color(0, 139, 139),    // dark cyan
-        new Color(255, 105, 180),  // hot pink
-        new Color(107, 142, 35),   // olive drab
+        AppColors.of("app.MermaidDiagramPanel.nodeBlue"),  // cornflower blue
+        AppColors.of("app.MermaidDiagramPanel.nodeGreen"),   // medium sea green
+        AppColors.of("app.MermaidDiagramPanel.nodeOrange"),    // orange
+        AppColors.of("app.MermaidDiagramPanel.nodePurple"),  // medium purple
+        AppColors.of("app.MermaidDiagramPanel.nodeRed"),    // crimson
+        AppColors.of("app.MermaidDiagramPanel.nodeTeal"),    // dark cyan
+        AppColors.of("app.MermaidDiagramPanel.nodePink"),  // hot pink
+        AppColors.of("app.MermaidDiagramPanel.nodeOlive"),   // olive drab
     };
 
     /**
@@ -1047,14 +1048,14 @@ public class MermaidDiagramPanel extends JPanel {
         int bgY = (int) Math.round(oy);
         int bgW = (int) Math.round(vbW * zoom);
         int bgH = (int) Math.round(vbH * zoom);
-        g2.setColor(new Color(252, 252, 252));
+        g2.setColor(AppColors.of("app.MermaidDiagramPanel.overviewPaper"));
         g2.fillRect(bgX, bgY, bgW, bgH);
-        g2.setColor(new Color(210, 210, 210));
+        g2.setColor(AppColors.of("app.MermaidDiagramPanel.overviewBorder"));
         g2.drawRect(bgX, bgY, bgW, bgH);
 
         // Draw edges first (behind nodes)
         g2.setStroke(new BasicStroke(Math.max(1f, (float) zoom * 2f)));
-        g2.setColor(new Color(160, 160, 160, 180));
+        g2.setColor(AppColors.of("app.MermaidDiagramPanel.overviewEdge"));
         for (DiagramEdge edge : diagram.getEdges()) {
             DiagramNode src = findNodeById(edge.getSourceId());
             DiagramNode tgt = findNodeById(edge.getTargetId());
@@ -1098,7 +1099,7 @@ public class MermaidDiagramPanel extends JPanel {
                 if (label != null && !label.isEmpty()) {
                     // Truncate long labels
                     if (label.length() > 12) label = label.substring(0, 10) + "\u2026";
-                    g2.setColor(Color.WHITE);
+                    g2.setColor(AppColors.of("bubble.userForeground"));
                     Font smallFont = new Font(Font.SANS_SERIF, Font.BOLD,
                             Math.max(7, Math.min(10, nh - 2)));
                     g2.setFont(smallFont);
@@ -1505,7 +1506,7 @@ public class MermaidDiagramPanel extends JPanel {
         } else {
             JLabel hint = new JLabel("Kein Element ausgew\u00E4hlt");
             hint.setFont(hint.getFont().deriveFont(Font.ITALIC, 11f));
-            hint.setForeground(Color.GRAY);
+            hint.setForeground(AppColors.of("app.MermaidDiagramPanel.mutedText"));
             editPanel.add(hint);
         }
 

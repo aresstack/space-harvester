@@ -8,6 +8,7 @@ import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Die Lupe links im Suchfeld als Umschalter zwischen den beiden Suchen (Angelo 27.11.2026): die gewohnte Lupe für die
@@ -17,11 +18,11 @@ import java.awt.RenderingHints;
  */
 public final class SearchModeIcon extends JButton {
 
-    private static final Color ICON = new Color(0x666666);
+    private static final Color ICON = AppColors.of("app.SearchModeIcon.icon");
     /** Größe beider Symbole, wie die bisherige Lupe ({@link InputFrame#magnifier()}). */
     private static final Dimension SIZE = new Dimension(24, 20);
     /** Das „W“ hinter dem Glas: eine Spur blasser und dünner als die Lupe davor. */
-    private static final Color LETTER = new Color(0x777777);
+    private static final Color LETTER = AppColors.of("app.SearchModeIcon.letter");
     private static final float LETTER_STROKE = 1.15f;
     /** Breite des „W“ an seiner Unterkante und seine Höhe, in Pixeln. */
     private static final float LETTER_WIDTH = 6.4f;

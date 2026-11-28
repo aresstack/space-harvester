@@ -15,6 +15,7 @@ import java.awt.RenderingHints;
 import java.awt.geom.Arc2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.RoundRectangle2D;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der runde Play-Knopf des Podcasts oben rechts im Himmel, nach dem Vorlese-Orb des Enterprise AI Client
@@ -28,9 +29,9 @@ public final class PodcastOrb extends JButton {
     /** Durchmesser wie der Orb des Enterprise AI Client. */
     public static final int SIZE = 36;
 
-    static final Color FAILED = new Color(0xF2B8B5);
-    static final Color FAILED_EDGE = new Color(0xD9534F);
-    static final Color FLASH = new Color(0xB3261E);
+    static final Color FAILED = AppColors.of("app.PodcastOrb.failed");
+    static final Color FAILED_EDGE = AppColors.of("app.PodcastOrb.failedEdge");
+    static final Color FLASH = AppColors.of("app.PodcastOrb.flash");
 
     /** Was der Knopf zeigt. */
     public enum State {
@@ -84,7 +85,7 @@ public final class PodcastOrb extends JButton {
         Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         setPreferredSize(new Dimension(SIZE, SIZE));
         setSize(SIZE, SIZE);
-        setForeground(Color.WHITE);
+        setForeground(AppColors.of("bubble.userForeground"));
         updateName();
     }
 
@@ -146,7 +147,7 @@ public final class PodcastOrb extends JButton {
             g.setColor(state == State.FAILED ? FAILED_EDGE : fill.darker());
             g.setStroke(new BasicStroke(1.3f));
             g.drawOval(1, 1, size - 3, size - 3);
-            Color ink = state == State.FAILED && !flash ? FLASH : Color.WHITE;
+            Color ink = state == State.FAILED && !flash ? FLASH : AppColors.of("bubble.userForeground");
             g.setColor(ink);
             double c = size / 2.0;
             switch (state) {

@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Random;
 import javax.swing.JPanel;
 import javax.swing.Timer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Blick aus dem Raumschiff (#1141): Sterne kommen aus der Tiefe auf den Betrachter zu und ziehen am Rand als Streifen
@@ -47,8 +48,8 @@ public final class Starfield extends JPanel {
     }
 
     /** Hintergrund oben/unten: tiefes Nachtblau wie der Sternenhimmel des Logos. */
-    static final Color SPACE_TOP = new Color(0x060A18);
-    static final Color SPACE_BOTTOM = new Color(0x141C3A);
+    static final Color SPACE_TOP = AppColors.of("app.Starfield.spaceTop");
+    static final Color SPACE_BOTTOM = AppColors.of("app.Starfield.spaceBottom");
     private static final int STARS = 520;
     private static final int FRAME_MS = 16;
     /** Brennweite relativ zur kürzeren Seite. */
@@ -77,7 +78,7 @@ public final class Starfield extends JPanel {
         this.random = random;
         setOpaque(true);
         setBackground(SPACE_TOP);
-        setForeground(Color.WHITE);
+        setForeground(AppColors.of("app.Starfield.starWhite"));
         for (int i = 0; i < STARS; i++) {
             spawn(i, random.nextDouble());
         }
@@ -201,7 +202,7 @@ public final class Starfield extends JPanel {
         // Ein schwacher Nebel um den Fluchtpunkt.
         float radius = Math.max(w, h) * 0.45f;
         g.setPaint(new RadialGradientPaint(w / 2f, h / 2f, radius, new float[] {0f, 0.55f, 1f},
-                new Color[] {new Color(70, 90, 170, 60), new Color(90, 50, 140, 22), new Color(0, 0, 0, 0)}));
+                new Color[] {AppColors.of("app.Starfield.nebulaBlue"), AppColors.of("app.Starfield.nebulaViolet"), new Color(0, 0, 0, 0)}));
         g.fillRect(0, 0, w, h);
     }
 
@@ -241,9 +242,9 @@ public final class Starfield extends JPanel {
             return Comic.YELLOW;
         }
         if (tint < 0.30f) {
-            return new Color(0xA9C6FF);
+            return AppColors.of("app.Starfield.starBlue");
         }
-        return Color.WHITE;
+        return AppColors.of("app.Starfield.starWhite");
     }
 
     private static Color withAlpha(Color color, float alpha) {
@@ -258,7 +259,7 @@ public final class Starfield extends JPanel {
         Path2D frame = new Path2D.Float(Path2D.WIND_EVEN_ODD);
         frame.append(new java.awt.Rectangle(0, 0, w, h), false);
         frame.append(window, false);
-        Color hull = new Color(0x1B2233);
+        Color hull = AppColors.of("app.Starfield.hull");
         g.setColor(hull);
         g.fill(frame);
         // Streben von unten zur Mitte des Rahmens.
@@ -273,7 +274,7 @@ public final class Starfield extends JPanel {
         // Kleine Kontrollleuchten unten im Rahmen.
         int lamp = Math.max(5, inset / 3);
         int lampY = h - inset / 2 - lamp / 2;
-        Color[] lamps = {Comic.GREEN, Comic.YELLOW, new Color(0x5FA8FF), Comic.GREEN};
+        Color[] lamps = {Comic.GREEN, Comic.YELLOW, AppColors.of("app.Starfield.lampBlue"), Comic.GREEN};
         for (int i = 0; i < lamps.length; i++) {
             g.setColor(lamps[i]);
             g.fillOval(w / 2 - (lamps.length * lamp * 3) / 2 + i * lamp * 3, lampY, lamp, lamp);
@@ -292,9 +293,9 @@ public final class Starfield extends JPanel {
             g.setFont(font);
             FontMetrics metrics = g.getFontMetrics();
             int textX = (w - metrics.stringWidth(headline)) / 2;
-            g.setColor(new Color(0, 0, 0, 140));
+            g.setColor(AppColors.of("app.Starfield.captionShadow"));
             g.drawString(headline, textX + 2, baseline + 2);
-            g.setColor(Color.WHITE);
+            g.setColor(AppColors.of("app.Starfield.captionInk"));
             g.drawString(headline, textX, baseline);
             baseline += metrics.getDescent() + 8;
             g.setColor(withAlpha(Comic.YELLOW, 0.9f));
@@ -305,7 +306,7 @@ public final class Starfield extends JPanel {
             g.setFont(Comic.regular(Math.max(13f, Math.min(17f, w / 50f))));
             FontMetrics metrics = g.getFontMetrics();
             baseline += metrics.getAscent();
-            g.setColor(new Color(0xC9D4F2));
+            g.setColor(AppColors.of("app.Starfield.captionMuted"));
             g.drawString(caption, (w - metrics.stringWidth(caption)) / 2, baseline);
         }
     }

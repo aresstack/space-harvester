@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.IntSupplier;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Übernommen aus dem Enterprise AI Client ({@code proasteion.exedra.ui.reader.ReaderFind}); hier sucht die Suchleiste
@@ -38,9 +39,9 @@ import java.util.function.IntSupplier;
 final class ReaderFind {
 
     /** Alle Treffer leicht markiert (Angelo; MainframeMate hatte volles {@code Color.YELLOW}). */
-    static final Color HIT = new Color(0xFFF59D);
+    static final Color HIT = AppColors.of("app.ReaderFind.hit");
     /** Der aktuelle Treffer (eigene Ergänzung, MainframeMates Amber 0xFFB74D). */
-    static final Color CURRENT_HIT = new Color(0xFFB74D);
+    static final Color CURRENT_HIT = AppColors.of("app.ReaderFind.currentHit");
 
     static final String TABLE_HITS = ReaderFind.class.getName() + ".tableHits";
 

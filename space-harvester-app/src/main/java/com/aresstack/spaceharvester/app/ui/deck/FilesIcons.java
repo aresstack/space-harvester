@@ -7,13 +7,14 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import javax.swing.Icon;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /** Gezeichnete Symbole des Arbeitsbereichs Dateien (keine Schriftzeichen, siehe Glyph). */
 public final class FilesIcons {
 
-    private static final Color FOLDER_FILL = new Color(0xFFE08A);
-    private static final Color FOLDER_EDGE = new Color(0xC99A00);
-    private static final Color PAPER_EDGE = new Color(0x8A8F98);
+    private static final Color FOLDER_FILL = AppColors.of("app.FilesIcons.folderFill");
+    private static final Color FOLDER_EDGE = AppColors.of("app.FilesIcons.folderEdge");
+    private static final Color PAPER_EDGE = AppColors.of("app.FilesIcons.paperEdge");
 
     private FilesIcons() {
     }
@@ -59,7 +60,7 @@ public final class FilesIcons {
                 g2.translate(x, y);
                 int[] xs = {3, 10, 13, 13, 3};
                 int[] ys = {1, 1, 4, 15, 15};
-                g2.setColor(Color.WHITE);
+                g2.setColor(AppColors.of("bubble.userForeground"));
                 g2.fillPolygon(xs, ys, xs.length);
                 g2.setColor(PAPER_EDGE);
                 g2.drawPolygon(xs, ys, xs.length);
@@ -150,7 +151,7 @@ public final class FilesIcons {
 
     /** Orangefarbener Punkt: ungespeicherte Änderungen. */
     static Icon unsaved() {
-        return dot(new Color(0xE08A00));
+        return dot(AppColors.of("app.FilesIcons.unsaved"));
     }
 
     static Icon dot(Color color) {
@@ -178,19 +179,19 @@ public final class FilesIcons {
 
     /** Dateiarten für die Kennfarbe des Symbols (wie die Endungs-Symbole in MainframeMate). */
     enum Kind {
-        MAINFRAME(new Color(0x1F7A8C), "jcl", "proc", "prc", "cntl", "cbl", "cob", "cobol", "cpy", "nat", "nsp",
+        MAINFRAME(AppColors.of("app.FilesIcons.kindMainframe"), "jcl", "proc", "prc", "cntl", "cbl", "cob", "cobol", "cpy", "nat", "nsp",
                 "nsn", "nss", "nsh", "nsc", "nsl", "nsa", "nsg", "nsm", "nsd", "ns3", "ns4", "ns5", "ns6", "ns7",
                 "ns8", "asm", "rexx"),
-        CODE(new Color(0x2F6DB5), "java", "kt", "groovy", "gradle", "py", "js", "ts", "c", "h", "cpp", "cs", "go",
+        CODE(AppColors.of("app.FilesIcons.kindCode"), "java", "kt", "groovy", "gradle", "py", "js", "ts", "c", "h", "cpp", "cs", "go",
                 "rb", "php", "sql", "sh", "bat", "cmd", "ps1", "json", "xml", "xsd", "yaml", "yml", "html", "htm",
                 "css", "properties", "ini"),
-        PDF(new Color(0xC62828), "pdf"),
-        WORD(new Color(0x2B579A), "doc", "docx", "odt", "rtf"),
-        TABLE(new Color(0x217346), "xls", "xlsx", "ods", "csv"),
-        SLIDES(new Color(0xD24726), "ppt", "pptx", "odp"),
-        MAIL(new Color(0x7B5EA7), "msg", "eml"),
-        IMAGE(new Color(0x8E44AD), "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "tif", "tiff"),
-        ARCHIVE(new Color(0x8D6E63), "zip", "jar", "7z", "rar", "gz", "tar"),
+        PDF(AppColors.of("app.FilesIcons.kindPdf"), "pdf"),
+        WORD(AppColors.of("app.FilesIcons.kindWord"), "doc", "docx", "odt", "rtf"),
+        TABLE(AppColors.of("app.FilesIcons.kindTable"), "xls", "xlsx", "ods", "csv"),
+        SLIDES(AppColors.of("app.FilesIcons.kindSlides"), "ppt", "pptx", "odp"),
+        MAIL(AppColors.of("app.FilesIcons.kindMail"), "msg", "eml"),
+        IMAGE(AppColors.of("app.FilesIcons.kindImage"), "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "tif", "tiff"),
+        ARCHIVE(AppColors.of("app.FilesIcons.kindArchive"), "zip", "jar", "7z", "rar", "gz", "tar"),
         TEXT(null, "txt", "log", "md");
 
         private final Color color;

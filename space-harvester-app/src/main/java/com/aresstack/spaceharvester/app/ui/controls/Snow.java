@@ -9,6 +9,7 @@ import java.awt.RenderingHints;
 import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
 import java.util.Random;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Dezenter Schnee für eine Leiste (Angelo 28.11.2026): ein paar blasse Schneeflocken auf ihrer Fläche und flache
@@ -105,7 +106,7 @@ public final class Snow {
         shape.curveTo(left + width * 0.75, bottom - MOUND_HEIGHT * 1.1, left + width * 0.9, bottom - MOUND_HEIGHT * 0.5,
                 left + width, bottom);
         shape.closePath();
-        g.setColor(Color.WHITE);
+        g.setColor(AppColors.of("app.Snow.mound"));
         g.fill(shape);
         g.setColor(Comic.LINE);
         g.setStroke(new BasicStroke(1f));
