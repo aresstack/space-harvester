@@ -26,7 +26,7 @@ final class NdvLibrarySelection {
             choices.put(name, check);
             items.add(check);
         }
-        JScrollPane scroll = new JScrollPane(items);
+        JScrollPane scroll = Comic.comicBars(new JScrollPane(items));
         scroll.setPreferredSize(new Dimension(Math.max(260, anchor.getWidth()), 250));
         JPanel content = new JPanel(new BorderLayout());
         content.add(scroll, BorderLayout.CENTER);

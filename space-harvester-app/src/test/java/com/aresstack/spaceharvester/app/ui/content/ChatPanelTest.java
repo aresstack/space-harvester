@@ -53,7 +53,13 @@ class ChatPanelTest {
 
     private static java.util.List<String> menuTexts(ChatPanel panel) {
         return panel.chatMenuItems().stream()
-                .map(item -> item instanceof javax.swing.JMenuItem menu ? menu.getText() : "—").toList();
+                .map(item -> item instanceof javax.swing.JMenuItem menu ? marked(menu) : "—").toList();
+    }
+
+    /** Der Titel eines Eintrags; der gezeichnete Haken des offenen Chats steht hier als „✓ “, sein leerer Platz als Lücke. */
+    private static String marked(javax.swing.JMenuItem menu) {
+        return menu.getIcon() instanceof com.aresstack.spaceharvester.app.ui.controls.CheckMark mark
+                ? (mark.checked() ? "✓ " : "    ") + menu.getText() : menu.getText();
     }
 
     @Test

@@ -8,6 +8,8 @@ import com.aresstack.spaceharvester.app.proving.ProvingGroundRuns;
 import com.aresstack.spaceharvester.app.ui.AppState;
 import com.aresstack.spaceharvester.app.ui.AppTimeouts;
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.app.ui.Dialogs;
+import com.aresstack.spaceharvester.app.ui.Glyph;
 import com.aresstack.spaceharvester.app.ui.IconButton;
 import com.aresstack.spaceharvester.app.ui.controls.ComicTreeRenderer;
 import com.aresstack.spaceharvester.app.ui.controls.FolderField;
@@ -29,6 +31,7 @@ import com.aresstack.spaceharvester.provingground.player.StepResult;
 import com.aresstack.spaceharvester.provingground.run.CaseRunResult;
 import com.aresstack.spaceharvester.provingground.run.ProjectRunResult;
 import com.aresstack.spaceharvester.provingground.store.ProjectFile;
+import com.aresstack.spaceharvester.provingground.store.TestCaseFile;
 
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
@@ -43,7 +46,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Supplier;
+import javax.swing.DefaultCellEditor;
+import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -62,7 +69,12 @@ import javax.swing.tree.TreePath;
  * und den Playwright-JSONL-Dateien) als Baum Projekt › Suiten › Testfälle, rechts die Schritte des gewählten
  * Testfalls mit Rolle (Given/When/Then), Benutzer und Beschreibung, oben rechts Ausführen und Abbrechen. Ausgeführt
  * wird, was im Baum gewählt ist (Testfall, Suite oder das ganze Projekt), im Browser aus Einstellungen › Browser; die
- * Zugangsdaten der Testbenutzer kommen erst im Lauf aus KeePass. Aufnehmen und Bearbeiten folgen.
+ * Zugangsdaten der Testbenutzer kommen erst im Lauf aus KeePass.
+ *
+ * <p>Aufnehmen mit dem originalen Playwright-Recorder: ● nimmt in den gewählten Testfall auf (hängt an) oder, ist eine
+ * Suite gewählt, in einen neuen; ❚❚ hält an und nimmt wieder auf, ■ beendet und speichert. Bearbeiten: Rolle, Benutzer
+ * und Beschreibung direkt in der Tabelle (das Fachliche hängt an der Schritt-ID und bleibt beim Verschieben richtig
+ * zugeordnet), ▲ ▼ verschieben, der Papierkorb löscht. Jede Änderung wird sofort gespeichert.</p>
  */
 public final class ProvingGroundWorkspace extends JPanel {
 
@@ -71,6 +83,14 @@ public final class ProvingGroundWorkspace extends JPanel {
     static final String RUN_TIP = "Ausführen: den gewählten Testfall, die Suite oder das ganze Projekt";
     static final String STOP_TIP = "Abbrechen: den laufenden Test beenden";
     static final String CREATE_TIP = "In diesem Ordner ein leeres Testprojekt anlegen";
+    static final String SUITE_TIP = "Neue Suite anlegen";
+    static final String RECORD_TIP = "Aufnehmen: in den gewählten Testfall, oder bei einer Suite in einen neuen";
+    static final String PAUSE_TIP = "Aufnahme anhalten oder fortsetzen";
+    static final String UP_TIP = "Schritt nach oben";
+    static final String DOWN_TIP = "Schritt nach unten";
+    static final String DELETE_TIP = "Schritt löschen";
+    /** Rolle „automatisch“: aus der Aktion (Assertion = Then, sonst When). */
+    static final String AUTO = "automatisch";
 
     private final Supplier<KeePassLink> keePass;
     private final Supplier<Path> dataDirectory;
@@ -87,10 +107,26 @@ public final class ProvingGroundWorkspace extends JPanel {
     private final IconButton run = new IconButton(ComposerIcons.play(), RUN_TIP).compact();
     private final IconButton stop = new IconButton(ComposerIcons.stop(), STOP_TIP).compact();
     private final IconButton create = new IconButton(ComposerIcons.plus(12), CREATE_TIP).compact();
+    private final IconButton record = new IconButton(Glyph.CIRCLE_FULL, RECORD_TIP).compact();
+    private final IconButton pause = new IconButton(ComposerIcons.pause(), PAUSE_TIP).compact();
+    private final IconButton up = new IconButton(ComposerIcons.chevronUp(), UP_TIP).compact();
+    private final IconButton down = new IconButton(ComposerIcons.chevronDown(), DOWN_TIP).compact();
+    private final IconButton delete = new IconButton(Glyph.TRASH, DELETE_TIP).compact();
+    /** Schreibt Dateien nacheinander, nie auf dem EDT. */
+    private final ExecutorService io = Executors.newSingleThreadExecutor(runnable -> {
+        Thread worker = new Thread(runnable, "proving-ground-io");
+        worker.setDaemon(true);
+        return worker;
+    });
+    private ProvingGroundRuns.Recording recording;
     /** Ergebnisse des letzten Laufs je Testfall ({@code <suite>/<fall>}). */
     private final Map<String, CaseRunResult> results = new HashMap<>();
     private Path directory;
     private TestProject project;
+    /** Der gezeigte Testfall (Aktionen, Fachliches, Suite), oder null. */
+    private TestCase shownCase;
+    private TestCaseEntry shownEntry;
+    private TestSuite shownSuite;
 
     /**
      * @param keePass       die KeePass-Kopplung der App (still gelesen, wie im Command Deck)
@@ -107,7 +143,16 @@ public final class ProvingGroundWorkspace extends JPanel {
         tree.setCellRenderer(new ComicTreeRenderer());
         tree.setRootVisible(true);
         tree.addTreeSelectionListener(event -> selected());
-        create.addActionListener(event -> createProject());
+        create.addActionListener(event -> {
+            if (project == null) {
+                createProject();
+            } else {
+                String name = Dialogs.askText(this, "Neue Suite", "Name der Suite", "");
+                if (name != null) {
+                    createSuite(name);
+                }
+            }
+        });
         create.setVisible(false);
         JPanel sidebar = new JPanel(new BorderLayout(0, 6));
         sidebar.setOpaque(false);
@@ -119,10 +164,34 @@ public final class ProvingGroundWorkspace extends JPanel {
         sidebar.add(Comic.scroll(tree), BorderLayout.CENTER);
 
         run.addActionListener(event -> runSelection());
-        stop.addActionListener(event -> runs.stop());
+        stop.addActionListener(event -> {
+            if (recording != null) {
+                recording.stop();
+            } else {
+                runs.stop();
+            }
+        });
         stop.setEnabled(false);
+        record.setForeground(Comic.RED);
+        record.addActionListener(event -> startRecording());
+        pause.setEnabled(false);
+        pause.addActionListener(event -> togglePause());
+        up.addActionListener(event -> moveSelected(-1));
+        down.addActionListener(event -> moveSelected(1));
+        delete.addActionListener(event -> {
+            int row = table.getSelectedRow();
+            if (row >= 0 && Dialogs.confirm(this, "Schritt löschen", "Schritt " + (row + 1) + " wirklich löschen?")) {
+                deleteStep(row);
+            }
+        });
+        steps.onEdit(this::bindingEdited);
         table.getColumnModel().getColumn(0).setMaxWidth(48);
-        table.getColumnModel().getColumn(1).setMaxWidth(80);
+        table.getColumnModel().getColumn(1).setMaxWidth(110);
+        JComboBox<String> roles = Comic.combo();
+        for (String role : List.of(AUTO, "Given", "When", "Then")) {
+            roles.addItem(role);
+        }
+        table.getColumnModel().getColumn(1).setCellEditor(new DefaultCellEditor(roles));
         report.setEditable(false);
         JSplitPane center = new JSplitPane(JSplitPane.VERTICAL_SPLIT, Comic.scroll(table), Comic.scroll(report));
         center.setResizeWeight(0.65);
@@ -131,6 +200,11 @@ public final class ProvingGroundWorkspace extends JPanel {
         content.setOpaque(false);
         JPanel tools = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         tools.setOpaque(false);
+        tools.add(up);
+        tools.add(down);
+        tools.add(delete);
+        tools.add(record);
+        tools.add(pause);
         tools.add(run);
         tools.add(stop);
         content.add(DeckBars.head(title, tools), BorderLayout.NORTH);
@@ -183,7 +257,8 @@ public final class ProvingGroundWorkspace extends JPanel {
 
     private void show(TestProject read, String note, StatusNote.Tone tone) {
         project = read;
-        create.setVisible(read == null && directory != null);
+        create.setVisible(directory != null);
+        create.setToolTipText(read == null ? CREATE_TIP : SUITE_TIP);
         root.removeAllChildren();
         root.setUserObject(read == null ? "Kein Testprojekt" : new Node(read.name().isEmpty() ? "Testprojekt"
                 : read.name(), null, null));
@@ -202,6 +277,19 @@ public final class ProvingGroundWorkspace extends JPanel {
         }
         tree.setSelectionRow(0);
         status.show(new StatusNote(note, tone, null, null));
+    }
+
+    /** Wählt im Baum den Knoten des Testfalls oder der Suite. */
+    private void select(String suiteId, String caseId) {
+        for (int row = 0; row < tree.getRowCount(); row++) {
+            Object value = ((DefaultMutableTreeNode) tree.getPathForRow(row).getLastPathComponent()).getUserObject();
+            if (value instanceof Node node && node.suite() != null && node.suite().id().equals(suiteId)
+                    && (caseId == null ? node.testCase() == null
+                    : node.testCase() != null && node.testCase().id().equals(caseId))) {
+                tree.setSelectionRow(row);
+                return;
+            }
+        }
     }
 
     /** Ein leeres Testprojekt mit dem Namen des Ordners. */
@@ -232,7 +320,11 @@ public final class ProvingGroundWorkspace extends JPanel {
         Node node = selectedNode();
         title.setText(node == null ? "Proving Ground" : node.label());
         steps.show(null, null, null);
+        shownCase = null;
+        shownEntry = null;
+        shownSuite = node == null ? null : node.suite();
         report.setText("");
+        updateUsers();
         if (node == null || node.testCase() == null || directory == null) {
             return;
         }
@@ -254,6 +346,8 @@ public final class ProvingGroundWorkspace extends JPanel {
                 return;
             }
             CaseRunResult result = results.get(reference);
+            shownCase = testCase;
+            shownEntry = entry;
             steps.show(testCase, entry, result);
             report.setText(result == null ? "" : result.render());
         }));
@@ -278,6 +372,7 @@ public final class ProvingGroundWorkspace extends JPanel {
         Path output = dataDirectory.get().resolve("proving-ground")
                 .resolve(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")));
         run.setEnabled(false);
+        record.setEnabled(false);
         stop.setEnabled(true);
         status.show(StatusNote.plain("Test läuft …"));
         TestProject current = project;
@@ -316,7 +411,209 @@ public final class ProvingGroundWorkspace extends JPanel {
 
     private void finishedRun() {
         run.setEnabled(true);
+        record.setEnabled(true);
         stop.setEnabled(false);
+        pause.setEnabled(false);
+    }
+
+    /** Die Benutzer des Projekts als Auswahl in der Spalte „Benutzer“ (leer = der des Testfalls). */
+    private void updateUsers() {
+        JComboBox<String> users = Comic.combo();
+        users.addItem("");
+        if (project != null) {
+            project.users().forEach(user -> users.addItem(user.name()));
+        }
+        table.getColumnModel().getColumn(2).setCellEditor(new DefaultCellEditor(users));
+    }
+
+    // ---- Aufnehmen ----
+
+    /** ● : in den gezeigten Testfall (anhängen) oder, bei gewählter Suite, in einen neuen Testfall. */
+    void startRecording() {
+        Node node = selectedNode();
+        if (project == null || directory == null || node == null || node.suite() == null) {
+            status.show(new StatusNote("Erst eine Suite oder einen Testfall wählen (neue Suite mit ＋)",
+                    StatusNote.Tone.WARNING, null, null));
+            return;
+        }
+        if (node.testCase() != null) {
+            if (shownCase == null) {
+                return;
+            }
+            record(node.suite(), shownEntry, new TestCase(shownCase.name(), shownCase.steps()));
+        } else {
+            String name = Dialogs.askText(this, "Neuer Testfall", "Name des Testfalls", "");
+            if (name != null) {
+                record(node.suite(), newCase(node.suite(), name), new TestCase(name));
+            }
+        }
+    }
+
+    /** Ein neuer Testfall in {@code suite} mit eigener Datei {@code <suite>/<id>.jsonl}. */
+    static TestCaseEntry newCase(TestSuite suite, String name) {
+        String id = TestProject.newId(name, suite.cases().stream().map(TestCaseEntry::id).toList());
+        return TestCaseEntry.of(id, name, ProjectFile.defaultCaseFile(suite.id(), id));
+    }
+
+    private void record(TestSuite suite, TestCaseEntry entry, TestCase target) {
+        run.setEnabled(false);
+        record.setEnabled(false);
+        stop.setEnabled(true);
+        pause.setEnabled(true);
+        title.setText(entry.name() + " · Aufnahme");
+        status.show(StatusNote.plain("Aufnahme läuft – im Browser arbeiten, ■ beendet und speichert"));
+        recording = runs.record(target, this::setup,
+                live -> SwingUtilities.invokeLater(() -> steps.show(new TestCase(target.name(), live), entry, null)),
+                recorded -> SwingUtilities.invokeLater(() -> recorded(suite, entry, recorded)),
+                problem -> SwingUtilities.invokeLater(() -> {
+                    recording = null;
+                    finishedRun();
+                    status.show(new StatusNote("Aufnahme nicht gestartet: " + problem, StatusNote.Tone.ERROR,
+                            null, null));
+                }));
+    }
+
+    private void togglePause() {
+        if (recording == null) {
+            return;
+        }
+        if (recording.paused()) {
+            recording.resume();
+            status.show(StatusNote.plain("Aufnahme läuft"));
+        } else {
+            recording.pause();
+            status.show(StatusNote.plain("Aufnahme angehalten – ❚❚ setzt fort"));
+        }
+    }
+
+    /** Speichert die Aufnahme (Aktionen und, bei einem neuen Testfall, den Eintrag im Projekt). */
+    private void recorded(TestSuite suite, TestCaseEntry entry, TestCase recorded) {
+        recording = null;
+        finishedRun();
+        TestCase snapshot = new TestCase(recorded.name(), recorded.steps());
+        TestProject changed = project.withSuite(project.suite(suite.id()).withCase(entry));
+        saveCase(entry, snapshot, changed, "Aufnahme gespeichert: " + snapshot.size() + " Schritte",
+                suite.id(), entry.id());
+    }
+
+    // ---- Bearbeiten ----
+
+    /** Rolle, Benutzer oder Beschreibung eines Schritts geändert (Tabelle). */
+    private void bindingEdited(String stepId, StepBinding binding) {
+        if (shownEntry == null || shownSuite == null) {
+            return;
+        }
+        TestCaseEntry entry = shownEntry.withBinding(stepId, binding);
+        shownEntry = entry;
+        TestProject changed = project.withSuite(project.suite(shownSuite.id()).withCase(entry));
+        project = changed;
+        steps.show(shownCase, entry, null);
+        Path base = directory;
+        save(() -> ProjectFile.write(changed, base), "Gespeichert");
+    }
+
+    void moveSelected(int delta) {
+        int row = table.getSelectedRow();
+        if (shownCase == null || row < 0 || row + delta < 0 || row + delta >= shownCase.size()) {
+            return;
+        }
+        shownCase.move(row, row + delta);
+        steps.show(shownCase, shownEntry, null);
+        table.setRowSelectionInterval(row + delta, row + delta);
+        writeShownCase(project);
+    }
+
+    void deleteStep(int row) {
+        if (shownCase == null || row < 0 || row >= shownCase.size()) {
+            return;
+        }
+        shownCase.remove(row);
+        shownEntry = shownEntry.prunedTo(shownCase);
+        TestProject changed = project.withSuite(project.suite(shownSuite.id()).withCase(shownEntry));
+        project = changed;
+        steps.show(shownCase, shownEntry, null);
+        writeShownCase(changed);
+    }
+
+    private void writeShownCase(TestProject changed) {
+        TestCase snapshot = new TestCase(shownCase.name(), shownCase.steps());
+        TestCaseEntry entry = shownEntry;
+        Path base = directory;
+        save(() -> {
+            TestCaseFile.write(snapshot, ProjectFile.caseFile(base, entry));
+            ProjectFile.write(changed, base);
+        }, "Gespeichert");
+    }
+
+    /** Neue Suite im Projekt (Verzeichnis entsteht mit dem ersten Testfall). */
+    void createSuite(String name) {
+        if (project == null) {
+            return;
+        }
+        String id = TestProject.newId(name, project.suites().stream().map(TestSuite::id).toList());
+        TestProject changed = project.withSuite(TestSuite.of(id, name, List.of()));
+        Path base = directory;
+        io.execute(() -> {
+            try {
+                ProjectFile.write(changed, base);
+                SwingUtilities.invokeLater(() -> reopen(base, id, null));
+            } catch (IOException broken) {
+                SwingUtilities.invokeLater(() -> status.show(new StatusNote("Speichern fehlgeschlagen: "
+                        + broken.getMessage(), StatusNote.Tone.ERROR, null, null)));
+            }
+        });
+    }
+
+    private void saveCase(TestCaseEntry entry, TestCase snapshot, TestProject changed, String done, String suiteId,
+                          String caseId) {
+        Path base = directory;
+        io.execute(() -> {
+            try {
+                TestCaseFile.write(snapshot, ProjectFile.caseFile(base, entry));
+                ProjectFile.write(changed, base);
+                SwingUtilities.invokeLater(() -> {
+                    reopen(base, suiteId, caseId);
+                    status.show(StatusNote.plain(done));
+                });
+            } catch (IOException broken) {
+                SwingUtilities.invokeLater(() -> status.show(new StatusNote("Speichern fehlgeschlagen: "
+                        + broken.getMessage(), StatusNote.Tone.ERROR, null, null)));
+            }
+        });
+    }
+
+    private interface Write {
+        void run() throws IOException;
+    }
+
+    private void save(Write write, String done) {
+        io.execute(() -> {
+            try {
+                write.run();
+                SwingUtilities.invokeLater(() -> status.show(StatusNote.plain(done)));
+            } catch (IOException broken) {
+                SwingUtilities.invokeLater(() -> status.show(new StatusNote("Speichern fehlgeschlagen: "
+                        + broken.getMessage(), StatusNote.Tone.ERROR, null, null)));
+            }
+        });
+    }
+
+    /** Liest das Projekt neu und wählt danach Suite und Testfall. */
+    private void reopen(Path base, String suiteId, String caseId) {
+        try {
+            TestProject read = ProjectFile.read(base);
+            directory = base;
+            show(read, read.name() + ": " + count(read) + " Testfälle", StatusNote.Tone.PLAIN);
+            select(suiteId, caseId);
+        } catch (IOException broken) {
+            status.show(new StatusNote("Testprojekt nicht lesbar: " + broken.getMessage(), StatusNote.Tone.ERROR,
+                    null, null));
+        }
+    }
+
+    /** Wartet, bis alles geschrieben ist (für Tests). */
+    void flush() throws Exception {
+        io.submit(() -> { }).get();
     }
 
     private Node selectedNode() {
@@ -357,29 +654,74 @@ public final class ProvingGroundWorkspace extends JPanel {
         }
     }
 
-    /** Die Schritte eines Testfalls: Nr., Rolle, Benutzer, Beschreibung (sonst Playwrights Aktion), Ergebnis. */
+    /**
+     * Die Schritte eines Testfalls: Nr., Rolle, Benutzer, Schritt (Beschreibung, sonst Playwrights Aktion), Ergebnis.
+     * Rolle, Benutzer und Schritt sind bearbeitbar; eine Änderung geht als neues Fachliches des Schritts hinaus.
+     */
     static final class StepsModel extends AbstractTableModel {
 
         private static final String[] COLUMNS = {"Nr.", "Rolle", "Benutzer", "Schritt", "Ergebnis"};
         private final List<Object[]> rows = new ArrayList<>();
+        private TestCase testCase;
+        private TestCaseEntry entry;
+        private java.util.function.BiConsumer<String, StepBinding> onEdit = (id, binding) -> { };
 
-        void show(TestCase testCase, TestCaseEntry entry, CaseRunResult result) {
+        void onEdit(java.util.function.BiConsumer<String, StepBinding> listener) {
+            onEdit = listener;
+        }
+
+        void show(TestCase shown, TestCaseEntry shownEntry, CaseRunResult result) {
             rows.clear();
-            if (testCase != null) {
+            testCase = shown;
+            entry = shownEntry;
+            if (shown != null) {
                 List<StepResult> played = result == null || result.steps() == null ? List.of()
                         : result.steps().steps();
-                for (int i = 0; i < testCase.size(); i++) {
-                    TestStep step = testCase.step(i);
-                    StepBinding binding = entry.binding(step.id());
+                for (int i = 0; i < shown.size(); i++) {
+                    TestStep step = shown.step(i);
+                    StepBinding binding = shownEntry.binding(step.id());
                     StepRole role = binding.role() != null ? binding.role() : StepRole.of(step);
                     String user = binding.user() != null ? binding.user()
-                            : entry.user() != null ? entry.user() : "";
+                            : shownEntry.user() != null ? shownEntry.user() : "";
                     String what = binding.description().isEmpty() ? step.describe() : binding.description();
                     String outcome = i < played.size() ? outcome(played.get(i)) : "";
                     rows.add(new Object[]{i + 1, label(role), user, what, outcome});
                 }
             }
             fireTableDataChanged();
+        }
+
+        @Override
+        public boolean isCellEditable(int row, int column) {
+            return entry != null && column >= 1 && column <= 3;
+        }
+
+        @Override
+        public void setValueAt(Object value, int row, int column) {
+            if (entry == null || testCase == null || row >= testCase.size()) {
+                return;
+            }
+            TestStep step = testCase.step(row);
+            StepBinding binding = entry.binding(step.id());
+            String text = value == null ? "" : value.toString().strip();
+            StepBinding changed = switch (column) {
+                case 1 -> binding.withRole(role(text));
+                case 2 -> binding.withUser(text.isEmpty() || text.equals(entry.user()) ? null : text);
+                case 3 -> binding.withDescription(text.equals(step.describe()) ? "" : text);
+                default -> binding;
+            };
+            if (!changed.equals(binding)) {
+                onEdit.accept(step.id(), changed);
+            }
+        }
+
+        private static StepRole role(String text) {
+            return switch (text) {
+                case "Given" -> StepRole.GIVEN;
+                case "When" -> StepRole.WHEN;
+                case "Then" -> StepRole.THEN;
+                default -> null;
+            };
         }
 
         private static String outcome(StepResult step) {

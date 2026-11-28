@@ -194,6 +194,16 @@ public final class Comic {
         }
     }
 
+    /**
+     * Gibt einer Rollfläche, die nicht aus {@link #scroll} kommt (etwa die des Code-Editors mit Zeilennummern), die
+     * Rollbalken der App: schmal, rund, ohne Pfeilknöpfe (Angelo 28.11.2026: keine Swing-Standardbalken mehr).
+     */
+    public static <T extends JScrollPane> T comicBars(T pane) {
+        com.aresstack.enterpriseai.ui.comic.control.ComicScrollBarUI.install(pane.getVerticalScrollBar(), PALETTE);
+        com.aresstack.enterpriseai.ui.comic.control.ComicScrollBarUI.install(pane.getHorizontalScrollBar(), PALETTE);
+        return pane;
+    }
+
     public static ComicScrollPane scroll(Component view) {
         ComicScrollPane scroll = new ComicScrollPane(view, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
                 ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED, PALETTE);

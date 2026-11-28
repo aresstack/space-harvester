@@ -185,7 +185,7 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
             }
         });
         key(area, KeyStroke.getKeyStroke(KeyEvent.VK_S, InputEvent.CTRL_DOWN_MASK), "deck-save", session::save);
-        scroll = new RTextScrollPane(area, true);
+        scroll = Comic.comicBars(new RTextScrollPane(area, true));
         style(scroll);
         reparse.setRepeats(false);
         refind.setRepeats(false);
@@ -903,7 +903,7 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
         configure(compareArea);
         compareArea.setEditable(false);
         compareArea.getAccessibleContext().setAccessibleName("Vergleichsstand");
-        RTextScrollPane compareScroll = new RTextScrollPane(compareArea, true);
+        RTextScrollPane compareScroll = Comic.comicBars(new RTextScrollPane(compareArea, true));
         style(compareScroll);
         versions.getAccessibleContext().setAccessibleName("Version");
         versions.setToolTipText("Ältere Version zum Vergleich auswählen");

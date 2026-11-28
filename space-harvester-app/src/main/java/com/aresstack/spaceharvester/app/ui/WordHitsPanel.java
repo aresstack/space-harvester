@@ -26,6 +26,7 @@ final class WordHitsPanel extends JPanel {
 
     static final String NO_WORDS = "Keine Wörter gefunden";
     static final String ROW_TIP = "Klick zeigt die Seiten mit diesem Wort";
+    static final String PREVIEW_CLICK = "; ein Klick zeigt die Seite in der Vorschau.";
 
     /** Führt Arbeit im Hintergrund aus und meldet das Ergebnis auf dem EDT; in Tests sofort. */
     interface Runner {
@@ -37,6 +38,9 @@ final class WordHitsPanel extends JPanel {
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Wörter derselben Suche laden");
     private final InfoPopup popup = new InfoPopup();
     private final Consumer<WordSearch.Place> onOpen;
+    /** Ob eine Vorschau offen ist und was eine Seite dort zeigt; ohne Vorschau öffnet ein Klick die Seite ganz. */
+    private java.util.function.BooleanSupplier previewing = () -> false;
+    private Consumer<WordSearch.Place> onPreview = place -> { };
     private final Consumer<String> onStatus;
     private final Consumer<Throwable> onProblem;
     Runner runner = Background::run;
@@ -64,7 +68,7 @@ final class WordHitsPanel extends JPanel {
             public void mouseClicked(MouseEvent e) {
                 int row = table.rowAtPoint(e.getPoint());
                 if (row >= 0 && javax.swing.SwingUtilities.isLeftMouseButton(e)) {
-                    places(model.rows.get(row), e);
+                    places(model.rows.get(row), e, e.getClickCount() >= 2);
                 }
             }
         });
@@ -148,7 +152,22 @@ final class WordHitsPanel extends JPanel {
         return Texts.count(count, "Wort", "Wörter") + (more ? ", weitere folgen" : "");
     }
 
-    private void places(WordSearch.Word word, MouseEvent at) {
+    /**
+     * Mit offener Vorschau (Angelo 28.11.2026) zeigt ein Klick auf ein Wort seine erste Seite dort, ein Doppelklick
+     * öffnet sie ganz; die Liste der Seiten erscheint dann nur, wenn es mehrere sind, und ihr Klick wählt die Seite
+     * der Vorschau.
+     */
+    void onPreview(java.util.function.BooleanSupplier previewing, Consumer<WordSearch.Place> onPreview) {
+        this.previewing = Objects.requireNonNull(previewing, "previewing");
+        this.onPreview = Objects.requireNonNull(onPreview, "onPreview");
+    }
+
+    /** Schließt die Liste der Seiten eines Worts. */
+    void hidePlaces() {
+        popup.setVisible(false);
+    }
+
+    private void places(WordSearch.Word word, MouseEvent at, boolean open) {
         WordSearch current = search;
         if (current == null) {
             return;
@@ -158,13 +177,30 @@ final class WordHitsPanel extends JPanel {
             if (mine != request) {
                 return;
             }
+            boolean preview = previewing.getAsBoolean();
+            if (preview && !places.isEmpty()) {
+                popup.setVisible(false);
+                if (open) {
+                    onOpen.accept(places.get(0));
+                    return;
+                }
+                onPreview.accept(places.get(0));
+                if (places.size() == 1) {
+                    return;
+                }
+            }
             popup.clearLinks();
             popup.text((word.verb() != null ? "Aussagen mit „" : "Fundstellen von „") + word.text() + "“",
                     places.isEmpty() ? "Keine sichtbare Fundstelle."
-                            : Texts.count(places.size(), "Seite", "Seiten") + "; ein Klick öffnet die Seite.");
+                            : Texts.count(places.size(), "Seite", "Seiten") + (preview ? PREVIEW_CLICK
+                            : "; ein Klick öffnet die Seite."));
             for (WordSearch.Place place : places) {
                 popup.link(place.title() + " · " + Texts.count(place.count(), word.verb() != null ? "Aussage"
                         : "Fundstelle", word.verb() != null ? "Aussagen" : "Fundstellen"), () -> {
+                    if (preview) {
+                        onPreview.accept(place);
+                        return;
+                    }
                     popup.setVisible(false);
                     onOpen.accept(place);
                 });

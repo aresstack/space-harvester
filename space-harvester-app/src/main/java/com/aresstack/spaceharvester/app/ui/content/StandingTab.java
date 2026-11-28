@@ -117,6 +117,15 @@ final class StandingTab extends JPanel {
      */
     static final String HOW_TO_ANALYZE = "Die Analyse startet per Rechtsklick auf die Auswahl im Baum links, "
             + "Eintrag „Analysieren“.";
+    /**
+     * Der Knopf mitten in der leeren Fläche (Angelo 28.11.2026): Wo ein Reiter die Aussagenanalyse braucht und die
+     * Auswahl noch keine hat, steht er dort, damit niemand ratlos vor der leeren Seite steht.
+     */
+    static final String ANALYZE_NOW = "Jetzt analysieren";
+    static final String ANALYZE_NOW_TIP = "Aussagen der Auswahl links analysieren; vor dem Start nennt eine Rückfrage "
+            + "den Umfang";
+    /** Die Reiter, die ohne Aussagenanalyse leer bleiben. */
+    static final java.util.Set<String> NEEDS_ANALYSIS = java.util.Set.of(STATEMENTS, READING, CONFLICTS);
     static final String NO_MATCH = "Keine Treffer";
     static final String STALE_WORD = "veraltet";
     static final String DELETE_ANALYSES_TITLE = "Aussagen-Analysen löschen?";
@@ -355,6 +364,8 @@ final class StandingTab extends JPanel {
     private final JTextField search = new JTextField(9);
     private final DefaultListModel<Row> model = new DefaultListModel<>();
     private final PlaceholderList<Row> list = new PlaceholderList<>(model);
+    private com.aresstack.spaceharvester.app.ui.controls.CenterOffer analyzeOffer;
+    private Runnable onAnalyze = () -> { };
     private final JScrollPane scroll;
     private final DefaultListModel<Row> conflictModel = new DefaultListModel<>();
     private final PlaceholderList<Row> conflictList = new PlaceholderList<>(conflictModel);
@@ -550,6 +561,7 @@ final class StandingTab extends JPanel {
             foreignTools.forEach((tab, tools) -> tools.forEach(tool -> tool.setVisible(tab.equals(name))));
             popup.setVisible(false);
             reading.shown(shown && READING.equals(name));
+            offerAnalysis();
             tellForeign(name);
             if (foreign.containsKey(name)) {
                 onStatus.accept(" ");
@@ -562,7 +574,27 @@ final class StandingTab extends JPanel {
                 status();
             }
         });
-        add(tabs, BorderLayout.CENTER);
+        analyzeOffer = new com.aresstack.spaceharvester.app.ui.controls.CenterOffer(tabs, ANALYZE_NOW,
+                ANALYZE_NOW_TIP).onAccept(() -> onAnalyze.run());
+        add(analyzeOffer, BorderLayout.CENTER);
+    }
+
+    /** Was „Jetzt analysieren“ tut: derselbe Ablauf wie „Analysieren“ im Baum, für die Auswahl links. */
+    void onAnalyze(Runnable action) {
+        onAnalyze = Objects.requireNonNull(action, "action");
+    }
+
+    /** Das Angebot steht nur, wenn der gewählte Reiter die Analyse braucht und die gelesene Auswahl keine hat. */
+    private void offerAnalysis() {
+        if (analyzeOffer != null) {
+            analyzeOffer.offer(view != null && view.entries().isEmpty()
+                    && NEEDS_ANALYSIS.contains(tabs.selected()));
+        }
+    }
+
+    /** Für Tests: das Angebot in der Mitte. */
+    com.aresstack.spaceharvester.app.ui.controls.CenterOffer analyzeOffer() {
+        return analyzeOffer;
     }
 
     /**
@@ -629,6 +661,7 @@ final class StandingTab extends JPanel {
             generation++;
             view = null;
             busy.setBusy(false);
+            offerAnalysis();
             show(List.of());
             counts(null);
             onStatus.accept(" ");
@@ -683,6 +716,7 @@ final class StandingTab extends JPanel {
         ExportPanel.Selection chosen = selection;
         Filter filter = filter();
         busy.setBusy(true);
+        analyzeOffer.offer(false);
         runner.run(() -> {
             StatusQuoView read = current.view(chosen, stop::get);
             StatementConflicts found = StatementConflicts.of(read);
@@ -704,6 +738,7 @@ final class StandingTab extends JPanel {
             conflictLabel();
             fetchSentences(conflictList, conflictModel);
             status();
+            offerAnalysis();
         }, failure -> {
             if (request != generation) {
                 return;

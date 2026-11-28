@@ -2321,7 +2321,8 @@ public final class ChatPanel extends JPanel {
     private void showEffortMenu() {
         JPopupMenu menu = new JPopupMenu();
         for (String level : EFFORTS) {
-            JMenuItem item = new JMenuItem((level.equals(effortLevel) ? "✓ " : "    ") + level);
+            JMenuItem item = new JMenuItem(level,
+                    com.aresstack.spaceharvester.app.ui.controls.CheckMark.of(level.equals(effortLevel)));
             item.addActionListener(e -> {
                 effortLevel = level;
                 fitFooter();
@@ -3082,7 +3083,7 @@ public final class ChatPanel extends JPanel {
         /** Die gelbe Gedankenblase dieser Antwort (Wissen, Schritte, Quellen, Balken); {@code null} nur in Tests. */
         KnowledgeCard card;
         /** Laufende Werkzeugaufrufe außer dem Browser: Kennung und Text, für die Schritte der Gedankenblase. */
-        private final java.util.Map<String, String> steps = new java.util.HashMap<>();
+        private final java.util.Map<String, String> steps = new java.util.LinkedHashMap<>();
         /** Die Browser-Werkzeuge dieser Antwort, {@code null} ohne Websuche. */
         com.aresstack.spaceharvester.app.chat.browser.BrowserChatTools browserTools;
         /** Die Zeile der Antwortblase; wartet unsichtbar hinter den Wolken, bis Text kommt (EAC). */
@@ -3268,6 +3269,9 @@ public final class ChatPanel extends JPanel {
             String step = steps.remove(key);
             if (step != null && card != null && !detached) {
                 card.stepDone(step);
+                // Sonst bliebe der fertige Schritt als „läuft“ stehen, während schon das Modell arbeitet (Angelo
+                // 28.11.2026: „Sucht NDV-Objekte“ sah aus wie ein Hänger). Läuft noch ein Werkzeug, steht es da.
+                card.step(steps.isEmpty() ? KnowledgeCard.THINKING : steps.values().iterator().next());
             }
             var cloud = clouds.remove(key);
             if (cloud == null || detached) {
@@ -4323,8 +4327,10 @@ public final class ChatPanel extends JPanel {
     private JMenuItem chatItem(ChatStore.Entry entry, boolean deleted) {
         ChatRecord record = entry.record();
         boolean current = !deleted && record.id().equals(chat.id());
-        String label = (current ? "✓ " : "    ") + com.aresstack.spaceharvester.app.chat.ChatExport.displayTitle(record);
-        JMenuItem item = new JMenuItem(deleted ? "<html><s>" + escapeHtml(label) + "</s></html>" : label);
+        String label = com.aresstack.spaceharvester.app.chat.ChatExport.displayTitle(record);
+        // Der Haken des offenen Chats ist gezeichnet: Die Schrift der Einträge hat kein „✓“ (Kästchen im Verlauf).
+        JMenuItem item = new JMenuItem(deleted ? "<html><s>" + escapeHtml(label) + "</s></html>" : label,
+                com.aresstack.spaceharvester.app.ui.controls.CheckMark.of(current));
         item.setFont(Comic.regular(item.getFont().getSize2D()));
         String area = lastArea(record);
         item.setToolTipText(deleted ? DELETED_TIP : Texts.count(record.messages().size(), "Nachricht", "Nachrichten")

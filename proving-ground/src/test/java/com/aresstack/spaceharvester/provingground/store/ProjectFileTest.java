@@ -104,4 +104,24 @@ class ProjectFileTest {
         assertTrue(pruned.steps().containsKey(first));
         assertTrue(entry.withBinding(first, StepBinding.NONE).binding(first).isEmpty());
     }
+
+    @Test
+    void suitesAndCasesAreReplacedOrAddedAndGetReadableIds() {
+        TestProject project = sample();
+        TestSuite anmeldung = project.suite("anmeldung");
+        String id = TestProject.newId("Anmelden über Ärzte-Portal!", anmeldung.cases().stream()
+                .map(TestCaseEntry::id).toList());
+        assertEquals("anmelden-ueber-aerzte-portal", id);
+        assertEquals("login-2", TestProject.newId("Login", List.of("login")));
+        assertEquals("neu", TestProject.newId("???", List.of()));
+        TestCaseEntry added = TestCaseEntry.of(id, "Anmelden über Ärzte-Portal", ProjectFile.defaultCaseFile(
+                "anmeldung", id));
+        TestProject changed = project.withSuite(anmeldung.withCase(added));
+        assertEquals(2, changed.suite("anmeldung").cases().size());
+        TestProject renamed = changed.withSuite(changed.suite("anmeldung").withCase(
+                TestCaseEntry.of(id, "Neu benannt", added.file())));
+        assertEquals("Neu benannt", renamed.testCase("anmeldung/" + id).name());
+        assertEquals(2, renamed.suite("anmeldung").cases().size());
+        assertEquals(3, renamed.withSuite(TestSuite.of("neu", "Neu", List.of())).suites().size());
+    }
 }

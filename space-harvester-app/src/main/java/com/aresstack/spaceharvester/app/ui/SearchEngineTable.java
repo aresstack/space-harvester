@@ -140,7 +140,7 @@ final class SearchEngineTable extends JPanel {
             }
         });
 
-        JScrollPane scroll = new JScrollPane(table);
+        JScrollPane scroll = Comic.comicBars(new JScrollPane(table));
         scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         scroll.setPreferredSize(new Dimension(420, 130));
         scroll.setBorder(BorderFactory.createLineBorder(Comic.MUTED));

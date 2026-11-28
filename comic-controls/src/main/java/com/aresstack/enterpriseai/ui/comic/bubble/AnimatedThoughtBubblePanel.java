@@ -63,6 +63,8 @@ public class AnimatedThoughtBubblePanel extends JPanel {
     private static final int CONNECTOR_SPACE = 58;
     private static final int ARC = 24;
     private static final int CONTENT_PADDING = 17;
+    /** Vertical gap of the BorderLayout between title, text and the south stack. */
+    private static final int ROW_GAP = 5;
     private static final int MINIMUM_HEIGHT = 104;
     private static final int DEFAULT_MAXIMUM_WIDTH = 600;
     private static final int TIMER_DELAY_MILLIS = 33;
@@ -313,13 +315,13 @@ public class AnimatedThoughtBubblePanel extends JPanel {
         explanationArea.setSize(new Dimension(measureWidth, Short.MAX_VALUE));
         Dimension explanationSize = explanationArea.getPreferredSize();
         Dimension titleSize = headerRow.getPreferredSize();
-        int south = southStack.isVisible() && southStack.getComponentCount() > 0
-                ? southStack.getPreferredSize().height : 0;
+        // Exactly as BorderLayout lays out: a VISIBLE south stack costs its gap even while its bar is hidden
+        // (height 0). Leaving that gap out once clipped the last text line by those pixels.
+        int south = southStack.isVisible() ? southStack.getPreferredSize().height + ROW_GAP : 0;
         int width = Math.max(reportedContentWidth, titleSize.width)
                 + (CONTENT_PADDING * 2)
                 + CONNECTOR_SPACE;
-        int height = CONTENT_PADDING * 2 + titleSize.height + 5 + explanationSize.height
-                + (south > 0 ? south + 5 : 0);
+        int height = CONTENT_PADDING * 2 + titleSize.height + ROW_GAP + explanationSize.height + south;
         return new Dimension(Math.min(maximumBubbleWidth, width), Math.max(MINIMUM_HEIGHT, height));
     }
 
@@ -343,7 +345,7 @@ public class AnimatedThoughtBubblePanel extends JPanel {
 
     private void buildUi() {
         setOpaque(false);
-        setLayout(new BorderLayout(0, 5));
+        setLayout(new BorderLayout(0, ROW_GAP));
         setBorder(createContentBorder());
         headerRow.setOpaque(false);
         // WEST/EAST instead of a box with glue: the stamp is right-aligned however wide the

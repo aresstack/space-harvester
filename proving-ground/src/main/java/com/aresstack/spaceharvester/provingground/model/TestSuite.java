@@ -39,6 +39,23 @@ public record TestSuite(String id, String name, Scope scope, List<String> precon
         return cases.stream().filter(entry -> entry.id().equals(caseId)).findFirst().orElse(null);
     }
 
+    /** This suite with {@code testCase} replacing the one of the same id, or appended. */
+    public TestSuite withCase(TestCaseEntry testCase) {
+        java.util.List<TestCaseEntry> copy = new java.util.ArrayList<>(cases);
+        int index = -1;
+        for (int i = 0; i < copy.size(); i++) {
+            if (copy.get(i).id().equals(testCase.id())) {
+                index = i;
+            }
+        }
+        if (index < 0) {
+            copy.add(testCase);
+        } else {
+            copy.set(index, testCase);
+        }
+        return withCases(copy);
+    }
+
     public TestSuite withScope(Scope value) {
         return new TestSuite(id, name, value, preconditions, cases, description);
     }

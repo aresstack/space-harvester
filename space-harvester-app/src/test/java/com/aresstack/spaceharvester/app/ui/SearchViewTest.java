@@ -189,6 +189,35 @@ class SearchViewTest {
         assertThat(revealed).containsExactly(expected[0]);
         assertThat(opened).isEmpty();
         assertThat(view[0].heading.selected()).as("ein gewählter Treffer hebt die Markierung auf").isFalse();
+
+        // Angelo 28.11.2026: Der Pfeil unten rechts klappt die Vorschau auf und dreht sich; sie zeigt den gewählten
+        // Treffer, ein anderer Klick den nächsten, geöffnet wird dabei nichts.
+        assertThat(view[0].help()).isSameAs(view[0].previewToggle());
+        assertThat(view[0].previewOpen()).isFalse();
+        assertThat(view[0].previewPane().isVisible()).isFalse();
+        assertThat(view[0].previewToggle().getToolTipText()).isEqualTo(SearchView.PREVIEW_SHOW);
+        javax.swing.Icon up = view[0].previewToggle().getIcon();
+        SearchView.HitsModel hits = (SearchView.HitsModel) table.getModel();
+        SwingUtilities.invokeAndWait(() -> view[0].previewToggle().doClick());
+        assertThat(view[0].previewOpen()).isTrue();
+        assertThat(view[0].previewPane().isVisible()).isTrue();
+        assertThat(view[0].previewToggle().getToolTipText()).isEqualTo(SearchView.PREVIEW_HIDE);
+        assertThat(view[0].previewToggle().getIcon()).isNotSameAs(up)
+                .isInstanceOf(com.aresstack.spaceharvester.app.ui.controls.Flipped.class);
+        assertThat(view[0].previewPane().titleText())
+                .isEqualTo(hits.rows.get(table.convertRowIndexToModel(1)).title());
+        SwingUtilities.invokeAndWait(() -> table.setRowSelectionInterval(0, 0));
+        assertThat(view[0].previewPane().titleText())
+                .isEqualTo(hits.rows.get(table.convertRowIndexToModel(0)).title());
+        assertThat(opened).isEmpty();
+        assertThat(AppState.shared().getBoolean(SearchView.STATE_PREVIEW, false)).isTrue();
+        // Eine geleerte Trefferliste (neue Suche) leert auch die Vorschau.
+        SwingUtilities.invokeAndWait(() -> hits.set(List.of()));
+        assertThat(view[0].previewPane().titleText()).isBlank();
+        SwingUtilities.invokeAndWait(() -> view[0].previewToggle().doClick());
+        assertThat(view[0].previewOpen()).isFalse();
+        assertThat(view[0].previewPane().isVisible()).isFalse();
+        assertThat(AppState.shared().getBoolean(SearchView.STATE_PREVIEW, true)).isFalse();
     }
 
     @Test
