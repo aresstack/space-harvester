@@ -104,6 +104,8 @@ public final class SearchView implements View {
     static final String WORD_ORIGIN = "Seiten und Anhänge";
     static final String WORD_PAGES = "Seiten";
     static final String WORD_DOCUMENTS = "Anhänge";
+    /** Die letzten Suchbegriffe, einer je Zeile, der neueste zuerst. */
+    static final String STATE_RECENT_TERMS = "search.recent";
     /** Titel und Fragen der Hinweise, wenn Fachbegriffe oder Verben im Bereich fehlen. */
     static final String TECHNICAL_OFFER_TITLE = "Fachbegriffe ermitteln?";
     static final String VERBS_OFFER_TITLE = "Aussagen analysieren?";
@@ -806,15 +808,29 @@ public final class SearchView implements View {
         optionsButton.addActionListener(e -> showOptions());
         // Wie in AskAI: Lupe links, ✕ (bei Text) und ▾ rechts IM Feld, kein loser Knopf daneben.
         searchBar.addButton(optionsButton);
-        // Pfeil nach unten bzw. Alt+Pfeil nach unten im Feld öffnet die Optionen auch per Tastatur.
+        // Alt+Pfeil nach unten im Feld öffnet die Optionen auch per Tastatur.
         query.getInputMap().put(javax.swing.KeyStroke.getKeyStroke("alt DOWN"), "searchOptions");
-        query.getInputMap().put(javax.swing.KeyStroke.getKeyStroke("DOWN"), "searchOptions");
         query.getActionMap().put("searchOptions", new javax.swing.AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent e) {
                 showOptions();
             }
         });
+        // Pfeil nach unten klappt die letzten Suchbegriffe auf (Angelo, 28.11.2026); ohne Verlauf wie bisher die Optionen.
+        query.getInputMap().put(javax.swing.KeyStroke.getKeyStroke("DOWN"), "recentOrOptions");
+        query.getActionMap().put("recentOrOptions", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                if (!recent.show(true)) {
+                    showOptions();
+                }
+            }
+        });
+        recent = com.aresstack.spaceharvester.app.ui.controls.RecentTermsPopup.install(query, searchBar, recentTerms,
+                term -> {
+                    onSubmit.run();
+                    search();
+                });
         JPanel panel = new JPanel();
         panel.setLayout(new javax.swing.BoxLayout(panel, javax.swing.BoxLayout.Y_AXIS));
         panel.setBackground(Comic.SURFACE);
@@ -833,6 +849,17 @@ public final class SearchView implements View {
 
     /** Die Hinweise unter den Häkchen; bleiben beim Neuaufbau des Popups. */
     private JPanel notes;
+    /** Die letzten Suchbegriffe, über einen Neustart gemerkt. */
+    final com.aresstack.spaceharvester.app.ui.controls.RecentTerms recentTerms =
+            new com.aresstack.spaceharvester.app.ui.controls.RecentTerms(storedRecentTerms(),
+                    terms -> AppState.shared().put(STATE_RECENT_TERMS, terms.isEmpty() ? null : String.join("\n", terms)));
+    /** Gedrückthalten oder Pfeil nach unten im Suchfeld: die letzten Suchbegriffe. */
+    com.aresstack.spaceharvester.app.ui.controls.RecentTermsPopup recent;
+
+    private static List<String> storedRecentTerms() {
+        String stored = AppState.shared().get(STATE_RECENT_TERMS);
+        return stored == null || stored.isBlank() ? List.of() : List.of(stored.split("\n"));
+    }
 
     /**
      * Baut das Popup neu, in der Reihenfolge der Entscheidung: wo (Quellen), was (Dateitypen), wie (Semantische
@@ -1680,6 +1707,7 @@ public final class SearchView implements View {
     /** Merkt eine startende Suche im Verlauf; Vor-Einträge hinter der gezeigten fallen weg. */
     private void remember(String text, List<Explorer.Scope> area) {
         publishSearchLocation(text, area);
+        recentTerms.add(text);
         if (revisiting) {
             return;
         }
