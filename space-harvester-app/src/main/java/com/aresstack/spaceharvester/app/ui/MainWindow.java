@@ -1433,6 +1433,7 @@ public final class MainWindow implements AppContext.Navigator {
         content.chatSidebar().chat().searchFront(section == AppContext.Section.SEARCH);
         content.chatSidebar().chat().readingFront(section == AppContext.Section.CONTENT);
         findBar.tools(view.tools());
+        findBar.help(view.help());
         view.shown();
         if (changed) {
             findBar.areaChanged();

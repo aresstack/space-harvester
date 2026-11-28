@@ -544,6 +544,11 @@ public final class ContentView implements View {
         return tools;
     }
 
+    @Override
+    public JComponent help() {
+        return detail.help();
+    }
+
     /**
      * Der Chat als Seitenleiste für das Hauptfenster (Angelo, 21.11.2026): er steht neben der Arbeitsfläche und bleibt
      * in jedem Bereich stehen; sein Wissen ist weiter die Auswahl links.

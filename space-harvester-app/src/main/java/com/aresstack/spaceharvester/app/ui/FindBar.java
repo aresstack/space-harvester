@@ -80,6 +80,11 @@ public final class FindBar extends JPanel {
      */
     private final JPanel corner = new JPanel(new MiddleLayout());
     /**
+     * Die „?“-Hilfe der gezeigten Ansicht, ganz rechts in der Ecke. Wie die Lupe links gehört sie fest zur Leiste und
+     * bleibt auch stehen, solange die Suche aufgeklappt ist (Angelo 27.11.2026).
+     */
+    private final JPanel help = new JPanel(new MiddleLayout());
+    /**
      * Umschalter „Hervorheben | Zeilen falten“ im Feld, links vor ▲▼ (Angelo 24.11.2026); nur sichtbar, wenn die
      * Ansicht selbst sucht ({@link Own}).
      */
@@ -114,6 +119,11 @@ public final class FindBar extends JPanel {
 
         /** Das Symbol des Umschalters. */
         javax.swing.Icon foldIcon();
+
+        /** Ob die Ansicht Zeilen ohne Treffer zufalten kann; ohne das zeigt das Feld keinen Falt-Umschalter. */
+        default boolean canFold() {
+            return true;
+        }
 
         /** Was rechts in der Ecke der Leiste steht (Sprachauswahl des Code-Viewers); {@code null} ohne. */
         JComponent findCorner();
@@ -214,6 +224,8 @@ public final class FindBar extends JPanel {
         add(tools);
         add(search);
         add(corner);
+        help.setOpaque(false);
+        add(help);
         expand(false);
         updateCounter();
         built = true;
@@ -255,6 +267,25 @@ public final class FindBar extends JPanel {
         tools.repaint();
         revalidate();
         repaint();
+    }
+
+    /** Setzt die „?“-Hilfe ganz rechts; {@code null} lässt den Platz leer. */
+    public void help(JComponent component) {
+        if (component != null && component.getParent() == help) {
+            return;
+        }
+        help.removeAll();
+        if (component != null) {
+            help.add(component, BorderLayout.CENTER);
+        }
+        help.revalidate();
+        revalidate();
+        repaint();
+    }
+
+    /** Für Tests: der Platz der Hilfe ganz rechts. */
+    public JComponent helpArea() {
+        return help;
     }
 
     /** Setzt die Ecke rechts; {@code null} lässt sie leer. */
@@ -460,8 +491,8 @@ public final class FindBar extends JPanel {
         }
         JComponent root = area.get();
         Own shown = own != null ? own : root == null ? null : owner(root);
-        foldToggle.setVisible(shown != null);
-        if (shown != null) {
+        foldToggle.setVisible(shown != null && shown.canFold());
+        if (shown != null && shown.canFold()) {
             foldToggle.setIcon(shown.foldIcon());
             foldToggle.marked(shown.folding());
         }
@@ -500,8 +531,6 @@ public final class FindBar extends JPanel {
      * Suche füllt alles rechts der Lupe.
      */
     private final class RowLayout implements java.awt.LayoutManager {
-        private static final int GAP = 6;
-
         @Override
         public void addLayoutComponent(String name, java.awt.Component comp) {
         }
@@ -516,7 +545,7 @@ public final class FindBar extends JPanel {
             Dimension button = findButton.getPreferredSize();
             Dimension middle = tools.getPreferredSize();
             Dimension field = search.getPreferredSize();
-            int width = button.width + GAP + Math.max(middle.width + cornerWidth(), field.width);
+            int width = button.width + GAP + Math.max(middle.width + cornerWidth(), field.width) + helpWidth();
             // Überall dieselbe Höhe wie die Fußleisten der Seitenleisten (Angelo 24.11.2026).
             return new Dimension(width + insets.left + insets.right, Comic.FOOT_HEIGHT);
         }
@@ -535,7 +564,10 @@ public final class FindBar extends JPanel {
             int top = insets.top;
             int height = Math.max(0, parent.getHeight() - insets.top - insets.bottom);
             int cornerWidth = cornerWidth();
-            int outer = parent.getWidth() - insets.right;
+            int helpWidth = helpWidth();
+            help.setBounds(parent.getWidth() - insets.right - Math.max(0, helpWidth - GAP), top,
+                    Math.max(0, helpWidth - GAP), height);
+            int outer = parent.getWidth() - insets.right - helpWidth;
             corner.setBounds(Math.max(left, outer - Math.max(0, cornerWidth - GAP)), top,
                     Math.max(0, cornerWidth - GAP), height);
             int right = outer - cornerWidth;
@@ -554,6 +586,15 @@ public final class FindBar extends JPanel {
             tools.setBounds(x, top, middle, height);
         }
     }
+
+    /** Platz der Hilfe samt Abstand; ohne sichtbare Hilfe keiner. */
+    private int helpWidth() {
+        int width = help.getComponentCount() == 0 || !help.getComponent(0).isVisible() ? 0
+                : help.getComponent(0).getPreferredSize().width;
+        return width <= 0 ? 0 : width + GAP;
+    }
+
+    private static final int GAP = 6;
 
     /** Platz der Ecke samt Abstand; ohne Inhalt keiner. */
     private int cornerWidth() {
