@@ -1,8 +1,14 @@
 # ADR 0024: Aussagenanalyse auf Knopfdruck und globaler Knowledge Graph
 
-- Status: **Angenommen, Umsetzung läuft** (Strang G, 09.11.2026; Issue #499, Produktentscheidung Angelo 09.11.2026:
+- Status: **Angenommen, umgesetzt** (Strang G, 09.11.2026; Issue #499, Produktentscheidung Angelo 09.11.2026:
   „Der Knowledge Graph wird bereits in dieser ersten Ausbaustufe global und persistent angelegt. Er wird allerdings
   ausschließlich durch manuell gestartete Analysen befüllt.“).
+- Stand 28.11.2026: Die Schritte dieser Entscheidung sind gemergt (Core #503, Desktop-Adapter #504, Analyseauftrag
+  #513, Reiter „Aussagen“ und „Graph“ #525, Kontextmenü „Analysieren“ #528, JSON-LD-Export #526/#530/#532,
+  Abnahmetests #531, Qualitätsstufe #586). Die Reiter „Aussagen“ und „Graph“ tragen weiterhin das Abzeichen
+  „Experimentell“, wie es #499 (Abschnitt A, Punkt 3) verlangt. Issue #499 bleibt bis zu Angelos Abnahme offen. Eine
+  Messung der Aussagenqualität auf echten Inhalten liegt nicht vor; sie ist Angelos Bedingung für jede Automatik
+  ([ADR 0032](0032-fachlogik-aus-aussagen.md)).
 - Baut auf: [ADR 0005](0005-deutsches-ud-parsing.md) (`:nlp-parser`, MaltParser, Modell aus #99),
   [ADR 0019](0019-begriffsindex-und-begriffsbeziehungen.md) (Begriffsindex, bestätigte Begriffsbeziehungen),
   [ADR 0021](0021-bildanalyse.md) (Analyse nur auf Abruf).

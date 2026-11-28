@@ -2,7 +2,9 @@
 
 - Status: **Angenommen** (Strang I, 17.10.2026) als Laufzeitparser von `:nlp-parser`. Vorgeschlagen am 17.10.2026;
   der reale Laufzeit-Spike ist mit dem veröffentlichten Modell `maltparser-de-gsd-v1.0.0` aus #99 abgeschlossen
-  (Rauchtest unten). Das Modul ist weiterhin nicht in die Anwendung eingebunden; das braucht ein eigenes Issue.
+  (Rauchtest unten). Fortschreibung 28.11.2026: Das Modul ist seit dem 09.11.2026 in die Desktop-App eingebunden
+  (`app.nlp.MaltStatementAnalyzer`, Issue #499, PR #504, [ADR 0024](0024-aussagenanalyse-und-globaler-knowledge-graph.md)),
+  und nur dort: Core und Server kennen weiterhin keinen Parser (`NoParserInServerTest`, `CoreModuleTest`).
 - Entscheidung zur Parserwahl: Angelo, 17.10.2026 („Für das Dependency Parsing mussten wir aus Lizenzgründen auf den
   MaltParser ausweichen“), Issue #98 in der Fassung vom 17.10.2026.
 - Hängt ab von: #99 (`:nlp-model-training`: Training, Evaluation, Lizenzprüfung und Veröffentlichung des Modells).
