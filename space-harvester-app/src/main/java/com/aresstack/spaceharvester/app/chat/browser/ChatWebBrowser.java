@@ -126,14 +126,15 @@ public final class ChatWebBrowser {
 
         /**
          * Der Dialog der App, auf dem EDT; der Werkzeug-Thread wartet auf die Antwort. Er gehört zum Hauptfenster der
-         * App und kommt nach vorn: Hat gerade der Browser den Fokus, kennt Swing kein aktives Fenster, und ein Dialog
-         * ohne Besitzer lag hinter dem Browser, während der Chat auf ihn wartete.
+         * App und liegt über allen Fenstern: Hat gerade der Browser den Fokus, kennt Swing kein aktives Fenster, und ein
+         * Dialog ohne Besitzer lag hinter dem Browser, während der Chat auf ihn wartete; Windows holt das Fenster der App
+         * im Hintergrund auch mit Besitzer nicht vor den Browser.
          */
         SearchPageQuestion DIALOG = () -> {
             String[] answer = {null};
             try {
                 javax.swing.SwingUtilities.invokeAndWait(() -> answer[0] =
-                        com.aresstack.spaceharvester.app.ui.Dialogs.askText(appWindow(), INTERNAL_SEARCH_TITLE,
+                        com.aresstack.spaceharvester.app.ui.Dialogs.askTextInFront(appWindow(), INTERNAL_SEARCH_TITLE,
                                 INTERNAL_SEARCH_HINT, ""));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
