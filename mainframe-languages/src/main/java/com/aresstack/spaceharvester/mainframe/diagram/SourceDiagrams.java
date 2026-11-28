@@ -37,7 +37,16 @@ public final class SourceDiagrams {
      * @param type      Typ, der tatsächlich erzeugt wurde (ER bei DDM, Struktur als Rückfall)
      * @param collapsed ob kompakt erzeugt wurde (große Modelle schalten das selbst ein)
      */
-    public record Result(Optional<String> mermaid, DiagramType type, boolean collapsed) {
+    public record Result(Optional<String> mermaid, DiagramType type, boolean collapsed,
+                         java.util.Map<String, FlowLabels.Detail> details) {
+
+        public Result {
+            details = details == null ? java.util.Map.of() : java.util.Map.copyOf(details);
+        }
+
+        public Result(Optional<String> mermaid, DiagramType type, boolean collapsed) {
+            this(mermaid, type, collapsed, null);
+        }
     }
 
     private SourceDiagrams() {
@@ -118,8 +127,38 @@ public final class SourceDiagrams {
             }
         }
 
-        FlowLabels labels = FlowLabels.of(content, resolver,
-                ai ? OutlineToMermaidConverter.blockLabelSummarizer() : null, OutlineToMermaidConverter.labelLayout());
+        // Aufgerufene Programme je Erzeugung nur einmal laden, auch wenn zweimal gezeichnet wird (siehe unten)
+        java.util.Map<String, java.util.Optional<String>> loaded = new java.util.concurrent.ConcurrentHashMap<>();
+        SourceResolver once = resolver == null ? null : target -> loaded.computeIfAbsent(
+                target.toUpperCase(Locale.ROOT), key -> java.util.Optional.ofNullable(resolver.resolve(target)))
+                .orElse(null);
+        BlockLabelSummarizer summarizer = ai ? OutlineToMermaidConverter.blockLabelSummarizer() : null;
+        FlowLabels.Layout layout = OutlineToMermaidConverter.labelLayout();
+        java.util.function.Function<FlowLabels, Result> draw = labels -> draw(content, sourceName, lang, type,
+                mindmapDepth, collapsed, autoCollapse, once, preparedOutline, labels);
+        if (summarizer != null && enabled(summarizer)) {
+            // Parallel statt nacheinander (Angelo 28.11.2026): erst ohne Warten zeichnen und dabei alle Fragen an die
+            // KI sammeln, sie dann gleichzeitig stellen (so viele, wie der Dienst parallel erlaubt), dann mit den
+            // Antworten zeichnen; die zweite Runde nimmt die gesammelten Antworten.
+            ParallelLabels parallel = new ParallelLabels(summarizer);
+            draw.apply(FlowLabels.of(content, once, parallel, layout));
+            parallel.askAll();
+            return draw.apply(FlowLabels.of(content, once, parallel, layout));
+        }
+        return draw.apply(FlowLabels.of(content, once, summarizer, layout));
+    }
+
+    private static boolean enabled(BlockLabelSummarizer summarizer) {
+        try {
+            return summarizer.enabled();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private static Result draw(String content, String sourceName, SourceLanguage lang, DiagramType type,
+            int mindmapDepth, boolean collapsed, boolean autoCollapse, SourceResolver resolver, Outline preparedOutline,
+            FlowLabels labels) {
 
         // COBOL: a flowchart shows only the static control flow of the parser, never paragraph order as execution
         // order (#1473). Without a complete graph (e.g. unresolved COPY) the structure diagram is shown instead.
@@ -129,8 +168,8 @@ public final class SourceDiagrams {
             if (procedure != null) {
                 boolean compact = collapsed
                         || autoCollapse && procedure.nodes().size() > OutlineToMermaidConverter.COLLAPSE_THRESHOLD;
-                return new Result(Optional.of(CobolControlFlowDiagram.render(procedure, labels, compact)),
-                        DiagramType.FLOWCHART, compact);
+                String mermaid = CobolControlFlowDiagram.render(procedure, labels, compact) + labels.notes();
+                return new Result(Optional.of(mermaid), DiagramType.FLOWCHART, compact, labels.details());
             }
         }
 
@@ -169,7 +208,12 @@ public final class SourceDiagrams {
             result = OutlineToMermaidConverter.convert(model, DiagramType.STRUCTURE, null, null, compact);
             produced = DiagramType.STRUCTURE;
         }
-        return new Result(Optional.ofNullable(result).filter(s -> !s.trim().isEmpty()), produced, compact);
+        if (result != null && produced == DiagramType.FLOWCHART && !result.isBlank()) {
+            // Erklärbox neben dem Ablauf (nur mit Erklärungen der KI)
+            result = (result.endsWith("\n") ? result : result + "\n") + labels.notes();
+        }
+        return new Result(Optional.ofNullable(result).filter(s -> !s.trim().isEmpty()), produced, compact,
+                labels.details());
     }
 
     private static com.aresstack.spaceharvester.mainframe.cobol.CobolControlFlow.Procedure cobolProcedure(

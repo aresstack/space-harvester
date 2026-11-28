@@ -11,7 +11,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
@@ -62,7 +61,12 @@ public final class DiagramLabels implements BlockLabelSummarizer {
      * @param maxTokens Ausgabelimit je Anfrage (dasselbe wie die Antwortreserve im Budget), {@code null} =
      *                  Einstellung des Dienstes
      */
-    public record Target(AiChat chat, String model, String thinking, ModelBudget budget, Integer maxTokens) {
+    public record Target(AiChat chat, String model, String thinking, ModelBudget budget, Integer maxTokens,
+            Integer parallel) {
+
+        public Target(AiChat chat, String model, String thinking, ModelBudget budget, Integer maxTokens) {
+            this(chat, model, thinking, budget, maxTokens, null);
+        }
 
         public Target(AiChat chat, String model, String thinking, ModelBudget budget) {
             this(chat, model, thinking, budget, budget == null ? null : budget.answerTokens());
@@ -90,6 +94,18 @@ public final class DiagramLabels implements BlockLabelSummarizer {
         }
         Target current = target.get();
         return current != null && current.chat() != null && current.model() != null && !current.model().isBlank();
+    }
+
+    /**
+     * So viele Fragen eines Diagramms gleichzeitig, wie der KI-Dienst unter „ai.parallel“ erlaubt; nicht eingestellt
+     * gilt dessen Vorgabe.
+     */
+    @Override
+    public int parallel() {
+        Target current = target.get();
+        Integer parallel = current == null ? null : current.parallel();
+        return parallel == null || parallel < 1 ? com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_PARALLEL
+                : parallel;
     }
 
     /** Ob der Schalter in Einstellungen › Diagramme an ist. */
@@ -164,7 +180,8 @@ public final class DiagramLabels implements BlockLabelSummarizer {
             return null;
         }
         cache.put(key, result);
-        lastProblem = null;
+        // Den Grund nicht löschen: Bei parallelen Fragen darf eine gelungene Antwort den Fehler einer anderen nicht
+        // verdecken; DiagramView holt ihn je Diagramm einmal ab (takeProblem).
         return result;
     }
 
@@ -196,13 +213,10 @@ public final class DiagramLabels implements BlockLabelSummarizer {
             }
         });
         try {
-            long timeout = com.aresstack.spaceharvester.app.ui.AppTimeouts.shared()
-                    .get(com.aresstack.spaceharvester.app.ui.AppTimeouts.Value.DIAGRAM_LABELS).toSeconds();
-            if (!done.await(timeout, TimeUnit.SECONDS)) {
-                task.cancel();
-                lastProblem = "Keine Antwort in " + timeout + " s";
-                return null;
-            }
+            // Wie im Chat keine feste Frist: Die Antwort kommt gestreamt, und die Verbindung bricht selbst ab, wenn
+            // länger als die eingestellte KI-Frist kein Zeichen mehr kommt (Lesefrist der Verbindung). Das meldet
+            // failed(), der Grund steht dann in der gelben Meldung, und der Block behält die Beschriftung ohne KI.
+            done.await();
         } catch (InterruptedException e) {
             task.cancel();
             Thread.currentThread().interrupt();

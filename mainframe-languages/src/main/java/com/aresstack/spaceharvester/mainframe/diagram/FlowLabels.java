@@ -37,14 +37,15 @@ public final class FlowLabels {
     /**
      * Länge und Zeilenbreite der Beschriftungen (Einstellungen › Diagramme).
      *
-     * @param length       Höchstlänge kurzer Beschriftungen in Zeichen (Frage, Zweig, Zweck eines Aufrufs)
-     * @param detailLength Höchstlänge der ausführlichen Beschreibung eines Blocks in Zeichen
+     * @param length       Höchstlänge der Beschriftung im Knoten in Zeichen (Überschrift eines Blocks, Frage, Zweig,
+     *                     Zweck eines Aufrufs)
+     * @param detailLength Höchstlänge einer Erklärung in der Erklärbox neben dem Diagramm (wenige Sätze)
      * @param lineWidth    so viele Zeichen höchstens je Zeile im Knoten, danach wird am Wortende umbrochen
      */
     public record Layout(int length, int detailLength, int lineWidth) {
 
         /** Vorgabe, solange nichts eingestellt ist. */
-        public static final Layout DEFAULT = new Layout(140, 600, 44);
+        public static final Layout DEFAULT = new Layout(60, 300, 30);
 
         public Layout {
             if (length < 1 || detailLength < 1 || lineWidth < 1) {
@@ -53,20 +54,54 @@ public final class FlowLabels {
         }
     }
 
-    static final String BLOCK_PURPOSE = "Abschnitt eines Großrechner-Programms. Beschreibe für Einsteiger, die diese "
-            + "Sprache nicht kennen, ausführlich und Schritt für Schritt in einfachen Sätzen wie Pseudocode, was hier "
-            + "fachlich wirklich passiert: was gelesen, geprüft, berechnet, gesetzt oder geschrieben wird und warum "
-            + "(z. B. \"Liest den nächsten Satz der Arbeitsdatei. Zählt ihn mit. Nimmt die ersten zwei Zeichen als "
-            + "Satzart.\"). Keine Befehlsnamen; Feldnamen nur, wenn sie die Bedeutung tragen.";
+    /**
+     * Gemeinsame Regel aller Erklärungen (Angelo 28.11.2026): den Code erklären, nicht nacherzählen. Eine
+     * Nacherzählung Anweisung für Anweisung („kopiert X nach Y, setzt Z auf FALSE“) ist nur neuer Programmcode in
+     * Worten.
+     */
+    static final String EXPLAIN_RULE = "Erkläre den fachlichen Zweck: was dieser Code für das Geschäft oder den Ablauf "
+            + "bewirkt und warum. Erzähle den Code NICHT Anweisung für Anweisung nach (nicht \"kopiert X nach Y\", "
+            + "nicht \"setzt Z auf FALSE\"), nenne keine Befehle, keine Variablen- oder Feldnamen und keine Werte, "
+            + "außer sie tragen die fachliche Bedeutung.";
+    /** Überschrift eines Blocks im Knoten. */
+    static final String BLOCK_TITLE_PURPOSE = "Abschnitt eines Großrechner-Programms. Gib eine kurze Überschrift in "
+            + "einfachem Deutsch, wozu dieser Abschnitt da ist (z. B. \"Zugang prüfen\" oder \"Sendung "
+            + "vorbereiten\"). " + EXPLAIN_RULE;
+    /** Erklärung eines Blocks (Erklärbox neben dem Diagramm). */
+    static final String BLOCK_PURPOSE = "Abschnitt eines Großrechner-Programms. Erkläre einem Einsteiger, der diese "
+            + "Sprache nicht kennt, in wenigen einfachen Sätzen, wozu dieser Abschnitt da ist und was er im Ablauf "
+            + "erreicht. " + EXPLAIN_RULE;
     static final String DECISION_PURPOSE = "Verzweigung eines Großrechner-Programms. Formuliere die Entscheidung als "
-            + "kurze, verständliche Frage für Einsteiger (z. B. \"Welche Satzart liegt vor?\" oder \"Ist der Betrag "
-            + "negativ?\"). Nur die Frage.";
-    static final String STEP_PURPOSE = "Schritt eines JCL-Jobs mit seinen Dateien (DD). Beschreibe für Einsteiger, die "
-            + "JCL nicht kennen, ausführlich in einfachen Sätzen, was dieser Schritt fachlich tut: welches Programm "
-            + "läuft, welche Daten es liest, was es damit macht und wohin das Ergebnis geht.";
+            + "kurze, verständliche Frage für Einsteiger (z. B. \"Welche Satzart liegt vor?\" oder \"Darf der "
+            + "Benutzer das Programm nutzen?\"). Nur die Frage, ohne Feldnamen und Werte, außer sie tragen die "
+            + "fachliche Bedeutung.";
+    /** Überschrift eines JCL-Schritts im Knoten. */
+    static final String STEP_TITLE_PURPOSE = "Schritt eines JCL-Jobs mit seinen Dateien (DD). Gib eine kurze "
+            + "Überschrift in einfachem Deutsch, wozu dieser Schritt da ist (z. B. \"Kundendaten sortieren\"). "
+            + EXPLAIN_RULE;
+    static final String STEP_PURPOSE = "Schritt eines JCL-Jobs mit seinen Dateien (DD). Erkläre einem Einsteiger, "
+            + "der JCL nicht kennt, in wenigen einfachen Sätzen, wozu dieser Schritt da ist: welche Daten er "
+            + "verarbeitet, was dabei fachlich herauskommt und wofür das Ergebnis gebraucht wird. " + EXPLAIN_RULE;
+    /** Zweck eines aufgerufenen Programms im Knoten. */
+    static final String CALLEE_TITLE_PURPOSE = "Quelltext des aufgerufenen Programms %s. Aufruf an dieser Stelle: %s%s. "
+            + "Gib in wenigen Worten an, wozu es hier aufgerufen wird (z. B. \"Satzart SW verbuchen\"). "
+            + EXPLAIN_RULE;
     static final String CALLEE_PURPOSE = "Quelltext des aufgerufenen Programms %s. Aufruf an dieser Stelle: %s%s. "
-            + "Beschreibe für Einsteiger in einem kurzen Satz, was dieses Programm tut und wozu es hier aufgerufen "
-            + "wird.";
+            + "Erkläre einem Einsteiger in wenigen einfachen Sätzen, wozu dieses Programm da ist, warum es an dieser "
+            + "Stelle aufgerufen wird und was dadurch im Ablauf erreicht wird. " + EXPLAIN_RULE;
+
+    /**
+     * Was zu einem Knoten gehört: eine Überschrift, die Quelltextzeilen und mit KI die Erklärung, die auch in der
+     * Erklärbox steht. Beim Klick auf den Knoten erscheint das im Detailbereich.
+     *
+     * @param heading     Überschrift (etwa „Zeilen 12–30“ oder „SATZSW – aufgerufen mit …“)
+     * @param code        Quelltext, den der Knoten zusammenfasst
+     * @param purpose     Zweck der Erklärung (für eine Nachfrage im Chat)
+     * @param number      Nummer der Erklärung in der Erklärbox, 0 ohne Erklärung
+     * @param explanation Erklärung der KI, {@code null} ohne
+     */
+    public record Detail(String heading, String code, String purpose, int number, String explanation) {
+    }
 
     private static final Pattern BRANCH = Pattern.compile(
             "^\\s*(VALUE|WHEN|NONE|ANY|ALL|ELSE)\\b\\s*(?:VALUE\\b\\s*)?(.*)$", Pattern.CASE_INSENSITIVE);
@@ -84,7 +119,8 @@ public final class FlowLabels {
     private final SourceResolver resolver;
     private final BlockLabelSummarizer ai;
     private final Layout layout;
-    private final Map<String, String> sources = new HashMap<>();
+    private final Map<String, String> sources = new java.util.LinkedHashMap<>();
+    private final Map<String, Detail> details = new java.util.LinkedHashMap<>();
 
     private FlowLabels(String content, SourceResolver resolver, BlockLabelSummarizer ai, Layout layout) {
         this.lines = content == null ? new String[0] : content.split("\\r?\\n", -1);
@@ -151,13 +187,43 @@ public final class FlowLabels {
         return false;
     }
 
-    /** KI-Beschreibung der Quelltextzeilen {@code from}…{@code to} zu einem Zweck oder {@code null}. */
-    String describeLines(int from, int to, String purpose) {
-        if (!ai() || lines.length == 0 || from < 1 || to < from) {
+    /**
+     * Merkt sich, was beim Klick auf den Knoten {@code id} im Detailbereich steht (Zeilen {@code from}…{@code to}),
+     * und gibt mit KI die kurze Überschrift für den Knoten, sonst {@code null}.
+     */
+    String titleLines(String id, String heading, int from, int to, String titlePurpose, String detailPurpose) {
+        if (lines.length == 0 || from < 1 || to < from) {
             return null;
         }
-        String code = range(from, Math.min(to, lines.length));
-        if (code.isBlank()) {
+        return title(id, heading, range(from, Math.min(to, lines.length)), titlePurpose, detailPurpose);
+    }
+
+    /** Wie {@link #titleLines} mit dem Code selbst. */
+    String title(String id, String heading, String code, String titlePurpose, String detailPurpose) {
+        if (code == null || code.isBlank()) {
+            return null;
+        }
+        String title = ask(code, titlePurpose, false);
+        // Beide Fragen immer stellen, auch wenn die Überschrift ausbleibt: In der Sammelrunde für parallele Anfragen
+        // (ParallelLabels) antwortet noch keine, gestellt werden müssen trotzdem beide.
+        String explanation = detailPurpose == null ? null : explain(code, detailPurpose);
+        int number = 0;
+        if (title != null && explanation != null) {
+            Detail known = id == null ? null : details.get(id);
+            number = known != null && known.number() > 0 ? known.number()
+                    : details.values().stream().mapToInt(Detail::number).max().orElse(0) + 1;
+            title = mark(number) + " " + title;
+        }
+        if (id != null) {
+            details.put(id, new Detail(heading, code.strip(), detailPurpose, number,
+                    number == 0 ? null : explanation));
+        }
+        return title;
+    }
+
+    /** Die Erklärung der KI zum Zweck {@code purpose} in höchstens {@link Layout#detailLength()} Zeichen. */
+    private String explain(String code, String purpose) {
+        if (!ai()) {
             return null;
         }
         try {
@@ -166,6 +232,50 @@ public final class FlowLabels {
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    /** Nummer einer Erklärung: ① bis ⑳, danach (21), (22) … */
+    public static String mark(int number) {
+        return number >= 1 && number <= 20 ? String.valueOf((char) ('\u2460' + number - 1)) : "(" + number + ")";
+    }
+
+    /**
+     * Die Erklärbox (Angelo 28.11.2026): eine freistehende gelbe Box neben dem Diagramm, ohne Linien zu den Knoten.
+     * Jede Erklärung trägt die Nummer, die auch vor dem Titel ihres Knotens steht. Leer, wenn es keine Erklärung gibt
+     * (ohne KI oder wenn die KI nicht antwortete).
+     */
+    public String notes() {
+        List<Detail> explained = details.values().stream().filter(d -> d.number() > 0)
+                .sorted(java.util.Comparator.comparingInt(Detail::number)).toList();
+        if (explained.isEmpty()) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder();
+        out.append("  classDef erklaerung fill:#fff8c4,stroke:#c9b458,color:#333\n");
+        out.append("  subgraph erklaerungen [\"Erklärungen\"]\n");
+        out.append("    direction TB\n");
+        for (Detail d : explained) {
+            out.append("    erklaerung_").append(d.number()).append("[\"")
+                    .append(noteText(mark(d.number()) + " " + d.explanation())).append("\"]:::erklaerung\n");
+        }
+        // Unsichtbare Verbindungen nur innerhalb der Box: hält die Erklärungen in ihrer Reihenfolge untereinander
+        for (int i = 1; i < explained.size(); i++) {
+            out.append("    erklaerung_").append(explained.get(i - 1).number()).append(" ~~~ erklaerung_")
+                    .append(explained.get(i).number()).append('\n');
+        }
+        out.append("  end\n");
+        return out.toString();
+    }
+
+    private static String noteText(String text) {
+        return text.replace("#", "＃").replace("\"", "＂").replace("&", "＆").replace("<", "＜").replace(">", "＞")
+                .replace("|", "｜").replace("`", "｀").replace("\\", "＼").replace("[", "［").replace("]", "］")
+                .replaceAll("\\s+", " ").trim();
+    }
+
+    /** Was beim Klick auf einen Knoten im Detailbereich steht, je Mermaid-ID des Knotens. */
+    public Map<String, Detail> details() {
+        return java.util.Collections.unmodifiableMap(details);
     }
 
     /** Die Verzweigung der Zeilen {@code from}…{@code to} als Frage (KI), sonst {@code fact}. */
@@ -177,18 +287,6 @@ public final class FlowLabels {
         return question == null ? fact : question;
     }
 
-    /** KI-Beschreibung eines Blocks oder {@code null}. */
-    String describeBlock(String code) {
-        if (!ai() || code == null || code.isBlank()) {
-            return null;
-        }
-        try {
-            String answer = ai.describe(code, layout.detailLength(), BLOCK_PURPOSE);
-            return answer == null || answer.isBlank() ? null : answer.trim();
-        } catch (RuntimeException e) {
-            return null;
-        }
-    }
 
     // ---- Verzweigungen ---------------------------------------------------------------------------------------------
 
@@ -305,28 +403,29 @@ public final class FlowLabels {
     // ---- Aufgerufene Programme -------------------------------------------------------------------------------------
 
     /**
-     * Was unter dem Namen eines aufgerufenen Programms steht: mit KI, was es tut und wozu es hier aufgerufen wird;
-     * mit geladenem Quelltext seine eigenen Aufrufe („ruft: …“). {@code null}, wenn nichts bekannt ist.
+     * Was unter dem Namen eines aufgerufenen Programms steht: mit KI in wenigen Worten, wozu es hier aufgerufen wird;
+     * mit geladenem Quelltext seine eigenen Aufrufe („ruft: …“). Der Quelltext des Programms kommt in den
+     * Detailbereich des Knotens {@code id}. {@code null}, wenn nichts bekannt ist.
      */
-    String callee(String target, JclElement call, String branch) {
-        return callee(target, call == null || call.getRawText() == null ? null : call.getRawText().trim(), branch);
+    String callee(String id, String target, JclElement call, String branch) {
+        return callee(id, target, call == null || call.getRawText() == null ? null : call.getRawText().trim(),
+                branch);
     }
 
     /** Wie oben mit dem Text der Aufrufstelle ({@code null} = nur der Name). */
-    String callee(String target, String callText, String branch) {
+    String callee(String id, String target, String callText, String branch) {
         String source = source(target);
         if (source == null) {
             return null;
         }
+        String where = callText == null || callText.isBlank() ? target : callText;
+        String condition = branch == null ? "" : " (Zweig: " + branch + ")";
         List<String> parts = new ArrayList<>();
-        if (ai()) {
-            String where = callText == null || callText.isBlank() ? target : callText;
-            String condition = branch == null ? "" : " (Zweig: " + branch + ")";
-            String purpose = String.format(Locale.ROOT, CALLEE_PURPOSE, target, where, condition);
-            String text = ask(source, purpose, true);
-            if (text != null) {
-                parts.add(text);
-            }
+        String text = title(id, target + " – aufgerufen mit " + where + condition, source,
+                String.format(Locale.ROOT, CALLEE_TITLE_PURPOSE, target, where, condition),
+                String.format(Locale.ROOT, CALLEE_PURPOSE, target, where, condition));
+        if (text != null) {
+            parts.add(text);
         }
         List<String> next = calls(source, target);
         if (!next.isEmpty()) {

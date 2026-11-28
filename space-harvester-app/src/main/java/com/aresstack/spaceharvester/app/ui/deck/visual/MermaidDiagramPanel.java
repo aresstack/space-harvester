@@ -1457,7 +1457,21 @@ public class MermaidDiagramPanel extends JPanel {
     //  Detail & Edit panels
     // ═══════════════════════════════════════════════════════════
 
+    /**
+     * Füllt den Detailbereich für einen angeklickten Knoten selbst (ID des Knotens); {@code true}, wenn er es getan
+     * hat, sonst zeigt das Panel die technischen Angaben des Knotens.
+     */
+    public void setNodeDetailHandler(java.util.function.Predicate<String> handler) {
+        this.nodeDetailHandler = handler;
+    }
+
+    private java.util.function.Predicate<String> nodeDetailHandler;
+
     private void updateDetailArea() {
+        if (selectedNode != null && nodeDetailHandler != null && nodeDetailHandler.test(selectedNode.getId())) {
+            if (detailChangeListener != null) detailChangeListener.onDetailChanged();
+            return;
+        }
         if (selectedNode != null) {
             DiagramNode n = selectedNode;
             detailArea.setText("Knoten: " + n.getId() + "\nLabel: " + n.getLabel()
