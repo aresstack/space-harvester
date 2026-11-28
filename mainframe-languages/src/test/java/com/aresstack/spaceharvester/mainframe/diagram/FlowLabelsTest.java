@@ -70,9 +70,15 @@ class FlowLabelsTest {
 
         String flow = flow(true, true);
 
-        assertThat(flow).contains("Fake-KI Frage").contains("Fake-KI Ablauf");
-        assertThat(flow).contains("EXT_SATZSW>\"SATZSW\\n(CALLNAT)\\nFake-KI Satz");
-        assertThat(flow).contains("ruft: SCHREIB");
+        // Im Knoten nur der kurze Titel mit Nummer, die Erklärung steht unter derselben Nummer in der Erklärbox
+        assertThat(flow).contains("BLOCK[\"① Fake-KI Frage\"]");
+        assertThat(flow).contains("EXT_SATZSW>\"SATZSW\\n(CALLNAT)\\n② Fake-KI Frage\\nruft: SCHREIB");
+        assertThat(flow).contains("subgraph erklaerungen [\"Erklärungen\"]")
+                .contains("erklaerung_1[\"① Fake-KI Ablauf\"]:::erklaerung")
+                .contains("erklaerung_2[\"② Fake-KI Ablauf\"]:::erklaerung");
+        // Freistehend: keine Linie von der Box zu einem Knoten, nur die unsichtbare Reihenfolge in der Box
+        assertThat(flow.lines().filter(line -> line.contains("erklaerung_") && line.contains("-->")))
+                .isEmpty();
         // Der Block nach READ bekam alle Zeilen, auch MOVE und ADD, die die Gliederung nicht kennt
         assertThat(ai.codes).anySatisfy(code -> assertThat(code).contains("MOVE SUBSTR").contains("ADD 1 TO"));
         // Die Frage sah die ganze Verzweigung mit allen Werten
@@ -81,6 +87,53 @@ class FlowLabelsTest {
         // Der Zweck des Unterprogramms kennt Aufrufstelle und Zweig
         assertThat(ai.purposes).anySatisfy(purpose -> assertThat(purpose).contains("SATZSW")
                 .contains("CALLNAT 'SATZSW' #SATZ").contains("#SATZART = 'SW'"));
+    }
+
+    @Test
+    void theQuestionsOfADiagramRunInParallelEachOnlyOnce() {
+        java.util.concurrent.atomic.AtomicInteger running = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger most = new java.util.concurrent.atomic.AtomicInteger();
+        List<String> asked = java.util.Collections.synchronizedList(new ArrayList<>());
+        OutlineToMermaidConverter.blockLabelSummarizer(new BlockLabelSummarizer() {
+            @Override
+            public boolean enabled() {
+                return true;
+            }
+
+            @Override
+            public int parallel() {
+                return 3;
+            }
+
+            @Override
+            public String summarize(String code, int maxLength, String purpose) {
+                return answer("Titel", code, purpose);
+            }
+
+            @Override
+            public String describe(String code, int maxLength, String purpose) {
+                return answer("Erklärung", code, purpose);
+            }
+
+            private String answer(String kind, String code, String purpose) {
+                asked.add(kind + code + purpose);
+                most.accumulateAndGet(running.incrementAndGet(), Math::max);
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    running.decrementAndGet();
+                }
+                return kind;
+            }
+        });
+
+        String flow = flow(true, true);
+
+        assertThat(most.get()).isBetween(2, 3);
+        assertThat(asked).doesNotHaveDuplicates();
+        assertThat(flow).contains("① Titel").contains("erklaerung_1[\"① Erklärung\"]");
     }
 
     @Test

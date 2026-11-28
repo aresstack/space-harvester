@@ -2359,6 +2359,23 @@ public final class ChatPanel extends JPanel {
     }
 
     /**
+     * Fragt von außen (Diagramm-Ansicht: „im Chat erklären lassen“) wie über die Eingabe: der Ausschnitt als Zitat,
+     * die Frage gesendet mit den Werkzeugen des Bereichs. Läuft gerade eine Antwort oder steht schon Text in der
+     * Eingabe, bleibt es beim Zitat, damit nichts abgebrochen oder überschrieben wird.
+     *
+     * @return {@code true}, wenn die Frage hinausging
+     */
+    public boolean askAbout(String question, String excerpt, String reference) {
+        quote(excerpt, reference);
+        if (turn != null || readingAttachments || !editor.getText().isBlank()) {
+            return false;
+        }
+        editor.setText(question);
+        send();
+        return true;
+    }
+
+    /**
      * Merkt einen markierten Ausschnitt als Zitat für die nächste Frage vor (Angelo 27.11.2026): ein Chip mit
      * Anführungszeichen, dem Anfang des Ausschnitts und ✕, im Tooltip der ganze (gekürzt). Derselbe Ausschnitt nur
      * einmal; die Eingabe bekommt den Fokus, damit gleich die Frage folgen kann.

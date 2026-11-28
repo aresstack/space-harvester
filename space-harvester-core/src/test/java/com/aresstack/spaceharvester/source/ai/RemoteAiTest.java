@@ -701,6 +701,58 @@ class RemoteAiTest {
         assertThat(deltas).containsExactly("Hal", "lo");
     }
 
+    /**
+     * Angelo 28.11.2026: Ohne eigenes Modell in der Zeile „Quellcode“ gilt die Zeile des Text-Modells vollständig,
+     * auch ihr Nachdenken – „low“ geht als low, „aus“ schickt kein reasoning_effort (nie „none“ an gpt-oss).
+     */
+    @Test
+    void theSourceCodeRowWithoutOwnModelTakesModelAndThinkingOfTheChat() throws Exception {
+        AiServiceSettings chat = new AiServiceSettings(base(), KEY, "gpt-oss", null, null, null, null, Set.of());
+
+        askChat(chat.withStepThinking("low").sourceCode());
+        askChat(chat.withStepThinking("none").sourceCode());
+        askChat(chat.withStepThinking("none").withSourceCode(new AiServiceSettings.ModelUse("code-modell", null,
+                "high")).sourceCode());
+        // Angelos Einstellung: eigenes Modell, „denkt wenig“ – genau low geht mit, nie „none“
+        askChat(chat.withStepThinking("none").withSourceCode(new AiServiceSettings.ModelUse("openai/gpt-oss-120b",
+                8192, "low")).sourceCode());
+
+        assertThat(bodies).hasSize(4);
+        assertThat(bodies.get(3)).contains("\"model\":\"openai/gpt-oss-120b\"", "\"reasoning_effort\":\"low\"",
+                "\"max_tokens\":8192").doesNotContain("\"none\"");
+        assertThat(bodies.get(0)).contains("\"model\":\"gpt-oss\"", "\"reasoning_effort\":\"low\"",
+                "\"max_tokens\":" + AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS);
+        assertThat(bodies.get(1)).contains("\"model\":\"gpt-oss\"").doesNotContain("reasoning_effort");
+        assertThat(bodies.get(2)).contains("\"model\":\"code-modell\"", "\"reasoning_effort\":\"high\"",
+                "\"max_tokens\":" + AiServiceSettings.DEFAULT_SOURCE_CODE_MAX_TOKENS);
+    }
+
+    private void askChat(AiServiceSettings settings) throws Exception {
+        java.util.concurrent.CompletableFuture<String> done = new java.util.concurrent.CompletableFuture<>();
+        remote(settings).chat().stream(new AiChat.Request(List.of(AiChat.Message.user("Was tut der Block?")),
+                settings.chatModel(), null), new AiChat.Listener() {
+            @Override
+            public void delta(String text) {
+            }
+
+            @Override
+            public void completed(String text) {
+                done.complete(text);
+            }
+
+            @Override
+            public void failed(com.aresstack.spaceharvester.ai.AiChatException error) {
+                done.completeExceptionally(error);
+            }
+
+            @Override
+            public void cancelled() {
+                done.cancel(false);
+            }
+        });
+        done.get(10, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
     @Test
     void theChatOffersToolsAndReportsTheCallsOfTheModel() throws Exception {
         // ADR 0031: Die Werkzeuge leben beim Aufrufer; hier gehen nur Definition, Aufruf und Ergebnis über die Leitung.
