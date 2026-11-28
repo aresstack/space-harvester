@@ -622,14 +622,14 @@ public final class OutlineToMermaidConverter {
 
     private static String convertFlowchart(JclOutlineModel model, Set<String> sysFuncs, FlowLabels labels) {
         switch (model.getLanguage()) {
-            case JCL:     return convertJclFlowchart(model, sysFuncs);
+            case JCL:     return convertJclFlowchart(model, sysFuncs, labels);
             case COBOL:   return null;
             case NATURAL: return convertNaturalFlowchart(model, sysFuncs, labels);
-            default:      return convertJclFlowchart(model, sysFuncs);
+            default:      return convertJclFlowchart(model, sysFuncs, labels);
         }
     }
 
-    private static String convertJclFlowchart(JclOutlineModel model, Set<String> sysFuncs) {
+    private static String convertJclFlowchart(JclOutlineModel model, Set<String> sysFuncs, FlowLabels labels) {
         StringBuilder sb = new StringBuilder("flowchart TD\n");
         Set<String> usedIds = new HashSet<String>();
         List<JclElement> all = model.getElements();
@@ -649,7 +649,7 @@ public final class OutlineToMermaidConverter {
 
         if (hasConditionals) {
             // Build flow with conditionals
-            prevId = buildJclConditionalFlow(sb, all, steps, usedIds, startId);
+            prevId = buildJclConditionalFlow(sb, all, steps, usedIds, startId, labels, model.getTotalLines());
         } else {
             // Linear step flow
             for (JclElement step : steps) {
@@ -661,6 +661,7 @@ public final class OutlineToMermaidConverter {
                 sb.append("    ").append(stepId).append("[\"").append(esc(label));
                 if (pgm != null) sb.append("\\nPGM=").append(esc(pgm));
                 else if (proc != null) sb.append("\\nPROC=").append(esc(proc));
+                sb.append(jclStepAbout(step, all, labels, model.getTotalLines()));
                 sb.append("\"]\n");
 
                 // Style system function steps with IBM Blue
@@ -697,7 +698,8 @@ public final class OutlineToMermaidConverter {
      */
     private static String buildJclConditionalFlow(StringBuilder sb, List<JclElement> all,
                                                    List<JclElement> steps,
-                                                   Set<String> usedIds, String startId) {
+                                                   Set<String> usedIds, String startId,
+                                                   FlowLabels labels, int totalLines) {
         String prevId = startId;
         int stepIdx = 0;
 
@@ -746,7 +748,8 @@ public final class OutlineToMermaidConverter {
                         JclElement step = steps.get(stepIdx++);
                         String label = step.getName() != null ? step.getName() : "(Step)";
                         String stepId = safeId("STEP_" + label, usedIds);
-                        sb.append("    ").append(stepId).append("[\"").append(esc(label)).append("\"]\n");
+                        sb.append("    ").append(stepId).append("[\"").append(esc(label))
+                    .append(jclStepAbout(step, all, labels, totalLines)).append("\"]\n");
                         sb.append("    ").append(trueEnd).append(" -->|Ja| ").append(stepId).append("\n");
                         trueEnd = stepId;
                     }
@@ -762,7 +765,8 @@ public final class OutlineToMermaidConverter {
                             JclElement step = steps.get(stepIdx++);
                             String label = step.getName() != null ? step.getName() : "(Step)";
                             String stepId = safeId("STEP_" + label, usedIds);
-                            sb.append("    ").append(stepId).append("[\"").append(esc(label)).append("\"]\n");
+                            sb.append("    ").append(stepId).append("[\"").append(esc(label))
+                    .append(jclStepAbout(step, all, labels, totalLines)).append("\"]\n");
                             sb.append("    ").append(falseEnd).append(" -->|Nein| ").append(stepId).append("\n");
                             falseEnd = stepId;
                         }
@@ -784,7 +788,8 @@ public final class OutlineToMermaidConverter {
                     JclElement step = steps.get(stepIdx++);
                     String label = step.getName() != null ? step.getName() : "(Step)";
                     String stepId = safeId("STEP_" + label, usedIds);
-                    sb.append("    ").append(stepId).append("[\"").append(esc(label)).append("\"]\n");
+                    sb.append("    ").append(stepId).append("[\"").append(esc(label))
+                    .append(jclStepAbout(step, all, labels, totalLines)).append("\"]\n");
                     sb.append("    ").append(prevId).append(" --> ").append(stepId).append("\n");
                     prevId = stepId;
                 }
@@ -792,6 +797,29 @@ public final class OutlineToMermaidConverter {
         }
 
         return prevId;
+    }
+
+    /**
+     * Was ein JCL-Schritt tut, als weitere Zeilen seines Knotens (mit führendem Zeilenumbruch): mit KI die
+     * Beschreibung seiner Zeilen (EXEC bis vor den nächsten Schritt, IF, ELSE, ENDIF), sonst nichts.
+     */
+    private static String jclStepAbout(JclElement step, List<JclElement> all, FlowLabels labels, int totalLines) {
+        if (!labels.ai()) return "";
+        int to = totalLines;
+        boolean after = false;
+        for (JclElement e : all) {
+            if (e == step) { after = true; continue; }
+            if (!after) continue;
+            JclElementType t = e.getType();
+            if (t == JclElementType.EXEC || t == JclElementType.IF || t == JclElementType.ELSE
+                    || t == JclElementType.ENDIF || t == JclElementType.JOB || t == JclElementType.PROC
+                    || t == JclElementType.PEND) {
+                to = e.getLineNumber() - 1;
+                break;
+            }
+        }
+        String about = labels.describeLines(step.getLineNumber(), to, FlowLabels.STEP_PURPOSE);
+        return about == null ? "" : "\\n" + esc(labels.wrap(about));
     }
 
     private static String convertNaturalFlowchart(JclOutlineModel model, Set<String> sysFuncs, FlowLabels labels) {
@@ -2117,6 +2145,7 @@ public final class OutlineToMermaidConverter {
         // Zeile des letzten gezeigten oder übersprungenen Elements: ein Block umfasst alle Quelltextzeilen danach bis
         // vor das nächste gezeigte Element, auch solche ohne eigenes Element (MOVE, COMPUTE …)
         int afterLine = 0;
+        JclElement lastShown = null;
 
         // Phase 2 — Walk elements, classify, and build collapsed flow
         for (JclElement e : all) {
@@ -2127,12 +2156,13 @@ public final class OutlineToMermaidConverter {
 
             if (isStructuralFlowElement(e) || isImportantFlowElement(e, frequentTargets)) {
                 // Flush buffered detail elements as collapsed block
-                prevId = emitCollapsedDetailBlock(sb, detailBuffer,
-                        frequentTargets, usedIds, prevId, labels, afterLine + 1, e.getLineNumber() - 1);
+                prevId = emitCollapsedDetailBlock(sb, detailBuffer, frequentTargets, usedIds, prevId, labels,
+                        blockStart(lastShown, afterLine), e.getLineNumber() - 1);
                 detailBuffer.clear();
                 // Emit the structural / important element
                 prevId = emitCollapsedFlowElement(sb, e, usedIds, prevId, sysFuncs, labels);
                 afterLine = Math.max(afterLine, e.getLineNumber());
+                lastShown = e;
             } else {
                 // Everything else goes into the detail buffer
                 detailBuffer.add(e);
@@ -2141,7 +2171,7 @@ public final class OutlineToMermaidConverter {
 
         // Flush remaining detail buffer
         prevId = emitCollapsedDetailBlock(sb, detailBuffer,
-                frequentTargets, usedIds, prevId, labels, afterLine + 1, model.getTotalLines());
+                frequentTargets, usedIds, prevId, labels, blockStart(lastShown, afterLine), model.getTotalLines());
 
         // End node
         String endId = safeId("END", usedIds);
@@ -2149,6 +2179,19 @@ public final class OutlineToMermaidConverter {
         sb.append("    ").append(prevId).append(" --> ").append(endId).append("\n");
 
         return sb.toString();
+    }
+
+    /**
+     * Erste Zeile eines Blocks: die Zeile nach dem zuletzt gezeigten Element; folgt der Block direkt auf einen
+     * JCL-Schritt (seine DD-Anweisungen), gehört die EXEC-Zeile dazu, damit die KI weiß, welches Programm die Dateien
+     * benutzt.
+     */
+    private static int blockStart(JclElement lastShown, int afterLine) {
+        if (lastShown != null && lastShown.getType() == JclElementType.EXEC
+                && lastShown.getLineNumber() == afterLine) {
+            return afterLine;
+        }
+        return afterLine + 1;
     }
 
     private static String convertSequenceCollapsed(JclOutlineModel model, Set<String> sysFuncs) {
