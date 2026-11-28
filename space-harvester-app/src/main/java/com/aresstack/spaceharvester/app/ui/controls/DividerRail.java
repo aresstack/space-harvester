@@ -29,18 +29,34 @@ public final class DividerRail {
     private final JSplitPane pane;
     private final JComponent rail;
     private final EdgeOverlay overlay;
+    private final JComponent slot;
+    private final Drag drag = new Drag();
     private boolean active = true;
+    private java.util.function.BooleanSupplier busy = () -> false;
 
     private DividerRail(JSplitPane pane, JComponent rail, EdgeOverlay overlay, JComponent slot) {
         this.pane = pane;
         this.rail = rail;
         this.overlay = overlay;
-        overlay.anchor(slot, this::center);
-        Drag drag = new Drag();
+        this.slot = slot;
+        overlay.anchor(slot, this::center, this::focus);
         listen(rail, drag);
         for (Component part : rail.getComponents()) {
             listen(part, drag);
         }
+        // Symbole, die später wieder in die Leiste geschoben werden ({@link SideDock}), ziehen den Trenner ebenso.
+        rail.addContainerListener(new java.awt.event.ContainerAdapter() {
+            @Override
+            public void componentAdded(java.awt.event.ContainerEvent event) {
+                listen(event.getChild(), drag);
+                follow();
+            }
+
+            @Override
+            public void componentRemoved(java.awt.event.ContainerEvent event) {
+                follow();
+            }
+        });
         Component divider = divider();
         if (divider != null) {
             divider.addComponentListener(new ComponentAdapter() {
@@ -73,7 +89,33 @@ public final class DividerRail {
 
     /** Die Linie des Trenners ist hinter der Knopfleiste unterbrochen, damit sie nicht durchscheint. */
     private void gap() {
-        ComicDivider.gap(pane, active ? rail.getPreferredSize().height : 0);
+        int before = focus();
+        // Unter der Leiste stehen auf demselben Platz noch einzelne Kugeln: Auch hinter ihnen ruht die Linie.
+        int length = Math.max(rail.getPreferredSize().height,
+                slot.getComponentCount() == 0 ? 0 : slot.getPreferredSize().height);
+        ComicDivider.gap(pane, active ? before : 0, active ? length - before : 0);
+    }
+
+    /** Die Höhe im Platz, die auf der Mitte des Trenners liegt: die Mitte der Knopfleiste. */
+    private int focus() {
+        int height = rail.getPreferredSize().height;
+        if (height <= 0) {
+            height = slot.getComponentCount() == 0 ? 0 : slot.getPreferredSize().height;
+        }
+        return height / 2;
+    }
+
+    /**
+     * Solange {@code busy} gilt, zieht die Leiste den Trenner nicht: Jemand anderes trägt gerade eines ihrer Symbole
+     * ({@link SideDock}).
+     */
+    public void yieldWhile(java.util.function.BooleanSupplier busy) {
+        this.busy = busy;
+    }
+
+    /** Ob gerade am Trenner gezogen wird. */
+    public boolean dragging() {
+        return drag.dragging;
     }
 
     /**
@@ -148,6 +190,7 @@ public final class DividerRail {
     private final class Drag extends MouseAdapter {
         private static final int IDLE = Integer.MIN_VALUE;
         private int startX = IDLE;
+        private int startY;
         private int startLocation;
         private boolean dragging;
 
@@ -155,6 +198,7 @@ public final class DividerRail {
         public void mousePressed(MouseEvent event) {
             if (SwingUtilities.isLeftMouseButton(event) && onDivider()) {
                 startX = event.getXOnScreen();
+                startY = event.getYOnScreen();
                 startLocation = pane.getDividerLocation();
                 dragging = false;
             }
@@ -167,7 +211,9 @@ public final class DividerRail {
             }
             int moved = event.getXOnScreen() - startX;
             if (!dragging) {
-                if (Math.abs(moved) <= DragSource.getDragThreshold()) {
+                // Nur eine Bewegung zur Seite zieht den Trenner; nach oben oder unten wird ein Symbol herausgezogen.
+                if (Math.abs(moved) <= DragSource.getDragThreshold() || busy.getAsBoolean()
+                        || Math.abs(event.getYOnScreen() - startY) > Math.abs(moved)) {
                     return;
                 }
                 dragging = true;

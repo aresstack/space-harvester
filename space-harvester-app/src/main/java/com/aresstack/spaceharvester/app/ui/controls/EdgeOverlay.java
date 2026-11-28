@@ -32,6 +32,10 @@ public final class EdgeOverlay extends JPanel {
     private JComponent bar;
     /** Je Platz die Mitte, um die er steht ({@code null}: am Fensterrand); ohne Eintrag steht er am Rand. */
     private final java.util.Map<JComponent, java.util.function.Supplier<Point>> anchors = new java.util.HashMap<>();
+    /** Je Platz die Höhe in ihm, die auf seiner Mitte liegt; ohne Eintrag seine halbe Höhe. */
+    private final java.util.Map<JComponent, java.util.function.IntSupplier> focuses = new java.util.HashMap<>();
+    /** Was gerade mit der Maus getragen wird ({@link #carry}), oder {@code null}. */
+    private JComponent carried;
 
     public EdgeOverlay() {
         super(new BorderLayout() {
@@ -80,6 +84,46 @@ public final class EdgeOverlay extends JPanel {
         anchors.put(slot, center);
     }
 
+    /**
+     * Wie {@link #anchor(JComponent, java.util.function.Supplier)}, aber auf der Mitte liegt nicht die halbe Höhe des
+     * Platzes, sondern {@code focus} Pixel unter seiner Oberkante: die Mitte der Knopfleiste, unter der noch einzelne
+     * Kugeln stehen ({@link SideDock}).
+     */
+    public void anchor(JComponent slot, java.util.function.Supplier<Point> center,
+            java.util.function.IntSupplier focus) {
+        anchors.put(slot, center);
+        focuses.put(slot, focus);
+    }
+
+    /**
+     * Trägt {@code part} mit der Maus über allem anderen: seine Mitte steht auf {@code center}. Ein weiterer Aufruf
+     * bewegt es; {@link #drop} nimmt es wieder weg.
+     */
+    public void carry(JComponent part, Point center) {
+        if (carried != part) {
+            drop();
+            carried = part;
+            add(part, FLOATING, 0);
+        }
+        Dimension size = part.getPreferredSize();
+        part.setBounds(center.x - size.width / 2, center.y - size.height / 2, size.width, size.height);
+        repaint();
+    }
+
+    /** Nimmt das Getragene weg. */
+    public void drop() {
+        if (carried != null) {
+            remove(carried);
+            carried = null;
+            repaint();
+        }
+    }
+
+    /** Was gerade getragen wird (für Tests), oder {@code null}. */
+    public JComponent carried() {
+        return carried;
+    }
+
     /** Wo ein Platz der Größe {@code size} steht: um seine Mitte, sonst an {@code edge} unter den Kopfleisten. */
     private Point place(JComponent slot, Dimension size, int edge, int top) {
         java.util.function.Supplier<Point> anchor = anchors.get(slot);
@@ -88,7 +132,9 @@ public final class EdgeOverlay extends JPanel {
             return new Point(edge, top);
         }
         int x = Math.max(FRAME_LINE, Math.min(getWidth() - FRAME_LINE - size.width, center.x - size.width / 2));
-        int y = Math.max(top, Math.min(getHeight() - size.height, center.y - size.height / 2));
+        java.util.function.IntSupplier focus = focuses.get(slot);
+        int above = focus == null ? size.height / 2 : focus.getAsInt();
+        int y = Math.max(top, Math.min(getHeight() - size.height, center.y - above));
         return new Point(x, y);
     }
 
@@ -108,7 +154,7 @@ public final class EdgeOverlay extends JPanel {
     /** Die Plätze überlappen den Inhalt: Swing muss die Geschwister in ihrer Reihenfolge zeichnen. */
     @Override
     public boolean isOptimizedDrawingEnabled() {
-        return left.getComponentCount() == 0 && right.getComponentCount() == 0;
+        return left.getComponentCount() == 0 && right.getComponentCount() == 0 && carried == null;
     }
 
     @Override

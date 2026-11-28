@@ -32,6 +32,8 @@ public final class ComicDivider extends BasicSplitPaneDivider {
     private boolean gripShown = true;
     /** Länge der Lücke in der Mitte der Linie, in der eine Knopfleiste sitzt; 0 ohne Lücke. */
     private int gap;
+    /** Wie viel der Lücke vor der Mitte der Linie liegt; der Rest liegt dahinter. */
+    private int gapBefore;
 
     private ComicDivider(BasicSplitPaneUI ui, ComicPalette palette) {
         super(ui);
@@ -100,9 +102,21 @@ public final class ComicDivider extends BasicSplitPaneDivider {
      * weiter. 0 schließt die Lücke.
      */
     public static void gap(JSplitPane pane, int length) {
+        gap(pane, Math.max(0, length) / 2, Math.max(0, length) - Math.max(0, length) / 2);
+    }
+
+    /**
+     * Wie {@link #gap(JSplitPane, int)}, aber mit einer Lücke, die nicht mittig liegt: {@code before} Pixel vor der
+     * Mitte der Linie, {@code after} dahinter. So stehen unter einer Knopfleiste noch einzelne Kugeln
+     * ({@link SideDock}), ohne dass die Leiste ihren Platz an der Stelle des Griffs verliert.
+     */
+    public static void gap(JSplitPane pane, int before, int after) {
+        int first = Math.max(0, before);
+        int length = first + Math.max(0, after);
         if (pane.getUI() instanceof BasicSplitPaneUI basic && basic.getDivider() instanceof ComicDivider divider
-                && divider.gap != Math.max(0, length)) {
-            divider.gap = Math.max(0, length);
+                && (divider.gap != length || divider.gapBefore != first)) {
+            divider.gap = length;
+            divider.gapBefore = first;
             divider.repaint();
         }
     }
@@ -166,7 +180,7 @@ public final class ComicDivider extends BasicSplitPaneDivider {
             int center = across / 2;
             int grip = Math.min(GRIP_MAX, along / 3);
             int gripStart = (along - grip) / 2;
-            int gapStart = (along - gap) / 2;
+            int gapStart = Math.max(8, along / 2 - gapBefore);
             if (lying) {
                 g2.setColor(palette.getInk());
                 if (gap > 0) {

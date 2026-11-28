@@ -633,6 +633,99 @@ class MainWindowTest {
      * „Aufträge“, Strg+J und „»“ in der Leiste klappen sie auf und zu; sie bleibt in jedem Bereich stehen, zugeklappt
      * bleibt nur der schmale Teiler, und Zustand samt Breite gelten für den nächsten Start.
      */
+    /**
+     * Angelo 28.11.2026: Ein Symbol der rechten Knopfleiste lässt sich als Kugel herauslösen. Die Kugel öffnet ihren
+     * eigenen Bereich neben dem der Leiste; beide teilen sich die Höhe. Zurück in der Leiste schaltet sie wieder um.
+     */
+    @Test
+    void aToolOfTheRightRailBecomesABallWithItsOwnAreaThatSharesTheHeight() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            JPanel surface = window.content(() -> { }, () -> { });
+            try {
+                surface.setSize(1400, 820);
+                window.chatOpen(true);
+                layoutAll(surface);
+                com.aresstack.spaceharvester.app.ui.controls.SideDock dock = window.sideDock();
+                String chat = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.TITLE;
+                Component chatArea = find(window.sideStack(),
+                        com.aresstack.spaceharvester.app.ui.content.ChatSidebar.class).get(0);
+                int full = window.sideStack().getHeight();
+                assertThat(chatArea.getHeight()).isEqualTo(full);
+
+                // Der offene Chat wird zur Kugel: Sein Bereich bleibt offen, die Leiste zeigt keine Wahl mehr.
+                dock.detach(chat, 0);
+                layoutAll(surface);
+                assertThat(window.chatOpen()).isTrue();
+                assertThat(window.chatToggle().isSelected()).isTrue();
+                assertThat(window.analysesToggle().isSelected()).isFalse();
+                assertThat(window.jobsToggle().isSelected()).isFalse();
+                assertThat(chatArea.getParent()).isSameAs(window.sideStack());
+                assertThat(chatArea.getHeight()).as("allein hat er die ganze Höhe").isEqualTo(full);
+                assertThat(window.chatSplit().getDividerSize())
+                        .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.ComicDivider.THICKNESS);
+                assertThat(AppState.shared().get(MainWindow.SIDE_BALLS_KEY)).isEqualTo("0:1");
+
+                // Die Leiste schaltet daneben weiter um: Analysen und Chat teilen sich die Höhe.
+                window.analysesToggle().doClick();
+                layoutAll(surface);
+                assertThat(window.analysesOpen()).isTrue();
+                assertThat(window.chatOpen()).isTrue();
+                List<Component> shown = window.sideStack().shown();
+                assertThat(shown).hasSize(2);
+                assertThat(shown.get(1)).isSameAs(chatArea);
+                assertThat(shown.get(0).getHeight()).isCloseTo(shown.get(1).getHeight(),
+                        org.assertj.core.data.Offset.offset(1));
+                assertThat(shown.get(0).getHeight() + shown.get(1).getHeight()
+                        + com.aresstack.spaceharvester.app.ui.controls.AreaStack.GAP).isEqualTo(full);
+                window.analysesToggle().doClick();
+                window.jobsToggle().doClick();
+                layoutAll(surface);
+                assertThat(window.analysesOpen()).as("in der Leiste ist höchstens eines offen").isFalse();
+                assertThat(window.jobsOpen()).isTrue();
+                assertThat(window.chatOpen()).isTrue();
+
+                // Die Kugel schließt nur ihren Bereich; mit der Leiste zusammen ist dann alles zu.
+                window.chatToggle().doClick();
+                layoutAll(surface);
+                assertThat(window.chatOpen()).isFalse();
+                assertThat(window.jobsOpen()).isTrue();
+                assertThat(window.sideStack().shown()).hasSize(1);
+                window.jobsToggle().doClick();
+                layoutAll(surface);
+                assertThat(window.chatSplit().getDividerSize()).as("alles zu: kein Trenner").isZero();
+                assertThat(window.sideStack().getWidth()).isZero();
+                window.chatOpen(true);
+                layoutAll(surface);
+                assertThat(window.chatOpen()).as("Strg+J öffnet auch den Chat als Kugel").isTrue();
+                assertThat(window.sideStack().getWidth()).isGreaterThan(0);
+
+                // Zurück in die Leiste: Der offene Chat ist wieder ihre Wahl.
+                dock.attach(chat, 0);
+                layoutAll(surface);
+                assertThat(dock.balls()).isEmpty();
+                assertThat(window.chatOpen()).isTrue();
+                assertThat(window.chatToggle().isSelected()).isTrue();
+                assertThat(chatArea.getParent()).isNotSameAs(window.sideStack());
+                assertThat(chatArea.getHeight()).isEqualTo(full);
+                assertThat(AppState.shared().get(MainWindow.SIDE_BALLS_KEY)).isEmpty();
+            } finally {
+                // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten ohne Kugeln, Chat zu.
+                for (String ball : window.sideDock().balls()) {
+                    window.sideDock().attach(ball, 0);
+                }
+                window.chatOpen(true);
+                window.chatOpen(false);
+            }
+        });
+    }
+
     @Test
     void theChatIsASidebarNextToTheWorkAreaThatTheButtonTopRightOpensAndCloses() throws Exception {
         Path config = home.resolve("app.yml");
