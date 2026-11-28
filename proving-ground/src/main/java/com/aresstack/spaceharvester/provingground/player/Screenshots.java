@@ -139,8 +139,7 @@ public final class Screenshots {
         byte[] actual;
         while (true) {
             actual = screenshot.get();
-            if (expected != null && differing(expected, decode(actual), options.threshold, null)
-                    <= options.allowed(expected.getWidth() * expected.getHeight())) {
+            if (expected != null && matches(expected, decode(actual), options)) {
                 return;
             }
             if (previous != null && Arrays.equals(previous, actual)) {
@@ -177,6 +176,13 @@ public final class Screenshots {
         }
         throw new AssertionError("Bildschirmfoto „" + name + "“: " + different + " Pixel weichen ab, erlaubt "
                 + options.allowed(expected.getWidth() * expected.getHeight()) + " (Unterschied: " + diffFile + ")");
+    }
+
+    /** Same size and at most the allowed number of different pixels (a size change never passes). */
+    static boolean matches(BufferedImage expected, BufferedImage actual, Options options) {
+        return actual.getWidth() == expected.getWidth() && actual.getHeight() == expected.getHeight()
+                && differing(expected, actual, options.threshold, null)
+                <= options.allowed(expected.getWidth() * expected.getHeight());
     }
 
     /**

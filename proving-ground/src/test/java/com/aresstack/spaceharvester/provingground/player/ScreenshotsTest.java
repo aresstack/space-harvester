@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.function.Supplier;
 import javax.imageio.ImageIO;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -87,6 +88,23 @@ class ScreenshotsTest {
                 || !Screenshots.platform().isEmpty());
         assertEquals("Konto-Übersicht", Screenshots.fileName("Konto Übersicht"));
         assertEquals("a-b", Screenshots.fileName("a/b"));
+    }
+
+    @Test
+    void aSizeChangeNeverPassesEvenWhenEveryPixelMayDiffer() {
+        BufferedImage small = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+        BufferedImage big = new BufferedImage(100, 100, BufferedImage.TYPE_INT_ARGB);
+        assertFalse(Screenshots.matches(small, big, new Screenshots.Options().setMaxDiffPixels(1)));
+        assertFalse(Screenshots.matches(small, big, new Screenshots.Options().setMaxDiffPixelRatio(1)));
+        assertTrue(Screenshots.matches(small, small, new Screenshots.Options()));
+    }
+
+    @Test
+    void thePageCheckComparesTheWholePageTheElementCheckOnlyTheElement() {
+        assertTrue(com.aresstack.spaceharvester.provingground.model.TestStep.screenshotCode(null, "s")
+                .contains("new Page.ScreenshotOptions().setFullPage(true)"));
+        assertFalse(com.aresstack.spaceharvester.provingground.model.TestStep.screenshotCode("#a", "s")
+                .contains("setFullPage"));
     }
 
     private static BufferedImage box(Color color, int shift) {

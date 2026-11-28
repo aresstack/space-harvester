@@ -115,7 +115,8 @@ public final class TestStep {
         String options = element ? "Locator.ScreenshotOptions" : "Page.ScreenshotOptions";
         String subject = element ? "page.locator(" + QUOTE.toJson(selector) + ")" : "page";
         return "screenshots.expect(" + QUOTE.toJson(snapshot) + ", () -> " + subject + ".screenshot(new " + options
-                + "()\n    .setAnimations(ScreenshotAnimations.DISABLED).setCaret(ScreenshotCaret.HIDE)));";
+                + "()" + (element ? "" : ".setFullPage(true)")
+                + "\n    .setAnimations(ScreenshotAnimations.DISABLED).setCaret(ScreenshotCaret.HIDE)));";
     }
 
     /** {@code text} as a Java string literal, quoted as Playwright's generator quotes. */
