@@ -63,7 +63,7 @@ public final class SegmentedToggle extends JPanel {
 
     /**
      * Fügt eine Hälfte mit Symbol an Platz {@code index} ein (Angelo 28.11.2026: Symbole lassen sich aus einer
-     * Knopfleiste herausziehen und wieder hineinschieben, {@link SideDock}). Anders als beim Anfügen wird sie nicht
+     * Knopfleiste herausziehen und wieder hineinschieben, {@link PearlString}). Anders als beim Anfügen wird sie nicht
      * von selbst gewählt.
      */
     public SegmentedToggle segment(String name, javax.swing.Icon icon, int index) {

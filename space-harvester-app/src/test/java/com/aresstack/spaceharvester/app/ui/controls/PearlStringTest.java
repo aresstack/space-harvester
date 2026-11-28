@@ -19,14 +19,14 @@ import org.junit.jupiter.api.Test;
  * Knopfleiste und Kugeln einer Seitenleiste (Angelo 28.11.2026): Symbole lassen sich herausziehen, zurückschieben und
  * umsortieren; jede Kugel öffnet ihren eigenen Bereich, und die offenen Bereiche teilen sich die Höhe.
  */
-class SideDockTest {
+class PearlStringTest {
 
     private static final String CHAT = "Chat";
     private static final String ANALYSES = "Analysen";
     private static final String JOBS = "Aufträge";
 
     private final SegmentedToggle rail = new SegmentedToggle();
-    private final SideDock dock = new SideDock(rail);
+    private final PearlString dock = new PearlString(rail);
     private final List<String> changes = new ArrayList<>();
 
     private void threeTools() {
@@ -61,9 +61,9 @@ class SideDockTest {
             dock.detach(ANALYSES, 1);
 
             assertThat(rail.names()).containsExactly(CHAT, JOBS);
-            assertThat(dock.units()).containsExactly(SideDock.RAIL, ANALYSES);
-            assertThat(dock.balls()).containsExactly(ANALYSES);
-            assertThat(dock.ball(ANALYSES)).isTrue();
+            assertThat(dock.units()).containsExactly(PearlString.RAIL, ANALYSES);
+            assertThat(dock.pearls()).containsExactly(ANALYSES);
+            assertThat(dock.pearl(ANALYSES)).isTrue();
             assertThat(dock.open(ANALYSES)).as("war nicht gewählt: die Kugel ist zu").isFalse();
             assertThat(rail.getPreferredSize().height).isLessThan(railHeight);
             AbstractButton ball = dock.button(ANALYSES);
@@ -76,7 +76,7 @@ class SideDockTest {
             // Ein Klick öffnet den eigenen Bereich, ein zweiter schließt ihn; die Leiste bleibt unberührt.
             ball.doClick();
             assertThat(dock.open(ANALYSES)).isTrue();
-            assertThat(dock.openBalls()).containsExactly(ANALYSES);
+            assertThat(dock.openPearls()).containsExactly(ANALYSES);
             assertThat(rail.selected()).isNull();
             ball.doClick();
             assertThat(dock.open(ANALYSES)).isFalse();
@@ -84,7 +84,7 @@ class SideDockTest {
             // Zurück an ihren alten Platz in der Leiste.
             dock.attach(ANALYSES, 1);
             assertThat(rail.names()).containsExactly(CHAT, ANALYSES, JOBS);
-            assertThat(dock.balls()).isEmpty();
+            assertThat(dock.pearls()).isEmpty();
             assertThat(dock.button(ANALYSES).getParent()).isSameAs(rail);
             assertThat(dock.button(ANALYSES).getToolTipText()).isEqualTo("Analysen zeigen");
             assertThat(rail.getPreferredSize().height).isEqualTo(railHeight);
@@ -119,23 +119,23 @@ class SideDockTest {
             dock.detach(CHAT, 1);
             dock.detach(JOBS, 2);
             dock.open(JOBS, true);
-            assertThat(dock.units()).containsExactly(SideDock.RAIL, CHAT, JOBS);
+            assertThat(dock.units()).containsExactly(PearlString.RAIL, CHAT, JOBS);
 
             // Die Reihenfolge der Gruppen ist die ihrer Bereiche: Die unterste Kugel nach oben geschoben steht über
             // der Leiste.
             dock.order(JOBS, 0);
 
-            assertThat(dock.units()).containsExactly(JOBS, SideDock.RAIL, CHAT);
-            assertThat(dock.balls()).containsExactly(JOBS, CHAT);
+            assertThat(dock.units()).containsExactly(JOBS, PearlString.RAIL, CHAT);
+            assertThat(dock.pearls()).containsExactly(JOBS, CHAT);
             assertThat(dock.placement()).isEqualTo("2:1,R,0:0");
-            assertThat(dock.openBalls()).containsExactly(JOBS);
+            assertThat(dock.openPearls()).containsExactly(JOBS);
 
             // Ein neues Fenster stellt dieselben Kugeln wieder her; Unlesbares bleibt in der Leiste.
             SegmentedToggle otherRail = new SegmentedToggle();
-            SideDock other = new SideDock(otherRail);
+            PearlString other = new PearlString(otherRail);
             other.tool(CHAT, Glyph.STAR, "").tool(ANALYSES, Glyph.TABLE, "").tool(JOBS, Glyph.CROSSHAIR, "");
             other.restore("2:1,R,0:0,kaputt,9:1");
-            assertThat(other.units()).containsExactly(JOBS, SideDock.RAIL, CHAT);
+            assertThat(other.units()).containsExactly(JOBS, PearlString.RAIL, CHAT);
             assertThat(other.open(JOBS)).isTrue();
             assertThat(other.open(CHAT)).isFalse();
             assertThat(otherRail.names()).containsExactly(ANALYSES);
@@ -143,10 +143,10 @@ class SideDockTest {
             // Das letzte Symbol bleibt in der Leiste: Allein ist sie selbst eine Kugel und wechselt nur den Platz.
             dock.detach(ANALYSES, 0);
             assertThat(rail.names()).containsExactly(ANALYSES);
-            assertThat(dock.units()).containsExactly(SideDock.RAIL, JOBS, CHAT);
+            assertThat(dock.units()).containsExactly(PearlString.RAIL, JOBS, CHAT);
 
-            dock.closeBalls();
-            assertThat(dock.openBalls()).isEmpty();
+            dock.closePearls();
+            assertThat(dock.openPearls()).isEmpty();
             assertThat(dock.button(JOBS).isSelected()).isFalse();
         });
     }
@@ -173,12 +173,14 @@ class SideDockTest {
             drag(jobs, 5, 60);
             assertThat(dock.carrying()).isTrue();
             assertThat(overlay.carried()).as("das Symbol wird als Abbild getragen").isNotNull();
+            assertThat(overlay.carried().getComponent(0).getWidth()).as("das Abbild ist gezeichnet, nicht leer")
+                    .isGreaterThan(0);
             assertThat(rail.names()).as("erst beim Loslassen ändert sich etwas").contains(JOBS);
             release(jobs, 5, 60);
 
             assertThat(dock.carrying()).isFalse();
             assertThat(overlay.carried()).isNull();
-            assertThat(dock.balls()).containsExactly(JOBS);
+            assertThat(dock.pearls()).containsExactly(JOBS);
             assertThat(rail.names()).containsExactly(CHAT, ANALYSES);
             slot.setSize(dock.column().getPreferredSize());
             slot.doLayout();
@@ -191,7 +193,7 @@ class SideDockTest {
             press(analyses, 5, 5);
             drag(analyses, above.x, above.y);
             release(analyses, above.x, above.y);
-            assertThat(dock.balls()).containsExactly(ANALYSES, JOBS);
+            assertThat(dock.pearls()).containsExactly(ANALYSES, JOBS);
             slot.setSize(dock.column().getPreferredSize());
             slot.doLayout();
             layout();
@@ -203,7 +205,7 @@ class SideDockTest {
             press(ball, 5, 5);
             drag(ball, onRail.x, onRail.y);
             release(ball, onRail.x, onRail.y);
-            assertThat(dock.balls()).containsExactly(ANALYSES);
+            assertThat(dock.pearls()).containsExactly(ANALYSES);
             assertThat(rail.names()).containsExactly(CHAT, JOBS);
         });
     }
@@ -220,7 +222,7 @@ class SideDockTest {
             drag(chat, 40, 8);
             assertThat(dock.carrying()).as("zur Seite zieht die Leiste ihren Trenner").isFalse();
             release(chat, 40, 8);
-            assertThat(dock.balls()).isEmpty();
+            assertThat(dock.pearls()).isEmpty();
 
             dividerDragged[0] = true;
             press(chat, 5, 5);
@@ -233,7 +235,7 @@ class SideDockTest {
             drag(chat, 8, 200);
             assertThat(dock.carrying()).isTrue();
             release(chat, 8, 200);
-            assertThat(dock.balls()).containsExactly(CHAT);
+            assertThat(dock.pearls()).containsExactly(CHAT);
         });
     }
 

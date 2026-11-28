@@ -44,7 +44,7 @@ public final class DividerRail {
         for (Component part : rail.getComponents()) {
             listen(part, drag);
         }
-        // Symbole, die später wieder in die Leiste geschoben werden ({@link SideDock}), ziehen den Trenner ebenso.
+        // Symbole, die später wieder in die Leiste geschoben werden ({@link PearlString}), ziehen den Trenner ebenso.
         rail.addContainerListener(new java.awt.event.ContainerAdapter() {
             @Override
             public void componentAdded(java.awt.event.ContainerEvent event) {
@@ -109,7 +109,7 @@ public final class DividerRail {
 
     /**
      * Der Platz erstreckt sich über den ganzen Trenner, und was auf ihm steht, verteilt sich selbst darüber
-     * ({@link SideDock}: die Leiste und jede Kugel auf Höhe ihres Bereichs).
+     * ({@link PearlString}: die Leiste und jede Kugel auf Höhe ihres Bereichs).
      */
     public DividerRail spanning() {
         spanning = true;
@@ -141,7 +141,7 @@ public final class DividerRail {
 
     /**
      * Solange {@code busy} gilt, zieht die Leiste den Trenner nicht: Jemand anderes trägt gerade eines ihrer Symbole
-     * ({@link SideDock}).
+     * ({@link PearlString}).
      */
     public void yieldWhile(java.util.function.BooleanSupplier busy) {
         this.busy = busy;

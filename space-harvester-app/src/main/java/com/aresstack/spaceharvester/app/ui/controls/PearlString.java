@@ -23,7 +23,8 @@ import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 
 /**
- * Die Werkzeuge einer Seitenleiste als Knopfleiste und einzelne Kugeln (Angelo 28.11.2026, nach dem Vorbild der
+ * Die „Perlenkette“ (Angelo 28.11.2026): die Werkzeuge einer Seitenleiste als Knopfleiste und einzelne Kugeln
+ * („Perlen“, im Code {@code pearl}), aufgereiht auf dem Trenner der Leiste; nach dem Vorbild der
  * Werkzeugfenster in IntelliJ): Jedes Symbol der Knopfleiste lässt sich mit der Maus herausziehen und steht dann als
  * eigene Kugel darunter; zurück auf die Leiste geschoben, gehört es wieder zu ihr. Kugeln lassen sich untereinander
  * umsortieren. Die Symbole einer Knopfleiste schalten nur um: Von ihnen ist höchstens eines offen. Jede Kugel öffnet
@@ -34,7 +35,7 @@ import javax.swing.SwingUtilities;
  * <p>Diese Klasse kennt nur Namen, Symbole und Plätze. Was ein Werkzeug zeigt, entscheidet der Aufrufer und hört
  * dafür auf {@link #onChange}.
  */
-public final class SideDock {
+public final class PearlString {
 
     /** Abstand zwischen Knopfleiste und Kugeln und zwischen zwei Kugeln. */
     public static final int GAP = 4;
@@ -70,13 +71,13 @@ public final class SideDock {
     }
 
     /** Die Werkzeuge stehen zunächst alle in {@code rail}. */
-    public SideDock(SegmentedToggle rail) {
+    public PearlString(SegmentedToggle rail) {
         this.rail = rail;
         column.rebuild();
     }
 
     /** Meldet ein Werkzeug an; es steht am Ende der Knopfleiste. */
-    public SideDock tool(String name, Icon icon, String tip) {
+    public PearlString tool(String name, Icon icon, String tip) {
         tools.put(name, new Tool(icon, tip));
         rail.segment(name, icon);
         dress(rail, name);
@@ -149,7 +150,7 @@ public final class SideDock {
     }
 
     /** Ob das Werkzeug als einzelne Kugel steht. */
-    public boolean ball(String name) {
+    public boolean pearl(String name) {
         return views.containsKey(name);
     }
 
@@ -163,15 +164,15 @@ public final class SideDock {
     }
 
     /** Die Kugeln von oben nach unten. */
-    public List<String> balls() {
+    public List<String> pearls() {
         List<String> result = new ArrayList<>(units);
         result.remove(RAIL);
         return result;
     }
 
     /** Die Kugeln, deren Bereich offen ist, von oben nach unten. */
-    public List<String> openBalls() {
-        List<String> result = balls();
+    public List<String> openPearls() {
+        List<String> result = pearls();
         result.retainAll(open);
         return result;
     }
@@ -183,7 +184,7 @@ public final class SideDock {
 
     /** Öffnet oder schließt den Bereich einer Kugel; für ein Werkzeug in der Leiste geschieht nichts. */
     public void open(String name, boolean shown) {
-        if (!ball(name) || open.contains(name) == shown) {
+        if (!pearl(name) || open.contains(name) == shown) {
             return;
         }
         if (shown) {
@@ -197,7 +198,7 @@ public final class SideDock {
     }
 
     /** Schließt die Bereiche aller Kugeln. */
-    public void closeBalls() {
+    public void closePearls() {
         if (open.isEmpty()) {
             return;
         }
@@ -215,7 +216,7 @@ public final class SideDock {
      * selbst schon eine Kugel und wechselt nur ihren Platz ({@link #order}).
      */
     public void detach(String name, int index) {
-        if (!tools.containsKey(name) || ball(name)) {
+        if (!tools.containsKey(name) || pearl(name)) {
             return;
         }
         if (rail.names().size() == 1) {
@@ -253,7 +254,7 @@ public final class SideDock {
         if (!tools.containsKey(name)) {
             return;
         }
-        if (!ball(name)) {
+        if (!pearl(name)) {
             boolean chosen = name.equals(rail.selected());
             rail.remove(name);
             rail.segment(name, tools.get(name).icon, index);
@@ -359,7 +360,7 @@ public final class SideDock {
             try {
                 int number = Integer.parseInt(fields[0]);
                 // Das letzte Symbol bleibt in der Leiste.
-                if (number < 0 || number >= names.size() || ball(names.get(number)) || rail.names().size() == 1) {
+                if (number < 0 || number >= names.size() || pearl(names.get(number)) || rail.names().size() == 1) {
                     continue;
                 }
                 rail.remove(names.get(number));
@@ -382,7 +383,7 @@ public final class SideDock {
      */
     void drop(String name, Point point) {
         Rectangle bar = rail.getBounds();
-        boolean alone = !ball(name) && rail.names().size() == 1;
+        boolean alone = !pearl(name) && rail.names().size() == 1;
         boolean near = point.x >= -column.getWidth() && point.x <= 2 * column.getWidth();
         if (!alone && near && point.y >= bar.y - GAP / 2 && point.y < bar.y + bar.height + GAP / 2) {
             int height = bar.height / Math.max(1, rail.getComponentCount());
@@ -391,9 +392,9 @@ public final class SideDock {
             attach(name, Math.max(0, index));
             return;
         }
-        Component own = ball(name) ? views.get(name) : rail;
+        Component own = pearl(name) ? views.get(name) : rail;
         int from = own.getY() + own.getHeight() / 2;
-        String self = ball(name) ? name : alone ? RAIL : null;
+        String self = pearl(name) ? name : alone ? RAIL : null;
         int index = 0;
         for (String unit : units) {
             if (unit.equals(self)) {
@@ -441,7 +442,7 @@ public final class SideDock {
                 int dx = Math.abs(event.getX() - start.x);
                 int dy = Math.abs(event.getY() - start.y);
                 if (Math.max(dx, dy) <= DragSource.getDragThreshold() || railBusy.getAsBoolean()
-                        || !ball(name) && sideways.getAsBoolean() && dx >= dy) {
+                        || !pearl(name) && sideways.getAsBoolean() && dx >= dy) {
                     return;
                 }
                 carrying = true;

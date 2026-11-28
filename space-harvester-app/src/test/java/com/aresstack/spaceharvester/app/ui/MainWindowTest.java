@@ -652,7 +652,7 @@ class MainWindowTest {
                 surface.setSize(1400, 820);
                 window.chatOpen(true);
                 layoutAll(surface);
-                com.aresstack.spaceharvester.app.ui.controls.SideDock dock = window.sideDock();
+                com.aresstack.spaceharvester.app.ui.controls.PearlString dock = window.sidePearls();
                 String chat = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.TITLE;
                 Component chatArea = find(window.sideStack(),
                         com.aresstack.spaceharvester.app.ui.content.ChatSidebar.class).get(0);
@@ -670,7 +670,7 @@ class MainWindowTest {
                 assertThat(chatArea.getHeight()).as("allein hat er die ganze Höhe").isEqualTo(full);
                 assertThat(window.chatSplit().getDividerSize())
                         .isEqualTo(com.aresstack.spaceharvester.app.ui.controls.ComicDivider.THICKNESS);
-                assertThat(AppState.shared().get(MainWindow.SIDE_BALLS_KEY)).isEqualTo("R,0:1");
+                assertThat(AppState.shared().get(MainWindow.SIDE_PEARLS_KEY)).isEqualTo("R,0:1");
 
                 // Die Leiste schaltet daneben weiter um: Analysen und Chat teilen sich die Höhe.
                 window.analysesToggle().doClick();
@@ -723,6 +723,23 @@ class MainWindowTest {
                         .isCloseTo(upper.y + upper.height / 2, org.assertj.core.data.Offset.offset(1));
                 dock.order(chat, 1);
                 layoutAll(surface);
+
+                // Am waagerechten Trenner gezogen: Die Höhen ändern sich, Leiste und Kugel wandern mit ihrem Bereich,
+                // und die Anteile sind gemerkt.
+                window.sideStack().pull(1, 120);
+                layoutAll(surface);
+                layoutAll(surface);
+                shown = window.sideStack().shown();
+                assertThat(shown.get(0).getHeight() - shown.get(1).getHeight()).isCloseTo(240,
+                        org.assertj.core.data.Offset.offset(1));
+                ballView = window.chatToggle().getParent();
+                ballAt = SwingUtilities.convertRectangle(ballView.getParent(), ballView.getBounds(), surface);
+                lower = SwingUtilities.convertRectangle(window.sideStack(), shown.get(1).getBounds(), surface);
+                assertThat(ballAt.y + ballAt.height / 2).as("die Kugel wandert mit ihrem Bereich")
+                        .isCloseTo(lower.y + lower.height / 2, org.assertj.core.data.Offset.offset(1));
+                assertThat(AppState.shared().get(MainWindow.SIDE_SHARES_KEY)).isNotBlank();
+                window.sideStack().pull(1, -120);
+                layoutAll(surface);
                 window.analysesToggle().doClick();
                 window.jobsToggle().doClick();
                 layoutAll(surface);
@@ -748,19 +765,20 @@ class MainWindowTest {
                 // Zurück in die Leiste: Der offene Chat ist wieder ihre Wahl.
                 dock.attach(chat, 0);
                 layoutAll(surface);
-                assertThat(dock.balls()).isEmpty();
+                assertThat(dock.pearls()).isEmpty();
                 assertThat(window.chatOpen()).isTrue();
                 assertThat(window.chatToggle().isSelected()).isTrue();
                 assertThat(chatArea.getParent()).isNotSameAs(window.sideStack());
                 assertThat(chatArea.getHeight()).isEqualTo(full);
-                assertThat(AppState.shared().get(MainWindow.SIDE_BALLS_KEY)).isEmpty();
+                assertThat(AppState.shared().get(MainWindow.SIDE_PEARLS_KEY)).isEmpty();
             } finally {
                 // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten ohne Kugeln, Chat zu.
-                for (String ball : window.sideDock().balls()) {
-                    window.sideDock().attach(ball, 0);
+                for (String ball : window.sidePearls().pearls()) {
+                    window.sidePearls().attach(ball, 0);
                 }
                 window.chatOpen(true);
                 window.chatOpen(false);
+                AppState.shared().put(MainWindow.SIDE_SHARES_KEY, "");
             }
         });
     }

@@ -110,7 +110,7 @@ public final class ComicDivider extends BasicSplitPaneDivider {
     /**
      * Wie {@link #gap(JSplitPane, int)}, aber mit einer Lücke, die nicht mittig liegt: {@code before} Pixel vor der
      * Mitte der Linie, {@code after} dahinter. So stehen unter einer Knopfleiste noch einzelne Kugeln
-     * ({@link SideDock}), ohne dass die Leiste ihren Platz an der Stelle des Griffs verliert.
+     * ({@link PearlString}), ohne dass die Leiste ihren Platz an der Stelle des Griffs verliert.
      */
     public static void gap(JSplitPane pane, int before, int after) {
         int first = Math.max(0, before);
@@ -125,7 +125,7 @@ public final class ComicDivider extends BasicSplitPaneDivider {
 
     /**
      * Unterbricht die Linie an mehreren Stellen (je Anfang und Ende, von vorn nach hinten): Auf dem Trenner sitzen
-     * eine Knopfleiste und einzelne Kugeln, jede auf Höhe ihres Bereichs ({@link SideDock}). Eine leere Liste hebt
+     * eine Knopfleiste und einzelne Kugeln, jede auf Höhe ihres Bereichs ({@link PearlString}). Eine leere Liste hebt
      * das auf; dann gilt wieder {@link #gap(JSplitPane, int)}.
      */
     public static void gaps(JSplitPane pane, java.util.List<int[]> spans) {

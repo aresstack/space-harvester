@@ -96,7 +96,7 @@ public final class EdgeOverlay extends JPanel {
     /**
      * Wie {@link #anchor(JComponent, java.util.function.Supplier)}, aber auf der Mitte liegt nicht die halbe Höhe des
      * Platzes, sondern {@code focus} Pixel unter seiner Oberkante: die Mitte der Knopfleiste, unter der noch einzelne
-     * Kugeln stehen ({@link SideDock}).
+     * Kugeln stehen ({@link PearlString}).
      */
     public void anchor(JComponent slot, java.util.function.Supplier<Point> center,
             java.util.function.IntSupplier focus) {
@@ -107,7 +107,7 @@ public final class EdgeOverlay extends JPanel {
     /**
      * Streckt einen Platz über eine ganze Strecke, etwa die Linie eines Trenners: Solange {@code line} ein Rechteck
      * liefert, ist der Platz so hoch wie es und steht waagerecht mittig darauf. Was auf ihm steht, verteilt sich
-     * selbst über die Höhe ({@link SideDock}: jede Kugel auf Höhe ihres Bereichs).
+     * selbst über die Höhe ({@link PearlString}: jede Kugel auf Höhe ihres Bereichs).
      */
     public void span(JComponent slot, java.util.function.Supplier<java.awt.Rectangle> line) {
         spans.put(slot, line);
@@ -125,6 +125,8 @@ public final class EdgeOverlay extends JPanel {
         }
         Dimension size = part.getPreferredSize();
         part.setBounds(center.x - size.width / 2, center.y - size.height / 2, size.width, size.height);
+        // Das Getragene ist neu und hat noch kein Layout: Ohne es blieben seine Teile leer und es unsichtbar.
+        part.doLayout();
         repaint();
     }
 
