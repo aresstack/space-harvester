@@ -43,7 +43,7 @@ class RecordingCollectorTest {
             throw new AssertionError("asked only for a new fill");
         });
         assertEquals(1, test.size());
-        assertEquals("${secret.Passwort}", test.step(0).text());
+        assertEquals("{{secret.Passwort}}", test.step(0).text());
     }
 
     @Test
