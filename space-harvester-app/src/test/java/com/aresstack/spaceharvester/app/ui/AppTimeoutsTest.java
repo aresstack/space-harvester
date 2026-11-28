@@ -22,7 +22,7 @@ class AppTimeoutsTest {
 
         assertThat(timeouts.get(Value.DOWNLOAD_CONNECT)).isEqualTo(Duration.ofSeconds(30));
         assertThat(timeouts.get(Value.DOWNLOAD_RESPONSE)).isEqualTo(Duration.ofSeconds(60));
-        assertThat(timeouts.get(Value.BROWSER_START)).isEqualTo(Duration.ofSeconds(30));
+        assertThat(timeouts.get(Value.BROWSER_START)).as("ohne Frist").isEqualTo(Duration.ZERO);
         assertThat(timeouts.get(Value.DIAGRAM_LABELS)).isEqualTo(Duration.ofSeconds(30));
         assertThat(timeouts.get(Value.AUDIO_SILENCE)).isEqualTo(Duration.ofSeconds(60));
     }

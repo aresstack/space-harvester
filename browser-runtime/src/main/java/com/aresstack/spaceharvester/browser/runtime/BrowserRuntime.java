@@ -247,9 +247,7 @@ public final class BrowserRuntime {
                         case FIREFOX -> firefoxLaunchOptions(executable, headless, acceptRepost);
                         case CHROME, EDGE -> chromiumLaunchOptions(channel, headless);
                     };
-                    if (config.startTimeout().toMillis() > 0) {
-                        options.setTimeout(config.startTimeout().toMillis());
-                    }
+                    options.setTimeout(startTimeoutMillis());
                     browser = channel.firefoxFamily() ? playwright.firefox().launch(options)
                             : playwright.chromium().launch(options);
                 }
@@ -333,10 +331,17 @@ public final class BrowserRuntime {
 
     private BrowserType.LaunchPersistentContextOptions withStartTimeout(
             BrowserType.LaunchPersistentContextOptions options) {
-        if (config.startTimeout().toMillis() > 0) {
-            options.setTimeout(config.startTimeout().toMillis());
-        }
+        options.setTimeout(startTimeoutMillis());
         return options;
+    }
+
+    /**
+     * The start limit for Playwright; 0 is Playwright's "no limit". The first start of a browser on a machine can take
+     * longer than any fixed wait (measured in CI: 20 s until Firefox listened, 10 s more for the session, the second
+     * start under 2 s); a limit there closed a browser in the middle of its start.
+     */
+    private double startTimeoutMillis() {
+        return Math.max(0L, config.startTimeout().toMillis());
     }
 
     /** The installed Firefox on its own profile: a real window (no viewport emulation), no downloads. */
