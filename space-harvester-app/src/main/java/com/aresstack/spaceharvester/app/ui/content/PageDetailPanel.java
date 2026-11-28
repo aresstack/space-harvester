@@ -3107,7 +3107,7 @@ public final class PageDetailPanel extends JPanel {
         editor.setEditable(false);
         editor.setText(source);
         editor.setCaretPosition(0);
-        fileContent.add(new org.fife.ui.rtextarea.RTextScrollPane(editor), BorderLayout.CENTER);
+        fileContent.add(Comic.comicBars(new org.fife.ui.rtextarea.RTextScrollPane(editor)), BorderLayout.CENTER);
         originalProgramShown = true;
         originalCards.show(originalContent, ORIGINAL_FILE_CARD);
         if (line > 0 && line <= editor.getLineCount()) {
@@ -4261,7 +4261,7 @@ public final class PageDetailPanel extends JPanel {
                              ReadingPane.Prepared prepared) {
     }
 
-    private static ReadingPane.Prepared prepare(AppRuntime runtime,
+    static ReadingPane.Prepared prepare(AppRuntime runtime,
                                                 com.aresstack.spaceharvester.application.reading.ReadingView view) {
         // Ohne Bilder: Das HTML steht sofort, die Bilder holt die Ansicht nach dem Anzeigen nach (Angelo, 17.11.2026).
         return ReadingPane.prepareDeferred(view, image -> runtime.workspace().viewDiagramVector(view, image),

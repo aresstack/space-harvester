@@ -243,7 +243,7 @@ final class FtpJobsView extends JPanel implements JesChatTools.Access {
         spoolText.setHighlightCurrentLine(false);
         spoolText.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_NONE);
         spoolText.getAccessibleContext().setAccessibleName("Spool-Text");
-        RTextScrollPane textScroll = new RTextScrollPane(spoolText);
+        RTextScrollPane textScroll = Comic.comicBars(new RTextScrollPane(spoolText));
         textScroll.setBorder(BorderFactory.createLineBorder(Comic.LINE));
         diagram = new SpoolDiagram(spoolText::getText,
                 () -> selectedJob() == null ? "SPOOL" : selectedJob().jobName(), textScroll);
