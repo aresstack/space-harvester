@@ -1265,6 +1265,12 @@ public final class SearchView implements View {
         // Eigene Anfragenummer: Antworten der vorigen Suche (Neusortieren, Nachbarn, Ladestand) dürfen die
         // nachgesuchte Quelle nicht mehr überschreiben. Bis 23.11.2026 kam ein spätes Neusortieren der alten Quelle
         // nach dem ersten Stapel an, setzte deren (leeren) Cursor und „Weitere laden“ blieb aus (CI 45213208517).
+        // Dem Laden des vorigen Stapels folgt die Ansicht ab jetzt nicht mehr (wie bei „Weitere laden“): Lud die alte
+        // Quelle noch Seiten in den Cache, stieß ihre nächste Meldung sonst ein Neusortieren mit der alten Anfrage
+        // unter der neuen Anfragenummer an; kam es nach dem ersten Stapel der nachgesuchten Quelle an, setzte es
+        // deren Cursor auf den (leeren) der alten, und „Weitere laden“ blieb aus (CI auf main, 28.11.2026).
+        untrack();
+        progressId = null;
         int before = request;
         int id = ++request;
         if (neighborsFor == before) {
