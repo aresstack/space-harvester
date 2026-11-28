@@ -75,6 +75,33 @@ class ProvingGroundWorkspaceTest {
         assertThat(TestCaseFile.read(directory.resolve("anmeldung/login.jsonl")).size()).isEqualTo(1);
         assertThat(ProjectFile.read(directory).testCase("anmeldung/login").steps()).doesNotContainKey(assertId);
 
+        // Bildvergleich einfügen: nach dem gewählten Schritt, auf dessen Seite, mit Playwright-Code zum Abspielen.
+        SwingUtilities.invokeAndWait(() -> workspace.get().insertScreenshotCheck(0, " Startseite "));
+        workspace.get().flush();
+        TestCase withCheck = TestCaseFile.read(directory.resolve("anmeldung/login.jsonl"));
+        assertThat(withCheck.size()).isEqualTo(2);
+        assertThat(withCheck.step(1).name()).isEqualTo(TestStep.ASSERT_SCREENSHOT);
+        assertThat(withCheck.step(1).pageGuid()).isEqualTo(withCheck.step(0).pageGuid());
+        assertThat(withCheck.step(1).snapshot()).isEqualTo("Startseite");
+        assertThat(withCheck.step(1).code()).startsWith("screenshots.expect(\"Startseite\", () -> page.screenshot(");
+
+        // JUnit-Export: Playwright-Java-Code ohne Proving Ground; was nicht geht, wird genannt.
+        AtomicReference<com.aresstack.spaceharvester.provingground.player.JUnitExport.Result> exported =
+                new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> exported.set(workspace.get().exportShownCase()));
+        assertThat(exported.get().className()).isEqualTo("AnmeldenTest");
+        assertThat(exported.get().source()).contains("try (Playwright playwright = Playwright.create())")
+                .doesNotContain("com.aresstack");
+        assertThat(exported.get().notExported()).anyMatch(note -> note.contains("Bildvergleich"));
+        Path target = directory.resolve("export/AnmeldenTest.java");
+        Files.createDirectories(target.getParent());
+        SwingUtilities.invokeAndWait(() -> workspace.get().writeExport(exported.get(), target));
+        workspace.get().flush();
+        assertThat(Files.readString(target)).isEqualTo(exported.get().source());
+
+        SwingUtilities.invokeAndWait(() -> workspace.get().deleteStep(1));
+        workspace.get().flush();
+
         // Neue Suite und ein neuer Testfall bekommen lesbare IDs und eine eigene Datei.
         SwingUtilities.invokeAndWait(() -> workspace.get().createSuite("Konto & Daten"));
         workspace.get().flush();

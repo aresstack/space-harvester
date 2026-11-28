@@ -153,7 +153,8 @@ jobs:
       - name: Aufnehmen und Abspielen mit Firefox
         env:
           PROVING_GROUND_TEST_CHANNEL: firefox
-        run: ./gradlew :proving-ground:liveTest --console=plain
+        # xvfb: der exportierte JUnit-Test startet den Browser sichtbar, wie Playwrights Generator es schreibt
+        run: xvfb-run -a ./gradlew :proving-ground:liveTest --console=plain
       - name: Kein Test übersprungen
         working-directory: proving-ground/build/test-results/liveTest
         run: |

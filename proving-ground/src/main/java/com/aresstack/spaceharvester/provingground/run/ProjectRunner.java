@@ -49,6 +49,11 @@ public final class ProjectRunner {
     @FunctionalInterface
     public interface CaseSource {
         TestCase read(TestCaseEntry testCase) throws IOException;
+
+        /** Where the reference images of the test case's screenshot comparisons are, or null (none known). */
+        default Path screenshotReferences(TestCaseEntry testCase) {
+            return null;
+        }
     }
 
     private final TestPlayer player = new TestPlayer();
@@ -56,8 +61,18 @@ public final class ProjectRunner {
     /** Runs the project in {@code directory} (its test case files), with users' access data from {@code credentials}. */
     public ProjectRunResult run(TestProject project, Path directory, ContextFactory contexts, Credentials credentials,
                                 RunOptions options) {
-        return run(project, testCase -> com.aresstack.spaceharvester.provingground.store.ProjectFile
-                .readCase(directory, testCase), contexts, credentials, options);
+        return run(project, new CaseSource() {
+            @Override
+            public TestCase read(TestCaseEntry testCase) throws IOException {
+                return com.aresstack.spaceharvester.provingground.store.ProjectFile.readCase(directory, testCase);
+            }
+
+            @Override
+            public Path screenshotReferences(TestCaseEntry testCase) {
+                return com.aresstack.spaceharvester.provingground.store.ProjectFile.screenshotReferences(directory,
+                        testCase);
+            }
+        }, contexts, credentials, options);
     }
 
     public ProjectRunResult run(TestProject project, CaseSource source, ContextFactory contexts,
@@ -205,7 +220,8 @@ public final class ProjectRunner {
                 throws IOException {
             TestCase testCase = source.read(entry);
             PlaybackOptions playback = PlaybackOptions.defaults().withActionTimeout(options.actionTimeout())
-                    .withScreenshotOnFailure(output == null ? null : output.resolve(screenshotName + ".png"));
+                    .withScreenshotOnFailure(output == null ? null : output.resolve(screenshotName + ".png"))
+                    .withScreenshotReferences(source.screenshotReferences(entry));
             return player.play(testCase, new Environment(entry, sessions), pages, playback);
         }
 

@@ -1,5 +1,9 @@
 package com.aresstack.spaceharvester.app.ui.proving;
 
+import com.aresstack.spaceharvester.browser.runtime.BrowserChannel;
+import com.aresstack.spaceharvester.browser.runtime.BrowserExecutables;
+import com.aresstack.spaceharvester.provingground.player.JUnitExport;
+import javax.swing.JFileChooser;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.chat.browser.BrowserSettings;
 import com.aresstack.spaceharvester.app.credentials.KeePassLink;
@@ -97,6 +101,12 @@ public final class ProvingGroundWorkspace extends JPanel {
     static final String UP_TIP = "Schritt nach oben";
     static final String DOWN_TIP = "Schritt nach unten";
     static final String DELETE_TIP = "Schritt löschen";
+    static final String SCREENSHOT_TIP = "Bildvergleich der ganzen Seite nach dem gewählten Schritt einfügen"
+            + " (wie toHaveScreenshot): der erste Lauf legt das Referenzbild an, jeder weitere vergleicht";
+    static final String EXPORT_TIP = "Als JUnit-Test exportieren: Playwright-Java-Code, läuft ohne Proving Ground;"
+            + " Werte in {{...}} kommen aus Umgebungsvariablen";
+    static final String EXPORT_NO_CASE = "JUnit-Export: zuerst einen Testfall wählen";
+    static final String SCREENSHOT_NO_STEP = "Bildvergleich: zuerst einen Testfall mit Schritten wählen";
     /** Ordner des Testprojekts, solange keiner gewählt ist (unter dem Datenordner der App). */
     static final String DEFAULT_PROJECT = "Testprojekt";
     /** Name der Suite, die ● anlegt, wenn das Projekt noch keine hat. */
@@ -140,6 +150,8 @@ public final class ProvingGroundWorkspace extends JPanel {
     private final IconButton up = new IconButton(ComposerIcons.chevronUp(), UP_TIP).compact();
     private final IconButton down = new IconButton(ComposerIcons.chevronDown(), DOWN_TIP).compact();
     private final IconButton delete = new IconButton(Glyph.TRASH, DELETE_TIP).compact();
+    private final IconButton screenshot = new IconButton(ComposerIcons.picture(), SCREENSHOT_TIP).compact();
+    private final IconButton export = new IconButton(ComposerIcons.export(), EXPORT_TIP).compact();
     /** Schreibt Dateien nacheinander, nie auf dem EDT. */
     private final ExecutorService io = Executors.newSingleThreadExecutor(runnable -> {
         Thread worker = new Thread(runnable, "proving-ground-io");
@@ -224,6 +236,8 @@ public final class ProvingGroundWorkspace extends JPanel {
                 deleteStep(row);
             }
         });
+        screenshot.addActionListener(event -> askScreenshotCheck());
+        export.addActionListener(event -> askExport());
         steps.onEdit(this::bindingEdited);
         table.getColumnModel().getColumn(0).setMaxWidth(48);
         table.getColumnModel().getColumn(1).setMaxWidth(110);
@@ -264,6 +278,8 @@ public final class ProvingGroundWorkspace extends JPanel {
         tools.add(viewSwitch);
         tools.add(up);
         tools.add(down);
+        tools.add(screenshot);
+        tools.add(export);
         tools.add(delete);
         tools.add(record);
         tools.add(pause);
@@ -811,6 +827,61 @@ public final class ProvingGroundWorkspace extends JPanel {
         steps.show(shownCase, shownEntry, null);
         table.setRowSelectionInterval(row + delta, row + delta);
         writeShownCase(project);
+    }
+
+    private void askScreenshotCheck() {
+        if (shownCase == null || shownCase.size() == 0) {
+            status.show(new StatusNote(SCREENSHOT_NO_STEP, StatusNote.Tone.WARNING, null, null));
+            return;
+        }
+        int row = table.getSelectedRow() >= 0 ? table.getSelectedRow() : shownCase.size() - 1;
+        String name = Dialogs.askText(this, "Bildvergleich", "Name des Referenzbilds",
+                shownCase.name() + "-" + (row + 2));
+        if (name != null) {
+            insertScreenshotCheck(row, name);
+        }
+    }
+
+    /**
+     * Fügt nach Schritt {@code row} einen Bildvergleich der ganzen Seite dieses Schritts ein; der erste Lauf legt das
+     * Referenzbild an, jeder weitere vergleicht.
+     */
+    void insertScreenshotCheck(int row, String name) {
+        if (shownCase == null || row < 0 || row >= shownCase.size() || name == null || name.isBlank()) {
+            return;
+        }
+        shownCase.insert(row + 1, TestStep.assertScreenshot(shownCase.step(row).pageGuid(), null, name.strip()));
+        steps.show(shownCase, shownEntry, null);
+        table.setRowSelectionInterval(row + 1, row + 1);
+        writeShownCase(project);
+    }
+
+    private void askExport() {
+        if (shownCase == null) {
+            status.show(new StatusNote(EXPORT_NO_CASE, StatusNote.Tone.WARNING, null, null));
+            return;
+        }
+        JUnitExport.Result result = exportShownCase();
+        JFileChooser chooser = new JFileChooser(directory == null ? null : directory.toFile());
+        chooser.setSelectedFile(new java.io.File(chooser.getCurrentDirectory(), result.className() + ".java"));
+        if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION && chooser.getSelectedFile() != null) {
+            writeExport(result, chooser.getSelectedFile().toPath());
+        }
+    }
+
+    /** Der gezeigte Testfall als JUnit-Test, mit dem Browser aus Einstellungen › Browser. */
+    JUnitExport.Result exportShownCase() {
+        ProvingGroundRuns.Setup current = setup();
+        BrowserChannel channel = BrowserChannel.of(current.channel());
+        return JUnitExport.export(new TestCase(shownCase.name(), shownCase.steps()), new JUnitExport.Launch(
+                channel.firefoxFamily(), channel.launchChannel(),
+                BrowserExecutables.effective(channel.id(), current.executable())));
+    }
+
+    void writeExport(JUnitExport.Result result, Path target) {
+        String done = "Exportiert: " + target.getFileName() + (result.notExported().isEmpty() ? ""
+                : " – nicht übernommen (braucht Proving Ground): " + String.join(" · ", result.notExported()));
+        save(() -> Files.writeString(target, result.source(), java.nio.charset.StandardCharsets.UTF_8), done);
     }
 
     void deleteStep(int row) {
