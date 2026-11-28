@@ -53,7 +53,9 @@ public final class ConfigurationOverlay {
             "ai." + AiServiceSettings.SUMMARY_PLAN_THINKING, "ai." + AiServiceSettings.IMAGE_PLAN_MODEL,
             "ai." + AiServiceSettings.IMAGE_PLAN_MAX_TOKENS, "ai." + AiServiceSettings.IMAGE_PLAN_THINKING,
             "ai." + AiServiceSettings.DEADLINE_MODEL, "ai." + AiServiceSettings.DEADLINE_MAX_TOKENS,
-            "ai." + AiServiceSettings.DEADLINE_THINKING, "ai." + AiServiceSettings.PODCAST_SPEECH_MODEL,
+            "ai." + AiServiceSettings.DEADLINE_THINKING, "ai." + AiServiceSettings.SOURCE_CODE_MODEL,
+            "ai." + AiServiceSettings.SOURCE_CODE_MAX_TOKENS, "ai." + AiServiceSettings.SOURCE_CODE_THINKING,
+            "ai." + AiServiceSettings.PODCAST_SPEECH_MODEL,
             "ai." + AiServiceSettings.PODCAST_VOICE_HOST, "ai." + AiServiceSettings.PODCAST_VOICE_COHOST,
             "ai." + AiServiceSettings.READ_ALOUD_MODEL, "ai." + AiServiceSettings.READ_ALOUD_VOICE,
             "ai." + AiServiceSettings.PODCAST_PAUSE_MILLIS, "ai." + AiServiceSettings.PODCAST_SPEECH_ATTEMPTS,
@@ -151,6 +153,9 @@ public final class ConfigurationOverlay {
         put(properties, "ai." + AiServiceSettings.DEADLINE_MODEL, ai.deadlineUse().model());
         put(properties, "ai." + AiServiceSettings.DEADLINE_MAX_TOKENS, ai.deadlineUse().maxTokens());
         put(properties, "ai." + AiServiceSettings.DEADLINE_THINKING, ai.deadlineUse().thinking());
+        put(properties, "ai." + AiServiceSettings.SOURCE_CODE_MODEL, ai.sourceCodeUse().model());
+        put(properties, "ai." + AiServiceSettings.SOURCE_CODE_MAX_TOKENS, ai.sourceCodeUse().maxTokens());
+        put(properties, "ai." + AiServiceSettings.SOURCE_CODE_THINKING, ai.sourceCodeUse().thinking());
         put(properties, "ai." + AiServiceSettings.PODCAST_SPEECH_MODEL, ai.speech().podcastModel());
         put(properties, "ai." + AiServiceSettings.PODCAST_VOICE_HOST, ai.speech().podcastHost());
         put(properties, "ai." + AiServiceSettings.PODCAST_VOICE_COHOST, ai.speech().podcastCohost());

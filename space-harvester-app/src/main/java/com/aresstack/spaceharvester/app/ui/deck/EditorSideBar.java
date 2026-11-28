@@ -72,6 +72,14 @@ final class EditorSideBar extends JPanel {
      * @param remember   merkt den gewählten Reiter
      */
     EditorSideBar(Home home, List<Extra> extras, String remembered, Consumer<String> remember) {
+        this(home, true, extras, remembered, remember);
+    }
+
+    /**
+     * @param callsTab ob der Reiter Callees/Caller des Editors erscheint; NDV zeigt Aufrufe und Aufrufer in einem
+     *                 eigenen Reiter aus dem Graphen der Bibliothek und braucht ihn nicht doppelt (Angelo 28.11.2026)
+     */
+    EditorSideBar(Home home, boolean callsTab, List<Extra> extras, String remembered, Consumer<String> remember) {
         super(new BorderLayout(0, 6));
         this.home = home.name();
         this.footWest = home.footWest();
@@ -87,8 +95,11 @@ final class EditorSideBar extends JPanel {
 
         editorTab(RESOURCES, Glyph.TABLE, "Ressourcen: Daten, Data Areas, Datasets des geöffneten Quelltexts",
                 "Ressourcen filtern", resourcesHolder, text -> withShown(editor -> editor.filterResources(text)));
-        editorTab(CALLS, EditorIcons.relations(), "Callees/Caller: was der Quelltext aufruft und wer ihn aufruft",
-                "Callees/Caller filtern (Ausdruck)", callsHolder, text -> withShown(editor -> editor.filterCalls(text)));
+        if (callsTab) {
+            editorTab(CALLS, EditorIcons.relations(), "Callees/Caller: was der Quelltext aufruft und wer ihn aufruft",
+                    "Callees/Caller filtern (Ausdruck)", callsHolder,
+                    text -> withShown(editor -> editor.filterCalls(text)));
+        }
         for (Extra extra : extras) {
             editorTab(extra.name(), extra.icon(), extra.tooltip(), extra.placeholder(), extra.content(),
                     extra.filter());
@@ -170,7 +181,7 @@ final class EditorSideBar extends JPanel {
         return filters.get(name);
     }
 
-    /** Legt Ressourcen, Callees/Caller und Gliederung von {@code editor} in die Seitenleiste. */
+    /** Legt Ressourcen, Callees/Caller (falls als Reiter da) und Gliederung von {@code editor} in die Seitenleiste. */
     void show(DocumentEditor editor) {
         shown = editor;
         DocumentEditor.SidePanels panels = editor.detachSidePanels();

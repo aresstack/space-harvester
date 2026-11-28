@@ -87,6 +87,18 @@ public final class SourceDiagrams {
     public static Result generate(String content, String sourceName, Optional<SourceLanguage> language,
             DiagramType type, int mindmapDepth, boolean collapsed, boolean autoCollapse, SourceResolver resolver,
             Outline preparedOutline) {
+        return generate(content, sourceName, language, type, mindmapDepth, collapsed, autoCollapse, resolver,
+                preparedOutline, true);
+    }
+
+    /**
+     * Wie oben; {@code ai = false} beschriftet ohne KI-Aufrufe (schnelles erstes Bild), {@code true} mit der
+     * eingeschalteten KI-Beschreibung ({@link OutlineToMermaidConverter#blockLabelSummarizer()}). Aufgerufene
+     * Programme werden in beiden Fällen über {@code resolver} geladen, damit ihre eigenen Aufrufe erscheinen.
+     */
+    public static Result generate(String content, String sourceName, Optional<SourceLanguage> language,
+            DiagramType type, int mindmapDepth, boolean collapsed, boolean autoCollapse, SourceResolver resolver,
+            Outline preparedOutline, boolean ai) {
         if (content == null || content.isEmpty()) {
             return new Result(Optional.empty(), type, collapsed);
         }
@@ -106,12 +118,19 @@ public final class SourceDiagrams {
             }
         }
 
+        FlowLabels labels = FlowLabels.of(content, resolver,
+                ai ? OutlineToMermaidConverter.blockLabelSummarizer() : null, OutlineToMermaidConverter.labelLayout());
+
         // COBOL: a flowchart shows only the static control flow of the parser, never paragraph order as execution
         // order (#1473). Without a complete graph (e.g. unresolved COPY) the structure diagram is shown instead.
+        // Kompakt fasst es Ketten einfacher Anweisungen zu Blöcken zusammen (wie Natural, große Graphen von selbst).
         if (lang == SourceLanguage.COBOL && type == DiagramType.FLOWCHART) {
-            String flow = cobolControlFlow(content, sourceName);
-            if (flow != null) {
-                return new Result(Optional.of(flow), DiagramType.FLOWCHART, collapsed);
+            var procedure = cobolProcedure(content, sourceName);
+            if (procedure != null) {
+                boolean compact = collapsed
+                        || autoCollapse && procedure.nodes().size() > OutlineToMermaidConverter.COLLAPSE_THRESHOLD;
+                return new Result(Optional.of(CobolControlFlowDiagram.render(procedure, labels, compact)),
+                        DiagramType.FLOWCHART, compact);
             }
         }
 
@@ -144,7 +163,7 @@ public final class SourceDiagrams {
         }
 
         boolean compact = collapsed || autoCollapse && OutlineToMermaidConverter.shouldCollapse(model);
-        String result = OutlineToMermaidConverter.convert(model, type, callTree, ddms, compact);
+        String result = OutlineToMermaidConverter.convert(model, type, callTree, ddms, compact, labels);
         DiagramType produced = type;
         if (result == null && type != DiagramType.STRUCTURE) {
             result = OutlineToMermaidConverter.convert(model, DiagramType.STRUCTURE, null, null, compact);
@@ -153,13 +172,14 @@ public final class SourceDiagrams {
         return new Result(Optional.ofNullable(result).filter(s -> !s.trim().isEmpty()), produced, compact);
     }
 
-    private static String cobolControlFlow(String content, String sourceName) {
+    private static com.aresstack.spaceharvester.mainframe.cobol.CobolControlFlow.Procedure cobolProcedure(
+            String content, String sourceName) {
         try {
             var analysis = com.aresstack.spaceharvester.mainframe.cobol.CobolAnalyzer.proLeap().analyze(
                     com.aresstack.spaceharvester.mainframe.cobol.CobolSource.fixed(sourceName, content),
                     com.aresstack.spaceharvester.mainframe.cobol.CopybookResolver.NONE);
             var procedures = analysis.controlFlow().procedures();
-            return procedures.isEmpty() ? null : CobolControlFlowDiagram.render(procedures.getFirst());
+            return procedures.isEmpty() ? null : procedures.getFirst();
         } catch (RuntimeException e) {
             LOG.log(Level.FINE, "COBOL-Kontrollfluss gescheitert", e);
             return null;

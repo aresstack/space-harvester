@@ -1,7 +1,13 @@
 # ADR 0048: Mission Control – Abläufe aus Fähigkeiten
 
-- Status: **Vorbereitet** (28.11.2026). **Die Umsetzung ist nicht freigegeben.** Angelo gibt sie gesondert frei; bis
-  dahin leitet kein Strang aus diesem ADR einen Bauauftrag ab. Ticket: #1143 (übergeordnet #1141).
+- Status: **Zurückgenommen** (28.11.2026, 03:20 MEZ). Angelo hat die Eigenentwicklung der Engine und die
+  Implementierungsfreigabe zurückgenommen: „Die bisherige Architekturentscheidung zur Eigenentwicklung der
+  Workflow-Engine wird zurückgenommen. […] Entwickle keine eigene Workflow-Sprache, keine eigene Workflow-Engine und
+  keine eigene Ausführungsinfrastruktur, nur um das ursprüngliche Konzept exakt nachzubilden.“ **Aus diesem ADR wird
+  nichts gebaut.** Die Entscheidung wird in ADR 0049 neu getroffen, mit etablierten Standards und vorhandenen
+  Ausführungsengines an erster Stelle. Verworfen sind insbesondere die Abschnitte 4, 5 und 10 (eigenes Format,
+  eigene Ausführung) und der Schluss des Abschnitts „Geprüfte Standards“. Der Fehler des Architekten: Er hat das
+  Variablenprinzip als harte Bedingung genommen und daran jede fertige Engine gemessen. Ticket: #1143.
 - Quellen:
   - Angelos Nachricht vom 28.11.2026, 00:38 MEZ, zur Engine in MainframeMate: „Ich fand meine Engine relativ charmant,
     weil sie halt immer Variablen verwendet hat. […] Sie hat dann Ausgabevariablen definiert und dann konnte man diese

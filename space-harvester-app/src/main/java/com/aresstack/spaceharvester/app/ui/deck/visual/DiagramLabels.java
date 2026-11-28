@@ -31,12 +31,24 @@ public final class DiagramLabels implements BlockLabelSummarizer {
 
     /** Schalter in den Einstellungen (MainframeMate: Summarizer aktiv und „UML-Zusammenfassung“). */
     public static final String ENABLED_KEY = "deck.visual.ai-labels";
+    /**
+     * Vorgabe des Schalters: an. Die Kacheln mit „📦 5 Anweisungen“ waren als Rückfall gedacht, wenn keine KI da ist
+     * (Angelo 28.11.2026); ohne eingerichtetes Modell entstehen trotzdem keine Aufrufe ({@link #enabled()}).
+     */
+    public static final boolean ENABLED_DEFAULT = true;
+    /** Länge kurzer KI-Beschriftungen in Zeichen (Einstellungen › Diagramme). */
+    public static final String LENGTH_KEY = "deck.visual.label-length";
+    /** Länge der ausführlichen Beschreibung eines Blocks in Zeichen (Einstellungen › Diagramme). */
+    public static final String DETAIL_LENGTH_KEY = "deck.visual.block-length";
+    /** Zeichen je Zeile im Diagrammknoten (Einstellungen › Diagramme). */
+    public static final String LINE_WIDTH_KEY = "deck.visual.label-line-width";
     static final String SYSTEM_PROMPT = "Du bist ein Code-Summarizer. Antworte ausschließlich in DEUTSCH, "
             + "extrem kurz und sachlich. Keine Einleitung, keine Erklärung, "
             + "keine Code-Wiederholung. Wenn ein bestimmter Stil verlangt wird "
             + "(LABEL / SENTENCE / BULLETS), halte dich exakt daran. "
             + "LABEL = eine Substantiv-Phrase (z.B. \"Validierung der Eingabe\"). "
             + "SENTENCE = ein Satz. "
+            + "DETAILS = mehrere kurze, einfache Sätze, Schritt für Schritt. "
             + "BULLETS = kurze Bullet-Liste mit \"- \" Präfix.";
     private static final int CACHE_SIZE = 1000;
 
@@ -46,9 +58,15 @@ public final class DiagramLabels implements BlockLabelSummarizer {
      * @param chat     streamender Chat-Port, {@code null} ohne KI-Dienst
      * @param model    Modellname, {@code null} ohne Modell
      * @param thinking Nachdenken ({@code none}, {@code low}, …) oder {@code null} = Einstellung des Dienstes
-     * @param budget   Tokenbudget je Anfrage, {@code null} ohne bekannte Kontextlänge (dann eine Anfrage)
+     * @param budget    Tokenbudget je Anfrage, {@code null} ohne bekannte Kontextlänge (dann eine Anfrage)
+     * @param maxTokens Ausgabelimit je Anfrage (dasselbe wie die Antwortreserve im Budget), {@code null} =
+     *                  Einstellung des Dienstes
      */
-    public record Target(AiChat chat, String model, String thinking, ModelBudget budget) {
+    public record Target(AiChat chat, String model, String thinking, ModelBudget budget, Integer maxTokens) {
+
+        public Target(AiChat chat, String model, String thinking, ModelBudget budget) {
+            this(chat, model, thinking, budget, budget == null ? null : budget.answerTokens());
+        }
     }
 
     private final Supplier<Target> target;
@@ -67,15 +85,45 @@ public final class DiagramLabels implements BlockLabelSummarizer {
 
     @Override
     public boolean enabled() {
-        if (!AppState.shared().getBoolean(ENABLED_KEY, false)) {
+        if (!switchedOn()) {
             return false;
         }
         Target current = target.get();
         return current != null && current.chat() != null && current.model() != null && !current.model().isBlank();
     }
 
+    /** Ob der Schalter in Einstellungen › Diagramme an ist. */
+    public static boolean switchedOn() {
+        return AppState.shared().getBoolean(ENABLED_KEY, ENABLED_DEFAULT);
+    }
+
+    /** Länge und Zeilenbreite aus den Einstellungen; Ungültiges zählt als Vorgabe. */
+    public static com.aresstack.spaceharvester.mainframe.diagram.FlowLabels.Layout layout() {
+        var standard = com.aresstack.spaceharvester.mainframe.diagram.FlowLabels.Layout.DEFAULT;
+        int length = AppState.shared().getInt(LENGTH_KEY, standard.length());
+        int detail = AppState.shared().getInt(DETAIL_LENGTH_KEY, standard.detailLength());
+        int width = AppState.shared().getInt(LINE_WIDTH_KEY, standard.lineWidth());
+        return new com.aresstack.spaceharvester.mainframe.diagram.FlowLabels.Layout(
+                length > 0 ? length : standard.length(), detail > 0 ? detail : standard.detailLength(),
+                width > 0 ? width : standard.lineWidth());
+    }
+
     @Override
     public String summarize(String code, int maxLength, String purpose) {
+        return label(code, maxLength, purpose, "LABEL");
+    }
+
+    @Override
+    public String explain(String code, int maxLength, String purpose) {
+        return label(code, maxLength, purpose, "SENTENCE");
+    }
+
+    @Override
+    public String describe(String code, int maxLength, String purpose) {
+        return label(code, maxLength, purpose, "DETAILS");
+    }
+
+    private String label(String code, int maxLength, String purpose, String style) {
         if (code == null || code.isBlank()) {
             return null;
         }
@@ -83,33 +131,34 @@ public final class DiagramLabels implements BlockLabelSummarizer {
         if (current == null || current.chat() == null || current.model() == null) {
             return null;
         }
-        String key = current.model() + "|" + maxLength + "|" + Integer.toHexString(code.hashCode());
+        String key = current.model() + "|" + style + "|" + maxLength + "|" + Integer.toHexString(code.hashCode())
+                + "|" + Integer.toHexString(String.valueOf(purpose).hashCode());
         String cached = cache.get(key);
         if (cached != null) {
             return cached;
         }
         List<String> parts;
         try {
-            parts = parts(code, maxLength, purpose, current.budget());
+            parts = parts(code, maxLength, purpose, current.budget(), style);
         } catch (IllegalStateException tooSmall) {
             lastProblem = tooSmall.getMessage();
             return null;
         }
         String result;
         if (parts.size() == 1) {
-            result = ask(current, prompt(code, maxLength, purpose), maxLength);
+            result = ask(current, prompt(code, maxLength, purpose, style), maxLength);
         } else {
             // Erst jeden Teil beschriften, dann aus den Teilbeschriftungen den ganzen Block.
             StringBuilder labels = new StringBuilder();
             for (int i = 0; i < parts.size(); i++) {
-                String label = ask(current, prompt(parts.get(i), maxLength, part(purpose, i + 1, parts.size())),
-                        maxLength);
+                String label = ask(current, prompt(parts.get(i), maxLength, part(purpose, i + 1, parts.size()),
+                        style), maxLength);
                 if (label == null) {
                     return null;
                 }
                 labels.append("- ").append(label).append('\n');
             }
-            result = summarize(labels.toString(), maxLength, combined(purpose));
+            result = label(labels.toString(), maxLength, combined(purpose), style);
         }
         if (result == null || result.isEmpty()) {
             return null;
@@ -123,7 +172,8 @@ public final class DiagramLabels implements BlockLabelSummarizer {
         CountDownLatch done = new CountDownLatch(1);
         AtomicReference<String> answer = new AtomicReference<>();
         AiChat.Task task = current.chat().stream(new AiChat.Request(List.of(AiChat.Message.system(SYSTEM_PROMPT),
-                AiChat.Message.user(prompt)), current.model(), current.thinking()), new AiChat.Listener() {
+                AiChat.Message.user(prompt)), current.model(), current.thinking(), List.of(), null,
+                current.maxTokens()), new AiChat.Listener() {
             @Override
             public void delta(String text) {
             }
@@ -166,11 +216,15 @@ public final class DiagramLabels implements BlockLabelSummarizer {
      * lange Zeile wird an Zeichengrenzen geteilt. Ohne Budget oder wenn alles passt: ein Teil.
      */
     static List<String> parts(String code, int maxLength, String purpose, ModelBudget budget) {
+        return parts(code, maxLength, purpose, budget, "LABEL");
+    }
+
+    static List<String> parts(String code, int maxLength, String purpose, ModelBudget budget, String style) {
         if (budget == null) {
             return List.of(code);
         }
         int fixed = ModelBudget.tokens(SYSTEM_PROMPT) + ModelBudget.tokens(prompt("", maxLength,
-                part(purpose, Integer.MAX_VALUE, Integer.MAX_VALUE)));
+                part(purpose, Integer.MAX_VALUE, Integer.MAX_VALUE), style));
         int room = budget.left(fixed);
         if (room < 1) {
             throw new IllegalStateException("Kontextlänge des Modells (" + budget.contextTokens()
@@ -233,8 +287,12 @@ public final class DiagramLabels implements BlockLabelSummarizer {
     }
 
     static String prompt(String code, int maxLength, String purpose) {
+        return prompt(code, maxLength, purpose, "LABEL");
+    }
+
+    static String prompt(String code, int maxLength, String purpose, String style) {
         StringBuilder sb = new StringBuilder();
-        sb.append("STIL: LABEL\n");
+        sb.append("STIL: ").append(style).append('\n');
         sb.append("MAX_ZEICHEN: ").append(maxLength).append('\n');
         if (purpose != null && !purpose.isEmpty()) {
             sb.append("KONTEXT: ").append(purpose).append('\n');

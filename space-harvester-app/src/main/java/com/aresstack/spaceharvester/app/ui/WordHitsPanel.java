@@ -25,7 +25,7 @@ import java.util.function.Consumer;
 final class WordHitsPanel extends JPanel {
 
     static final String NO_WORDS = "Keine Wörter gefunden";
-    static final String ROW_TIP = "Klick zeigt die Seiten mit diesem Wort";
+    static final String ROW_TIP = "Klick zeigt die Seiten mit diesem Wort, Doppelklick öffnet die erste";
     static final String PREVIEW_CLICK = "; ein Klick zeigt die Seite in der Vorschau.";
 
     /** Führt Arbeit im Hintergrund aus und meldet das Ergebnis auf dem EDT; in Tests sofort. */
@@ -37,10 +37,15 @@ final class WordHitsPanel extends JPanel {
     private final JTable table = Comic.table(new JTable(model));
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Wörter derselben Suche laden");
     private final InfoPopup popup = new InfoPopup();
+    /** Der drehende Kreis über der Liste, solange die ersten Wörter einer Suche geladen werden. */
+    final com.aresstack.spaceharvester.app.ui.controls.BusyOverlay busy =
+            new com.aresstack.spaceharvester.app.ui.controls.BusyOverlay(Comic.scroll(table));
+    static final String SEARCHING = "Wörter werden gesucht …";
     private final Consumer<WordSearch.Place> onOpen;
     /** Ob eine Vorschau offen ist und was eine Seite dort zeigt; ohne Vorschau öffnet ein Klick die Seite ganz. */
     private java.util.function.BooleanSupplier previewing = () -> false;
     private Consumer<WordSearch.Place> onPreview = place -> { };
+    private java.util.function.BiConsumer<WordSearch.Word, Pager<WordSearch.Excerpt>> onExcerpts = (word, pager) -> { };
     private final Consumer<String> onStatus;
     private final Consumer<Throwable> onProblem;
     Runner runner = Background::run;
@@ -82,7 +87,8 @@ final class WordHitsPanel extends JPanel {
         more.addActionListener(e -> loadMore());
         more.setVisible(false);
         more.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
-        add(Comic.scroll(table), BorderLayout.CENTER);
+        busy.setText(SEARCHING);
+        add(busy, BorderLayout.CENTER);
         add(more, BorderLayout.SOUTH);
     }
 
@@ -94,7 +100,8 @@ final class WordHitsPanel extends JPanel {
         model.set(List.of());
         popup.setVisible(false);
         request++;
-        onStatus.accept("Wörter werden gesucht …");
+        onStatus.accept(SEARCHING);
+        busy.setBusy(true);
         loadMore();
     }
 
@@ -107,6 +114,7 @@ final class WordHitsPanel extends JPanel {
         model.set(List.of());
         more.setVisible(false);
         popup.setVisible(false);
+        busy.setBusy(false);
     }
 
     private void loadMore() {
@@ -117,12 +125,13 @@ final class WordHitsPanel extends JPanel {
         int mine = request;
         more.setEnabled(false);
         runner.run(() -> {
-            List<WordSearch.Word> next = current.next(WordSearch.STEP);
+            List<WordSearch.Word> next = current.next(WordSearch.step());
             return new Batch(next, current.hasMore());
         }, batch -> {
             if (mine != request) {
                 return;
             }
+            busy.setBusy(false);
             List<WordSearch.Word> rows = new ArrayList<>(model.rows);
             for (WordSearch.Word word : batch.words()) {
                 if (seen.add(word.key())) {
@@ -135,6 +144,7 @@ final class WordHitsPanel extends JPanel {
             onStatus.accept(status(rows.size(), batch.more()));
         }, failure -> {
             if (mine == request) {
+                busy.setBusy(false);
                 more.setEnabled(true);
                 onProblem.accept(failure);
             }
@@ -153,13 +163,15 @@ final class WordHitsPanel extends JPanel {
     }
 
     /**
-     * Mit offener Vorschau (Angelo 28.11.2026) zeigt ein Klick auf ein Wort seine erste Seite dort, ein Doppelklick
-     * öffnet sie ganz; die Liste der Seiten erscheint dann nur, wenn es mehrere sind, und ihr Klick wählt die Seite
-     * der Vorschau.
+     * Mit offener Vorschau (Angelo 28.11.2026) zeigt ein Klick auf ein Wort dort die Textausschnitte aller seiner
+     * Fundstellen, ein Doppelklick öffnet seine erste Seite ganz; die Liste der Seiten erscheint dann nur, wenn es
+     * mehrere sind, und ihr Klick zeigt die Seite in der Vorschau.
      */
-    void onPreview(java.util.function.BooleanSupplier previewing, Consumer<WordSearch.Place> onPreview) {
+    void onPreview(java.util.function.BooleanSupplier previewing, Consumer<WordSearch.Place> onPreview,
+                   java.util.function.BiConsumer<WordSearch.Word, Pager<WordSearch.Excerpt>> onExcerpts) {
         this.previewing = Objects.requireNonNull(previewing, "previewing");
         this.onPreview = Objects.requireNonNull(onPreview, "onPreview");
+        this.onExcerpts = Objects.requireNonNull(onExcerpts, "onExcerpts");
     }
 
     /** Schließt die Liste der Seiten eines Worts. */
@@ -178,13 +190,15 @@ final class WordHitsPanel extends JPanel {
                 return;
             }
             boolean preview = previewing.getAsBoolean();
+            // Der Doppelklick öffnet wie in der Seitensuche die Seite ganz, hier die erste des Worts.
+            if (open && !places.isEmpty()) {
+                popup.setVisible(false);
+                onOpen.accept(places.get(0));
+                return;
+            }
             if (preview && !places.isEmpty()) {
                 popup.setVisible(false);
-                if (open) {
-                    onOpen.accept(places.get(0));
-                    return;
-                }
-                onPreview.accept(places.get(0));
+                onExcerpts.accept(word, current.excerpts(word));
                 if (places.size() == 1) {
                     return;
                 }

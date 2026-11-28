@@ -83,6 +83,7 @@ Erhebung vom 26.11.2026, Stand develop `ef691aee`, und Entscheidungen F38-4, F39
 | Fristen je Anfrage einzelner KI-Aufgaben (früher `RemoteAi.SUMMARY_TIMEOUT`, `LABEL_TIMEOUT`, `EXPANSION_TIMEOUT`) | 5 min / 60 s / 90 s | große Modelle oder langsame Dienste brachen ab | **einstellbar**: `ai.summary-timeout`, `ai.label-timeout`, `ai.expansion-timeout` (`AiServiceSettings.Timeouts`), Einstellungen › KI-Dienst › Modelle › „Fristen je Anfrage“ |
 | Netz-Fristen der Quellen (früher `DelegatedConfluenceHttp.TIMEOUT`, `RoutedWebDavHttp.REQUEST_TIMEOUT`, `SourceDiagnostics.PROBE_TIMEOUT`) | 10 s / 90 s / 15 s | langsame Netze oder Proxys brachen Token-Prüfung, BSCW-Abrufe und Verbindungsprüfung ab | **einstellbar**: `network.timeouts.delegated-check`, `webdav-request`, `probe` (`SourceTimeouts`), für alle Quellen wie die Proxy-Frist |
 | Fristen der App (früher `HttpModelDownload.CONNECT_TIMEOUT`/`RESPONSE_TIMEOUT`, `ChatWebBrowser.FIREFOX_START_TIMEOUT_MILLIS` (heute Browser-Start und Browser-Navigation), `DiagramLabels.TIMEOUT_SECONDS`, `VlcPcmAudioDecoder.NO_AUDIO_TIMEOUT_NANOS`) | 30 / 60 / 30 / 30 / 60 s | langsame Netze, Rechner oder Modelle brachen ab | **einstellbar**: `AppTimeouts` in `app-state.json` (`app.timeouts.*`), Einstellungen › Allgemein › „Fristen der App“ |
+| Schritt blätternder Listen (früher `TermsTab.STEP`) | 120 Einträge | wer viele Fundstellen durchsieht, musste oft „Weitere laden“ drücken | **einstellbar**: `ListSteps` in `app-state.json` (`app.lists.terms-step`), Einstellungen › Allgemein › „Listen“; Obergrenze ist `TermQueries.MAX_LIMIT` |
 | MVS-Binärdiagnose und Hex-Ansicht (früher `BinarySample.MAX_CAPTURE_BYTES`, `MvsDiagnosisTools.BUDGET`, Lesegröße 4096, Frist 120 s) | 8 MiB / 65536 / 4096 Bytes / 120 s | größere Stichproben waren unmöglich, die KI las höchstens 64 KiB | **einstellbar**: `MvsDiagnosisSettings` in `app-state.json` (`deck.ftp.diagnosis.sample-bytes`, `read-bytes`, `budget-bytes`, `timeout-seconds`), Einstellungen › Mainframe › „MVS-Binärdiagnose und Hex-Ansicht“. Das Modell kommt aus der Zeile „Diagnose“ (siehe oben) |
 
 ### Grenzen außerhalb des eigenen Codes
@@ -136,6 +137,8 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `AiQueryExpansion.MAX_VARIANT_CHARS` | `200` | fest | Modellkontext | aus Modellfähigkeit ableiten |
 | `AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS` | `8192` | Vorgabe | Modellkontext | aus Modellfähigkeit ableiten |
 | `AiServiceSettings.DEFAULT_DEADLINE_MAX_TOKENS` | `8192` | Vorgabe | Modellkontext | aus Modellfähigkeit ableiten |
+| `AiServiceSettings.DEFAULT_SOURCE_CODE_MAX_TOKENS` | `4096` | Vorgabe | Modellkontext | aus Modellfähigkeit ableiten |
+| `FlowLabels.Layout.DEFAULT` | `140` / `600` / `44` Zeichen | Vorgabe | Lesbarkeit der Diagrammknoten | Einstellungen › Diagramme |
 | `AiServiceSettings.DEFAULT_IMAGE_MAX_TOKENS` | `16384` | Vorgabe | Modellkontext | aus Modellfähigkeit ableiten |
 | `AiServiceSettings.DEFAULT_IMAGE_PLAN_MAX_TOKENS` | `16384` | Vorgabe | Modellkontext | aus Modellfähigkeit ableiten |
 | `AiServiceSettings.DEFAULT_LOAD_TIMEOUT` | `Duration.ofMinutes(10)` | Vorgabe | Timeout | einstellbar |

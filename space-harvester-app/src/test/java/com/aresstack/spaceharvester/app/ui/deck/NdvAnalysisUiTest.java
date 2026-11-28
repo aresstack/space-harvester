@@ -129,13 +129,16 @@ class NdvAnalysisUiTest {
         SwingUtilities.invokeAndWait(() -> {
             com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor editor = browser.editor();
             com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor.SidePanels side = editor.detachSidePanels();
-            // Ressourcen, Callees/Caller und Gliederung liegen nicht mehr im Editor, sondern in der Seitenleiste.
-            for (javax.swing.JComponent panel : List.of(side.resources(), side.calls(), side.outline())) {
+            // Ressourcen und Gliederung liegen nicht mehr im Editor, sondern in der Seitenleiste.
+            for (javax.swing.JComponent panel : List.of(side.resources(), side.outline())) {
                 assertThat(javax.swing.SwingUtilities.isDescendingFrom(panel, editor)).isFalse();
                 assertThat(javax.swing.SwingUtilities.isDescendingFrom(panel, browser)).isTrue();
             }
             assertThat(javax.swing.SwingUtilities.isDescendingFrom(browser.relationsPanel(), browser.editor()
                     .getParent().getParent())).as("Aufrufe/Daten nicht mehr rechts neben dem Quelltext").isFalse();
+            // Callees/Caller des Editors zeigte dasselbe wie „Aufrufe/Daten“: kein eigener Reiter mehr.
+            browser.selectSide(EditorSideBar.CALLS);
+            assertThat(browser.sideTab()).isNotEqualTo(EditorSideBar.CALLS);
             browser.selectSide(NdvBrowser.SIDE_RELATIONS);
             assertThat(browser.sideTab()).isEqualTo(NdvBrowser.SIDE_RELATIONS);
             assertThat(browser.relationsPanel().isShowing()).isFalse(); // ohne Fenster nie „showing“
@@ -145,6 +148,12 @@ class NdvAnalysisUiTest {
             browser.sideFilter(NdvBrowser.SIDE_RELATIONS).setText("n01");
             assertThat(browser.relationsPanel().rows()).containsExactly("LAGERN01  [CALLNAT]  Zeile 2");
             browser.sideFilter(NdvBrowser.SIDE_RELATIONS).setText("");
+            // LAGER002 ruft niemand in LAGER auf: leer, und der Hinweis sagt, worin gesucht wurde.
+            browser.relationsPanel().select(NdvRelationsPanel.CALLERS);
+            assertThat(browser.relationsPanel().rows()).isEmpty();
+            assertThat(browser.relationsPanel().noteText()).startsWith("Kein Aufrufer in LAGER (")
+                    .endsWith(" Quelltexte durchsucht)");
+            browser.relationsPanel().select(NdvRelationsPanel.CALLEES);
             browser.selectSide(NdvBrowser.SIDE_LIBRARIES);
         });
     }
