@@ -530,14 +530,34 @@ class MainWindowTest {
                 assertThat(window.analysesToggle().isSelected()).isFalse();
                 window.analysesToggle().doClick();
                 assertThat(window.analysesOpen()).isTrue();
-                // Der Umschalter steht im Kopf der gezeigten Leiste (Angelo 27.11.2026), nicht mehr oben.
-                assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), sidebar)).isTrue();
+                // Der Umschalter ist die Knopfleiste auf dem Trenner der Leiste (Angelo 28.11.2026): senkrecht,
+                // mittig auf der Linie, mit dem gewählten Symbol; nicht mehr im Kopf der Leiste und nicht oben.
+                assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), sidebar)).isFalse();
                 assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), window.windowBar())).isFalse();
+                assertThat(((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle) window.sideSwitch()).vertical())
+                        .isTrue();
+                layoutAll(surface);
+                layoutAll(surface);
+                assertThat(window.rightRail().onDivider()).isTrue();
+                assertThat(com.aresstack.spaceharvester.app.ui.controls.ComicDivider.grip(window.chatSplit()))
+                        .as("die Knopfleiste ersetzt den gelben Griff").isFalse();
+                java.awt.Component divider = ((javax.swing.plaf.basic.BasicSplitPaneUI) window.chatSplit().getUI())
+                        .getDivider();
+                java.awt.Rectangle line = SwingUtilities.convertRectangle(divider.getParent(), divider.getBounds(),
+                        surface);
+                java.awt.Rectangle onLine = SwingUtilities.convertRectangle(window.sideSwitch().getParent(),
+                        window.sideSwitch().getBounds(), surface);
+                assertThat(onLine.x + onLine.width / 2).as("mittig auf dem Trenner")
+                        .isEqualTo(line.x + line.width / 2);
+                assertThat(onLine.y + onLine.height / 2).as("senkrecht mittig, an der Stelle des gelben Griffs")
+                        .isEqualTo(line.y + line.height / 2);
+                // Auch offen ist die Knopfleiste leicht durchscheinend, bis die Maus über ihr steht (Angelo
+                // 28.11.2026: immer, nicht nur zugeklappt).
+                assertThat(((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle) window.sideSwitch())
+                        .glassy()).isTrue();
                 window.jobsToggle().doClick();
                 assertThat(window.jobsOpen()).isTrue();
-                assertThat(SwingUtilities.isDescendingFrom(window.jobsToggle(), sidebar)).isFalse();
-                assertThat(SwingUtilities.isDescendingFrom(window.jobsToggle(),
-                        window.chatSplit().getRightComponent())).isTrue();
+                assertThat(window.jobsToggle().isSelected()).isTrue();
                 window.analysesToggle().doClick();
                 // Ein zweiter Klick auf das gewählte Symbol klappt die Leiste zu; zugeklappt steht der Umschalter
                 // ohne gewähltes Symbol senkrecht am rechten Fensterrand, direkt unter den Kopfleisten, und klappt
@@ -553,9 +573,10 @@ class MainWindowTest {
                         window.windowBar().getBounds(), surface);
                 assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), window.windowBar())).isFalse();
                 // Ohne Luft am Fensterrahmen (Angelo 28.11.2026), nicht hinter dessen Polster.
-                int line = com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.FRAME_LINE;
+                int frame = com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.FRAME_LINE;
+                assertThat(window.rightRail().onDivider()).isFalse();
                 assertThat(edge.x + edge.width).as("ganz am rechten Fensterrand")
-                        .isEqualTo(surface.getWidth() - line);
+                        .isEqualTo(surface.getWidth() - frame);
                 assertThat(edge.height).as("senkrecht: Symbole untereinander").isGreaterThan(2 * edge.width);
                 assertThat(edge.y).as("direkt unter den Kopfleisten").isEqualTo(bar.y + bar.height
                         + com.aresstack.spaceharvester.app.ui.controls.HeadBar.HEIGHT
@@ -566,8 +587,7 @@ class MainWindowTest {
                         .noneMatch(AbstractButton::isSelected);
                 window.chatToggle().doClick();
                 assertThat(window.chatOpen()).isTrue();
-                assertThat(SwingUtilities.isDescendingFrom(window.chatToggle(),
-                        window.chatSplit().getRightComponent())).isTrue();
+                assertThat(window.chatToggle().isSelected()).isTrue();
                 window.chatToggle().doClick();
                 assertThat(window.chatOpen()).isFalse();
                 // Links genauso: Der zweite Klick auf das gewählte Symbol klappt die Leiste zu, der Umschalter
@@ -580,15 +600,26 @@ class MainWindowTest {
                 layoutAll(surface);
                 java.awt.Rectangle left = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface);
                 assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isFalse();
-                assertThat(left.x).as("ganz am linken Fensterrand").isEqualTo(line);
+                assertThat(left.x).as("ganz am linken Fensterrand").isEqualTo(frame);
                 assertThat(left.y).as("auf derselben Höhe wie rechts").isEqualTo(edge.y);
                 assertThat(left.height).isGreaterThan(2 * left.width);
                 view.button(Explorer.FAVORITES_TAB).doClick();
                 assertThat(window.split().isLeftCollapsed()).isFalse();
                 assertThat(view.selected()).isEqualTo(Explorer.FAVORITES_TAB);
-                assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isTrue();
-                assertThat(view.vertical()).isFalse();
+                // Offen sitzt dieselbe Knopfleiste auf dem Trenner der linken Leiste.
+                assertThat(view.vertical()).isTrue();
                 layoutAll(surface);
+                layoutAll(surface);
+                assertThat(window.leftRail().onDivider()).isTrue();
+                java.awt.Component leftDivider = ((javax.swing.plaf.basic.BasicSplitPaneUI) window.split().getUI())
+                        .getDivider();
+                java.awt.Rectangle leftLine = SwingUtilities.convertRectangle(leftDivider.getParent(),
+                        leftDivider.getBounds(), surface);
+                left = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface);
+                assertThat(left.x + left.width / 2).as("mittig auf dem Trenner")
+                        .isEqualTo(leftLine.x + leftLine.width / 2);
+                assertThat(left.y + left.height / 2).as("senkrecht mittig, an der Stelle des gelben Griffs")
+                        .isEqualTo(leftLine.y + leftLine.height / 2);
             } finally {
                 // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten wieder mit dem Chat, zu.
                 window.chatOpen(true);
@@ -1282,6 +1313,7 @@ class MainWindowTest {
             assertThat(settings.drawer().isVisible()).isTrue();
             assertThat(window.explorer().component().isVisible()).isFalse();
             assertThat(settings.navRows()).extracting(SettingsNavRow::title).containsExactly(SettingsView.GENERAL,
+                    SettingsView.APPEARANCE,
                     SettingsView.AI, SettingsView.MODELS, SettingsView.WORDS, SettingsView.NETWORK, SettingsView.CACHE,
                     SettingsView.VIDEO, SettingsView.TERMINAL, SettingsView.NDV, SettingsView.BETAVIEW,
                     SettingsView.BROWSER, SettingsView.DIAGRAMS, SettingsView.SECURITY, SettingsView.DIAGNOSIS, SettingsView.LIBRARIES);
@@ -1292,8 +1324,8 @@ class MainWindowTest {
             }
             assertThat(ys).as("untereinander").isSorted().doesNotHaveDuplicates();
             // „Bibliotheken“ klebt am Boden des Drawers: unter dem Scrollbereich der Bereiche, über „Zurück“.
-            SettingsNavRow libraries = settings.navRows().get(14);
-            int librariesY = ys.get(14);
+            SettingsNavRow libraries = settings.navRows().get(settings.navRows().size() - 1);
+            int librariesY = ys.get(ys.size() - 1);
             int backY = SwingUtilities.convertPoint(settings.back.getParent(), settings.back.getLocation(),
                     settings.drawer()).y;
             assertThat(librariesY + libraries.getHeight()).isLessThanOrEqualTo(backY);
@@ -1302,11 +1334,12 @@ class MainWindowTest {
                     .as("scrollt nicht mit").isNull();
             assertThat(SwingUtilities.getAncestorOfClass(javax.swing.JScrollPane.class, settings.navRows().get(0)))
                     .isNotNull();
-            assertThat(librariesY).isGreaterThan(ys.get(13) + settings.navRows().get(13).getHeight());
+            assertThat(librariesY).isGreaterThan(ys.get(ys.size() - 2) + settings.navRows().get(ys.size() - 2).getHeight());
             assertThat(settings.selected()).isEqualTo(SettingsView.GENERAL);
 
             // Ein Klick auf „Netzwerk“ zeigt rechts nur diesen Bereich und markiert die Zeile.
-            SettingsNavRow network = settings.navRows().get(4);
+            SettingsNavRow network = settings.navRows().stream()
+                    .filter(row -> SettingsView.NETWORK.equals(row.title())).findFirst().orElseThrow();
             network.dispatchEvent(new MouseEvent(network, MouseEvent.MOUSE_PRESSED, 0, MouseEvent.BUTTON1_DOWN_MASK,
                     5, 5, 1, false, MouseEvent.BUTTON1));
             assertThat(settings.selected()).isEqualTo(SettingsView.NETWORK);

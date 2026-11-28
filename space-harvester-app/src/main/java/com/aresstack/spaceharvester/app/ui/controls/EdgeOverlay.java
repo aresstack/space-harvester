@@ -30,6 +30,8 @@ public final class EdgeOverlay extends JPanel {
     private final JPanel left = slot();
     private final JPanel right = slot();
     private JComponent bar;
+    /** Je Platz die Mitte, um die er steht ({@code null}: am Fensterrand); ohne Eintrag steht er am Rand. */
+    private final java.util.Map<JComponent, java.util.function.Supplier<Point>> anchors = new java.util.HashMap<>();
 
     public EdgeOverlay() {
         super(new BorderLayout() {
@@ -70,6 +72,26 @@ public final class EdgeOverlay extends JPanel {
         return right;
     }
 
+    /**
+     * Hängt einen Platz an eine Mitte, etwa die eines Trenners ({@link DividerRail}): Solange {@code center} einen
+     * Punkt liefert, steht der Platz waagerecht und senkrecht mittig darum statt oben am Fensterrand.
+     */
+    public void anchor(JComponent slot, java.util.function.Supplier<Point> center) {
+        anchors.put(slot, center);
+    }
+
+    /** Wo ein Platz der Größe {@code size} steht: um seine Mitte, sonst an {@code edge} unter den Kopfleisten. */
+    private Point place(JComponent slot, Dimension size, int edge, int top) {
+        java.util.function.Supplier<Point> anchor = anchors.get(slot);
+        Point center = anchor == null ? null : anchor.get();
+        if (center == null) {
+            return new Point(edge, top);
+        }
+        int x = Math.max(FRAME_LINE, Math.min(getWidth() - FRAME_LINE - size.width, center.x - size.width / 2));
+        int y = Math.max(top, Math.min(getHeight() - size.height, center.y - size.height / 2));
+        return new Point(x, y);
+    }
+
     /** Stellt {@code part} auf einen Platz ({@code null} leert ihn) und zeichnet neu. */
     public void place(JComponent slot, JComponent part) {
         if (part == null ? slot.getComponentCount() == 0 : part.getParent() == slot) {
@@ -98,9 +120,10 @@ public final class EdgeOverlay extends JPanel {
         Point origin = SwingUtilities.convertPoint(bar.getParent(), bar.getLocation(), this);
         int top = origin.y + bar.getHeight() + HeadBar.HEIGHT + HEAD_GAP;
         Dimension leftSize = left.getComponentCount() == 0 ? new Dimension() : left.getPreferredSize();
-        left.setBounds(FRAME_LINE, top, leftSize.width, leftSize.height);
+        Point leftAt = place(left, leftSize, FRAME_LINE, top);
+        left.setBounds(leftAt.x, leftAt.y, leftSize.width, leftSize.height);
         Dimension rightSize = right.getComponentCount() == 0 ? new Dimension() : right.getPreferredSize();
-        right.setBounds(getWidth() - FRAME_LINE - rightSize.width, top, rightSize.width,
-                rightSize.height);
+        Point rightAt = place(right, rightSize, getWidth() - FRAME_LINE - rightSize.width, top);
+        right.setBounds(rightAt.x, rightAt.y, rightSize.width, rightSize.height);
     }
 }

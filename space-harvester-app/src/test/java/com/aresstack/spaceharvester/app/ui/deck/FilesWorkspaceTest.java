@@ -319,6 +319,7 @@ class FilesWorkspaceTest {
         SwingUtilities.invokeAndWait(() -> workspace.showBrowseTab(0));
         flush();
         assertThat(workspace.browser().location()).contains(root.toString());
+        assertThat(workspace.pathField().getText()).as("Pfadfeld folgt dem Reiter").isEqualTo(root.toString());
         assertThat(names()).contains("Berichte", "job.jcl");
 
         // Der Filter gilt für den gezeigten Reiter (Codex #1241): im zweiten Reiter filtern, der erste bleibt ganz.

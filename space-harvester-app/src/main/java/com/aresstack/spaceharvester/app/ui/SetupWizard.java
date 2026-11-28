@@ -20,6 +20,8 @@ import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.ScrollPaneConstants;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
@@ -219,7 +221,19 @@ final class SetupWizard {
                 wizard.completed();
             }
         });
-        Dialogs.present(dialog, new Dimension(860, 600));
+        Dimension size = preferredContentSize(java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
+                .getMaximumWindowBounds());
+        wizard.root.setPreferredSize(size);
+        Dialogs.present(dialog, new Dimension(Math.min(860, size.width), Math.min(600, size.height)));
+    }
+
+    /**
+     * Bound the dialog content to the usable display area, leaving room for its header, border and taskbar.
+     * Otherwise an oversized first step can put the fixed navigation below the bottom edge of the screen.
+     */
+    static Dimension preferredContentSize(java.awt.Rectangle screen) {
+        return new Dimension(Math.max(320, Math.min(900, screen.width - 96)),
+                Math.max(260, Math.min(600, screen.height - 120)));
     }
 
     /** Beim Start: nur, solange die Datei keinen Abschluss kennt. */
@@ -564,8 +578,15 @@ final class SetupWizard {
         return value == null || value.isBlank() ? "–" : value;
     }
 
+    /**
+     * Keep a vertical scrollbar visible from the first step onward; never nest two scroll panes.
+     * The wizard navigation is separate from the page and therefore remains accessible.
+     */
     private static JComponent page(JComponent content) {
-        return Comic.column(content);
+        JScrollPane scroll = Comic.column(content);
+        scroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS);
+        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        return scroll;
     }
 
     private static ImageIcon shipIcon() {
