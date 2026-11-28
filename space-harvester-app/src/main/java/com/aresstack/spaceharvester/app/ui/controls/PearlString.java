@@ -68,7 +68,76 @@ public final class PearlString {
      * Je Gruppe die Höhe, auf der sie mit offenem Bereich zuletzt saß, als Anteil der Länge: Dort bleibt sie, wenn
      * ihr Bereich zu ist oder die Leiste zugeklappt am Fensterrand steht.
      */
-    private final Map<String, Double> seats = new java.util.HashMap<>();
+    private final Map<String, Integer> seats = new LinkedHashMap<>();
+    /** Ein Anteil der Länge in {@link #seats}: so fein, dass die Höhe auf das Pixel genau wiederkommt. */
+    private static final int SEAT_SCALE = 1_000_000;
+    private Runnable seatsChanged = () -> { };
+
+    /** Meldet, wenn eine Gruppe auf einer neuen Höhe sitzt (zum Merken, {@link #seats()}). */
+    public void onSeats(Runnable listener) {
+        this.seatsChanged = listener;
+    }
+
+    /**
+     * Die gemerkten Höhen zum Ablegen: je Gruppe ihre Kennung wie in {@link #placement} und ihr Anteil der Länge,
+     * etwa {@code "R=250000,*0=750000"}.
+     */
+    public String seats() {
+        StringBuilder text = new StringBuilder();
+        for (Map.Entry<String, Integer> seat : seats.entrySet()) {
+            String code = code(seat.getKey());
+            if (code != null) {
+                text.append(text.length() > 0 ? "," : "").append(code).append('=').append(seat.getValue());
+            }
+        }
+        return text.toString();
+    }
+
+    /**
+     * Setzt die Höhen aus {@link #seats()}: So sitzen Leiste und Kugeln schon beim Start zugeklappt dort, wo sie
+     * aufgeklappt saßen. {@code other} ist die Kette des anderen Rands (für ihre Gäste hier). Unlesbares entfällt.
+     */
+    public void seats(String text, PearlString other) {
+        seats.clear();
+        if (text != null) {
+            for (String part : text.split(",")) {
+                String[] fields = part.trim().split("=");
+                String unit = fields.length == 2 ? unit(fields[0], other) : null;
+                try {
+                    if (unit != null) {
+                        seats.put(unit, Math.max(0, Math.min(SEAT_SCALE, Integer.parseInt(fields[1]))));
+                    }
+                } catch (NumberFormatException unreadable) {
+                    // Ohne lesbare Höhe gilt die Verteilung nach der Reihenfolge.
+                }
+            }
+        }
+        column.revalidate();
+    }
+
+    /** Die Kennung einer Gruppe zum Merken: die Leiste, sonst die Nummer des Werkzeugs in seiner Kette. */
+    private String code(String unit) {
+        if (RAIL.equals(unit)) {
+            return RAIL;
+        }
+        int number = guests.getOrDefault(unit, this).tools().indexOf(unit);
+        return number < 0 ? null : (guests.containsKey(unit) ? GUEST : "") + number;
+    }
+
+    private String unit(String code, PearlString other) {
+        if (RAIL.equals(code)) {
+            return RAIL;
+        }
+        boolean guest = code.startsWith(GUEST);
+        PearlString origin = guest ? other : this;
+        try {
+            int number = Integer.parseInt(guest ? code.substring(GUEST.length()) : code);
+            return origin == null || number < 0 || number >= origin.tools().size() ? null
+                    : origin.tools().get(number);
+        } catch (NumberFormatException unreadable) {
+            return null;
+        }
+    }
     private boolean carrying;
     private java.util.function.Function<String, Integer> centre = name -> null;
     private Runnable laidOut = () -> { };
@@ -714,15 +783,18 @@ public final class PearlString {
             // dann am Fensterrand), bleibt es auf der Höhe, auf der es offen zuletzt saß (Angelo 28.11.2026: zugeklappt
             // genau dort, wo aufgeklappt). Was noch nie offen war, teilt sich die Länge in der Reihenfolge der Kette.
             Map<Component, Integer> middles = new LinkedHashMap<>();
+            boolean moved = false;
             for (int index = 0; index < parts.size(); index++) {
                 Component part = parts.get(index);
                 String unit = unitOf(part);
                 String tool = toolOf(part);
                 Integer middle = tool == null ? null : centre.apply(tool);
                 if (middle != null) {
-                    seats.put(unit, middle / (double) getHeight());
+                    int seat = (int) Math.round(middle * (double) SEAT_SCALE / getHeight());
+                    Integer before = seats.put(unit, seat);
+                    moved |= before == null || before != seat;
                 } else if (seats.containsKey(unit)) {
-                    middle = (int) Math.round(seats.get(unit) * getHeight());
+                    middle = (int) Math.round(seats.get(unit) * (double) getHeight() / SEAT_SCALE);
                 } else {
                     middle = (2 * index + 1) * getHeight() / (2 * parts.size());
                 }
@@ -737,6 +809,9 @@ public final class PearlString {
                 int y = Math.max(free, middles.get(part) - size.height / 2);
                 part.setBounds((getWidth() - size.width + 1) / 2, y, size.width, size.height);
                 free = y + size.height + GAP;
+            }
+            if (moved) {
+                seatsChanged.run();
             }
             laidOut.run();
         }

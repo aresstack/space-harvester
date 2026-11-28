@@ -145,6 +145,11 @@ public final class MainWindow implements AppContext.Navigator {
      */
     static final String PEARLS_KEY = "sidebar.pearls";
     /**
+     * Gemerkte Höhen von Knopfleisten und Kugeln je Perspektive (Schlüssel plus Punkt und Kennung der Perspektive),
+     * links und rechts je {@code PearlString.seats}: Zugeklappt sitzen sie schon beim Start dort, wo aufgeklappt.
+     */
+    static final String SEATS_KEY = "sidebar.pearls.seats";
+    /**
      * Die Bereiche der linken Leiste untereinander: ihr eigentlicher Inhalt ({@link #side}) und der Bereich jeder
      * Kugel, die an den linken Rand verschoben wurde.
      */
@@ -915,6 +920,8 @@ public final class MainWindow implements AppContext.Navigator {
         // Erst jetzt hören: Das Wiederherstellen der gemerkten Kugeln ist keine Änderung des Benutzers.
         sidePearls.onChange(this::sideChanged);
         leftPearls.onChange(this::sideChanged);
+        sidePearls.onSeats(this::rememberSeats);
+        leftPearls.onSeats(this::rememberSeats);
         if (WindowSizes.recallInt(LEFT_OPEN_KEY, 1) == 0) {
             collapseDrawer();
         }
@@ -1244,6 +1251,22 @@ public final class MainWindow implements AppContext.Navigator {
         return leftStack;
     }
 
+    private static String side(String[] sides, String prefix) {
+        for (String side : sides) {
+            if (side.startsWith(prefix)) {
+                return side.substring(prefix.length());
+            }
+        }
+        return null;
+    }
+
+    private void rememberSeats() {
+        if (!arranging && arrangedFor != null) {
+            AppState.shared().put(SEATS_KEY + "." + arrangedFor,
+                    "L=" + leftPearls.seats() + ";R=" + sidePearls.seats());
+        }
+    }
+
     /**
      * Ordnet die Kugeln so an, wie es für diese Perspektive gemerkt ist (Angelo 28.11.2026: jede Perspektive hat
      * ihre eigene Anordnung); ohne Gemerktes stehen alle Werkzeuge in ihrer Knopfleiste.
@@ -1266,6 +1289,10 @@ public final class MainWindow implements AppContext.Navigator {
                     leftPearls.restore(part.substring(2), sidePearls);
                 }
             }
+            String seats = perspective == null ? null : AppState.shared().get(SEATS_KEY + "." + perspective);
+            String[] sides = seats == null ? new String[0] : seats.split(";");
+            leftPearls.seats(side(sides, "L="), sidePearls);
+            sidePearls.seats(side(sides, "R="), leftPearls);
         } finally {
             arranging = false;
         }

@@ -1147,6 +1147,27 @@ class MainWindowTest {
                 assertThat(ballShut.y).isEqualTo(ballOpen);
                 assertThat(railShut.x + railShut.width).as("am rechten Fensterrand")
                         .isEqualTo(surface.getWidth() - frame);
+
+                // Auch beim Start mit zugeklappten Leisten: Die Höhen sind gemerkt, nichts wird gleichmäßig verteilt.
+                window.toggleDrawer();
+                MainWindow again = new MainWindow(context);
+                JPanel againSurface = again.content(() -> { }, () -> { });
+                againSurface.setSize(1400, 820);
+                for (int pass = 0; pass < 3; pass++) {
+                    layoutAll(againSurface);
+                }
+                assertThat(again.split().isLeftCollapsed()).isTrue();
+                assertThat(again.rightRail().onDivider()).isFalse();
+                Component againRail = again.sideSwitch();
+                Component againBall = again.chatToggle().getParent();
+                Component againLeft = again.explorer().view;
+                assertThat(againBall).isNotSameAs(againRail);
+                assertThat(SwingUtilities.convertRectangle(againRail.getParent(), againRail.getBounds(),
+                        againSurface).y).as("Start zugeklappt: Leiste rechts").isEqualTo(railOpen);
+                assertThat(SwingUtilities.convertRectangle(againBall.getParent(), againBall.getBounds(),
+                        againSurface).y).as("Start zugeklappt: Kugel rechts").isEqualTo(ballOpen);
+                assertThat(SwingUtilities.convertRectangle(againLeft.getParent(), againLeft.getBounds(),
+                        againSurface).y).as("Start zugeklappt: Leiste links").isEqualTo(leftOpen.y);
             } finally {
                 for (String tool : window.sidePearls().tools()) {
                     window.sidePearls().home(tool);
@@ -1157,6 +1178,8 @@ class MainWindowTest {
                 window.chatOpen(true);
                 window.chatOpen(false);
                 AppState.shared().put(MainWindow.SIDE_SHARES_KEY, "");
+                AppState.shared().put(MainWindow.SEATS_KEY + "."
+                        + com.aresstack.spaceharvester.app.ui.perspective.Perspectives.HARVESTER, "");
             }
         });
     }
