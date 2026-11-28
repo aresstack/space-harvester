@@ -57,7 +57,12 @@ public final class ChatArtifactStore {
     private static final Pattern ID = Pattern.compile("([DGB])(\\d{1,6})");
     /** Die Kennung eines Buchs (ADR 0044/0047): B1, B2 … – ein Dokument des Projekts, eines je Ordner. */
     public static final String BOOK = "B";
-    private static final ObjectMapper JSON = JsonMapper.builder().build();
+    /**
+     * Felder, die eine ältere Datei noch nicht kennt, gelten mit ihrem Grundwert (etwa {@code edition} = 0, seit #1675):
+     * Jackson 3 lehnt fehlende Zahlen sonst ab, und jedes ältere Artefakt verschwände aus Liste, Verweisen und Umzug.
+     */
+    private static final ObjectMapper JSON = JsonMapper.builder()
+            .disable(tools.jackson.databind.DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES).build();
     /** Ein Schloss für alle Instanzen: Ansicht und Werkzeuge dürfen sich nie überschreiben. */
     private static final Object LOCK = new Object();
 
