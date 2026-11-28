@@ -549,6 +549,7 @@ jede Zeile und trägt die Folge beim Erreichen nach.
 | `AiSettingsPanel.TIMEOUT_MAX_AMOUNT` | `999` | fest | Invariante/Darstellung | im Code belassen: größte Zahl im Feld, die Einheit (bis Tage) wählt der Benutzer |
 | `AppSettings.DEFAULT_CHECK_TIMEOUT` | `com.aresstack.spaceharvester.application.sync.PageFreshness.DEFAULT_TIMEOUT` | Vorgabe | Timeout | einstellbar |
 | `AppSettings.DEFAULT_LARGE_FILE_TIMEOUT` | `com.aresstack.spaceharvester.application.sync.PageFreshness.DEFAULT_LARGE_FILE_TIMEOUT` | Vorgabe | Timeout | einstellbar |
+| `AppSettings.DEFAULT_LARGE_FOLDER_BYTES` | `5L * 1024 * 1024 * 1024` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar (Einstellungen › Allgemein › Ablage, `space-harvester-app.large-folder-size`, 0 nie): nur Hinweis mit Ja/Nein vor dem Abgleich lokaler Ordner, blockiert nichts |
 | `AppSettings.DEFAULT_MAX_PAGE_BYTES` | `com.aresstack.spaceharvester.persistence.lucene.LucenePageCache.DEFAULT_MAX_PAYLOAD_BYTES` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
 | `AppSettings.DEFAULT_MAX_TEXT_FILE_BYTES` | `com.aresstack.spaceharvester.core.Harvester.DEFAULT_MAX_TEXT_FILE_BYTES` | Vorgabe | Speicher-/Ressourcenbudget | einstellbar |
 | `AppSettings.DEFAULT_RETENTION` | `Duration.ofDays(30)` | Vorgabe | Cache-Aufbewahrung | einstellbar |
