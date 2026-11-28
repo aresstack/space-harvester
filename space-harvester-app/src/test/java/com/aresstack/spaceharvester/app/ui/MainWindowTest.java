@@ -530,14 +530,28 @@ class MainWindowTest {
                 assertThat(window.analysesToggle().isSelected()).isFalse();
                 window.analysesToggle().doClick();
                 assertThat(window.analysesOpen()).isTrue();
-                // Der Umschalter steht im Kopf der gezeigten Leiste (Angelo 27.11.2026), nicht mehr oben.
-                assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), sidebar)).isTrue();
+                // Der Umschalter ist die Knopfleiste auf dem Trenner der Leiste (Angelo 28.11.2026): senkrecht,
+                // mittig auf der Linie, mit dem gewählten Symbol; nicht mehr im Kopf der Leiste und nicht oben.
+                assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), sidebar)).isFalse();
                 assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), window.windowBar())).isFalse();
+                assertThat(((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle) window.sideSwitch()).vertical())
+                        .isTrue();
+                layoutAll(surface);
+                layoutAll(surface);
+                assertThat(window.rightRail().onDivider()).isTrue();
+                assertThat(com.aresstack.spaceharvester.app.ui.controls.ComicDivider.grip(window.chatSplit()))
+                        .as("die Knopfleiste ersetzt den gelben Griff").isFalse();
+                java.awt.Component divider = ((javax.swing.plaf.basic.BasicSplitPaneUI) window.chatSplit().getUI())
+                        .getDivider();
+                java.awt.Rectangle line = SwingUtilities.convertRectangle(divider.getParent(), divider.getBounds(),
+                        surface);
+                java.awt.Rectangle onLine = SwingUtilities.convertRectangle(window.sideSwitch().getParent(),
+                        window.sideSwitch().getBounds(), surface);
+                assertThat(onLine.x + onLine.width / 2).as("mittig auf dem Trenner")
+                        .isEqualTo(line.x + line.width / 2);
                 window.jobsToggle().doClick();
                 assertThat(window.jobsOpen()).isTrue();
-                assertThat(SwingUtilities.isDescendingFrom(window.jobsToggle(), sidebar)).isFalse();
-                assertThat(SwingUtilities.isDescendingFrom(window.jobsToggle(),
-                        window.chatSplit().getRightComponent())).isTrue();
+                assertThat(window.jobsToggle().isSelected()).isTrue();
                 window.analysesToggle().doClick();
                 // Ein zweiter Klick auf das gewählte Symbol klappt die Leiste zu; zugeklappt steht der Umschalter
                 // ohne gewähltes Symbol senkrecht am rechten Fensterrand, direkt unter den Kopfleisten, und klappt
@@ -553,9 +567,10 @@ class MainWindowTest {
                         window.windowBar().getBounds(), surface);
                 assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), window.windowBar())).isFalse();
                 // Ohne Luft am Fensterrahmen (Angelo 28.11.2026), nicht hinter dessen Polster.
-                int line = com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.FRAME_LINE;
+                int frame = com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.FRAME_LINE;
+                assertThat(window.rightRail().onDivider()).isFalse();
                 assertThat(edge.x + edge.width).as("ganz am rechten Fensterrand")
-                        .isEqualTo(surface.getWidth() - line);
+                        .isEqualTo(surface.getWidth() - frame);
                 assertThat(edge.height).as("senkrecht: Symbole untereinander").isGreaterThan(2 * edge.width);
                 assertThat(edge.y).as("direkt unter den Kopfleisten").isEqualTo(bar.y + bar.height
                         + com.aresstack.spaceharvester.app.ui.controls.HeadBar.HEIGHT
@@ -566,8 +581,7 @@ class MainWindowTest {
                         .noneMatch(AbstractButton::isSelected);
                 window.chatToggle().doClick();
                 assertThat(window.chatOpen()).isTrue();
-                assertThat(SwingUtilities.isDescendingFrom(window.chatToggle(),
-                        window.chatSplit().getRightComponent())).isTrue();
+                assertThat(window.chatToggle().isSelected()).isTrue();
                 window.chatToggle().doClick();
                 assertThat(window.chatOpen()).isFalse();
                 // Links genauso: Der zweite Klick auf das gewählte Symbol klappt die Leiste zu, der Umschalter
@@ -580,15 +594,24 @@ class MainWindowTest {
                 layoutAll(surface);
                 java.awt.Rectangle left = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface);
                 assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isFalse();
-                assertThat(left.x).as("ganz am linken Fensterrand").isEqualTo(line);
+                assertThat(left.x).as("ganz am linken Fensterrand").isEqualTo(frame);
                 assertThat(left.y).as("auf derselben Höhe wie rechts").isEqualTo(edge.y);
                 assertThat(left.height).isGreaterThan(2 * left.width);
                 view.button(Explorer.FAVORITES_TAB).doClick();
                 assertThat(window.split().isLeftCollapsed()).isFalse();
                 assertThat(view.selected()).isEqualTo(Explorer.FAVORITES_TAB);
-                assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isTrue();
-                assertThat(view.vertical()).isFalse();
+                // Offen sitzt dieselbe Knopfleiste auf dem Trenner der linken Leiste.
+                assertThat(view.vertical()).isTrue();
                 layoutAll(surface);
+                layoutAll(surface);
+                assertThat(window.leftRail().onDivider()).isTrue();
+                java.awt.Component leftDivider = ((javax.swing.plaf.basic.BasicSplitPaneUI) window.split().getUI())
+                        .getDivider();
+                java.awt.Rectangle leftLine = SwingUtilities.convertRectangle(leftDivider.getParent(),
+                        leftDivider.getBounds(), surface);
+                left = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface);
+                assertThat(left.x + left.width / 2).as("mittig auf dem Trenner")
+                        .isEqualTo(leftLine.x + leftLine.width / 2);
             } finally {
                 // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten wieder mit dem Chat, zu.
                 window.chatOpen(true);

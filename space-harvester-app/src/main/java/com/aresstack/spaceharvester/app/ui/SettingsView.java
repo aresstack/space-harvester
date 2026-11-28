@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.app.ui.controls.DurationField;
 import com.aresstack.spaceharvester.application.metadata.AnalyticsQueries;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 
+import com.aresstack.spaceharvester.app.ui.controls.RailLook;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
@@ -201,6 +202,12 @@ public final class SettingsView implements View {
     /** Auswahl „Hintergrund des Bildbetrachters“, {@code space-harvester-app.viewer.background}; Einträge in der
      * Reihenfolge von {@link ViewerBackground}. */
     final JComboBox<String> viewer = Comic.combo();
+    /** Zeile der Platte „Darstellung“ (Angelo 28.11.2026): die Fassung der Knopfleisten an den Seitenleisten. */
+    static final String RAIL_TITLE = "Knopfleiste der Seitenleisten";
+    static final String RAIL_HINT = "Farben der senkrechten Knopfleiste, die auf dem Trenner einer Seitenleiste "
+            + "sitzt. Gilt sofort.";
+    /** Auswahl „Knopfleiste der Seitenleisten“; Einträge in der Reihenfolge von {@link RailLook}. */
+    final JComboBox<String> rail = Comic.combo();
     /** Was die Auswahl zeigt; eine Wahl desselben Werts schreibt nichts. */
     private ViewerBackground shownViewer;
     /** Während {@link #renderViewer} die Auswahl setzt, ist das keine Wahl des Benutzers. */
@@ -273,6 +280,17 @@ public final class SettingsView implements View {
         for (ViewerBackground background : ViewerBackground.values()) {
             viewer.addItem(background.label());
         }
+        for (RailLook look : RailLook.values()) {
+            rail.addItem(look.label());
+        }
+        rail.setSelectedIndex(RailLook.current().ordinal());
+        rail.setToolTipText("Aussehen der Knopfleisten an den Seitenleisten");
+        rail.addActionListener(e -> {
+            int index = rail.getSelectedIndex();
+            if (index >= 0 && index != RailLook.current().ordinal()) {
+                RailLook.choose(RailLook.values()[index]);
+            }
+        });
         viewer.setToolTipText("Farbe der Fläche hinter dem Bild im Bildbetrachter");
         viewer.addActionListener(e -> chooseViewer());
         analyticsPeriod.onChange(this::saveAnalytics);
@@ -326,6 +344,7 @@ public final class SettingsView implements View {
         consoleRows.add("Anzeigen", console, CONSOLE_HINT);
         SettingDialogs.Rows displayRows = new SettingDialogs.Rows();
         displayRows.add(VIEWER_TITLE, viewer, VIEWER_HINT);
+        displayRows.add(RAIL_TITLE, rail, RAIL_HINT);
         SettingDialogs.Rows analyticsRows = new SettingDialogs.Rows();
         analyticsRows.add("Zeitraum", analyticsPeriod, "Bis heute zurück; Analytics bewahrt standardmäßig 12 Monate "
                 + "auf.");

@@ -39,6 +39,7 @@ public final class SegmentedToggle extends JPanel {
     public SegmentedToggle() {
         super(new GridLayout(1, 0, 0, 0));
         setOpaque(false);
+        RailLook.follow(this);
     }
 
     /** Fügt eine Hälfte an; die erste ist gewählt. */
@@ -101,8 +102,9 @@ public final class SegmentedToggle extends JPanel {
 
     /**
      * Stellt die Hälften untereinander statt nebeneinander (Angelo 27.11.2026): So schmal steht der Umschalter einer
-     * zugeklappten Seitenleiste am Fensterrand, umgekehrt gefärbt (schwarzer Grund, weiße Symbole, die Hälfte unter
-     * der Maus hell). Nur für Hälften mit Symbol gedacht; eine Zahl zeigt sich dann als Punkt an der Ecke des Symbols.
+     * Seitenleiste als Knopfleiste auf ihrem Trenner oder, zugeklappt, am Fensterrand. Farben nach {@link RailLook};
+     * die gewählte Hälfte und die unter der Maus sind hervorgehoben. Nur für Hälften mit Symbol gedacht; eine Zahl
+     * zeigt sich dann als Punkt an der Ecke des Symbols.
      */
     public void vertical(boolean vertical) {
         if (this.vertical == vertical) {
@@ -336,17 +338,21 @@ public final class SegmentedToggle extends JPanel {
                 int h = vertical ? height - 1 + before + after : height - 1;
                 boolean on = isSelected();
                 if (vertical) {
-                    // Am Fensterrand ist der Umschalter umgekehrt gefärbt (Angelo 27.11.2026): schwarzer Grund,
-                    // weiße Symbole, denn keine Hälfte ist gewählt; die Hälfte unter der Maus wird hell.
-                    boolean light = getModel().isRollover() && isEnabled();
-                    g.setColor(light ? Comic.SURFACE : Comic.INK);
+                    // Die Knopfleiste in der gewählten Fassung (Angelo 28.11.2026); hervorgehoben sind die gewählte
+                    // Hälfte und die unter der Maus.
+                    RailLook look = RailLook.current();
+                    boolean chosen = on || getModel().isRollover() && isEnabled();
+                    g.setColor(chosen ? look.chosenGround() : look.ground());
                     g.fillRoundRect(x, y, w, h, arc, arc);
-                    g.setColor(Comic.INK);
-                    g.drawRoundRect(x, y, w, h, arc, arc);
+                    int inset = look.edgeWidth() - 1;
+                    g.setColor(look.edge());
+                    g.setStroke(new java.awt.BasicStroke(look.edgeWidth()));
+                    g.drawRoundRect(x + inset, y + inset, w - inset, h - inset, arc, arc);
+                    g.setStroke(new java.awt.BasicStroke(1f));
                     FontMetrics metrics = g.getFontMetrics(getFont());
                     g.setFont(getFont());
-                    paintLabel(g, (width - labelWidth(metrics)) / 2, height, light ? Comic.INK : Color.WHITE, !light,
-                            metrics);
+                    paintLabel(g, (width - labelWidth(metrics)) / 2, height,
+                            chosen ? look.chosenMark() : look.mark(), true, metrics);
                     if (count > 0) {
                         g.setColor(tone);
                         g.fillOval(width - DOT - 3, 3, DOT, DOT);
