@@ -551,6 +551,10 @@ class MainWindowTest {
                         .isEqualTo(line.x + line.width / 2);
                 assertThat(onLine.y + onLine.height / 2).as("senkrecht mittig, an der Stelle des gelben Griffs")
                         .isEqualTo(line.y + line.height / 2);
+                // Auch offen ist die Knopfleiste leicht durchscheinend, bis die Maus über ihr steht (Angelo
+                // 28.11.2026: immer, nicht nur zugeklappt).
+                assertThat(((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle) window.sideSwitch())
+                        .glassy()).isTrue();
                 window.jobsToggle().doClick();
                 assertThat(window.jobsOpen()).isTrue();
                 assertThat(window.jobsToggle().isSelected()).isTrue();
