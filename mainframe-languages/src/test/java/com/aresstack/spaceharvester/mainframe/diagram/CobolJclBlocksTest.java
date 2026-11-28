@@ -83,6 +83,36 @@ class CobolJclBlocksTest {
     }
 
     @Test
+    void blocksOnASharedLineAreDescribedFromTheirOwnStatementsOnly() {
+        RecordingAi ai = new RecordingAi();
+        OutlineToMermaidConverter.blockLabelSummarizer(ai);
+        String program = """
+                       IDENTIFICATION DIVISION.
+                       PROGRAM-ID. ZEILE.
+                       PROCEDURE DIVISION.
+                       MAIN-PARA.
+                           IF WS-A = 1 MOVE 1 TO WS-B ADD 1 TO WS-B ELSE MOVE 2 TO WS-B ADD 2 TO WS-B END-IF.
+                           GOBACK.
+                """;
+
+        SourceDiagrams.generate(program, "ZEILE.cbl", Optional.of(SourceLanguage.COBOL), DiagramType.FLOWCHART, 0,
+                true, false, null, null, true);
+
+        assertThat(ai.codes).isNotEmpty().allSatisfy(code -> assertThat(code).doesNotContain("IF WS-A")
+                .satisfiesAnyOf(c -> assertThat(c).contains("MOVE 1").doesNotContain("MOVE 2"),
+                        c -> assertThat(c).contains("MOVE 2").doesNotContain("MOVE 1")));
+    }
+
+    @Test
+    void separateLinesStillGiveTheModelTheFullSourceLines() {
+        RecordingAi ai = new RecordingAi();
+        OutlineToMermaidConverter.blockLabelSummarizer(ai);
+        cobol(true, true);
+        // ganze Quelltextzeilen mit Punkt, nicht nur die Kurztexte der Anweisungen
+        assertThat(ai.codes).anySatisfy(code -> assertThat(code).contains("MOVE 1 TO WS-A."));
+    }
+
+    @Test
     void withAiJclStepsAreDescribedTogetherWithTheirFiles() {
         RecordingAi ai = new RecordingAi();
         OutlineToMermaidConverter.blockLabelSummarizer(ai);

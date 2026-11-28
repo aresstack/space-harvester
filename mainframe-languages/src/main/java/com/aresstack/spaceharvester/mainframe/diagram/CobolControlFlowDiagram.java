@@ -48,7 +48,7 @@ public final class CobolControlFlowDiagram {
             String block = blockOf.get(node.id());
             if (block != null) {
                 if (block.equals(node.id())) {
-                    emitBlock(out, block, members.get(block), labels);
+                    emitBlock(out, block, members.get(block), graph, labels);
                 }
                 continue;
             }
@@ -138,7 +138,8 @@ public final class CobolControlFlowDiagram {
         return node.kind() == CobolControlFlow.NodeKind.STATEMENT;
     }
 
-    private static void emitBlock(StringBuilder out, String id, List<CobolControlFlow.Node> nodes, FlowLabels labels) {
+    private static void emitBlock(StringBuilder out, String id, List<CobolControlFlow.Node> nodes,
+            CobolControlFlow.Procedure graph, FlowLabels labels) {
         nodes = nodes.stream().sorted(java.util.Comparator.comparingInt(
                 (CobolControlFlow.Node n) -> n.span().start().line()).thenComparingInt(n -> n.span().start().column()))
                 .toList();
@@ -149,7 +150,14 @@ public final class CobolControlFlowDiagram {
             to = Math.max(to, node.span().end().line());
         }
         String fact = "📦 " + nodes.size() + " Anweisungen (L" + from + "–L" + to + ")";
-        String about = labels == null ? null : labels.describeLines(from, to, FlowLabels.BLOCK_PURPOSE);
+        String about = null;
+        if (labels != null) {
+            // Teilen sich Zeilen mit Anweisungen außerhalb des Blocks (mehrere Anweisungen je Zeile), bekommt die KI
+            // nur die Anweisungen des Blocks, sonst beschriebe sie auch den anderen Zweig.
+            about = sharesLines(nodes, graph, from, to)
+                    ? labels.describeBlock(String.join("\n", nodes.stream().map(CobolControlFlow.Node::label).toList()))
+                    : labels.describeLines(from, to, FlowLabels.BLOCK_PURPOSE);
+        }
         out.append("  ").append(id).append("[\"").append(escape(fact));
         if (about != null) {
             out.append(NEWLINE).append(lines(labels, about));
@@ -168,6 +176,19 @@ public final class CobolControlFlowDiagram {
         }
         out.append("\"]\n");
         out.append("  style ").append(id).append(" fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5\n");
+    }
+
+    private static boolean sharesLines(List<CobolControlFlow.Node> members, CobolControlFlow.Procedure graph,
+            int from, int to) {
+        for (var node : graph.nodes()) {
+            int start = node.span().start().line();
+            int end = node.span().end().line();
+            // Nur Anweisungen, die in diesen Zeilen beginnen oder enden; ein Absatz um den Block zählt nicht
+            if (!members.contains(node) && (start >= from && start <= to || end >= from && end <= to)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String callee(CobolControlFlow.Node node, FlowLabels labels) {
