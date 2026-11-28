@@ -103,6 +103,9 @@ jobs:
       fail-fast: false
       matrix:
         policy: [none, addons-blocked, start-page]
+        # Der Start des Chat-Browsers blieb einmal allein nach dem BiDi-Verbindungsaufbau stehen (Lauf 46100091976):
+        # mehrere frische Runner je Richtlinie, damit ein seltener Hänger sichtbar wird.
+        run: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -129,6 +132,8 @@ jobs:
       - name: Seite öffnen und interne Suche in einer Runde
         env:
           CHAT_BROWSER_TEST_CHANNEL: firefox
+          # Das BiDi-Protokoll zwischen Playwright und Firefox: zeigt, welche Antwort bei einem Hänger fehlt.
+          DEBUG: pw:protocol,pw:browser
         run: xvfb-run -a ./gradlew :space-harvester-app:test --tests '*ChatWebBrowserFirefoxLiveTest' -i --console=plain
       - name: Nicht übersprungen
         working-directory: space-harvester-app/build/test-results/test
