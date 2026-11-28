@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.control;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPainter;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 
@@ -25,7 +26,7 @@ public class ResearchPillButton extends JButton {
     private Color pressedFill = ResearchUiPalette.ACCENT_BLUE;
     private Color normalForeground = ResearchUiPalette.TEXT_PRIMARY;
     private Color hoverForeground = ResearchUiPalette.TEXT_PRIMARY;
-    private Color pressedForeground = Color.WHITE;
+    private Color pressedForeground = ThemeColor.of("comic.buttonPlate");
     private Color normalBorder;
     private Color hoverBorder;
     private Color pressedBorder;

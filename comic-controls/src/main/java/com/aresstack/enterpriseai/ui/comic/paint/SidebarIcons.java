@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.paint;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 
 import java.awt.BasicStroke;
@@ -244,5 +245,5 @@ public final class SidebarIcons {
         };
     }
 
-    private static final Color FOLDER_PAPER = new Color(0xFFF1C2);
+    private static final Color FOLDER_PAPER = ThemeColor.of("comic.folderPaper");
 }

@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.bubble;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import java.awt.Color;
 
 /** Keep all bubble colors in one replaceable value object. */
@@ -40,16 +41,20 @@ public final class BubblePalette {
 
     public static BubblePalette windowsPhoneInspired() {
         return new BubblePalette(
-                new Color(0xF4F4F4),
-                new Color(0x1676D2),
-                Color.WHITE,
-                new Color(0x15827A),
-                Color.WHITE,
-                new Color(0xF2C94C),
-                new Color(0x252525),
-                new Color(0xE39A18),
-                new Color(0xC94C4C),
-                new Color(0x6B6F76));
+                bubble("transcriptBackground"),
+                bubble("userBackground"),
+                bubble("userForeground"),
+                bubble("assistantBackground"),
+                bubble("assistantForeground"),
+                bubble("activityBackground"),
+                bubble("activityForeground"),
+                bubble("activityAccent"),
+                bubble("failureAccent"),
+                bubble("infoForeground"));
+    }
+
+    private static Color bubble(String role) {
+        return ThemeColor.of("bubble." + role);
     }
 
     /**

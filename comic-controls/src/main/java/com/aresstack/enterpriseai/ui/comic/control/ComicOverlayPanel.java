@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.control;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import com.aresstack.enterpriseai.ui.comic.theme.ComicPalette;
 
 import javax.swing.BorderFactory;
@@ -106,7 +107,7 @@ public class ComicOverlayPanel extends JPanel {
     protected void paintComponent(Graphics g) {
         Graphics2D g2 = (Graphics2D) g.create();
         try {
-            g2.setColor(new Color(0, 0, 0, 110)); // the dimmed backdrop
+            g2.setColor(ThemeColor.of("comic.overlayDim")); // the dimmed backdrop
             g2.fillRect(0, 0, getWidth(), getHeight());
         } finally {
             g2.dispose();

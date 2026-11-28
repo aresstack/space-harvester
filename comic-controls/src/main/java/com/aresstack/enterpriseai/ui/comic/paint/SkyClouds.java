@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.paint;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 
 import javax.swing.BoundedRangeModel;
@@ -92,7 +93,7 @@ public final class SkyClouds {
         g2.setPaint(sky);
         g2.fillRect(0, 0, width, skyHeight);
 
-        g2.setColor(new Color(255, 255, 255, 30));
+        g2.setColor(ThemeColor.withAlpha(ThemeColor.of("comic.buttonPlate"), 30));
         g2.fill(new Ellipse2D.Float(width * 0.08f, contentBottom * 0.15f, width * 0.28f,
                 Math.max(18f, contentBottom * 0.4f)));
         g2.fill(new Ellipse2D.Float(width * 0.58f, contentBottom * 0.45f, width * 0.34f,

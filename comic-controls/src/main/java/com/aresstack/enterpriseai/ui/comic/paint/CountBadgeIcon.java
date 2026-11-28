@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.paint;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import javax.swing.Icon;
 import java.awt.Color;
 import java.awt.Component;
@@ -72,7 +73,7 @@ public final class CountBadgeIcon implements Icon {
             g2.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 8));
             FontMetrics metrics = g2.getFontMetrics();
             String text = label();
-            g2.setColor(Color.WHITE);
+            g2.setColor(ThemeColor.of("comic.buttonPlate"));
             g2.drawString(text, px + (w - metrics.stringWidth(text)) / 2,
                     y + (PLATE_HEIGHT - metrics.getHeight()) / 2 + metrics.getAscent());
         } finally {

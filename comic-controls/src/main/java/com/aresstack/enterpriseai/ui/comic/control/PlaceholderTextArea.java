@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.control;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import javax.swing.JTextArea;
 import javax.swing.border.EmptyBorder;
 import java.awt.Color;
@@ -17,7 +18,7 @@ import java.awt.RenderingHints;
 public class PlaceholderTextArea extends JTextArea {
 
     /** Muted, but readable on the white composer plate (about 5:1, WCAG AA for normal text). */
-    private static final Color PLACEHOLDER = new Color(0x6B6F76);
+    private static final Color PLACEHOLDER = ThemeColor.of("comic.placeholderText");
 
     private String placeholder;
 

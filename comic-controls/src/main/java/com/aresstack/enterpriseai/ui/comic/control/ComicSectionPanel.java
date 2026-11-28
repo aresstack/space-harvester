@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.control;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import com.aresstack.enterpriseai.ui.comic.theme.ComicPalette;
 
 import javax.swing.BorderFactory;
@@ -24,7 +25,7 @@ public class ComicSectionPanel extends JPanel {
     private static final int STRIPE_WIDTH = 5;
 
     private final ComicPalette palette;
-    private Color plateFill = Color.WHITE;
+    private Color plateFill = ThemeColor.of("comic.buttonPlate");
     private Color accentStripe;
 
     public ComicSectionPanel() {
@@ -42,7 +43,7 @@ public class ComicSectionPanel extends JPanel {
 
     /** The plate's fill — white by default (calm); accent colors only for states that should pop. */
     public void setPlateFill(Color fill) {
-        this.plateFill = fill == null ? Color.WHITE : fill;
+        this.plateFill = fill == null ? ThemeColor.of("comic.buttonPlate") : fill;
         repaint();
     }
 

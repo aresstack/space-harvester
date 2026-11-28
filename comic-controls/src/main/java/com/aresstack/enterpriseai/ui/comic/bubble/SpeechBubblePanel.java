@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.bubble;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import javax.swing.AbstractButton;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
@@ -607,7 +608,7 @@ public final class SpeechBubblePanel extends JPanel
     }
 
     private static Color withAlpha(Color color, int alpha) {
-        return new Color(color.getRed(), color.getGreen(), color.getBlue(), alpha);
+        return ThemeColor.withAlpha(color, alpha); // derived live: follows a theme switch of the base color
     }
 
     private static String normalize(String value) {

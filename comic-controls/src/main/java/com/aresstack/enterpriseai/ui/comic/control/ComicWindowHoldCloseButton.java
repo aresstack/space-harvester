@@ -1,5 +1,6 @@
 package com.aresstack.enterpriseai.ui.comic.control;
 
+import com.aresstack.enterpriseai.ui.comic.theme.ThemeColor;
 import com.aresstack.enterpriseai.ui.comic.theme.ComicPalette;
 
 import javax.swing.SwingUtilities;
@@ -161,7 +162,7 @@ public class ComicWindowHoldCloseButton extends ComicWindowCloseButton {
             g2.setColor(palette.getInk());
             g2.setStroke(new BasicStroke(1.6f));
             g2.draw(chip);
-            g2.setColor(Color.WHITE);
+            g2.setColor(ThemeColor.of("comic.buttonPlate"));
             g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             int cx = getWidth() / 2;
             int cy = getHeight() / 2;
