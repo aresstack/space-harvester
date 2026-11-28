@@ -24,7 +24,6 @@ import com.aresstack.spaceharvester.browser.runtime.BrowserRuntimeConfig;
 import com.aresstack.spaceharvester.application.assets.DocumentText;
 
 import com.aresstack.askai.browser.search.LegacyBrowserSearchDefaults;
-import com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog;
 import com.aresstack.askai.browser.search.engine.BrowserSearchEngineSelection;
 import com.aresstack.askai.research.runtime.search.SearchBrowserWebSearch;
 
@@ -121,19 +120,21 @@ public final class ChatWebBrowser {
         return browser;
     }
 
-    /** Fragt nach der Such-URL einer internen Suchseite; {@code null}, wenn der Benutzer abbricht. */
+    /** Fragt nach der Adresse der internen Suchseite; {@code null}, wenn der Benutzer abbricht. */
     public interface SearchPageQuestion {
-        String ask(String problem);
+        String ask();
 
-        /** Der Dialog der App, auf dem EDT; der Werkzeug-Thread wartet auf die Antwort. */
-        SearchPageQuestion DIALOG = problem -> {
+        /**
+         * Der Dialog der App, auf dem EDT; der Werkzeug-Thread wartet auf die Antwort. Er gehört zum Hauptfenster der
+         * App und kommt nach vorn: Hat gerade der Browser den Fokus, kennt Swing kein aktives Fenster, und ein Dialog
+         * ohne Besitzer lag hinter dem Browser, während der Chat auf ihn wartete.
+         */
+        SearchPageQuestion DIALOG = () -> {
             String[] answer = {null};
             try {
                 javax.swing.SwingUtilities.invokeAndWait(() -> answer[0] =
-                        com.aresstack.spaceharvester.app.ui.Dialogs.askText(
-                                java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow(),
-                                INTERNAL_SEARCH_TITLE, problem == null ? INTERNAL_SEARCH_HINT
-                                        : problem + "\n\n" + INTERNAL_SEARCH_HINT, ""));
+                        com.aresstack.spaceharvester.app.ui.Dialogs.askText(appWindow(), INTERNAL_SEARCH_TITLE,
+                                INTERNAL_SEARCH_HINT, ""));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } catch (java.lang.reflect.InvocationTargetException e) {
@@ -144,12 +145,25 @@ public final class ChatWebBrowser {
         };
     }
 
-    static final String INTERNAL_SEARCH_TITLE = "Interne Suche einrichten";
-    static final String INTERNAL_SEARCH_HINT = "Für das Profil Intern ist noch keine Suchseite eingetragen. Gemeint "
-            + "ist eine Suchseite des Unternehmens, die nur intern erreichbar ist, etwa das Unternehmensportal oder "
-            + "das Intranet, nicht Google oder eine andere öffentliche Suchmaschine. Gib die Adresse ihrer "
-            + "Ergebnisseite ein und schreibe {query} an die Stelle der Suchbegriffe, zum Beispiel "
-            + "https://portal.example/suche?q={query}. Weitere Suchseiten trägst du unter Einstellungen › Browser ein.";
+    /**
+     * Das Fenster, zu dem Fragen des Chats gehören: das aktive Fenster der App, sonst ihr sichtbares Hauptfenster (der
+     * Browser hat den Fokus, Swing meldet dann kein aktives Fenster).
+     */
+    static java.awt.Window appWindow() {
+        java.awt.Window active = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow();
+        if (active != null) {
+            return active;
+        }
+        for (java.awt.Frame frame : java.awt.Frame.getFrames()) {
+            if (frame.isShowing()) {
+                return frame;
+            }
+        }
+        return null;
+    }
+
+    static final String INTERNAL_SEARCH_TITLE = "Interne Suche";
+    static final String INTERNAL_SEARCH_HINT = "Auf welcher Seite soll intern gesucht werden?";
 
     /** Wie die erste interne Suche ohne Suchseite nachfragt (Tests ersetzen den Dialog). */
     void searchPageQuestion(SearchPageQuestion question) {
@@ -158,7 +172,7 @@ public final class ChatWebBrowser {
 
     /**
      * Die Suchmaschinen des Chats nach seinem Profil. Hat Intern noch keine aktive Suchseite, fragt die erste interne
-     * Suche nach einer und trägt sie ein; ohne Antwort sucht sie nichts.
+     * Suche nach ihrer Adresse und trägt sie ein; ohne Antwort sucht sie nichts.
      */
     BrowserSearchEngineSelection engines(ChatConversationId chat) {
         BrowserProfile profile = profile(chat);
@@ -166,19 +180,12 @@ public final class ChatWebBrowser {
         if (profile != BrowserProfile.INTERNAL || !engines.resolvedEnabledEngines().isEmpty()) {
             return engines;
         }
-        String problem = null;
-        while (true) {
-            String typed = searchPageQuestion.ask(problem);
-            if (typed == null || typed.isBlank()) {
-                return engines;
-            }
-            if (BrowserSearchEngineCatalog.isSearchPage(typed.strip())) {
-                settings.addSearchPage(BrowserProfile.INTERNAL, typed.strip());
-                return settings.engines(BrowserProfile.INTERNAL);
-            }
-            problem = "„" + typed.strip() + "“ ist keine Such-URL: Sie beginnt mit http:// oder https:// und enthält "
-                    + "{query}.";
+        String address = BrowserSettings.searchPageAddress(searchPageQuestion.ask());
+        if (address == null) {
+            return engines;
         }
+        settings.addSearchPage(BrowserProfile.INTERNAL, address);
+        return settings.engines(BrowserProfile.INTERNAL);
     }
 
     /** Warum der letzte {@link #start} keinen Browser lieferte; leer, wenn er einen lieferte. */

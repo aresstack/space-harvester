@@ -91,8 +91,8 @@ class ChatWebBrowserFirefoxLiveTest {
         ChatWebBrowser browser = ChatWebBrowser.start(data, settings);
         assertThat(browser).as(ChatWebBrowser.unavailable()).isNotNull();
         List<String> asked = new ArrayList<>();
-        browser.searchPageQuestion(problem -> {
-            asked.add(String.valueOf(problem));
+        browser.searchPageQuestion(() -> {
+            asked.add("gefragt");
             return base + "/find?q={query}";
         });
         browser.profile("chat-1", true);
