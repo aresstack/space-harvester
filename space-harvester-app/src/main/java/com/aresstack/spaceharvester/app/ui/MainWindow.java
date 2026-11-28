@@ -328,23 +328,25 @@ public final class MainWindow implements AppContext.Navigator {
                 context.vault() == null ? null : context.vault().scope("sharepoint")));
         // NDV im Command Deck: „Indexieren (Regel anlegen)“ legt eine Wissensquelle an (globale Suche, KI-Suche).
         com.aresstack.spaceharvester.app.ui.deck.NdvAnalysisSettings.searchLink(new NdvSourceRules(context));
-        // Diagramm-Ansicht „Visuell“: KI-Kurzbeschriftung über das Modell der Zeile „Zusammenfassung“ (sonst das
-        // Chat-Modell), gestreamt; Systemfunktionen aus Einstellungen › Diagramme.
+        // Diagramm-Ansicht „Visuell“: KI-Beschreibung über das Modell der Zeile „Quellcode“ (sonst das Chat-Modell),
+        // gestreamt; Systemfunktionen aus Einstellungen › Diagramme.
         com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.connect(() -> {
             var runtime = context.runtime();
             var settings = context.settings();
             if (runtime == null || settings == null || settings.ai() == null) {
                 return null;
             }
-            var use = settings.ai().summary();
-            String model = use != null && use.model() != null ? use.model() : settings.ai().chatModel();
+            var use = settings.ai().sourceCode();
+            String model = use.model() != null ? use.model() : settings.ai().chatModel();
             // Tokenbudget aus Kontextlänge und Ausgabelimit (F41-7); fehlt eines, geht der Code in einer Anfrage.
             // Kontextlänge aus den Einstellungen, sonst aus dem schon bekannten Modellkatalog des Dienstes.
             com.aresstack.spaceharvester.app.runtime.ModelBudget budget = com.aresstack.spaceharvester.app.runtime
                     .ModelBudget.chat(settings.ai().contextTokens(), runtime.workspace().catalogContextTokens(model,
-                            false), settings.ai().chatMaxTokens());
+                            false), use.maxTokens() != null ? use.maxTokens()
+                            : com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_SOURCE_CODE_MAX_TOKENS);
             return new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramLabels.Target(
-                    runtime.workspace().aiChat(), model, use == null ? null : use.thinking(), budget);
+                    runtime.workspace().aiChat(), model, use.thinking() != null ? use.thinking()
+                    : com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_SOURCE_CODE_THINKING, budget);
         });
         statusView = new StatusView(context);
         sources = new SourcesView(context);

@@ -87,6 +87,9 @@ class ConfigurationParityTest {
                 deadline-model: fristen-modell
                 deadline-max-tokens: 4096
                 deadline-thinking: low
+                source-code-model: quellcode-modell
+                source-code-max-tokens: 2048
+                source-code-thinking: low
                 diagnosis-enabled: false
                 diagnosis-model: diagnose-modell
                 diagnosis-max-tokens: 2048
@@ -253,6 +256,8 @@ class ConfigurationParityTest {
                 .isEqualTo(new AiServiceSettings.ModelUse("schaubild-plan", 8192, "medium"));
         assertThat(appAi.deadline()).isEqualTo(ai.deadlineUse())
                 .isEqualTo(new AiServiceSettings.ModelUse("fristen-modell", 4096, "low"));
+        assertThat(appAi.sourceCode()).isEqualTo(ai.sourceCodeUse())
+                .isEqualTo(new AiServiceSettings.ModelUse("quellcode-modell", 2048, "low"));
         assertThat(appAi.diagnosis()).isEqualTo(ai.diagnosis()).isEqualTo(new AiServiceSettings.Diagnosis(false,
                 new AiServiceSettings.ModelUse("diagnose-modell", 2048, "high")));
         assertThat(appAi.timeouts()).isEqualTo(ai.timeouts()).isEqualTo(new AiServiceSettings.Timeouts(
