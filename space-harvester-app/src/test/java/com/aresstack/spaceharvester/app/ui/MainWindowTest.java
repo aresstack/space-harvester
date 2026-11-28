@@ -863,6 +863,12 @@ class MainWindowTest {
             List<com.aresstack.spaceharvester.app.ui.controls.HelpButton> helps =
                     find(row, com.aresstack.spaceharvester.app.ui.controls.HelpButton.class);
             assertThat(helps).isNotEmpty();
+            // Jeder Reiter der Seitenansicht hat sein „?“: genau eines ist zu sehen, auch ohne geöffnete Seite.
+            for (String tab : List.of("Leseansicht", "Podcast-Ansicht", "Anhänge", "Info", "Export")) {
+                find(surface, AbstractButton.class).stream().filter(button -> tab.equals(button.getToolTipText())
+                        || tab.equals(button.getText())).findFirst().ifPresent(AbstractButton::doClick);
+                assertThat(helps.stream().filter(java.awt.Component::isVisible).count()).as(tab).isEqualTo(1);
+            }
             // Ohne Hilfe zur gezeigten Ansicht nimmt die Ecke keinen Platz.
             helps.forEach(help -> help.setVisible(false));
             layoutAll(surface);
