@@ -43,6 +43,28 @@ class CenterOfferTest {
         });
     }
 
+    /**
+     * Proving Ground, Reiter Hooks (28.11.): die Ansicht ist ein JSplitPane mit großer Mindestgröße. Sie füllt die
+     * Fläche, mit und ohne Angebot, statt nach rechts unten zu rutschen.
+     */
+    @Test
+    void aSplitPaneWithALargeMinimumSizeFillsTheWholeArea() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JPanel top = new JPanel();
+            top.setMinimumSize(new java.awt.Dimension(900, 500));
+            javax.swing.JSplitPane content = new javax.swing.JSplitPane(javax.swing.JSplitPane.VERTICAL_SPLIT, top,
+                    new JPanel());
+            CenterOffer offer = new CenterOffer(content, "Projekt anlegen", "Neues Projekt");
+            offer.setSize(1200, 900);
+            for (boolean shown : new boolean[] {false, true}) {
+                offer.offer(shown);
+                layout(offer);
+                assertThat(content.getBounds()).as("Angebot " + shown)
+                        .isEqualTo(new java.awt.Rectangle(0, 0, 1200, 900));
+            }
+        });
+    }
+
     private static void layout(java.awt.Container container) {
         container.doLayout();
         for (java.awt.Component child : container.getComponents()) {

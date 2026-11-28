@@ -20,6 +20,15 @@ class KeePassTestCredentialsTest {
         assertThat(KeePassTestCredentials.otp(null)).isNull();
     }
 
+    /** Mehr Passwörter auf einer Seite (Angelo 28.11.): {{secret.PIN}} = Zusatzfeld „PIN“ des KeePass-Eintrags. */
+    @Test
+    void aFurtherPasswordComesFromTheEntrysFieldOfThatName() {
+        assertThat(KeePassTestCredentials.field(Map.of("PIN", "4711", "otp", "GEZD"), "pin")).isEqualTo("4711");
+        assertThat(KeePassTestCredentials.field(Map.of("PIN", "4711"), "Passwort")).as("kein Feld: Passwort gilt")
+                .isNull();
+        assertThat(KeePassTestCredentials.field(null, "PIN")).isNull();
+    }
+
     @Test
     void usersWithoutEntryHaveNoCredentialsAndAnUnpairedVaultSaysSo() {
         KeePassTestCredentials credentials = new KeePassTestCredentials(() -> null);

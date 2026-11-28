@@ -54,6 +54,43 @@ public final class RunningBrowser implements AutoCloseable {
         return context;
     }
 
+    /**
+     * A new context for a test (its own cookies and storage, like {@code browser.newContext()}) whose first page
+     * closes the start window of this browser: Firefox opens a window on its own at every start, and Playwright's
+     * {@code newPage()} always opens another one. A persistent start ({@link BrowserRuntime#forTestRun}) makes that
+     * start window a page of {@link #context()}; it is closed as soon as the test's window is open, so exactly one
+     * window stays. For an ephemeral start (no profile context) it is a plain {@code browser.newContext()}.
+     */
+    public BrowserContext newTestContext() {
+        return newTestContext(null);
+    }
+
+    /** As {@link #newTestContext()}, with Playwright's context options (viewport, locale ...; null = its defaults). */
+    public BrowserContext newTestContext(Browser.NewContextOptions options) {
+        BrowserContext test = browser.newContext(options);
+        if (context != null) {
+            AtomicBoolean done = new AtomicBoolean();
+            test.onPage(page -> {
+                if (done.compareAndSet(false, true)) {
+                    closeStartWindow();
+                }
+            });
+        }
+        return test;
+    }
+
+    /** Closes the pages of the profile context of a persistent start (its start window); nothing for an ephemeral one. */
+    public void closeStartWindow() {
+        if (context == null) {
+            return;
+        }
+        for (com.microsoft.playwright.Page start : java.util.List.copyOf(context.pages())) {
+            if (!start.isClosed()) {
+                start.close();
+            }
+        }
+    }
+
     /** Whether an add-on handed to the start is loaded. */
     public boolean addonLoaded() {
         return addonLoaded;

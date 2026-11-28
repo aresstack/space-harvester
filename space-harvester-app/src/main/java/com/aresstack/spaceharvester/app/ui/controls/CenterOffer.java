@@ -5,7 +5,6 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
-import javax.swing.OverlayLayout;
 import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Graphics;
@@ -46,7 +45,10 @@ public final class CenterOffer extends JPanel {
      */
     public CenterOffer(JComponent content, String label, String tooltip) {
         Objects.requireNonNull(content, "content");
-        setLayout(new OverlayLayout(this));
+        // Jede Lage füllt die ganze Fläche. Nicht OverlayLayout: das richtet nach getAlignmentX/Y aus, und ein
+        // JSplitPane meldet 0 (sein Layout-Manager), der Knopf-Layer 0,5 – die Ansicht rutschte dann um einen Teil
+        // ihrer Mindestgröße nach rechts unten (Proving Ground, Reiter Hooks, 28.11.).
+        setLayout(new Fill());
         setOpaque(false);
         button.setText(Objects.requireNonNull(label, "label"));
         button.setToolTipText(tooltip);
@@ -85,6 +87,51 @@ public final class CenterOffer extends JPanel {
     public boolean isOptimizedDrawingEnabled() {
         // Die Lagen überdecken sich.
         return false;
+    }
+
+    /** Legt jede Lage über die ganze Fläche; Größen sind die größten der Lagen. */
+    private static final class Fill implements java.awt.LayoutManager {
+
+        @Override
+        public void addLayoutComponent(String name, java.awt.Component component) {
+        }
+
+        @Override
+        public void removeLayoutComponent(java.awt.Component component) {
+        }
+
+        @Override
+        public java.awt.Dimension preferredLayoutSize(java.awt.Container parent) {
+            return size(parent, true);
+        }
+
+        @Override
+        public java.awt.Dimension minimumLayoutSize(java.awt.Container parent) {
+            return size(parent, false);
+        }
+
+        private static java.awt.Dimension size(java.awt.Container parent, boolean preferred) {
+            java.awt.Dimension result = new java.awt.Dimension();
+            for (java.awt.Component child : parent.getComponents()) {
+                java.awt.Dimension own = preferred ? child.getPreferredSize() : child.getMinimumSize();
+                result.width = Math.max(result.width, own.width);
+                result.height = Math.max(result.height, own.height);
+            }
+            java.awt.Insets insets = parent.getInsets();
+            result.width += insets.left + insets.right;
+            result.height += insets.top + insets.bottom;
+            return result;
+        }
+
+        @Override
+        public void layoutContainer(java.awt.Container parent) {
+            java.awt.Insets insets = parent.getInsets();
+            int width = Math.max(0, parent.getWidth() - insets.left - insets.right);
+            int height = Math.max(0, parent.getHeight() - insets.top - insets.bottom);
+            for (java.awt.Component child : parent.getComponents()) {
+                child.setBounds(insets.left, insets.top, width, height);
+            }
+        }
     }
 
     /** Der graue, runde Knopf: Fläche hell, Schrift gedämpft, unter der Maus etwas dunkler. */

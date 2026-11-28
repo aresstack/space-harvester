@@ -62,6 +62,12 @@ include 'mermaid-renderer'
 // eigenes Gradle-Projekt ohne Release.
 include 'browser-runtime'
 // Proving Ground (#1153): Webtests mit dem originalen Playwright-Recorder aufzeichnen und abspielen, ohne Swing.
+// TOTP-Bibliothek GoogleAuth und ihr Commons Codec als unveränderte Quellkopien (libs/*/UPSTREAM.md), Maven Central ist
+// keine Quelle.
+include 'googleauth'
+project(':googleauth').projectDir = file('libs/googleauth')
+include 'commons-codec'
+project(':commons-codec').projectDir = file('libs/commons-codec')
 include 'proving-ground'
 include 'space-harvester-app'
 

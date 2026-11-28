@@ -227,6 +227,46 @@ class ProvingGroundWorkspaceTest {
         }
     }
 
+    /**
+     * Angelo 28.11.: unten die Leiste mit der Lupe wie überall, rechts das „?“, das den gezeigten Reiter erklärt –
+     * jeder Reiter seine eigene Hilfe, auch wie man weitere Passwörter und Einmalcodes nutzt.
+     */
+    @Test
+    void theFootHasTheSearchAndAHelpThatExplainsTheShownTab() throws Exception {
+        TestCase recorded = new TestCase("Anmelden", List.of(TestStep.navigate("p", "{{start}}")));
+        TestCaseFile.write(recorded, directory.resolve("anmeldung/login.jsonl"));
+        ProjectFile.write(new TestProject("Fachverfahren", null, List.of(), List.of(), null,
+                List.of(TestSuite.of("anmeldung", "Anmeldung", List.of(TestCaseEntry.of("login", "Anmelden",
+                        "anmeldung/login.jsonl"))))), directory);
+        AtomicReference<ProvingGroundWorkspace> workspace = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> workspace.set(new ProvingGroundWorkspace(() -> null, () -> directory)));
+        SwingUtilities.invokeAndWait(() -> workspace.get().open(directory));
+        JTree tree = find(workspace.get(), JTree.class);
+        await(() -> tree.getRowCount() == 3);
+
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(SwingUtilities.isDescendingFrom(workspace.get().findBar(), workspace.get())).isTrue();
+            assertThat(SwingUtilities.isDescendingFrom(workspace.get().shownHelp(),
+                    workspace.get().findBar().helpArea())).isTrue();
+            tree.setSelectionRow(1);
+        });
+        await(() -> ProvingGroundWorkspace.HOOKS.equals(workspace.get().shownCard()));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(workspace.get().shownHelp().isVisible()).isTrue();
+            assertThat(workspace.get().shownHelp().popup().bodyText()).contains("beforeAll");
+            tree.setSelectionRow(0);
+        });
+        await(() -> ProvingGroundWorkspace.HOOKS.equals(workspace.get().shownCard()));
+        SwingUtilities.invokeAndWait(() -> tree.setSelectionRow(2));
+        await(() -> ProvingGroundWorkspace.STEPS.equals(workspace.get().shownCard()));
+        SwingUtilities.invokeAndWait(() -> {
+            String steps = workspace.get().shownHelp().popup().bodyText();
+            assertThat(steps).contains("{{secret.PIN}}").contains("{{otp()}}");
+        });
+        assertThat(ProvingGroundWorkspace.HELP_USERS).contains("Zusatzfeld „otp“").contains("„PIN“");
+        assertThat(ProvingGroundWorkspace.HELP_PRECONDITIONS).contains("Vorbedingungen");
+    }
+
     private static void await(BooleanSupplier condition) throws Exception {
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
         boolean[] met = new boolean[1];

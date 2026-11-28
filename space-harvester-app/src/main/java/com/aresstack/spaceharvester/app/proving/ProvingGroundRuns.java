@@ -94,10 +94,11 @@ public final class ProvingGroundRuns implements AutoCloseable {
                 }
                 BrowserRuntime runtime = new BrowserRuntime(BrowserRuntimeConfig.of(BrowserChannel.of(current.channel()),
                         current.executable(), current.dataDirectory(), current.browserStart()));
-                try (RunningBrowser browser = runtime.ephemeral(current.headless(), null, false)) {
+                // ein Fenster: das Startfenster von Firefox schließt, sobald das Fenster des Tests offen ist
+                try (RunningBrowser browser = runtime.forTestRun(current.headless(), false)) {
                     running.set(browser);
                     ProjectRunResult result = new ProjectRunner().run(project, directory,
-                            user -> browser.browser().newContext(), credentials.get(),
+                            user -> browser.newTestContext(), credentials.get(),
                             RunOptions.defaults().withOnly(only).withActionTimeout(current.actionTimeout())
                                     .withOutputDirectory(outputDirectory));
                     done.accept(result);
@@ -173,9 +174,9 @@ public final class ProvingGroundRuns implements AutoCloseable {
                 Setup current = setup.get();
                 BrowserRuntime runtime = new BrowserRuntime(BrowserRuntimeConfig.of(BrowserChannel.of(current.channel()),
                         current.executable(), current.dataDirectory(), current.browserStart()));
-                try (RunningBrowser browser = runtime.ephemeral(false, null, false)) {
+                try (RunningBrowser browser = runtime.forTestRun(false, false)) {
                     running.set(browser);
-                    BrowserContext context = browser.browser().newContext();
+                    BrowserContext context = browser.newTestContext();
                     try (Recorder recorder = Recorder.start(context, target, RecorderOptions.defaults())) {
                         recording.recorder = recorder;
                         if (recording.paused) {
