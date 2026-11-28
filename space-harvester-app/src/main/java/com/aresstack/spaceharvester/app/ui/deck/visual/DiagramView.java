@@ -376,6 +376,12 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
         boolean auto = autoCollapse;
         // Große Quelltexte nur beim Öffnen automatisch kompakt (wie MainframeMate), danach entscheidet der Schalter
         autoCollapse = false;
+        // Einmal zeichnen (Angelo 28.11.2026: nicht erst ohne KI und dann alles noch einmal): mit KI wird erst
+        // gezeichnet, wenn die Beschriftungen da sind.
+        boolean ai = !mermaid && VisualAction.aiAvailable();
+        if (ai) {
+            diagram.getStatusLabel().setText("KI beschriftet das Diagramm …");
+        }
         new SwingWorker<SourceDiagrams.Result, Void>() {
             @Override
             protected SourceDiagrams.Result doInBackground() {
@@ -385,9 +391,8 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
                             wanted, false);
                 }
                 VisualAction.takeLabelProblem();
-                // Erst das Bild ohne KI (sofort da), die KI-Fassung zieht danach nach
                 return SourceDiagrams.generate(text, name, language, wanted, depth, compact, auto, targets,
-                        preparedOutline.get(), false);
+                        preparedOutline.get(), ai);
             }
 
             @Override
@@ -416,58 +421,14 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
                     showCollapse();
                 }
                 diagram.setMermaidSource(result.mermaid().get());
-                if (!mermaid && VisualAction.aiAvailable()) {
-                    describe(mine, text, name, language, result, depth, preparedOutline);
-                }
+                diagram.getStatusLabel().setText(ai ? "Von der KI beschriftet." : " ");
                 String labelProblem = VisualAction.takeLabelProblem();
                 if (result.type() != wanted && language.orElse(null) == SourceLanguage.COBOL
                         && (wanted == DiagramType.FLOWCHART || wanted == DiagramType.SEQUENCE)) {
                     plate.show("COBOL: Statische Struktur und Aufrufbeziehungen – der tatsächliche Ablauf "
                             + "ist noch nicht vollständig analysiert.", null, null);
                 } else if (labelProblem != null) {
-                    plate.show("KI-Kurzbeschriftung nicht möglich (" + labelProblem
-                            + ") – die Blöcke tragen die einfache Beschriftung.", null, null);
-                }
-            }
-        }.execute();
-    }
-
-    /**
-     * Zweiter Durchgang mit KI: dasselbe Diagramm (gleicher Typ, gleiche Kompaktheit), aber Blöcke, Verzweigungen und
-     * aufgerufene Programme von der KI beschrieben. Ersetzt das Bild nur, solange keine neuere Erzeugung läuft.
-     */
-    private void describe(long mine, String text, String name, Optional<SourceLanguage> language,
-            SourceDiagrams.Result first, int depth,
-            java.util.function.Supplier<com.aresstack.spaceharvester.mainframe.outline.Outline> outline) {
-        diagram.getStatusLabel().setText("KI beschreibt das Diagramm …");
-        new SwingWorker<SourceDiagrams.Result, Void>() {
-            @Override
-            protected SourceDiagrams.Result doInBackground() {
-                return SourceDiagrams.generate(text, name, language, first.type(), depth, first.collapsed(), false,
-                        targets, outline.get(), true);
-            }
-
-            @Override
-            protected void done() {
-                if (mine != ticket) {
-                    return;
-                }
-                SourceDiagrams.Result described;
-                try {
-                    described = get();
-                } catch (Exception e) {
-                    described = null;
-                }
-                String problem = VisualAction.takeLabelProblem();
-                if (described != null && described.mermaid().isPresent()
-                        && !described.mermaid().equals(first.mermaid())) {
-                    diagram.setMermaidSource(described.mermaid().get());
-                    diagram.getStatusLabel().setText("Von der KI beschrieben.");
-                } else {
-                    diagram.getStatusLabel().setText(" ");
-                }
-                if (problem != null) {
-                    plate.show("KI-Beschreibung nicht möglich (" + problem
+                    plate.show("KI-Beschriftung nicht möglich (" + labelProblem
                             + ") – das Diagramm trägt die einfache Beschriftung.", null, null);
                 }
             }
