@@ -200,6 +200,9 @@ public final class BrowserRuntime {
             }
 
             stage = "BROWSER_LAUNCH";
+            long launchStarted = System.nanoTime();
+            LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " starting"
+                    + (persistent ? " on a lasting profile" : " (ephemeral)"));
             if (persistent) {
                 Path directory = profile.directory();
                 context = switch (channel) {
@@ -232,11 +235,17 @@ public final class BrowserRuntime {
                 browser = channel.firefoxFamily() ? playwright.firefox().launch(options)
                         : playwright.chromium().launch(options);
             }
+            LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " started after "
+                    + millisSince(launchStarted) + " ms");
             if (firefoxAddon != null) {
                 stage = "ADDON_LOAD";
+                long addonStarted = System.nanoTime();
+                LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " installing its add-on");
                 try {
                     FirefoxAddon.install(context, browser, firefoxAddon);
                     addonLoaded = true;
+                    LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " add-on installed after "
+                            + millisSince(addonStarted) + " ms");
                 } catch (RuntimeException loadFailed) {
                     addonFailure = "add-on not loaded: " + firstLine(loadFailed);
                 }
@@ -407,5 +416,9 @@ public final class BrowserRuntime {
         String message = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
         int newline = message.indexOf('\n');
         return newline > 0 ? message.substring(0, newline) : message;
+    }
+
+    private static long millisSince(long nanoTime) {
+        return (System.nanoTime() - nanoTime) / 1_000_000L;
     }
 }

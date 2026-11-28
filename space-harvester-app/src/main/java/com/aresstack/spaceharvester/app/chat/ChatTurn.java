@@ -54,6 +54,9 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class ChatTurn {
 
+    /** Beginn und Dauer jedes Browser-Werkzeugs im App-Log, damit ein hängender Schritt dort sichtbar ist. */
+    private static final System.Logger BROWSER_LOG = System.getLogger(ChatTurn.class.getName() + ".browser");
+
     /** Bis so viele Seiten gehen die Seiten ganz mit, statt zu suchen. */
     static final int WHOLE_PAGES = 3;
     /** Längstens so lange wartet der Turn auf die Suche; danach zählen die bis dahin bewerteten Treffer. */
@@ -1126,13 +1129,25 @@ public final class ChatTurn {
                     }
                     String what = toolset.describe(call);
                     String key = round + ":" + index + ":" + call.id();
+                    // Browser-Schritte zeigt die Karte „Browserrecherche“, nicht die Karte des Wissens.
+                    boolean browser = browserCall(call);
                     onUi(() -> {
-                        listener.using(what);
+                        if (!browser) {
+                            listener.using(what);
+                        }
                         listener.toolStarted(key, call.name(), what);
                     });
+                    long started = System.nanoTime();
+                    if (browser) {
+                        BROWSER_LOG.log(System.Logger.Level.INFO, "Browser-Werkzeug " + call.name() + " beginnt");
+                    }
                     try {
                         results[index] = ChatRoom.within(room, () -> toolset.run(call));
                     } finally {
+                        if (browser) {
+                            BROWSER_LOG.log(System.Logger.Level.INFO, "Browser-Werkzeug " + call.name()
+                                    + " fertig nach " + (System.nanoTime() - started) / 1_000_000L + " ms");
+                        }
                         onUi(() -> listener.toolFinished(key));
                     }
                 };
