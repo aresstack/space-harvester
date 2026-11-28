@@ -136,6 +136,8 @@ public final class InfoPopup extends JPopupMenu {
     public InfoPopup clearLinks() {
         links.removeAll();
         linkLabels.clear();
+        // Die nächste Liste beginnt oben, nicht dort, wohin die vorige gescrollt war.
+        linkScroll.getViewport().setViewPosition(new java.awt.Point(0, 0));
         linkScroll.setVisible(false);
         return this;
     }
@@ -147,7 +149,6 @@ public final class InfoPopup extends JPopupMenu {
         link.setFont(Comic.regular(13f));
         link.setForeground(Comic.BLUE);
         Cursors.set(link, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        link.putClientProperty("info-popup.link", Boolean.TRUE);
         @SuppressWarnings("unchecked")
         Map<java.awt.font.TextAttribute, Object> attributes =
                 (Map<java.awt.font.TextAttribute, Object>) link.getFont().getAttributes();
@@ -187,8 +188,8 @@ public final class InfoPopup extends JPopupMenu {
             }
         });
         link.setAlignmentX(LEFT_ALIGNMENT);
+        // Nur merken: ausgelegt werden die Links einmal in sizeFor, nicht bei jedem neuen von vorn.
         linkLabels.add(link);
-        arrangeLinks(false);
         linkScroll.setVisible(true);
         return this;
     }
@@ -312,13 +313,7 @@ public final class InfoPopup extends JPopupMenu {
     }
 
     private java.util.Optional<JComponent> firstLink() {
-        for (Component component : links.getComponents()) {
-            if (component instanceof JComponent label
-                    && Boolean.TRUE.equals(label.getClientProperty("info-popup.link"))) {
-                return java.util.Optional.of(label);
-            }
-        }
-        return java.util.Optional.empty();
+        return linkLabels.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(linkLabels.get(0));
     }
 
     @Override
@@ -353,11 +348,8 @@ public final class InfoPopup extends JPopupMenu {
     /** Die Texte der Links, in Reihenfolge. */
     public java.util.List<String> linkTexts() {
         java.util.List<String> texts = new java.util.ArrayList<>();
-        for (Component component : links.getComponents()) {
-            if (component instanceof JLabel label
-                    && Boolean.TRUE.equals(label.getClientProperty("info-popup.link"))) {
-                texts.add(label.getText());
-            }
+        for (JLabel label : linkLabels) {
+            texts.add(label.getText());
         }
         return texts;
     }
@@ -365,9 +357,8 @@ public final class InfoPopup extends JPopupMenu {
     /** Klickt den Link {@code index} (ab 0) an. */
     public void clickLink(int index) {
         int seen = -1;
-        for (Component component : links.getComponents()) {
-            if (component instanceof JComponent label
-                    && Boolean.TRUE.equals(label.getClientProperty("info-popup.link")) && ++seen == index) {
+        for (JLabel label : linkLabels) {
+            if (++seen == index) {
                 MouseEvent click = new MouseEvent(label, MouseEvent.MOUSE_CLICKED, 0, 0, 1, 1, 1, false);
                 for (java.awt.event.MouseListener listener : label.getMouseListeners()) {
                     listener.mouseClicked(click);
@@ -380,9 +371,8 @@ public final class InfoPopup extends JPopupMenu {
     /** Drückt Enter auf dem Link {@code index} (ab 0), wie ein Tastaturbenutzer. */
     public void pressEnterOnLink(int index) {
         int seen = -1;
-        for (Component component : links.getComponents()) {
-            if (component instanceof JComponent label
-                    && Boolean.TRUE.equals(label.getClientProperty("info-popup.link")) && ++seen == index) {
+        for (JLabel label : linkLabels) {
+            if (++seen == index) {
                 KeyEvent enter = new KeyEvent(label, KeyEvent.KEY_PRESSED, 0, 0, KeyEvent.VK_ENTER, '\n');
                 for (java.awt.event.KeyListener listener : label.getKeyListeners()) {
                     listener.keyPressed(enter);
