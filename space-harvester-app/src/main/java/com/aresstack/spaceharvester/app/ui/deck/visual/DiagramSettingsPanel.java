@@ -39,7 +39,10 @@ public final class DiagramSettingsPanel {
     private final Model model = new Model();
     private final JTable table = Comic.table(new JTable(model));
     private final JLabel feedback = Comic.muted(" ");
-    final JCheckBox aiLabels = Comic.checkBox("Zusammengefasste Blöcke von der KI kurz beschriften");
+    final JCheckBox aiLabels = Comic.checkBox("Diagramme von der KI beschreiben lassen");
+    final javax.swing.JTextField length = Comic.field(5);
+    final javax.swing.JTextField detailLength = Comic.field(5);
+    final javax.swing.JTextField lineWidth = Comic.field(5);
     private final JPanel diagram = new JPanel(new BorderLayout(0, 6));
     private final JPanel functions = new JPanel(new BorderLayout(0, 8));
 
@@ -50,15 +53,21 @@ public final class DiagramSettingsPanel {
     DiagramSettingsPanel(SystemFunctionsStore store) {
         this.store = store;
         diagram.setOpaque(false);
-        aiLabels.setSelected(AppState.shared().getBoolean(DiagramLabels.ENABLED_KEY, false));
-        aiLabels.setToolTipText("In der Übersicht (kompaktes Diagramm) fasst die Diagramm-Ansicht viele Anweisungen zu "
-                + "einem Block zusammen; eingeschaltet beschreibt das Modell der Zeile „Zusammenfassung“ (sonst das "
-                + "Chat-Modell) jeden Block in einer kurzen Substantiv-Phrase. Aus: keine KI-Aufrufe.");
+        aiLabels.setSelected(DiagramLabels.switchedOn());
+        aiLabels.setToolTipText("Eingeschaltet beschreibt das Modell der Zeile „Quellcode“ (sonst das Chat-Modell) "
+                + "jeden zusammengefassten Block ausführlich, jede Verzweigung als Frage und jedes aufgerufene "
+                + "Programm mit seinem Zweck. Aus: keine KI-Aufrufe, die einfache Beschriftung bleibt.");
         aiLabels.addActionListener(e -> AppState.shared().put(DiagramLabels.ENABLED_KEY, aiLabels.isSelected()));
         diagram.add(aiLabels, BorderLayout.NORTH);
-        diagram.add(Comic.hint("Der Code des Blocks (höchstens 4000 Zeichen) geht dabei an den KI-Dienst; jede Antwort wird "
-                + "gestreamt und bis 30 s abgewartet (das erste Laden des Modells dauert), sonst bleibt die einfache Beschriftung („📦 5 Anweisungen“)."),
-                BorderLayout.CENTER);
+        diagram.add(Comic.hint("Der Code der Blöcke und der aufgerufenen Programme geht dabei an den KI-Dienst. Das "
+                + "Diagramm erscheint sofort mit der einfachen Beschriftung („📦 5 Anweisungen“, Bedingungen, Zweige); "
+                + "die KI-Fassung ersetzt es, sobald sie fertig ist."), BorderLayout.CENTER);
+        number(length, DiagramLabels.LENGTH_KEY, "Länge kurzer Beschriftungen (Frage, Zweig, Zweck) in Zeichen");
+        number(detailLength, DiagramLabels.DETAIL_LENGTH_KEY, "Länge der Beschreibung eines Blocks in Zeichen");
+        number(lineWidth, DiagramLabels.LINE_WIDTH_KEY, "Zeichen je Zeile in einem Diagrammknoten");
+        diagram.add(Comic.row(new JLabel("Kurz"), length, new JLabel("Block"), detailLength,
+                new JLabel("Zeilenbreite"), lineWidth), BorderLayout.SOUTH);
+        showNumbers();
 
         functions.setOpaque(false);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -89,6 +98,37 @@ public final class DiagramSettingsPanel {
         store.onChange(() -> javax.swing.SwingUtilities.invokeLater(this::render));
     }
 
+    /** Ein Zahlenfeld, das beim Verlassen oder mit Enter speichert; Ungültiges stellt den gespeicherten Wert wieder her. */
+    private void number(javax.swing.JTextField field, String key, String tip) {
+        field.setToolTipText(tip);
+        field.getAccessibleContext().setAccessibleName(tip);
+        Runnable save = () -> {
+            try {
+                int value = Integer.parseInt(field.getText().trim());
+                if (value > 0) {
+                    AppState.shared().put(key, value);
+                }
+            } catch (NumberFormatException ignored) {
+                // gespeicherter Wert bleibt
+            }
+            showNumbers();
+        };
+        field.addActionListener(e -> save.run());
+        field.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusLost(java.awt.event.FocusEvent e) {
+                save.run();
+            }
+        });
+    }
+
+    private void showNumbers() {
+        var layout = DiagramLabels.layout();
+        length.setText(Integer.toString(layout.length()));
+        detailLength.setText(Integer.toString(layout.detailLength()));
+        lineWidth.setText(Integer.toString(layout.lineWidth()));
+    }
+
     public JComponent diagramComponent() {
         return diagram;
     }
@@ -99,7 +139,8 @@ public final class DiagramSettingsPanel {
 
     /** Zeigt den gespeicherten Stand. */
     public void render() {
-        aiLabels.setSelected(AppState.shared().getBoolean(DiagramLabels.ENABLED_KEY, false));
+        aiLabels.setSelected(DiagramLabels.switchedOn());
+        showNumbers();
         if (table.isEditing()) {
             return;
         }
