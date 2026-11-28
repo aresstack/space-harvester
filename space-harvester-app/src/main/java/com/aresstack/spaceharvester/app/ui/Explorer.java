@@ -578,7 +578,115 @@ public final class Explorer {
     private boolean global;
     private List<Scope> externalScopes = List.of();
     private final DefaultTreeModel model = new DefaultTreeModel(top);
-    private final JTree tree = new JTree(model);
+    private final JTree tree = new FindableTree();
+
+    /** Überschrift und Text der „?“-Hilfe unten rechts in der Fußleiste. */
+    static final String HELP_HEADING = "Wissensquellen";
+    static final String HELP = "Oben schaltest du zwischen Wissensquellen, Favoriten und Artefakten um; ein zweiter "
+            + "Klick auf das gewählte Symbol klappt die Leiste zu. „Titel filtern“ zeigt nur passende Einträge. Die "
+            + "Lupe unten links filtert nicht: Sie markiert die Titel im Baum, die den Suchtext enthalten, und "
+            + "springt mit Enter von Treffer zu Treffer. Gesucht wird in dem, was im Baum schon geladen ist. In der "
+            + "Mitte unten klappst du alles zu oder zeigst das geöffnete Dokument im Baum. Das Zeichen rechts zeigt "
+            + "den Stand aller Quellen; ein Klick darauf aktualisiert alle.";
+
+    /** Die Titel, die die Suche der Fußleiste gerade markiert, in der Reihenfolge des Baums. */
+    private List<Node> findHits = List.of();
+    private Set<Node> findMarked = Set.of();
+    private int findAt = -1;
+
+    /**
+     * Der Baum sucht mit der Lupe der Fußleiste selbst (Angelo 27.11.2026): Er markiert die Titel mit dem Suchtext
+     * und springt von Treffer zu Treffer, filtert aber nicht und ändert die Auswahl nicht. Gesucht wird in den
+     * geladenen Knoten; nachladen würde die Quelle fragen, und das geschieht nur auf Klick.
+     */
+    private final class FindableTree extends JTree implements FindBar.Own {
+
+        FindableTree() {
+            super(model);
+        }
+
+        @Override
+        public boolean ownsFind() {
+            return true;
+        }
+
+        @Override
+        public void find(String query) {
+            String wanted = query == null ? "" : query.trim().toLowerCase(java.util.Locale.ROOT);
+            List<Node> hits = new ArrayList<>();
+            if (!wanted.isEmpty()) {
+                java.util.Enumeration<javax.swing.tree.TreeNode> all = top.preorderEnumeration();
+                while (all.hasMoreElements()) {
+                    if (all.nextElement() instanceof Node node && node.item() instanceof KnowledgeNode
+                            && String.valueOf(node).toLowerCase(java.util.Locale.ROOT).contains(wanted)) {
+                        hits.add(node);
+                    }
+                }
+            }
+            findHits = hits;
+            findMarked = new java.util.HashSet<>(hits);
+            findAt = hits.isEmpty() ? -1 : 0;
+            showFindHit();
+        }
+
+        @Override
+        public void findStep(int direction) {
+            if (!findHits.isEmpty()) {
+                findAt = Math.floorMod(findAt + direction, findHits.size());
+                showFindHit();
+            }
+        }
+
+        @Override
+        public String findCounter() {
+            return findHits.isEmpty() ? "Keine Treffer" : (findAt + 1) + " / " + findHits.size();
+        }
+
+        @Override
+        public boolean canFold() {
+            return false;
+        }
+
+        @Override
+        public boolean folding() {
+            return false;
+        }
+
+        @Override
+        public void folding(boolean on) {
+            // Die Suche im Baum filtert nicht; dafür gibt es „Titel filtern“.
+        }
+
+        @Override
+        public javax.swing.Icon foldIcon() {
+            return null;
+        }
+
+        @Override
+        public JComponent findCorner() {
+            return allBadge;
+        }
+    }
+
+    /** Rollt zum aktuellen Treffer der Suche im Baum; die Auswahl bleibt, wie sie ist. */
+    private void showFindHit() {
+        if (findAt >= 0 && findAt < findHits.size() && findHits.get(findAt).getParent() != null) {
+            tree.scrollPathToVisible(new TreePath(findHits.get(findAt).getPath()));
+        }
+        tree.repaint();
+    }
+
+    /** Die Treffer der Suche im Baum (für Tests). */
+    List<Node> findHits() {
+        return findHits;
+    }
+
+    /** Die Fußleiste mit Lupe, Aktionen, Bestandszeichen und Hilfe (für Tests). */
+    FindBar footBar() {
+        return footBar;
+    }
+
+    private FindBar footBar;
     /** Die Bestandszeichen je Zeile (Angelo, 13.11.2026): aus dem Core gemeldet, nie abgefragt. */
     private final TreeStates states;
     private final DefaultListModel<Match> matchModel = new DefaultListModel<>();
@@ -1062,9 +1170,23 @@ public final class Explorer {
         // „Neuer Ordner“ nur, solange die Favoriten gezeigt werden (Angelo 24.11.2026: unten in der Fußleiste).
         favorites.newFolderButton().setVisible(false);
         // Die gemeinsame Fußleiste aller Seitenleisten, so hoch wie die Leiste mit der Lupe daneben.
-        root.add(new com.aresstack.spaceharvester.app.ui.controls.SideFoot(
-                com.aresstack.spaceharvester.app.ui.controls.SideFoot.buttons(collapseAll, showCurrent,
-                        favorites.newFolderButton(), groupByKind), note, allBadge), BorderLayout.SOUTH);
+        // Dieselbe Leiste wie unter der Arbeitsfläche und unter den Aufträgen (Angelo 27.11.2026): links die Lupe
+        // (markiert Titel im Baum), mittig die Aktionen, rechts das Bestandszeichen und in der Ecke die Hilfe.
+        footBar = new FindBar(() -> deck);
+        footBar.tools(com.aresstack.spaceharvester.app.ui.controls.SideFoot.centered(collapseAll, showCurrent,
+                favorites.newFolderButton(), groupByKind));
+        footBar.help(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, HELP_HEADING, HELP));
+        footBar.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
+                BorderFactory.createEmptyBorder(4, 2, 4, 2)));
+        // Der Hinweis der Leiste steht über der Fußleiste und nimmt nur Platz, solange er etwas sagt.
+        note.setVisible(false);
+        note.addPropertyChangeListener("text", event -> note.setVisible(!note.getText().isBlank()));
+        JPanel south = new JPanel(new BorderLayout());
+        south.setOpaque(false);
+        south.add(note, BorderLayout.NORTH);
+        south.add(footBar, BorderLayout.SOUTH);
+        root.add(south, BorderLayout.SOUTH);
+        footBar.viewChanged();
         context.onChange(ignored -> refreshSources());
         refreshSources();
     }
@@ -2472,6 +2594,9 @@ public final class Explorer {
 
         /** Ob die Zeile der hervorgehobene Suchtreffer ist ({@link #hint}). */
         private boolean hinted;
+        /** Ob die Lupe der Fußleiste diesen Titel markiert, und ob er ihr aktueller Treffer ist. */
+        private boolean found;
+        private boolean foundCurrent;
 
         /** Breite von Symbol und Titel, ohne die Spalten rechts. */
         private int getPreferredSizeOfText() {
@@ -2523,6 +2648,8 @@ public final class Explorer {
             badge = badge(item);
             this.row = row;
             hinted = value != null && value == hint;
+            found = value != null && findMarked.contains(value);
+            foundCurrent = found && findAt >= 0 && findAt < findHits.size() && findHits.get(findAt) == value;
             int depth = value instanceof Node node ? node.getLevel() : 1;
             // Die Spalten rechts liegen im rechten Rand des Labels: der Titel endet davor und wird nötigenfalls
             // mit „…“ gekürzt, statt die Symbole aus dem sichtbaren Bereich zu schieben.
@@ -2543,6 +2670,19 @@ public final class Explorer {
 
         @Override
         public void paint(java.awt.Graphics graphics) {
+            if (found) {
+                // Treffer der Lupe unten links: gelb unterlegt wie die Treffer im Lesetext, der aktuelle mit Rand.
+                java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+                g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                int textEnd = Math.min(getWidth() - 1, getPreferredSizeOfText());
+                g.setColor(Comic.YELLOW);
+                g.fillRoundRect(1, 1, textEnd - 2, getHeight() - 3, 8, 8);
+                if (foundCurrent) {
+                    g.setColor(Comic.INK);
+                    g.drawRoundRect(1, 1, textEnd - 2, getHeight() - 3, 8, 8);
+                }
+                g.dispose();
+            }
             super.paint(graphics);
             if (hinted) {
                 // Treffer der Suche: blauer Rahmen um den Titel, keine Auswahl (der Filter bleibt, Angelo 23.11.2026).
@@ -2850,6 +2990,10 @@ public final class Explorer {
         } else {
             runFilter();
             favoritesShown();
+        }
+        if (footBar != null) {
+            // Lupe und Ecke der Fußleiste folgen der gezeigten Ansicht (Baum oder Artefakte).
+            footBar.viewChanged();
         }
     }
 

@@ -169,7 +169,7 @@ class ExplorerFavoritesTest {
             javax.swing.JComponent newFolder = view.newFolderButton();
             assertThat(SwingUtilities.isDescendingFrom(newFolder, view.component())).isFalse();
             assertThat(SwingUtilities.getAncestorOfClass(
-                    com.aresstack.spaceharvester.app.ui.controls.SideFoot.class, newFolder)).isNotNull();
+                    FindBar.class, newFolder)).isNotNull();
             assertThat(newFolder.isVisible()).isFalse();
             explorer.showOnlyFavorites(true);
             assertThat(newFolder.isVisible()).isTrue();

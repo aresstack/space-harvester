@@ -725,7 +725,8 @@ public final class MainWindow implements AppContext.Navigator {
         perspectives.add(new Perspective(Perspectives.HARVESTER, "Space Harvester",
                 "Quellen sammeln, suchen, lesen, chatten und analysieren", true, icons, work, side, null, null, null));
         perspectives.add(commandDeck.perspective());
-        perspectives.add(Perspectives.provingGround());
+        perspectives.add(new com.aresstack.spaceharvester.app.ui.proving.ProvingGroundWorkspace(context::keePass,
+                context::dataDirectory).perspective());
         perspectives.add(Perspectives.missionControl());
         for (Perspective perspective : perspectives.all()) {
             stage.add(perspective.workspace(), perspective.id());
@@ -1432,6 +1433,7 @@ public final class MainWindow implements AppContext.Navigator {
         content.chatSidebar().chat().searchFront(section == AppContext.Section.SEARCH);
         content.chatSidebar().chat().readingFront(section == AppContext.Section.CONTENT);
         findBar.tools(view.tools());
+        findBar.help(view.help());
         view.shown();
         if (changed) {
             findBar.areaChanged();

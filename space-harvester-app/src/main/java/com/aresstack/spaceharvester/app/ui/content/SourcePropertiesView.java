@@ -194,7 +194,7 @@ final class SourcePropertiesView extends JPanel {
         });
         tools.add(edit);
         tools.add(new CopyButton(this::copyText));
-        tools.add(new HelpButton(24, "Eigenschaften der Quelle", HELP));
+        // Die Hilfe steht nicht mehr bei den Werkzeugen im Kopf, sondern unten rechts in der Leiste ({@link #help()}).
 
         column.setLayout(new BoxLayout(column, BoxLayout.Y_AXIS));
         column.setOpaque(false);
@@ -219,6 +219,14 @@ final class SourcePropertiesView extends JPanel {
     }
 
     /** Die Werkzeuge für die gemeinsame Kopfzeile. */
+    /** Die „?“-Hilfe dieser Ansicht für die Ecke unten rechts in der Werkzeugleiste. */
+    JComponent help() {
+        return help;
+    }
+
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton help =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, "Eigenschaften der Quelle", HELP);
+
     JComponent tools() {
         return tools;
     }
