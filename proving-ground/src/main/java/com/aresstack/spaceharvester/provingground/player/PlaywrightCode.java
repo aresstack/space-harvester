@@ -55,6 +55,10 @@ final class PlaywrightCode {
     private static final Pattern USED_PAGE = Pattern.compile("\\b(page\\d*)\\s*\\.");
     private static final Pattern STRING = Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"");
     private static final String CLASS_NAME = "RecordedTest";
+    /** Classes the generated code uses directly; their JARs make the compiler's class path. */
+    private static final List<Class<?>> ANCHORS = List.of(Page.class,
+            com.microsoft.playwright.assertions.PlaywrightAssertions.class,
+            com.microsoft.playwright.options.AriaRole.class);
     private static final String[] HEADER = {
             "import com.microsoft.playwright.*;",
             "import com.microsoft.playwright.options.*;",
@@ -83,17 +87,26 @@ final class PlaywrightCode {
      * whose code does not compile is left out and the rest compiled again, so it fails alone.
      */
     static PlaywrightCode compile(TestCase testCase) {
+        return compile(testCase, PlaywrightCode.class.getClassLoader(), classpath());
+    }
+
+    /**
+     * As {@link #compile(TestCase)}, with the classes the code uses from {@code loader} and only {@code fileClasspath}
+     * as files for the compiler (in the packaged app that is nothing: Playwright lies in nested JARs).
+     */
+    static PlaywrightCode compile(TestCase testCase, ClassLoader loader, String fileClasspath) {
         Map<Integer, String> problems = new HashMap<>();
         while (true) {
             int known = problems.size();
-            PlaywrightCode attempt = compile(testCase, problems);
+            PlaywrightCode attempt = compile(testCase, problems, loader, fileClasspath);
             if (attempt.instance != null || problems.size() == known || problems.size() >= testCase.size()) {
                 return attempt;
             }
         }
     }
 
-    private static PlaywrightCode compile(TestCase testCase, Map<Integer, String> problems) {
+    private static PlaywrightCode compile(TestCase testCase, Map<Integer, String> problems, ClassLoader runtime,
+                                          String fileClasspath) {
         Map<Integer, List<String>> declared = new HashMap<>();
         StringBuilder source = new StringBuilder();
         for (String line : HEADER) {
@@ -128,7 +141,9 @@ final class PlaywrightCode {
         Map<String, ByteArrayOutputStream> classes = new HashMap<>();
         try (StandardJavaFileManager standard = compiler.getStandardFileManager(diagnostics, Locale.GERMAN,
                 StandardCharsets.UTF_8)) {
-            JavaFileManager memory = new ForwardingJavaFileManager<>(standard) {
+            // Packaged app: Playwright lies in nested JARs the compiler cannot open; the loader that loaded it reads them.
+            JavaFileManager loaded = new LoaderClassPath(standard, runtime, ANCHORS);
+            JavaFileManager memory = new ForwardingJavaFileManager<>(loaded) {
                 @Override
                 public JavaFileObject getJavaFileForOutput(Location location, String className, JavaFileObject.Kind kind,
                                                            FileObject sibling) {
@@ -149,7 +164,7 @@ final class PlaywrightCode {
                 }
             };
             boolean compiled = compiler.getTask(null, memory, diagnostics,
-                    List.of("-classpath", classpath(), "-proc:none", "-nowarn", "-g"), null, List.of(unit)).call();
+                    List.of("-classpath", fileClasspath, "-proc:none", "-nowarn", "-g"), null, List.of(unit)).call();
             if (!compiled) {
                 for (Diagnostic<? extends JavaFileObject> diagnostic : diagnostics.getDiagnostics()) {
                     if (diagnostic.getKind() != Diagnostic.Kind.ERROR) {
@@ -174,7 +189,7 @@ final class PlaywrightCode {
             return new PlaywrightCode(null, Map.of(), problems, declared);
         }
         try {
-            ClassLoader loader = new ClassLoader(Page.class.getClassLoader()) {
+            ClassLoader loader = new ClassLoader(runtime) {
                 @Override
                 protected Class<?> findClass(String name) throws ClassNotFoundException {
                     ByteArrayOutputStream bytes = classes.get(name);
@@ -281,16 +296,20 @@ final class PlaywrightCode {
     /** Where Playwright Java is (and the rest of the class path), for the compiler. */
     private static String classpath() {
         Set<String> entries = new LinkedHashSet<>();
-        for (Class<?> type : List.of(Page.class, com.microsoft.playwright.assertions.PlaywrightAssertions.class)) {
+        for (Class<?> type : ANCHORS) {
             try {
                 entries.add(Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI()).toString());
             } catch (Exception | LinkageError unknown) {
-                // then the class path of the JVM has to do
+                // nested JAR of the packaged app: LoaderClassPath reads it through the class loader
             }
         }
         String own = System.getProperty("java.class.path");
-        if (own != null && !own.isBlank()) {
-            entries.add(own);
+        if (own != null) {
+            for (String entry : own.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
+                if (LoaderClassPath.openable(entry)) {
+                    entries.add(entry);
+                }
+            }
         }
         return String.join(File.pathSeparator, entries);
     }
