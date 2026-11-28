@@ -4,7 +4,13 @@ import com.aresstack.spaceharvester.browser.runtime.BrowserChannel;
 import com.aresstack.spaceharvester.browser.runtime.BrowserRuntime;
 import com.aresstack.spaceharvester.browser.runtime.BrowserRuntimeConfig;
 import com.aresstack.spaceharvester.browser.runtime.RunningBrowser;
+import com.aresstack.spaceharvester.provingground.model.TestCase;
 import com.aresstack.spaceharvester.provingground.model.TestProject;
+import com.aresstack.spaceharvester.provingground.model.TestStep;
+import com.aresstack.spaceharvester.provingground.recorder.Recorder;
+import com.aresstack.spaceharvester.provingground.recorder.RecorderOptions;
+import com.microsoft.playwright.BrowserContext;
+import com.microsoft.playwright.PlaywrightException;
 import com.aresstack.spaceharvester.provingground.run.Credentials;
 import com.aresstack.spaceharvester.provingground.run.ProjectRunResult;
 import com.aresstack.spaceharvester.provingground.run.ProjectRunner;
@@ -20,7 +26,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * Testläufe des Proving Ground: einer nach dem anderen in einem eigenen Thread (Playwright Java will einen Thread je
+ * Testläufe und Aufnahmen des Proving Ground: eins nach dem anderen in einem eigenen Thread (Playwright Java will einen Thread je
  * Verbindung), jeder in einem frischen Browser mit Wegwerfprofil über die Browser-Laufzeit, mit dem Browser aus
  * Einstellungen › Browser (Vorgabe: der installierte Firefox). Abbrechen trennt den Browser
  * ({@link RunningBrowser#abandon()}, gedacht für einen anderen Thread); der Lauf endet dann mit Fehlern an den offenen
@@ -78,6 +84,87 @@ public final class ProvingGroundRuns implements AutoCloseable {
                 busy = false;
             }
         });
+    }
+
+    /** Eine laufende Aufnahme: Pause und Ende kommen aus der Oberfläche, die Arbeit geschieht im Lauf-Thread. */
+    public static final class Recording {
+        private volatile boolean stopRequested;
+        private volatile Recorder recorder;
+        private volatile boolean paused;
+
+        /** Nimmt bis {@link #resume()} nichts auf. */
+        public void pause() {
+            paused = true;
+            Recorder current = recorder;
+            if (current != null) {
+                current.pause();
+            }
+        }
+
+        public void resume() {
+            paused = false;
+            Recorder current = recorder;
+            if (current != null) {
+                current.resume();
+            }
+        }
+
+        public boolean paused() {
+            return paused;
+        }
+
+        /** Beendet die Aufnahme; der Browser schließt, die Schritte bleiben. */
+        public void stop() {
+            stopRequested = true;
+        }
+    }
+
+    /**
+     * Startet eine Aufnahme mit dem originalen Playwright-Recorder in einem sichtbaren Browser; die Schritte kommen an
+     * {@code target} hinzu. {@code steps} erhält nach jeder Änderung den ganzen Stand, {@code done} das Ergebnis, wenn
+     * die Aufnahme endet ({@link Recording#stop()} oder der Benutzer schließt das Browserfenster); beides im
+     * Lauf-Thread.
+     */
+    public Recording record(TestCase target, Supplier<Setup> setup, Consumer<List<TestStep>> steps,
+                            Consumer<TestCase> done, Consumer<String> failed) {
+        Recording recording = new Recording();
+        if (busy) {
+            failed.accept("Es läuft schon ein Test oder eine Aufnahme");
+            return recording;
+        }
+        busy = true;
+        thread.execute(() -> {
+            try {
+                Setup current = setup.get();
+                BrowserRuntime runtime = new BrowserRuntime(BrowserRuntimeConfig.of(BrowserChannel.of(current.channel()),
+                        current.executable(), current.dataDirectory(), current.browserStart()));
+                try (RunningBrowser browser = runtime.ephemeral(false, null, false)) {
+                    running.set(browser);
+                    BrowserContext context = browser.browser().newContext();
+                    try (Recorder recorder = Recorder.start(context, target, RecorderOptions.defaults())) {
+                        recording.recorder = recorder;
+                        if (recording.paused) {
+                            recorder.pause();
+                        }
+                        recorder.onStep(step -> steps.accept(List.copyOf(target.steps())));
+                        context.newPage();
+                        try {
+                            recorder.pump(() -> recording.stopRequested || context.pages().isEmpty());
+                        } catch (PlaywrightException browserClosed) {
+                            // der Benutzer hat den Browser geschlossen: die Schritte bis dahin bleiben
+                        }
+                    }
+                    done.accept(target);
+                } finally {
+                    running.set(null);
+                }
+            } catch (Exception | LinkageError broken) {
+                failed.accept(broken.getMessage() == null ? broken.toString() : broken.getMessage());
+            } finally {
+                busy = false;
+            }
+        });
+        return recording;
     }
 
     /** Bricht den laufenden Test ab (trennt seinen Browser); kehrt sofort zurück. */

@@ -54,6 +54,36 @@ class ProvingGroundWorkspaceTest {
         assertThat(steps.getValueAt(1, 1)).isEqualTo("Then");
         assertThat((String) steps.getValueAt(1, 3)).startsWith("assertText #status");
         assertThat(workspace.get().perspective().ready()).isTrue();
+
+        // Bearbeiten: Fachliches in der Tabelle, Verschieben, Löschen – alles sofort gespeichert, Zuordnung per ID.
+        String assertId = recorded.step(1).id();
+        SwingUtilities.invokeAndWait(() -> steps.setValueAt("Angemeldet prüfen", 1, 3));
+        workspace.get().flush();
+        assertThat(ProjectFile.read(directory).testCase("anmeldung/login").binding(assertId).description())
+                .isEqualTo("Angemeldet prüfen");
+        SwingUtilities.invokeAndWait(() -> {
+            javax.swing.JTable table = find(workspace.get(), javax.swing.JTable.class);
+            table.setRowSelectionInterval(1, 1);
+            workspace.get().moveSelected(-1);
+        });
+        workspace.get().flush();
+        TestCase moved = TestCaseFile.read(directory.resolve("anmeldung/login.jsonl"));
+        assertThat(moved.step(0).id()).isEqualTo(assertId);
+        assertThat(steps.getValueAt(0, 3)).isEqualTo("Angemeldet prüfen");
+        SwingUtilities.invokeAndWait(() -> workspace.get().deleteStep(0));
+        workspace.get().flush();
+        assertThat(TestCaseFile.read(directory.resolve("anmeldung/login.jsonl")).size()).isEqualTo(1);
+        assertThat(ProjectFile.read(directory).testCase("anmeldung/login").steps()).doesNotContainKey(assertId);
+
+        // Neue Suite und ein neuer Testfall bekommen lesbare IDs und eine eigene Datei.
+        SwingUtilities.invokeAndWait(() -> workspace.get().createSuite("Konto & Daten"));
+        workspace.get().flush();
+        await(() -> tree.getRowCount() == 4);
+        assertThat(ProjectFile.read(directory).suite("konto-daten")).isNotNull();
+        TestCaseEntry fresh = ProvingGroundWorkspace.newCase(ProjectFile.read(directory).suite("anmeldung"),
+                "Login");
+        assertThat(fresh.id()).isEqualTo("login-2");
+        assertThat(fresh.file()).isEqualTo("anmeldung/login-2.jsonl");
     }
 
     @Test
