@@ -125,7 +125,7 @@ final class WordHitsPanel extends JPanel {
         int mine = request;
         more.setEnabled(false);
         runner.run(() -> {
-            List<WordSearch.Word> next = current.next(WordSearch.STEP);
+            List<WordSearch.Word> next = current.next(WordSearch.step());
             return new Batch(next, current.hasMore());
         }, batch -> {
             if (mine != request) {

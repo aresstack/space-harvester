@@ -113,7 +113,9 @@ public final class WordSearch {
     }
 
     /** So viele Einträge lädt die Liste je Schritt, wie der Reiter „Begriffe“. */
-    public static final int STEP = TermsTab.STEP;
+    public static int step() {
+        return TermsTab.step();
+    }
 
     private final Workspace workspace;
     private final SelectionTerms terms;
@@ -215,7 +217,7 @@ public final class WordSearch {
         String text = q == null || q.isBlank() ? null : q;
         return cursor -> {
             TermQueries.TermList list = workspace.terms(new TermQueries.TermSearch(null, null, termKind, text, false,
-                    STEP, cursor, null, origin).within(pages()));
+                    step(), cursor, null, origin).within(pages()));
             return new Pager.Page<>(list.terms().stream().map(term -> Word.of(term, kind)).toList(),
                     list.nextCursor());
         };
@@ -224,7 +226,7 @@ public final class WordSearch {
     private Pager.Fetch<Word> verbs(String q) {
         String text = q == null || q.isBlank() ? null : q;
         return cursor -> {
-            VerbQueries.VerbList list = workspace.verbs(pages(), text, STEP, cursor);
+            VerbQueries.VerbList list = workspace.verbs(pages(), text, step(), cursor);
             return new Pager.Page<>(list.verbs().stream().map(Word::of).toList(), list.nextCursor());
         };
     }
@@ -239,7 +241,7 @@ public final class WordSearch {
         if (word.term() != null) {
             fetch = cursor -> {
                 TermQueries.OccurrenceList list = workspace.occurrences(new TermQueries.OccurrenceSearch(
-                        word.term().normalized(), word.term().kind(), null, null, STEP, cursor, TermQueries.MAX_SNIPPET_CHARS,
+                        word.term().normalized(), word.term().kind(), null, null, step(), cursor, TermQueries.MAX_SNIPPET_CHARS,
                         origin).within(pages()));
                 return new Pager.Page<>(list.occurrences().stream().map(WordSearch::excerpt).toList(),
                         list.nextCursor());

@@ -33,7 +33,7 @@ class ExcerptListTest {
     private static Pager<WordSearch.Excerpt> pager(int total) {
         return new Pager<>((one, other) -> 0, List.of(List.of(cursor -> {
             int from = cursor == null ? 0 : Integer.parseInt(cursor);
-            int to = Math.min(total, from + WordSearch.STEP);
+            int to = Math.min(total, from + WordSearch.step());
             List<WordSearch.Excerpt> items = new ArrayList<>();
             for (int i = from; i < to; i++) {
                 items.add(excerpt(i + 1));
@@ -73,9 +73,9 @@ class ExcerptListTest {
         SwingUtilities.invokeAndWait(() -> {
             ExcerptList list = new ExcerptList(place -> { });
             list.runner = NOW;
-            int total = WordSearch.STEP + 2;
+            int total = WordSearch.step() + 2;
             list.show("Sammelkonto", pager(total));
-            assertThat(list.cards()).hasSize(WordSearch.STEP);
+            assertThat(list.cards()).hasSize(WordSearch.step());
             assertThat(list.more().isVisible()).isTrue();
             assertThat(list.headingText()).endsWith(", weitere folgen");
 

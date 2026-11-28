@@ -97,7 +97,7 @@ public final class ExcerptList extends JPanel {
         }
         int mine = request;
         more.setEnabled(false);
-        runner.run(() -> new Batch(current.next(WordSearch.STEP), current.hasMore()), batch -> {
+        runner.run(() -> new Batch(current.next(WordSearch.step()), current.hasMore()), batch -> {
             if (mine != request) {
                 return;
             }
