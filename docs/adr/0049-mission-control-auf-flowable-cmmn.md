@@ -1,8 +1,8 @@
 # ADR 0049: Mission Control auf Flowable mit CMMN statt eigener Engine
 
-- Status: **Entschieden** (28.11.2026): Flowable 8 mit CMMN ist die Engine von Mission Control. Angelo hat am
-  28.11.2026 um 03:50 MEZ entschieden, dass die Engine eine eingebettete H2-Datenbank als Datei benutzen darf
-  (Abschnitt 5). **Zum Bau ist damit noch nichts freigegeben;** die Freigabe erfolgt gesondert.
+- Status: **Vorbereitet** (28.11.2026). Der Architekt schlägt Flowable 8 mit CMMN als Engine von Mission Control vor.
+  Angelo hat dazu am 28.11.2026 um 03:50 MEZ entschieden, dass die Engine eine eingebettete H2-Datenbank als Datei
+  benutzen darf (Abschnitt 5). **Zum Bau ist nichts freigegeben;** die Freigabe erfolgt gesondert.
 - Ersetzt [ADR 0048](0048-mission-control-ablaeufe-aus-faehigkeiten.md), das Angelo am 28.11.2026 zurückgenommen hat.
 - Quellen:
   - **Maßgeblich:** Angelos Nachricht vom 28.11.2026, 03:20 MEZ: „Die bisherige Architekturentscheidung zur
