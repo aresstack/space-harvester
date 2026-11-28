@@ -562,7 +562,7 @@ public final class MainWindow implements AppContext.Navigator {
             (section.administration() ? administration : icons).add(button);
         }
         // Chat, Analysen und Aufträge sind keine Bereiche, sondern Leisten neben jedem Bereich: ihr Umschalter steht
-        // im Kopf der Leiste, zugeklappt am rechten Rand unter dem Schließen-Knopf (Angelo 27.11.2026).
+        // im Kopf der Leiste, zugeklappt senkrecht am rechten Fensterrand unter der Kopfleiste (Angelo 27.11.2026).
         sideSwitch.segment(SWITCH_CHAT, com.aresstack.spaceharvester.app.ui.content.ChatSidebar.icon())
                 .segment(SWITCH_ANALYSES, com.aresstack.spaceharvester.app.ui.content.AnalysesSidebar.icon())
                 .segment(SWITCH_JOBS, stack());
@@ -837,8 +837,8 @@ public final class MainWindow implements AppContext.Navigator {
 
         surface.add(top, BorderLayout.NORTH);
         surface.add(split, BorderLayout.CENTER);
-        // Der zweite Klick auf das gewählte Symbol klappt die linke Leiste zu; der Umschalter wandert dann an den linken
-        // Rand unter das Logo, und ein Klick dort klappt sie wieder auf (Angelo 27.11.2026).
+        // Der zweite Klick auf das gewählte Symbol klappt die linke Leiste zu; der Umschalter wandert dann senkrecht an
+        // den linken Fensterrand, und ein Klick dort klappt sie wieder auf (Angelo 27.11.2026).
         explorer.view.onAgain(name -> toggleDrawer());
         explorer.view.onSelect(name -> {
             if (explorerDrawer() && split.isLeftCollapsed()) {
@@ -1011,7 +1011,7 @@ public final class MainWindow implements AppContext.Navigator {
 
     /**
      * Zeigt am Umschalter, welche Leiste offen ist, und stellt ihn an seinen Platz: in den Kopf der gezeigten Leiste
-     * oder, zugeklappt, ohne gewähltes Symbol an den rechten Rand unter den Schließen-Knopf.
+     * oder, zugeklappt, ohne gewähltes Symbol senkrecht an den rechten Fensterrand, direkt unter die Kopfleiste.
      */
     private void selectSideToggles() {
         JComponent slot = null;
@@ -1028,11 +1028,13 @@ public final class MainWindow implements AppContext.Navigator {
             slot = chatSidebar.switchSlot();
         }
         if (slot == null) {
+            sideSwitch.vertical(true);
             edges.place(edges.right(), sideSwitch);
             return;
         }
         java.awt.Container old = sideSwitch.getParent();
         if (old != slot) {
+            sideSwitch.vertical(false);
             slot.add(sideSwitch);
             slot.revalidate();
             slot.repaint();
@@ -1043,6 +1045,7 @@ public final class MainWindow implements AppContext.Navigator {
             }
         }
     }
+
 
     /** Der Umschalter der rechten Leiste (für Tests). */
     JComponent sideSwitch() {
@@ -1062,8 +1065,8 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /**
-     * Stellt den Umschalter der linken Leiste an seinen Platz: in ihren Kopf oder, zugeklappt, ohne gewähltes Symbol an
-     * den linken Rand unter das Logo.
+     * Stellt den Umschalter der linken Leiste an seinen Platz: in ihren Kopf oder, zugeklappt, ohne gewähltes Symbol
+     * senkrecht an den linken Fensterrand, direkt unter die Kopfleiste.
      */
     private void placeExplorerSwitch() {
         boolean collapsed = explorerDrawer() && split.isLeftCollapsed();

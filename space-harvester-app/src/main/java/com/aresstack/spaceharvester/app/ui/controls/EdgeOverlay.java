@@ -10,15 +10,18 @@ import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 
 /**
- * Eine Fläche mit zwei schwebenden Plätzen am linken und rechten Rand, auf der Linie unter ihrer Kopfleiste (Angelo
- * 27.11.2026): Dorthin wandert der Umschalter einer zugeklappten Seitenleiste, unter das Logo links und unter den
- * Schließen-Knopf rechts, und öffnet die Leiste von dort wieder. Die Plätze liegen über dem übrigen Inhalt und nehmen
- * ihm keinen Raum; ein leerer Platz ist unsichtbar und fängt keine Maus.
+ * Eine Fläche mit zwei schwebenden Plätzen am linken und rechten Fensterrand (Angelo 27.11.2026): Dorthin wandert der
+ * Umschalter einer zugeklappten Seitenleiste. Er dreht sich senkrecht und beginnt direkt unter den Kopfleisten der
+ * Arbeitsfläche, an deren Unterkante, als klappe er nach unten auf; von dort öffnet er die Leiste wieder. Die Plätze
+ * liegen über dem übrigen Inhalt im schmalen Rand und nehmen ihm keinen Raum: Die Kopfleisten bleiben so breit, wie
+ * sie sind. Ein leerer Platz ist unsichtbar und fängt keine Maus.
  */
 public final class EdgeOverlay extends JPanel {
 
-    /** So weit ragt ein Platz unter die Linie; der größere Teil steht darüber, im freien Rand der Kopfleiste. */
-    public static final int BELOW_LINE = 5;
+    /** Abstand eines Platzes zum Fensterrand. */
+    public static final int EDGE_GAP = 1;
+    /** Abstand eines Platzes zur Unterkante der Kopfleisten darüber. */
+    public static final int HEAD_GAP = 4;
 
     private static final String FLOATING = "floating";
 
@@ -50,7 +53,7 @@ public final class EdgeOverlay extends JPanel {
         return slot;
     }
 
-    /** Die Kopfleiste, unter deren Linie die Plätze stehen; ihr Innenrand gibt den Abstand zu den Seiten. */
+    /** Die Titelleiste; unter ihr stehen die Kopfleisten ({@link HeadBar}), unter denen die Plätze beginnen. */
     public void bar(JComponent bar) {
         this.bar = bar;
     }
@@ -91,12 +94,12 @@ public final class EdgeOverlay extends JPanel {
             return;
         }
         Point origin = SwingUtilities.convertPoint(bar.getParent(), bar.getLocation(), this);
-        Insets insets = bar.getInsets();
-        int line = origin.y + bar.getHeight();
+        Insets insets = getInsets();
+        int top = origin.y + bar.getHeight() + HeadBar.HEIGHT + HEAD_GAP;
         Dimension leftSize = left.getComponentCount() == 0 ? new Dimension() : left.getPreferredSize();
-        left.setBounds(origin.x + insets.left, line + BELOW_LINE - leftSize.height, leftSize.width, leftSize.height);
+        left.setBounds(insets.left + EDGE_GAP, top, leftSize.width, leftSize.height);
         Dimension rightSize = right.getComponentCount() == 0 ? new Dimension() : right.getPreferredSize();
-        right.setBounds(origin.x + bar.getWidth() - insets.right - rightSize.width,
-                line + BELOW_LINE - rightSize.height, rightSize.width, rightSize.height);
+        right.setBounds(getWidth() - insets.right - EDGE_GAP - rightSize.width, top, rightSize.width,
+                rightSize.height);
     }
 }

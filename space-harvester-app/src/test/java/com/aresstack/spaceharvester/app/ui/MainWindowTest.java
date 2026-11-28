@@ -540,8 +540,8 @@ class MainWindowTest {
                         window.chatSplit().getRightComponent())).isTrue();
                 window.analysesToggle().doClick();
                 // Ein zweiter Klick auf das gewählte Symbol klappt die Leiste zu; zugeklappt steht der Umschalter
-                // ohne gewähltes Symbol am rechten Rand unter dem Schließen-Knopf, auf der Linie unter der
-                // Titelleiste, und klappt von dort wieder auf.
+                // ohne gewähltes Symbol senkrecht am rechten Fensterrand, direkt unter den Kopfleisten, und klappt
+                // von dort wieder auf; die Kopfleisten bleiben so breit, wie sie sind.
                 window.analysesToggle().doClick();
                 assertThat(window.analysesOpen()).isFalse();
                 assertThat(window.chatOpen()).isFalse();
@@ -552,12 +552,15 @@ class MainWindowTest {
                 java.awt.Rectangle bar = SwingUtilities.convertRectangle(window.windowBar().getParent(),
                         window.windowBar().getBounds(), surface);
                 assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), window.windowBar())).isFalse();
-                assertThat(edge.x + edge.width).as("rechtsbündig mit dem Schließen-Knopf")
-                        .isEqualTo(bar.x + bar.width - window.windowBar().getInsets().right);
-                assertThat(edge.y).as("unter dem Schließen-Knopf").isGreaterThan(bar.y + bar.height / 2);
-                assertThat(edge.y + edge.height).as("knapp über der Linie")
-                        .isEqualTo(bar.y + bar.height + com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay
-                                .BELOW_LINE);
+                int gap = com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.EDGE_GAP;
+                assertThat(edge.x + edge.width).as("am rechten Fensterrand")
+                        .isEqualTo(surface.getWidth() - surface.getInsets().right - gap);
+                assertThat(edge.height).as("senkrecht: Symbole untereinander").isGreaterThan(2 * edge.width);
+                assertThat(edge.y).as("direkt unter den Kopfleisten").isEqualTo(bar.y + bar.height
+                        + com.aresstack.spaceharvester.app.ui.controls.HeadBar.HEIGHT
+                        + com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.HEAD_GAP);
+                assertThat(window.split().getWidth()).as("die Arbeitsfläche behält ihre Breite")
+                        .isEqualTo(surface.getWidth() - surface.getInsets().left - surface.getInsets().right);
                 assertThat(List.of(window.chatToggle(), window.analysesToggle(), window.jobsToggle()))
                         .noneMatch(AbstractButton::isSelected);
                 window.chatToggle().doClick();
@@ -576,12 +579,14 @@ class MainWindowTest {
                 layoutAll(surface);
                 java.awt.Rectangle left = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface);
                 assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isFalse();
-                assertThat(left.x).isEqualTo(bar.x + window.windowBar().getInsets().left);
-                assertThat(left.y + left.height).isEqualTo(edge.y + edge.height);
+                assertThat(left.x).isEqualTo(surface.getInsets().left + gap);
+                assertThat(left.y).as("auf derselben Höhe wie rechts").isEqualTo(edge.y);
+                assertThat(left.height).isGreaterThan(2 * left.width);
                 view.button(Explorer.FAVORITES_TAB).doClick();
                 assertThat(window.split().isLeftCollapsed()).isFalse();
                 assertThat(view.selected()).isEqualTo(Explorer.FAVORITES_TAB);
                 assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isTrue();
+                assertThat(view.vertical()).isFalse();
                 layoutAll(surface);
             } finally {
                 // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten wieder mit dem Chat, zu.
