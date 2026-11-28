@@ -59,4 +59,31 @@ class InfoPopupTest {
             assertThat(popup.linkTexts()).containsExactly("Zum Beleg im Text");
         });
     }
+
+    /** Angelo 28.11.2026: Viele Fundstellen standen in einer Zeile und waren ab der dritten abgeschnitten. */
+    @Test
+    void linksThatDoNotFitSideBySideStackAndScrollWhenThereAreMany() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            InfoPopup popup = new InfoPopup();
+            popup.text("Fundstellen von „Sammelkonto“", "2 Seiten").link("Zu Beleg 1", () -> { })
+                    .link("Zu Beleg 2", () -> { });
+            popup.sizeFor(600);
+            assertThat(popup.linksStacked()).as("kurze Links bleiben nebeneinander").isFalse();
+
+            popup.clearLinks().text("Fundstellen von „Sammelkonto“", "11 Seiten");
+            for (int i = 1; i <= 11; i++) {
+                popup.link("Erfundene Seite Nummer " + i + " mit einem langen Titel · 1 Fundstelle", () -> { });
+            }
+            Dimension size = popup.sizeFor(600);
+            assertThat(popup.linksStacked()).isTrue();
+            assertThat(popup.linksScroll()).as("elf Zeilen passen in 600 Pixel").isFalse();
+            assertThat(size.width).isLessThanOrEqualTo(InfoPopup.MAX_WIDTH);
+            assertThat(popup.linkTexts()).hasSize(11);
+
+            Dimension low = popup.sizeFor(200);
+            assertThat(low.height).isLessThanOrEqualTo(200);
+            assertThat(popup.linksScroll()).as("bei wenig Platz scrollen die Links").isTrue();
+            //SHOT
+        });
+    }
 }

@@ -32,7 +32,8 @@ import java.util.Objects;
 
 /**
  * Ein selbst gezeichnetes Hinweisfenster an der Mausposition: Überschrift, umbrechender Fließtext in Proportionalschrift
- * und darunter wahlweise Links („Zum Beleg im Text“). Es ist höchstens {@link #MAX_WIDTH} breit, schmaler bei kurzem
+ * und darunter wahlweise Links („Zum Beleg im Text“). Passen die Links nicht nebeneinander, stehen sie
+ * untereinander und scrollen bei vielen (Angelo 28.11.2026: alle Fundstellen müssen erreichbar sein). Es ist höchstens {@link #MAX_WIDTH} breit, schmaler bei kurzem
  * Text; Überschrift und Text brechen um. Wird der Text höher als das Fenster hergibt, scrollt er, Überschrift und
  * Links bleiben stehen. Es schließt sich bei Klick daneben, mit Esc oder beim Klick auf einen Link; der erste Link hat
  * den Tastaturfokus (Enter oder Leertaste). Es erscheint leicht versetzt zum Mauszeiger, damit ein Doppelklick auf
@@ -50,11 +51,21 @@ public final class InfoPopup extends JPopupMenu {
     private static final int PAD = 12;
     private static final int OFFSET = 10;
     private static final int GAP = 6;
+    /** Abstand zwischen Links in einer Zeile und über den Links. */
+    private static final int LINK_GAP = 14;
+    private static final int LINKS_TOP = 8;
+    /** Untereinander stehende Links nehmen höchstens diesen Anteil der verfügbaren Höhe, der Rest scrollt. */
+    static final double LINKS_SHARE = 0.6;
+    /** So viel Höhe behält der Text mindestens. */
+    private static final int BODY_MIN = 48;
 
     private final WrappedText title = Comic.wrapped(" ", Comic.INK, 13f);
     private final WrappedText body = Comic.wrapped(" ", Comic.TEXT, 13f);
     private final JScrollPane scroll = Comic.scroll(body);
     private final JPanel links = new JPanel();
+    private final JScrollPane linkScroll = Comic.scroll(links);
+    private final java.util.List<JLabel> linkLabels = new java.util.ArrayList<>();
+    private boolean stacked;
     /** Bedienelemente zum Inhalt (etwa Stand setzen) zwischen Text und Links; leer ohne. */
     private final JPanel controls = new JPanel(new java.awt.BorderLayout());
     private final JPanel content = new JPanel();
@@ -73,7 +84,11 @@ public final class InfoPopup extends JPopupMenu {
         scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         links.setOpaque(false);
         links.setLayout(new BoxLayout(links, BoxLayout.X_AXIS));
-        links.setAlignmentX(LEFT_ALIGNMENT);
+        linkScroll.setAlignmentX(LEFT_ALIGNMENT);
+        linkScroll.setOpaque(false);
+        linkScroll.getViewport().setOpaque(false);
+        linkScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        linkScroll.setVisible(false);
         content.add(title);
         content.add(Box.createVerticalStrut(GAP));
         content.add(scroll);
@@ -81,7 +96,7 @@ public final class InfoPopup extends JPopupMenu {
         controls.setAlignmentX(LEFT_ALIGNMENT);
         controls.setVisible(false);
         content.add(controls);
-        content.add(links);
+        content.add(linkScroll);
         add(content);
         // Esc schließt auch, wenn ein Link den Fokus hat.
         content.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
@@ -120,7 +135,8 @@ public final class InfoPopup extends JPopupMenu {
     /** Entfernt alle Links. */
     public InfoPopup clearLinks() {
         links.removeAll();
-        links.setVisible(false);
+        linkLabels.clear();
+        linkScroll.setVisible(false);
         return this;
     }
 
@@ -170,13 +186,10 @@ public final class InfoPopup extends JPopupMenu {
                 link.setBorder(BorderFactory.createEmptyBorder(1, 1, 1, 1));
             }
         });
-        if (links.getComponentCount() > 0) {
-            links.add(Box.createHorizontalStrut(14));
-        } else {
-            links.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
-        }
-        links.add(link);
-        links.setVisible(true);
+        link.setAlignmentX(LEFT_ALIGNMENT);
+        linkLabels.add(link);
+        arrangeLinks(false);
+        linkScroll.setVisible(true);
         return this;
     }
 
@@ -198,14 +211,32 @@ public final class InfoPopup extends JPopupMenu {
      * Überschrift und Links ganz, der Text scrollt, wenn er nicht mehr hineinpasst.
      */
     public Dimension sizeFor(int availableHeight) {
+        arrangeLinks(linkRowWidth() > MAX_WIDTH - 2 * PAD);
         int width = Math.min(MAX_WIDTH, naturalWidth() + 2 * PAD);
         int inner = width - 2 * PAD;
         int titleHeight = title.isVisible() ? title.heightFor(inner) + GAP : 0;
-        int linksHeight = (links.isVisible() ? links.getPreferredSize().height : 0)
-                + (controls.isVisible() ? controls.getPreferredSize().height : 0);
+        links.setPreferredSize(null);
+        int linksWanted = linkScroll.isVisible() ? links.getPreferredSize().height : 0;
+        int controlsHeight = controls.isVisible() ? controls.getPreferredSize().height : 0;
+        int linksRoom = stacked ? Math.min(linksWanted, Math.min((int) (availableHeight * LINKS_SHARE),
+                availableHeight - 2 * PAD - titleHeight - controlsHeight - BODY_MIN)) : linksWanted;
+        boolean linksScroll = linksRoom < linksWanted;
+        if (linksScroll) {
+            // Der Rollbalken der Links kommt zur Breite dazu, damit er keinen Link kürzt, solange Platz ist.
+            width = Math.min(MAX_WIDTH, width + linkScroll.getVerticalScrollBar().getPreferredSize().width);
+            inner = width - 2 * PAD;
+        }
+        linkScroll.setVerticalScrollBarPolicy(linksScroll ? JScrollPane.VERTICAL_SCROLLBAR_ALWAYS
+                : JScrollPane.VERTICAL_SCROLLBAR_NEVER);
+        // Feste Breite: so kürzt ein zu langer Link mit „…“, statt abgeschnitten zu werden.
+        links.setPreferredSize(new Dimension(inner - (linksScroll
+                ? linkScroll.getVerticalScrollBar().getPreferredSize().width : 0), linksWanted));
+        linkScroll.setPreferredSize(new Dimension(inner, linksRoom));
+        linkScroll.setMaximumSize(new Dimension(inner, linksRoom));
+        int linksHeight = linksRoom + controlsHeight;
         int bodyHeight = body.heightFor(inner);
         int fixed = 2 * PAD + titleHeight + linksHeight;
-        int bodyRoom = Math.max(48, Math.min(bodyHeight, availableHeight - fixed));
+        int bodyRoom = Math.max(BODY_MIN, Math.min(bodyHeight, availableHeight - fixed));
         boolean scrolls = bodyRoom < bodyHeight;
         int barWidth = scrolls ? scroll.getVerticalScrollBar().getPreferredSize().width : 0;
         scroll.setVerticalScrollBarPolicy(scrolls ? JScrollPane.VERTICAL_SCROLLBAR_ALWAYS
@@ -215,12 +246,45 @@ public final class InfoPopup extends JPopupMenu {
         Dimension titleSize = new Dimension(inner, title.isVisible() ? title.heightFor(inner) : 0);
         title.setPreferredSize(titleSize);
         title.setMaximumSize(titleSize);
-        links.setMaximumSize(new Dimension(inner, linksHeight));
         body.setPreferredSize(new Dimension(inner - barWidth, scrolls ? body.heightFor(inner - barWidth) : bodyHeight));
         scroll.setPreferredSize(new Dimension(inner, bodyRoom));
         scroll.setMaximumSize(new Dimension(inner, bodyRoom));
         content.setPreferredSize(new Dimension(inner, fixed - 2 * PAD + bodyRoom));
         return new Dimension(width, fixed + bodyRoom);
+    }
+
+    /** Ob die Links bei der zuletzt berechneten Größe untereinander stehen und ob sie scrollen. */
+    public boolean linksStacked() {
+        return stacked;
+    }
+
+    public boolean linksScroll() {
+        return linkScroll.getVerticalScrollBarPolicy() == JScrollPane.VERTICAL_SCROLLBAR_ALWAYS;
+    }
+
+    /** Breite aller Links nebeneinander. */
+    private int linkRowWidth() {
+        int width = 0;
+        for (JLabel link : linkLabels) {
+            width += link.getPreferredSize().width + (width > 0 ? LINK_GAP : 0);
+        }
+        return width;
+    }
+
+    /** Stellt die Links nebeneinander oder, wenn sie so nicht hineinpassen, untereinander. */
+    private void arrangeLinks(boolean stack) {
+        stacked = stack;
+        links.removeAll();
+        links.setPreferredSize(null);
+        links.setLayout(new BoxLayout(links, stack ? BoxLayout.Y_AXIS : BoxLayout.X_AXIS));
+        links.setBorder(BorderFactory.createEmptyBorder(LINKS_TOP, 0, 0, 0));
+        for (JLabel link : linkLabels) {
+            if (!stack && links.getComponentCount() > 0) {
+                links.add(Box.createHorizontalStrut(LINK_GAP));
+            }
+            links.add(link);
+        }
+        links.revalidate();
     }
 
     /** Ob der Text bei der zuletzt berechneten Größe scrollt. */
@@ -238,7 +302,7 @@ public final class InfoPopup extends JPopupMenu {
         for (String line : body.getText().split("\n")) {
             widest = Math.max(widest, metrics.stringWidth(line));
         }
-        if (links.isVisible()) {
+        if (linkScroll.isVisible()) {
             widest = Math.max(widest, links.getPreferredSize().width);
         }
         if (controls.isVisible()) {
