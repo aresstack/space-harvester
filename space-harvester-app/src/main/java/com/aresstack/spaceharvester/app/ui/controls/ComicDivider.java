@@ -32,6 +32,10 @@ public final class ComicDivider extends BasicSplitPaneDivider {
     private boolean gripShown = true;
     /** Länge der Lücke in der Mitte der Linie, in der eine Knopfleiste sitzt; 0 ohne Lücke. */
     private int gap;
+    /** Wie viel der Lücke vor der Mitte der Linie liegt; der Rest liegt dahinter. */
+    private int gapBefore;
+    /** Mehrere Lücken an festen Stellen der Linie (je Anfang und Ende); leer, wenn nur {@link #gap} gilt. */
+    private java.util.List<int[]> rests = java.util.List.of();
 
     private ComicDivider(BasicSplitPaneUI ui, ComicPalette palette) {
         super(ui);
@@ -100,11 +104,41 @@ public final class ComicDivider extends BasicSplitPaneDivider {
      * weiter. 0 schließt die Lücke.
      */
     public static void gap(JSplitPane pane, int length) {
+        gap(pane, Math.max(0, length) / 2, Math.max(0, length) - Math.max(0, length) / 2);
+    }
+
+    /**
+     * Wie {@link #gap(JSplitPane, int)}, aber mit einer Lücke, die nicht mittig liegt: {@code before} Pixel vor der
+     * Mitte der Linie, {@code after} dahinter. So stehen unter einer Knopfleiste noch einzelne Kugeln
+     * ({@link PearlString}), ohne dass die Leiste ihren Platz an der Stelle des Griffs verliert.
+     */
+    public static void gap(JSplitPane pane, int before, int after) {
+        int first = Math.max(0, before);
+        int length = first + Math.max(0, after);
         if (pane.getUI() instanceof BasicSplitPaneUI basic && basic.getDivider() instanceof ComicDivider divider
-                && divider.gap != Math.max(0, length)) {
-            divider.gap = Math.max(0, length);
+                && (divider.gap != length || divider.gapBefore != first)) {
+            divider.gap = length;
+            divider.gapBefore = first;
             divider.repaint();
         }
+    }
+
+    /**
+     * Unterbricht die Linie an mehreren Stellen (je Anfang und Ende, von vorn nach hinten): Auf dem Trenner sitzen
+     * eine Knopfleiste und einzelne Kugeln, jede auf Höhe ihres Bereichs ({@link PearlString}). Eine leere Liste hebt
+     * das auf; dann gilt wieder {@link #gap(JSplitPane, int)}.
+     */
+    public static void gaps(JSplitPane pane, java.util.List<int[]> spans) {
+        if (pane.getUI() instanceof BasicSplitPaneUI basic && basic.getDivider() instanceof ComicDivider divider) {
+            divider.rests = java.util.List.copyOf(spans);
+            divider.repaint();
+        }
+    }
+
+    /** Die Lücken an festen Stellen der Linie dieser Teilung (für Tests). */
+    public static java.util.List<int[]> gaps(JSplitPane pane) {
+        return pane.getUI() instanceof BasicSplitPaneUI basic && basic.getDivider() instanceof ComicDivider divider
+                ? divider.rests : java.util.List.of();
     }
 
     /** Die Länge der Lücke in der Linie dieser Teilung (für Tests). */
@@ -166,15 +200,19 @@ public final class ComicDivider extends BasicSplitPaneDivider {
             int center = across / 2;
             int grip = Math.min(GRIP_MAX, along / 3);
             int gripStart = (along - grip) / 2;
-            int gapStart = (along - gap) / 2;
-            if (lying) {
-                g2.setColor(palette.getInk());
-                if (gap > 0) {
-                    g2.fillRoundRect(8, center - 1, Math.max(2, gapStart - 8), 2, 2, 2);
-                    g2.fillRoundRect(gapStart + gap, center - 1, Math.max(2, along - 8 - gapStart - gap), 2, 2, 2);
-                } else {
-                    g2.fillRoundRect(8, center - 1, Math.max(2, along - 16), 2, 2, 2);
+            g2.setColor(palette.getInk());
+            // Die Linie in Stücken: von Lücke zu Lücke, an beiden Enden kurz vor dem Rand.
+            int from = LINE_INSET;
+            for (int[] rest : rests(along)) {
+                if (rest[0] > from) {
+                    line(g2, lying, center, from, Math.min(rest[0], along - LINE_INSET));
                 }
+                from = Math.max(from, rest[1]);
+            }
+            if (along - LINE_INSET > from) {
+                line(g2, lying, center, from, along - LINE_INSET);
+            }
+            if (lying) {
                 if (gripShown && grip > 10 && across >= 6) {
                     g2.setColor(palette.getAccentYellow());
                     g2.fillRoundRect(gripStart, center - 2, grip, 5, 5, 5);
@@ -182,13 +220,6 @@ public final class ComicDivider extends BasicSplitPaneDivider {
                     g2.drawRoundRect(gripStart, center - 2, grip, 5, 5, 5);
                 }
             } else {
-                g2.setColor(palette.getInk());
-                if (gap > 0) {
-                    g2.fillRoundRect(center - 1, 8, 2, Math.max(2, gapStart - 8), 2, 2);
-                    g2.fillRoundRect(center - 1, gapStart + gap, 2, Math.max(2, along - 8 - gapStart - gap), 2, 2);
-                } else {
-                    g2.fillRoundRect(center - 1, 8, 2, Math.max(2, along - 16), 2, 2);
-                }
                 if (gripShown && grip > 10 && across >= 6) {
                     g2.setColor(palette.getAccentYellow());
                     g2.fillRoundRect(center - 2, gripStart, 5, grip, 5, 5);
@@ -199,5 +230,28 @@ public final class ComicDivider extends BasicSplitPaneDivider {
         } finally {
             g2.dispose();
         }
+    }
+
+    /** Die Linie endet kurz vor beiden Enden des Trenners. */
+    private static final int LINE_INSET = 8;
+
+    private static void line(Graphics2D g2, boolean lying, int center, int from, int to) {
+        if (lying) {
+            g2.fillRoundRect(from, center - 1, Math.max(2, to - from), 2, 2, 2);
+        } else {
+            g2.fillRoundRect(center - 1, from, 2, Math.max(2, to - from), 2, 2);
+        }
+    }
+
+    /** Die Lücken der Linie, von vorn nach hinten: die gesetzten Stellen, sonst die eine um die Mitte. */
+    private java.util.List<int[]> rests(int along) {
+        if (!rests.isEmpty()) {
+            return rests;
+        }
+        if (gap <= 0) {
+            return java.util.List.of();
+        }
+        int start = Math.max(LINE_INSET, along / 2 - gapBefore);
+        return java.util.List.of(new int[] {start, start + gap});
     }
 }

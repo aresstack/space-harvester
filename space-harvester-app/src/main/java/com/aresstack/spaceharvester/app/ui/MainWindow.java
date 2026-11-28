@@ -128,6 +128,23 @@ public final class MainWindow implements AppContext.Navigator {
     /** Die rechte Seitenleiste zeigt entweder den Chat oder die Aufträge (Angelo 22.11.2026). */
     private final java.awt.CardLayout sideModes = new java.awt.CardLayout();
     private final JPanel sideDeck = new JPanel(sideModes);
+    /**
+     * Die Bereiche der rechten Leiste untereinander (Angelo 28.11.2026): oben, was die Knopfleiste gewählt hat
+     * ({@link #sideDeck}), darunter der Bereich jeder offenen Kugel; sie teilen sich die Höhe.
+     */
+    private final com.aresstack.spaceharvester.app.ui.controls.AreaStack sideStack =
+            new com.aresstack.spaceharvester.app.ui.controls.AreaStack();
+    /** Knopfleiste und Kugeln der rechten Leiste: Jedes Symbol lässt sich herausziehen und zurückschieben. */
+    private final com.aresstack.spaceharvester.app.ui.controls.PearlString sidePearls =
+            new com.aresstack.spaceharvester.app.ui.controls.PearlString(sideSwitch);
+    /** Gemerkte Kugeln der rechten Leiste ({@code PearlString.placement}). */
+    static final String SIDE_PEARLS_KEY = "sidebar.right.pearls";
+    /**
+     * Gemerkte Anteile der Bereiche der rechten Leiste an ihrer Höhe, in Tausendsteln des Mittels: zuerst der Bereich
+     * der Knopfleiste, dann Chat, Aufträge und Analysen ({@link #SIDE_MODES}).
+     */
+    static final String SIDE_SHARES_KEY = "sidebar.right.shares";
+    private static final int SHARE_SCALE = 1000;
     private String sideMode = SIDE_CHAT;
     /** Die Leiste über die ganze Arbeitsfläche („Groß anzeigen“); der Explorer bleibt. */
     private boolean chatLarge;
@@ -240,7 +257,7 @@ public final class MainWindow implements AppContext.Navigator {
             return -1;
         }
         int tabs = span[1] - span[0];
-        int start = chatOpen ? left : left + (stage.getWidth() - tabs) / 2;
+        int start = sideShown() ? left : left + (stage.getWidth() - tabs) / 2;
         return start + tabs + Math.max(0, width - span[1]);
     }
 
@@ -593,12 +610,10 @@ public final class MainWindow implements AppContext.Navigator {
         }
         // Chat, Analysen und Aufträge sind keine Bereiche, sondern Leisten neben jedem Bereich: ihr Umschalter steht
         // im Kopf der Leiste, zugeklappt senkrecht am rechten Fensterrand unter der Kopfleiste (Angelo 27.11.2026).
-        sideSwitch.segment(SWITCH_CHAT, com.aresstack.spaceharvester.app.ui.content.ChatSidebar.icon())
-                .segment(SWITCH_ANALYSES, com.aresstack.spaceharvester.app.ui.content.AnalysesSidebar.icon())
-                .segment(SWITCH_JOBS, stack());
-        sideSwitch.button(SWITCH_CHAT).setToolTipText(CHAT_TOOLTIP);
-        sideSwitch.button(SWITCH_ANALYSES).setToolTipText(ANALYSES_TOOLTIP);
-        sideSwitch.button(SWITCH_JOBS).setToolTipText(JOBS_TOOLTIP);
+        sidePearls.tool(SWITCH_CHAT, com.aresstack.spaceharvester.app.ui.content.ChatSidebar.icon(), CHAT_TOOLTIP)
+                .tool(SWITCH_ANALYSES, com.aresstack.spaceharvester.app.ui.content.AnalysesSidebar.icon(),
+                        ANALYSES_TOOLTIP)
+                .tool(SWITCH_JOBS, stack(), JOBS_TOOLTIP);
         sideSwitch.clear();
         sideSwitch.onSelect(name -> sideOpen(true, sideModeOf(name)));
         sideSwitch.onAgain(name -> sideOpen(false, sideMode));
@@ -721,15 +736,15 @@ public final class MainWindow implements AppContext.Navigator {
         work.add(deckHolder, BorderLayout.CENTER);
         work.add(workFoot, BorderLayout.SOUTH);
         chatSidebar = content.chatSidebar();
-        chatSidebar.onCollapse(() -> sideOpen(false, sideMode));
+        chatSidebar.onCollapse(() -> sideOpen(false, SIDE_CHAT));
         // Diagramm-Ansicht: „im Chat erklären lassen“ geht in diesen Chat, mit den Werkzeugen des Bereichs
         com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.chat((question, excerpt, reference) -> {
             sideOpen(true, SIDE_CHAT);
             return chatSidebar.chat().askAbout(question, excerpt, reference);
         });
-        activities.sidebar(() -> chatLarge(!chatLarge), () -> sideOpen(false, sideMode));
+        activities.sidebar(() -> chatLarge(!chatLarge), () -> sideOpen(false, SIDE_JOBS));
         analysesSidebar = content.analysesSidebar();
-        analysesSidebar.onCollapse(() -> sideOpen(false, sideMode));
+        analysesSidebar.onCollapse(() -> sideOpen(false, SIDE_ANALYSES));
         analysesSidebar.onOpen(() -> sideOpen(true, SIDE_ANALYSES));
         // Ein Sprung zu einer Fundstelle oder Seite soll sie zeigen: die große Ansicht wird wieder zur Leiste.
         analysesSidebar.onRevealMiddle(() -> {
@@ -791,7 +806,7 @@ public final class MainWindow implements AppContext.Navigator {
             });
             commandDeck.onSidebarChanged(this::refreshDrawerToggle);
         }
-        chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, stage, sideDeck);
+        chatSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, stage, sideStack);
         chatSplit.setBorder(null);
         chatSplit.setBackground(Comic.SURFACE);
         chatSplit.setResizeWeight(1);
@@ -799,13 +814,34 @@ public final class MainWindow implements AppContext.Navigator {
         chatSplit.setMinimumSize(new Dimension(320, 0));
         ComicDivider.install(chatSplit, Comic.PALETTE);
         rightRail = com.aresstack.spaceharvester.app.ui.controls.DividerRail.install(chatSplit, sideSwitch, edges,
-                edges.right());
+                edges.right()).spanning();
+        // Leiste und Kugeln sitzen auf dem Trenner je auf Höhe ihres eigenen Bereichs.
+        sidePearls.centres(tool -> {
+            JComponent area = sidePearls.pearl(tool) ? sideArea(sideModeOf(tool)) : sideDeck;
+            return sideShown() && sideStack.shown().contains(area) && (sidePearls.pearl(tool) || chatOpen)
+                    ? area.getY() + area.getHeight() / 2 : null;
+        });
+        sidePearls.onLayout(() -> rightRail.rests());
+        sideStack.onLayout(() -> {
+            edges.revalidate();
+            edges.repaint();
+        });
+        sideStack.onShares(this::rememberShares);
+        // Zur Seite zieht die Knopfleiste ihren Trenner, nach oben oder unten löst sich ein Symbol als Kugel.
+        sidePearls.carrier(edges);
+        sidePearls.sideways(rightRail::onDivider, rightRail::dragging);
+        rightRail.yieldWhile(sidePearls::carrying);
+        sidePearls.onAttach((tool, wasOpen) -> {
+            if (wasOpen) {
+                sideOpen(true, sideModeOf(tool));
+            }
+        });
         if (chatSplit.getUI() instanceof javax.swing.plaf.basic.BasicSplitPaneUI basic) {
             basic.getDivider().addMouseListener(new java.awt.event.MouseAdapter() {
                 @Override
                 public void mouseClicked(java.awt.event.MouseEvent event) {
                     if (event.getClickCount() == 2) {
-                        sideOpen(!chatOpen, sideMode);
+                        sideClose();
                     }
                 }
             });
@@ -824,9 +860,13 @@ public final class MainWindow implements AppContext.Navigator {
         chatLarge = WindowSizes.recallInt(CHAT_LARGE_KEY, 0) == 1;
         int recalled = WindowSizes.recallInt(SIDE_JOBS_KEY, 0);
         sideMode = recalled >= 0 && recalled < SIDE_MODES.size() ? SIDE_MODES.get(recalled) : SIDE_CHAT;
+        sidePearls.restore(AppState.shared().get(SIDE_PEARLS_KEY));
+        recallShares();
+        placePearls();
         selectSideToggles();
-        sideModes.show(sideDeck, sideMode);
         placeChat();
+        // Erst jetzt hören: Das Wiederherstellen der gemerkten Kugeln ist keine Änderung des Benutzers.
+        sidePearls.onChange(this::sideChanged);
         split = new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
                 side, chatSplit, 200, 520, WindowSizes.recallInt(LEFT_WIDTH_KEY, SIDEBAR_WIDTH));
         split.setLeftWidthListener(width -> WindowSizes.rememberInt(LEFT_WIDTH_KEY, width));
@@ -981,7 +1021,7 @@ public final class MainWindow implements AppContext.Navigator {
         surface.getActionMap().put("chat-shrink", new javax.swing.AbstractAction() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent e) {
-                if (chatOpen && chatLarge) {
+                if (sideShown() && chatLarge) {
                     chatLarge(false);
                 }
             }
@@ -1032,17 +1072,132 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     boolean analysesOpen() {
-        return chatOpen && SIDE_ANALYSES.equals(sideMode);
+        return sideShows(SIDE_ANALYSES);
+    }
+
+    /** Ob der Bereich dieser Leiste zu sehen ist: als Wahl der Knopfleiste oder als offene Kugel. */
+    private boolean sideShows(String mode) {
+        String tool = switchOf(mode);
+        return sidePearls.pearl(tool) ? sidePearls.open(tool) : chatOpen && mode.equals(sideMode);
+    }
+
+    /** Ob rechts überhaupt etwas offen ist: die Wahl der Knopfleiste oder der Bereich einer Kugel. */
+    private boolean sideShown() {
+        return chatOpen || !sidePearls.openPearls().isEmpty();
+    }
+
+    private static String switchOf(String mode) {
+        return SIDE_JOBS.equals(mode) ? SWITCH_JOBS : SIDE_ANALYSES.equals(mode) ? SWITCH_ANALYSES : SWITCH_CHAT;
+    }
+
+    private JComponent sideArea(String mode) {
+        return SIDE_JOBS.equals(mode) ? activities.component()
+                : SIDE_ANALYSES.equals(mode) ? analysesSidebar : chatSidebar;
+    }
+
+    /** Die Kugeln der rechten Leiste (für Tests). */
+    com.aresstack.spaceharvester.app.ui.controls.PearlString sidePearls() {
+        return sidePearls;
+    }
+
+    /** Die Bereiche der rechten Leiste untereinander (für Tests). */
+    com.aresstack.spaceharvester.app.ui.controls.AreaStack sideStack() {
+        return sideStack;
+    }
+
+    /**
+     * Stellt jeden Bereich dorthin, wo sein Werkzeug steht: Der einer Kugel steht für sich in {@link #sideStack}, der
+     * eines Symbols der Knopfleiste in {@link #sideDeck}. Wird das gewählte Symbol der Leiste zur Kugel, zeigt die
+     * Leiste nichts mehr; der Bereich bleibt als der der Kugel offen.
+     */
+    private void placePearls() {
+        for (String mode : SIDE_MODES) {
+            JComponent area = sideArea(mode);
+            boolean ball = sidePearls.pearl(switchOf(mode));
+            if (ball && area.getParent() != sideStack) {
+                sideDeck.remove(area);
+                sideStack.add(area);
+            } else if (!ball && area.getParent() != sideDeck) {
+                sideStack.remove(area);
+                area.setVisible(true);
+                sideDeck.add(area, mode);
+            }
+        }
+        if (chatOpen && sidePearls.pearl(switchOf(sideMode))) {
+            chatOpen = false;
+            WindowSizes.rememberInt(CHAT_OPEN_KEY, 0);
+        }
+        if (!sidePearls.pearl(switchOf(sideMode))) {
+            sideModes.show(sideDeck, sideMode);
+        }
+        // Die Bereiche stehen in der Reihenfolge ihrer Gruppen: Die oberste Kugel hat den oberen Bereich.
+        java.util.List<java.awt.Component> areas = new java.util.ArrayList<>();
+        for (String unit : sidePearls.units()) {
+            if (com.aresstack.spaceharvester.app.ui.controls.PearlString.RAIL.equals(unit)) {
+                // Ist rechts alles zu, bleibt der Bereich der Leiste der eine, der mit ihr auf null schrumpft.
+                if (chatOpen || sidePearls.openPearls().isEmpty()) {
+                    areas.add(sideDeck);
+                }
+            } else if (sidePearls.open(unit)) {
+                areas.add(sideArea(sideModeOf(unit)));
+            }
+        }
+        sideStack.show(areas);
+    }
+
+    /** Die Bereiche der rechten Leiste in der Reihenfolge von {@link #SIDE_SHARES_KEY}. */
+    private java.util.List<JComponent> shareAreas() {
+        java.util.List<JComponent> areas = new java.util.ArrayList<>();
+        areas.add(sideDeck);
+        for (String mode : SIDE_MODES) {
+            areas.add(sideArea(mode));
+        }
+        return areas;
+    }
+
+    private void rememberShares() {
+        StringBuilder text = new StringBuilder();
+        for (JComponent area : shareAreas()) {
+            text.append(text.length() > 0 ? "," : "").append(Math.round(sideStack.share(area) * SHARE_SCALE));
+        }
+        AppState.shared().put(SIDE_SHARES_KEY, text.toString());
+    }
+
+    private void recallShares() {
+        String text = AppState.shared().get(SIDE_SHARES_KEY);
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        String[] parts = text.split(",");
+        java.util.List<JComponent> areas = shareAreas();
+        for (int index = 0; index < Math.min(parts.length, areas.size()); index++) {
+            try {
+                sideStack.share(areas.get(index), Integer.parseInt(parts[index].trim()) / (double) SHARE_SCALE);
+            } catch (NumberFormatException unreadable) {
+                // Ein unlesbarer Anteil bleibt gleich groß wie die anderen.
+            }
+        }
+    }
+
+    /** Klappt die rechte Leiste ganz zu: die Wahl der Knopfleiste und die Bereiche aller Kugeln. */
+    private void sideClose() {
+        chatOpen = false;
+        WindowSizes.rememberInt(CHAT_OPEN_KEY, 0);
+        if (sidePearls.openPearls().isEmpty()) {
+            sideChanged();
+        } else {
+            sidePearls.closePearls();
+        }
     }
 
     /** Die Hälfte „Analysen“ des Umschalters der rechten Leiste (für Tests). */
     javax.swing.AbstractButton analysesToggle() {
-        return sideSwitch.button(SWITCH_ANALYSES);
+        return sidePearls.button(SWITCH_ANALYSES);
     }
 
     /** Die Hälfte „Aufträge“ des Umschalters der rechten Leiste (für Tests). */
     javax.swing.AbstractButton jobsToggle() {
-        return sideSwitch.button(SWITCH_JOBS);
+        return sidePearls.button(SWITCH_JOBS);
     }
 
     private static String sideModeOf(String name) {
@@ -1058,11 +1213,10 @@ public final class MainWindow implements AppContext.Navigator {
         if (!chatOpen) {
             sideSwitch.clear();
         } else {
-            sideSwitch.show(SIDE_JOBS.equals(sideMode) ? SWITCH_JOBS
-                    : SIDE_ANALYSES.equals(sideMode) ? SWITCH_ANALYSES : SWITCH_CHAT);
+            sideSwitch.show(switchOf(sideMode));
         }
         sideSwitch.vertical(true);
-        edges.place(edges.right(), sideSwitch);
+        edges.place(edges.right(), sidePearls.column());
         edges.revalidate();
         edges.repaint();
     }
@@ -1118,17 +1272,31 @@ public final class MainWindow implements AppContext.Navigator {
      * beide; was zuletzt offen war, gilt auch nach dem Neustart.
      */
     private void sideOpen(boolean open, String mode) {
+        String tool = switchOf(mode);
+        if (sidePearls.pearl(tool)) {
+            // Eine Kugel öffnet ihren eigenen Bereich, unabhängig von der Knopfleiste.
+            if (sidePearls.open(tool) != open) {
+                sidePearls.open(tool, open);
+            }
+            return;
+        }
         chatOpen = open;
         if (open) {
             sideMode = mode;
             WindowSizes.rememberInt(SIDE_JOBS_KEY, SIDE_MODES.indexOf(mode));
-            sideModes.show(sideDeck, mode);
         }
+        WindowSizes.rememberInt(CHAT_OPEN_KEY, open ? 1 : 0);
+        sideChanged();
+    }
+
+    /** Nach jeder Änderung rechts: Bereiche stellen, Knopfleiste und Kugeln zeigen den Stand, Plätze merken. */
+    private void sideChanged() {
+        placePearls();
+        AppState.shared().put(SIDE_PEARLS_KEY, sidePearls.placement());
         selectSideToggles();
         if (chatOpen()) {
             chatUnread(false);
         }
-        WindowSizes.rememberInt(CHAT_OPEN_KEY, open ? 1 : 0);
         placeChat();
         if (jobsOpen()) {
             activities.shown();
@@ -1138,7 +1306,7 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     boolean jobsOpen() {
-        return chatOpen && SIDE_JOBS.equals(sideMode);
+        return sideShows(SIDE_JOBS);
     }
 
     /** Eine Antwort ist fertig: Ist die Leiste zu, zeigt der Chat-Knopf einen Punkt, bis sie aufgeklappt wird. */
@@ -1154,13 +1322,13 @@ public final class MainWindow implements AppContext.Navigator {
 
     private void chatUnread(boolean unread) {
         chatUnread = unread;
-        sideSwitch.icon(SWITCH_CHAT, unread ? com.aresstack.spaceharvester.app.ui.content.ChatSidebar.unreadIcon()
+        sidePearls.icon(SWITCH_CHAT, unread ? com.aresstack.spaceharvester.app.ui.content.ChatSidebar.unreadIcon()
                 : com.aresstack.spaceharvester.app.ui.content.ChatSidebar.icon());
-        sideSwitch.button(SWITCH_CHAT).setToolTipText(unread ? CHAT_UNREAD_TOOLTIP : CHAT_TOOLTIP);
+        sidePearls.tip(SWITCH_CHAT, unread ? CHAT_UNREAD_TOOLTIP : CHAT_TOOLTIP);
     }
 
     boolean chatOpen() {
-        return chatOpen && SIDE_CHAT.equals(sideMode);
+        return sideShows(SIDE_CHAT);
     }
 
     /**
@@ -1185,11 +1353,12 @@ public final class MainWindow implements AppContext.Navigator {
         placingChat = true;
         try {
             int min = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH;
-            sideDeck.setMinimumSize(new Dimension(chatOpen ? min : 0, 0));
+            boolean shown = sideShown();
+            sideStack.setMinimumSize(new Dimension(shown ? min : 0, 0));
             chatSidebar.shown(chatOpen());
             activities.sidebarShown(jobsOpen());
             analysesSidebar.shown(analysesOpen());
-            boolean large = chatOpen && chatLarge;
+            boolean large = shown && chatLarge;
             chatSidebar.large(large);
             analysesSidebar.large(large);
             activities.large(large);
@@ -1198,14 +1367,14 @@ public final class MainWindow implements AppContext.Navigator {
             // Zugeklappt oder groß gibt es keinen Teiler (Angelo 28.11.2026: kein Griff, der sich nicht bewegen lässt);
             // auf geht die Leiste über ihre Knöpfe. Die Teilung selbst bleibt eingeschaltet: Abgeschaltet verlören
             // alle Trenner der Arbeitsfläche ihren Doppelpfeil-Zeiger.
-            ComicDivider.draggable(chatSplit, chatOpen && !large);
-            chatSplit.setDividerSize(chatOpen && !large ? ComicDivider.THICKNESS : 0);
+            ComicDivider.draggable(chatSplit, shown && !large);
+            chatSplit.setDividerSize(shown && !large ? ComicDivider.THICKNESS : 0);
             int width = chatSplit.getWidth();
             if (width > 0 && !large) {
                 // Die Arbeitsfläche behält ihre Mindestbreite; in einem schmalen Fenster gibt die Leiste nach.
                 int room = Math.max(0, width - chatSplit.getDividerSize() - 320);
-                int shown = chatOpen ? Math.max(Math.min(min, room), Math.min(chatWidth, room)) : 0;
-                chatSplit.setDividerLocation(width - chatSplit.getDividerSize() - shown);
+                int wide = shown ? Math.max(Math.min(min, room), Math.min(chatWidth, room)) : 0;
+                chatSplit.setDividerLocation(width - chatSplit.getDividerSize() - wide);
             }
             chatSplit.revalidate();
         } finally {
@@ -1217,7 +1386,7 @@ public final class MainWindow implements AppContext.Navigator {
 
     /** Merkt die Breite, die der Benutzer der offenen Leiste durch Ziehen gegeben hat. */
     private void rememberChatWidth() {
-        if (placingChat || !chatOpen || chatLarge || chatSplit.getWidth() <= 0) {
+        if (placingChat || !sideShown() || chatLarge || chatSplit.getWidth() <= 0) {
             return;
         }
         int width = chatSplit.getWidth() - chatSplit.getDividerSize() - chatSplit.getDividerLocation();
@@ -1371,14 +1540,14 @@ public final class MainWindow implements AppContext.Navigator {
 
     /** Die Chat-/Auftrags-Seitenleiste (für Tests). */
     JComponent sideDeck() {
-        return sideDeck;
+        return sideStack;
     }
 
     @Override
     public void show(AppContext.Section section) {
         // Wer einen Bereich aufruft, will ihn sehen: aus der großen Chat-Ansicht wird wieder die Leiste. Nur die
         // Auswahl im Explorer lässt sie groß, denn dort wählt man den Bereich der nächsten Frage.
-        if (chatSplit != null && chatOpen && chatLarge) {
+        if (chatSplit != null && sideShown() && chatLarge) {
             chatLarge = false;
             WindowSizes.rememberInt(CHAT_LARGE_KEY, 0);
             placeChat();
@@ -2099,7 +2268,7 @@ public final class MainWindow implements AppContext.Navigator {
     /** Für Tests: der Umschalter der Chat-Seitenleiste oben rechts. */
     /** Die Hälfte „Chat“ des Umschalters der rechten Leiste (für Tests). */
     javax.swing.AbstractButton chatToggle() {
-        return sideSwitch.button(SWITCH_CHAT);
+        return sidePearls.button(SWITCH_CHAT);
     }
 
     /** Für Tests: die Teilung zwischen Drawer und Arbeitsfläche. */

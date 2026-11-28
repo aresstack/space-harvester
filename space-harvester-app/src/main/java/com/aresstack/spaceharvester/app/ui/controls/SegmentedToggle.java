@@ -53,15 +53,46 @@ public final class SegmentedToggle extends JPanel {
      * gefüllten Hälfte gezeichnet, gleich welche Farbe es selbst mitbringt.
      */
     public SegmentedToggle segment(String name, javax.swing.Icon icon) {
+        put(name, icon, segments.size());
+        if (selected == null) {
+            selected = name;
+            segments.get(name).setSelected(true);
+        }
+        return this;
+    }
+
+    /**
+     * Fügt eine Hälfte mit Symbol an Platz {@code index} ein (Angelo 28.11.2026: Symbole lassen sich aus einer
+     * Knopfleiste herausziehen und wieder hineinschieben, {@link PearlString}). Anders als beim Anfügen wird sie nicht
+     * von selbst gewählt.
+     */
+    public SegmentedToggle segment(String name, javax.swing.Icon icon, int index) {
+        put(name, icon, index);
+        return this;
+    }
+
+    private void put(String name, javax.swing.Icon icon, int index) {
         Segment segment = new Segment(name);
         segment.icon = icon;
         if (icon != null) {
             segment.setIcon(icon);
             segment.setToolTipText(name);
         }
-        segments.put(name, segment);
+        int at = Math.max(0, Math.min(segments.size(), index));
+        // Die Reihenfolge der Hälften bestimmt, welche Enden des gemeinsamen Rahmens rund sind.
+        Map<String, Segment> ordered = new LinkedHashMap<>();
+        int position = 0;
+        for (Map.Entry<String, Segment> entry : segments.entrySet()) {
+            if (position++ == at) {
+                ordered.put(name, segment);
+            }
+            ordered.put(entry.getKey(), entry.getValue());
+        }
+        ordered.putIfAbsent(name, segment);
+        segments.clear();
+        segments.putAll(ordered);
         group.add(segment);
-        add(segment);
+        add(segment, at);
         segment.addActionListener(event -> clicked(name));
         segment.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
@@ -74,11 +105,30 @@ public final class SegmentedToggle extends JPanel {
                 hovered(false);
             }
         });
-        if (selected == null) {
-            selected = name;
-            segment.setSelected(true);
+        revalidate();
+        repaint();
+    }
+
+    /** Nimmt eine Hälfte heraus; war sie gewählt, ist danach keine gewählt. Meldet nichts. */
+    public void remove(String name) {
+        Segment segment = segments.remove(name);
+        if (segment == null) {
+            return;
         }
-        return this;
+        group.remove(segment);
+        remove(segment);
+        if (name.equals(selected)) {
+            selected = null;
+            group.clearSelection();
+        }
+        hovered = false;
+        revalidate();
+        repaint();
+    }
+
+    /** Die Namen der Hälften in ihrer Reihenfolge. */
+    public List<String> names() {
+        return List.copyOf(segments.keySet());
     }
 
     /**
@@ -157,6 +207,8 @@ public final class SegmentedToggle extends JPanel {
     }
     /** Rand um das Symbol einer senkrechten Hälfte: Sie ist so breit, wie eine waagerechte hoch ist. */
     private static final int VERTICAL_PAD = 3;
+    /** Um so viel ist eine senkrechte Hälfte höher als breit, solange sie nicht allein steht. */
+    private static final int SEGMENT_STRETCH = 4;
     private static final int DOT = 6;
 
     /** Hebt die Wahl auf, ohne etwas zu melden: Keine Hälfte ist gefüllt (etwa solange die Leiste zugeklappt ist). */
@@ -305,7 +357,9 @@ public final class SegmentedToggle extends JPanel {
         public Dimension getPreferredSize() {
             if (vertical) {
                 int label = labelWidth(getFontMetrics(getFont()));
-                return new Dimension(label + 2 * VERTICAL_PAD, label + 2 * VERTICAL_PAD + 4);
+                // Eine einzelne Hälfte ist eine Kugel: so hoch wie breit.
+                return new Dimension(label + 2 * VERTICAL_PAD,
+                        label + 2 * VERTICAL_PAD + (segments.size() == 1 ? 0 : SEGMENT_STRETCH));
             }
             int chip = chipWidth();
             return new Dimension(2 * PAD + labelWidth(getFontMetrics(getFont()))
