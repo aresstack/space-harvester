@@ -1771,8 +1771,7 @@ public class Jobs implements AutoCloseable {
             queued.clear();
             // Weckt, wer auf das Ende eines wartenden Auftrags wartet ({@link #await}).
             changed.signalAll();
-            // Kopie: Ein Zuhörer beim Anhalten kann den Auftrag im selben Thread beenden und aus {@code open} nehmen.
-            for (Job job : new ArrayList<>(open.values())) {
+            for (Job job : open.values()) {
                 if (survivesShutdown(job)) {
                     // Abgelegt wird, was der Benutzer wollte: so erkennt der nächste Start ein Anhalten oder einen
                     // Abbruch des Benutzers ({@link #markInterrupted}) und setzt nur Unterbrochenes fort.
