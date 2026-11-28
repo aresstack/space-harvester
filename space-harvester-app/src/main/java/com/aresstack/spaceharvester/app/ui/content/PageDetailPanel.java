@@ -4251,7 +4251,7 @@ public final class PageDetailPanel extends JPanel {
                              ReadingPane.Prepared prepared) {
     }
 
-    private static ReadingPane.Prepared prepare(AppRuntime runtime,
+    static ReadingPane.Prepared prepare(AppRuntime runtime,
                                                 com.aresstack.spaceharvester.application.reading.ReadingView view) {
         // Ohne Bilder: Das HTML steht sofort, die Bilder holt die Ansicht nach dem Anzeigen nach (Angelo, 17.11.2026).
         return ReadingPane.prepareDeferred(view, image -> runtime.workspace().viewDiagramVector(view, image),

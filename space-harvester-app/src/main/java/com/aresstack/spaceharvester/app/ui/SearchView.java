@@ -137,8 +137,27 @@ public final class SearchView implements View {
     /** Gelbe Zeile, wenn das Glossar nicht lesbar ist; die Suche läuft ohne die Synonyme, kein Fehler. */
     static final String SYNONYMS_UNREADABLE = "Glossar nicht lesbar, ohne Synonyme der Fachbegriffe gesucht";
 
+    /**
+     * Die Vorschau unter den Treffern, wie im Mail-Postfach (Angelo 28.11.2026): Der Pfeil unten rechts in der
+     * Werkzeugleiste klappt sie auf und dreht sich dabei; ein Klick auf einen Treffer zeigt seine Seite, der
+     * Doppelklick öffnet sie weiter ganz. Der Trenner darüber ändert die Höhe.
+     */
+    static final String PREVIEW_SHOW = "Vorschau aufklappen: ein Klick auf einen Treffer zeigt die Seite unter der Liste";
+    static final String PREVIEW_HIDE = "Vorschau zuklappen";
+    /** Schlüssel im Application State: ob die Vorschau offen ist und ihr Anteil an der Höhe in Prozent. */
+    static final String STATE_PREVIEW = "search.preview";
+    static final String STATE_PREVIEW_SHARE = "search.preview.share";
+    /** Anteil der Vorschau an der Höhe beim ersten Aufklappen, in Prozent. */
+    static final int PREVIEW_SHARE = 50;
+
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 12));
+    private final com.aresstack.spaceharvester.app.ui.content.PagePreview preview;
+    private final javax.swing.JSplitPane previewSplit = new javax.swing.JSplitPane(
+            javax.swing.JSplitPane.VERTICAL_SPLIT);
+    private final IconButton previewToggle = new IconButton(
+            com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronUp(), PREVIEW_SHOW);
+    private boolean previewOpen;
     /** Die ganze Ansicht: oben {@link #heading} über volle Breite, darunter {@link #root} mit Innenabstand. */
     private final JPanel frame = new JPanel(new BorderLayout());
     /**
@@ -444,6 +463,9 @@ public final class SearchView implements View {
         termsPanel = new TechnicalTermsPanel(error -> feedback.problem(error));
         wordsPanel = new WordHitsPanel(place -> context.navigator().openPage(place.sourceId(), place.pageId()),
                 this::wordStatus, error -> feedback.problem(error));
+        preview = new com.aresstack.spaceharvester.app.ui.content.PagePreview(context::runtime);
+        wordsPanel.onPreview(() -> previewOpen,
+                place -> preview.show(place.sourceId(), place.pageId(), place.title()));
         AppState state = AppState.shared();
         words = STATE_WORDS.equals(state.get(STATE_MODE));
         modeIcon.word(words);
@@ -524,6 +546,7 @@ public final class SearchView implements View {
                     hinted[0] = key;
                     context.navigator().hintPage(hit.sourceId(), hit.spaceKey(), hit.pageId());
                 }
+                previewSelected();
             }
         });
         table.addMouseListener(new MouseAdapter() {
@@ -603,7 +626,24 @@ public final class SearchView implements View {
         center.add(list, HITS_CARD);
         center.add(termsPanel, TERMS_CARD);
         center.add(wordsPanel, WORDS_CARD);
-        root.add(center, BorderLayout.CENTER);
+        previewSplit.setTopComponent(center);
+        previewSplit.setBottomComponent(preview);
+        previewSplit.setOpaque(false);
+        previewSplit.setResizeWeight(1);
+        previewSplit.setContinuousLayout(true);
+        com.aresstack.spaceharvester.app.ui.controls.ComicDivider.install(previewSplit, Comic.PALETTE);
+        // Die mit dem Trenner gezogene Höhe bleibt gemerkt, als Anteil, damit sie zu jeder Fenstergröße passt.
+        previewSplit.addPropertyChangeListener(javax.swing.JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> {
+            int height = previewSplit.getHeight();
+            if (previewOpen && height > 0 && !placingPreview) {
+                AppState.shared().put(STATE_PREVIEW_SHARE,
+                        Math.round(100f * (height - previewSplit.getDividerLocation()) / height));
+            }
+        });
+        previewToggle.getAccessibleContext().setAccessibleName(PREVIEW_SHOW);
+        previewToggle.addActionListener(e -> preview(!previewOpen));
+        preview(AppState.shared().getBoolean(STATE_PREVIEW, false));
+        root.add(previewSplit, BorderLayout.CENTER);
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
 
         // Der Stand steht in der Statuszeile des Hauptfensters: Ladestand, Abbrechen bzw. Endzustand, Treffer.
@@ -976,6 +1016,73 @@ public final class SearchView implements View {
     @Override
     public JComponent component() {
         return frame;
+    }
+
+    /** Unten rechts in der Ecke der Werkzeugleiste steht der Pfeil der Vorschau. */
+    @Override
+    public JComponent help() {
+        return previewToggle;
+    }
+
+    /** Solange die Vorschau ihre Höhe selbst setzt, ist das kein Ziehen des Benutzers. */
+    private boolean placingPreview;
+
+    /** Klappt die Vorschau auf oder zu; aufgeklappt zeigt sie gleich den gewählten Treffer. */
+    void preview(boolean open) {
+        previewOpen = open;
+        AppState.shared().put(STATE_PREVIEW, open);
+        previewToggle.setIcon(open ? new com.aresstack.spaceharvester.app.ui.controls.Flipped(
+                com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronUp())
+                : com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.chevronUp());
+        previewToggle.setToolTipText(open ? PREVIEW_HIDE : PREVIEW_SHOW);
+        previewToggle.getAccessibleContext().setAccessibleName(open ? PREVIEW_HIDE : PREVIEW_SHOW);
+        preview.setVisible(open);
+        previewSplit.setDividerSize(open ? com.aresstack.spaceharvester.app.ui.controls.ComicDivider.THICKNESS : 0);
+        if (open) {
+            previewSelected();
+            placePreview();
+            // Vor dem ersten Auslegen hat die Teilung keine Höhe; dann stellt sie sich danach.
+            javax.swing.SwingUtilities.invokeLater(this::placePreview);
+        } else {
+            wordsPanel.hidePlaces();
+        }
+        previewSplit.revalidate();
+        previewSplit.repaint();
+    }
+
+    private void placePreview() {
+        int height = previewSplit.getHeight();
+        if (!previewOpen || height <= 0) {
+            return;
+        }
+        int share = Math.max(10, Math.min(90, AppState.shared().getInt(STATE_PREVIEW_SHARE, PREVIEW_SHARE)));
+        placingPreview = true;
+        try {
+            previewSplit.setDividerLocation(height - height * share / 100);
+        } finally {
+            placingPreview = false;
+        }
+    }
+
+    /** Zeigt den einen gewählten Treffer in der offenen Vorschau. */
+    private void previewSelected() {
+        int row = table.getSelectedRow();
+        if (previewOpen && row >= 0 && table.getSelectedRowCount() == 1) {
+            Hit hit = model.rows.get(table.convertRowIndexToModel(row));
+            preview.show(hit.sourceId(), hit.pageId(), hit.title());
+        }
+    }
+
+    boolean previewOpen() {
+        return previewOpen;
+    }
+
+    IconButton previewToggle() {
+        return previewToggle;
+    }
+
+    com.aresstack.spaceharvester.app.ui.content.PagePreview previewPane() {
+        return preview;
     }
 
     @Override
