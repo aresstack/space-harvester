@@ -287,12 +287,16 @@ public final class ProvingGroundWorkspace extends JPanel {
                 null, status);
     }
 
+    /** Zählt die Leseaufträge von {@link #open}; nur das Ergebnis des letzten gilt (nur im EDT gelesen/geschrieben). */
+    private long openRequests;
+
     /** Liest das Testprojekt im Ordner, im Hintergrund. */
     void open(Path chosen) {
         if (chosen == null) {
             return;
         }
         AppState.shared().put(PROJECT_KEY, chosen.toString());
+        long request = ++openRequests;
         CompletableFuture.supplyAsync(() -> {
             try {
                 return Files.exists(chosen.resolve(ProjectFile.FILE_NAME)) ? ProjectFile.read(chosen) : null;
@@ -300,6 +304,9 @@ public final class ProvingGroundWorkspace extends JPanel {
                 throw new IllegalStateException(broken.getMessage(), broken);
             }
         }).whenComplete((read, failure) -> SwingUtilities.invokeLater(() -> {
+            if (request != openRequests) {
+                return; // a later open() was asked for; an earlier read finishing last must not win
+            }
             directory = chosen;
             results.clear();
             if (failure != null) {
