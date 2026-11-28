@@ -746,6 +746,7 @@ class MainWindowTest {
                 Component chatArea = find(surface,
                         com.aresstack.spaceharvester.app.ui.content.ChatSidebar.class).get(0);
                 int full = window.leftStack().getHeight();
+                int leftBefore = window.split().getPreferredLeftWidth();
                 assertThat(window.leftStack().shown()).hasSize(1);
 
                 // Der offene Chat wandert an den linken Rand: Sein Bereich steht unter dem Explorer, rechts ist zu.
@@ -804,6 +805,8 @@ class MainWindowTest {
                 layoutAll(surface);
                 assertThat(window.chatOpen()).isFalse();
                 assertThat(window.leftStack().getWidth()).isZero();
+                // Ohne Gast gilt wieder die Breite von vorher, auch wenn die Leiste gerade zu ist.
+                assertThat(window.split().getPreferredLeftWidth()).isEqualTo(leftBefore);
                 window.chatToggle().doClick();
                 window.split().openLeft();
                 layoutAll(surface);

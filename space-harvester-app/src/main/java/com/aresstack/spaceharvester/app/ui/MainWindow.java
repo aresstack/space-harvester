@@ -1254,16 +1254,15 @@ public final class MainWindow implements AppContext.Navigator {
     private void fitLeftWidth(boolean guests) {
         int min = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH;
         leftStack.setMinimumSize(new Dimension(guests ? min : 0, 0));
-        if (split.getWidth() <= 0) {
-            return;
-        }
-        int width = split.getDividerLocation();
+        // Über die gemerkte Breite der Teilung, nicht über den Teiler: Das gilt auch, solange die Leiste zugeklappt
+        // ist, und zählt nicht als Ziehen des Benutzers (die gespeicherte Breite bleibt seine).
+        int width = split.getPreferredLeftWidth();
         if (guests && width < min) {
             leftWidthBefore = width;
-            split.setDividerLocation(min);
+            split.setPreferredLeftWidth(min);
         } else if (!guests && leftWidthBefore >= 0) {
             if (width == min) {
-                split.setDividerLocation(leftWidthBefore);
+                split.setPreferredLeftWidth(leftWidthBefore);
             }
             leftWidthBefore = -1;
         }
