@@ -16,10 +16,8 @@ java {
 dependencies {
     api project(':browser-runtime')
     implementation libs.gson
-    // Einmalcodes wie WD4J (TotpService, googleauth); dessen HttpClient braucht nur der QR-Code-Erzeuger.
-    implementation(libs.googleauth) {
-        exclude group: 'org.apache.httpcomponents'
-    }
+    // Einmalcodes wie WD4J (TotpService, googleauth), als Quellkopie unter libs/googleauth.
+    implementation project(':googleauth')
     // Der JUnit-Export wird auch in der App übersetzt und ausgeführt (@Test); nur die API, keine Engine.
     implementation platform(libs.junit.bom)
     implementation 'org.junit.jupiter:junit-jupiter-api'
