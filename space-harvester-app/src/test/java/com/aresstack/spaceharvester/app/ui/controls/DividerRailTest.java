@@ -91,6 +91,22 @@ class DividerRailTest {
             Rectangle slot = overlay.right().getBounds();
             int center = 500 + ComicDivider.THICKNESS / 2;
             assertThat(slot.x + slot.width / 2).as("mittig auf der Linie des Trenners").isEqualTo(center);
+            // An der Stelle des gelben Griffs: in der Mitte der Länge des Trenners, nicht oben.
+            java.awt.Component divider = ((javax.swing.plaf.basic.BasicSplitPaneUI) pane.getUI()).getDivider();
+            java.awt.Point middle = SwingUtilities.convertPoint(divider.getParent(), divider.getX(),
+                    divider.getY() + divider.getHeight() / 2, overlay);
+            assertThat(slot.y + slot.height / 2).as("senkrecht mittig, wo der Griff war").isEqualTo(middle.y);
+            // Die Linie des Trenners bleibt über die ganze Länge: oben und unten gezeichnet, nur der Griff fehlt.
+            java.awt.image.BufferedImage line = new java.awt.image.BufferedImage(divider.getWidth(),
+                    divider.getHeight(), java.awt.image.BufferedImage.TYPE_INT_RGB);
+            java.awt.Graphics2D lg = line.createGraphics();
+            divider.paint(lg);
+            lg.dispose();
+            int ink = Comic.INK.getRGB();
+            int lineX = divider.getWidth() / 2 - 1;
+            assertThat(line.getRGB(lineX, 20)).as("Linie oben").isEqualTo(ink);
+            assertThat(line.getRGB(lineX, divider.getHeight() / 2)).as("Linie in der Mitte").isEqualTo(ink);
+            assertThat(line.getRGB(lineX, divider.getHeight() - 20)).as("Linie unten").isEqualTo(ink);
 
             // Ziehen über die Schwelle hinaus verschiebt den Trenner und löst den Knopf nicht aus.
             JToggleButton jobs = rail.button("Aufträge");
