@@ -1056,6 +1056,9 @@ public final class Explorer {
 
         JScrollPane treeScroll = Comic.scroll(tree);
         treeScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        // Durchsichtig bis zur Fläche darunter: „Alles auswählen“ färbt Kopf und Baum gemeinsam (SelectionGlow).
+        treeScroll.setOpaque(false);
+        treeScroll.getViewport().setOpaque(false);
         // Jede Zeile ist genau so breit wie der sichtbare Bereich: Bestandszeichen und Stern stehen
         // in festen Spalten ganz rechts, ein zu langer Titel wird davor mit „…“ gekürzt. Bei neuer Breite neu
         // vermessen (auch beim Verschieben des Teilers).
@@ -1154,8 +1157,23 @@ public final class Explorer {
             }
         });
         head.addMouseListener(chooseAll);
-        root.add(head, BorderLayout.NORTH);
-        root.add(deck, BorderLayout.CENTER);
+        // „Alles auswählen“ färbt Kopf und Baum als eine Fläche (Angelo 28.11.2026), bis unter die letzte Zeile.
+        ((BorderLayout) allGlow.getLayout()).setVgap(6);
+        allGlow.add(head, BorderLayout.NORTH);
+        allGlow.add(deck, BorderLayout.CENTER);
+        allGlow.extent(this::allGlowExtent);
+        tree.addTreeExpansionListener(new javax.swing.event.TreeExpansionListener() {
+            @Override
+            public void treeExpanded(javax.swing.event.TreeExpansionEvent event) {
+                allGlow.repaint();
+            }
+
+            @Override
+            public void treeCollapsed(javax.swing.event.TreeExpansionEvent event) {
+                allGlow.repaint();
+            }
+        });
+        root.add(allGlow, BorderLayout.CENTER);
         collapseAll.addActionListener(e -> collapseAll());
         showCurrent.setEnabled(false);
         showCurrent.addActionListener(e -> showCurrent());
@@ -1368,9 +1386,35 @@ public final class Explorer {
         return global;
     }
 
+    /** Kopf und Baum der Wissensquellen; gelb, solange alle Quellen gewählt sind. */
+    private final com.aresstack.spaceharvester.app.ui.controls.SelectionGlow allGlow =
+            new com.aresstack.spaceharvester.app.ui.controls.SelectionGlow();
+    /** Luft unter der letzten Zeile des Baums, bevor das Gelb endet. */
+    private static final int GLOW_BELOW = 8;
+
+    /** Ob „alles gewählt“ gerade gezeigt wird (für Tests). */
+    boolean allShown() {
+        return allGlow.on();
+    }
+
+    /** Die Fläche aus Kopf und Baum (für Tests). */
+    com.aresstack.spaceharvester.app.ui.controls.SelectionGlow allGlow() {
+        return allGlow;
+    }
+
+    /** Das Gelb reicht bis unter die letzte Zeile des Baums, auch der aufgeklappten; höchstens bis zum Fuß. */
+    private int allGlowExtent() {
+        if (!tree.isShowing() && tree.getParent() != null && !tree.getParent().getParent().isVisible()) {
+            return allGlow.getHeight();
+        }
+        int rows = tree.getRowCount();
+        java.awt.Rectangle last = rows == 0 ? null : tree.getRowBounds(rows - 1);
+        int below = last == null ? 0 : last.y + last.height + GLOW_BELOW;
+        return Math.min(allGlow.getHeight(), deck.getY() + below);
+    }
+
     private void paintHead() {
-        head.setOpaque(global && !artifactsShown());
-        head.setBackground(Comic.YELLOW);
+        allGlow.on(global && !artifactsShown());
         heading.setForeground(global ? Comic.INK : Comic.MUTED);
         head.repaint();
     }
@@ -2976,8 +3020,7 @@ public final class Explorer {
         allBadge.setVisible(SOURCES_TAB.equals(tab));
         groupByKind.setVisible(shown);
         favorites.newFolderButton().setVisible(!shown && onlyFavorites);
-        head.setOpaque(!shown && global);
-        head.repaint();
+        allGlow.on(!shown && global);
         if (shown != artifactsFront) {
             artifactsFront = shown;
             artifactsListener.accept(shown);

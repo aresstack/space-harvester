@@ -895,7 +895,7 @@ class ExplorerTest {
             tree.setSelectionRow(0);
             assertThat(explorer[0].allSelected()).isFalse();
             assertThat(selections.get(selections.size() - 1).sourceId()).isEqualTo("handbuch");
-            assertThat(explorer[0].head().isOpaque()).isFalse();
+            assertThat(explorer[0].allShown()).isFalse();
 
             // Klick auf die Überschrift: alles gewählt, Baum leer, Kopf gelb.
             javax.swing.JLabel heading = explorer[0].heading();
@@ -908,15 +908,14 @@ class ExplorerTest {
                     .isSameAs(com.aresstack.spaceharvester.app.ui.content.ExportPanel.Selection.ALL);
             assertThat(selections.get(selections.size() - 1).global()).isTrue();
             assertThat(scopes.get(scopes.size() - 1)).isEmpty();
-            assertThat(explorer[0].head().isOpaque()).isTrue();
-            assertThat(explorer[0].head().getBackground()).isEqualTo(Comic.YELLOW);
+            assertThat(explorer[0].allShown()).isTrue();
             assertThat(explorer[0].selectAllButton().getToolTipText()).isEqualTo(Explorer.ALL_TIP);
 
             // Ein Knoten im Baum löst die globale Auswahl ab.
             tree.setSelectionRow(0);
             assertThat(explorer[0].allSelected()).isFalse();
             assertThat(selections.get(selections.size() - 1).sourceId()).isEqualTo("handbuch");
-            assertThat(explorer[0].head().isOpaque()).isFalse();
+            assertThat(explorer[0].allShown()).isFalse();
 
             // Der Knopf tut dasselbe wie die Überschrift; ohne Baumauswahl meldet er die Auswahl selbst.
             tree.clearSelection();
