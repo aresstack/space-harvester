@@ -83,6 +83,14 @@ class InfoPopupTest {
             Dimension low = popup.sizeFor(200);
             assertThat(low.height).isLessThanOrEqualTo(200);
             assertThat(popup.linksScroll()).as("bei wenig Platz scrollen die Links").isTrue();
+
+            // Viele Links kosten keine quadratische Zeit: ausgelegt wird einmal, nicht je Link (Codex zu #1755).
+            popup.clearLinks();
+            for (int i = 0; i < 4000; i++) {
+                popup.link("Seite " + i, () -> { });
+            }
+            assertThat(popup.linkTexts()).hasSize(4000);
+            assertThat(popup.sizeFor(600).height).isLessThanOrEqualTo(600);
             //SHOT
         });
     }
