@@ -65,6 +65,65 @@ public class SearchBrowserWebSearchLiveTest {
         }
     }
 
+    /**
+     * A search page named only by its address: the search browser finds its search field, types the words and reads the
+     * results; the result URL it reached is remembered, so the next search opens it directly instead of the page.
+     */
+    @Test
+    public void aSearchPageNamedOnlyByItsAddressIsSearchedThroughItsFieldAndItsResultUrlIsRemembered() throws Exception {
+        TestBrowserLauncher launcher = TestBrowserLauncher.fromEnvironment();
+        assumeTrue("SKIPPED (environment-gated): " + launcher.readiness().render(),
+                launcher.readiness().render().startsWith("READY"));
+        HttpServer content = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        content.createContext("/", exchange -> respond(exchange, "<html><body>Inhalt</body></html>"));
+        content.start();
+        String base = "http://127.0.0.1:" + content.getAddress().getPort();
+        java.util.List<String> visited = java.util.Collections.synchronizedList(new java.util.ArrayList<String>());
+        HttpServer portal = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        portal.createContext("/", exchange -> {
+            visited.add(exchange.getRequestURI().toString());
+            if (exchange.getRequestURI().getPath().startsWith("/find")) {
+                respond(exchange, "<!doctype html><html><head><title>Treffer</title></head><body>"
+                        + "<nav><a href='/'>Start</a><a href='/hilfe'>Hilfe</a></nav><main><ul id='r'>"
+                        + "<li><h2><a href='" + base + "/a'>Trennungsgeld Merkblatt (result)</a></h2>"
+                        + "<p>Explanatory snippet describing when the separation allowance is paid.</p></li>"
+                        + "<li><h2><a href='" + base + "/b'>Umzugskosten Merkblatt (result)</a></h2>"
+                        + "<p>Explanatory snippet describing which removal costs are refunded.</p></li>"
+                        + "<li><h2><a href='" + base + "/c'>Reisekosten Merkblatt (result)</a></h2>"
+                        + "<p>Explanatory snippet describing which travel costs are refunded.</p></li>"
+                        + "</ul></main></body></html>");
+            } else {
+                respond(exchange, "<!doctype html><html><head><title>Portal</title></head><body>"
+                        + "<header><form action='/find' method='get'><input type='search' name='text' "
+                        + "aria-label='Suche'><button>Suchen</button></form></header>"
+                        + "<main><p>Willkommen im Portal.</p></main></body></html>");
+            }
+        });
+        portal.start();
+        String page = "http://127.0.0.1:" + portal.getAddress().getPort() + "/";
+        BrowserSearchEngineSelection selection = new BrowserSearchEngineSelection(Collections.singletonList(
+                new BrowserSearchEngineSelection.Entry(page, true, 1, 0, 0, Collections.<String>emptyList(),
+                        Collections.<String>emptyList())), EngineAcquisitionMode.FIRST_USABLE);
+        SearchBrowserWebSearch search = new SearchBrowserWebSearch(launcher, () -> true,
+                LegacyBrowserSearchDefaults::create, chat -> selection);
+        try {
+            String first = search.search(new ChatConversationId("chat-1"), "Trennungsgeld", null, url -> false);
+            assertTrue(first, first.contains(base + "/a"));
+            int startPageVisits = java.util.Collections.frequency(visited, "/");
+            assertTrue(visited.toString(), startPageVisits >= 1);
+
+            String second = search.search(new ChatConversationId("chat-1"), "Reisekosten", null, url -> false);
+            assertTrue(second, second.contains(base + "/c"));
+            assertTrue("remembered result URL, no second visit of the page: " + visited,
+                    java.util.Collections.frequency(visited, "/") == startPageVisits
+                            && visited.contains("/find?text=Reisekosten"));
+        } finally {
+            search.close();
+            portal.stop(0);
+            content.stop(0);
+        }
+    }
+
     private static void respond(com.sun.net.httpserver.HttpExchange exchange, String body) throws java.io.IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");

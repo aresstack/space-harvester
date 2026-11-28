@@ -143,6 +143,20 @@ public final class BrowserSettings implements BrowserPolicyStore, ChangeApproval
     }
 
     /**
+     * Die Adresse einer Suchseite des Hauses, wie der Benutzer sie eingibt: nur die Seite, etwa
+     * {@code https://portal.example/} (wie dort gesucht wird, findet der Suchbrowser selbst über ihr Suchfeld), ohne
+     * Schema mit {@code https://} davor; {@code null} für eine leere Eingabe.
+     */
+    public static String searchPageAddress(String typed) {
+        if (typed == null || typed.isBlank()) {
+            return null;
+        }
+        String address = typed.strip();
+        String lower = address.toLowerCase(java.util.Locale.ROOT);
+        return lower.startsWith("http://") || lower.startsWith("https://") ? address : "https://" + address;
+    }
+
+    /**
      * Nimmt eine Suchseite in die Liste des Profils auf, mit Priorität 0 wie die übrigen Suchseiten: Weiß man nicht,
      * wo etwas steht, werden alle zusammen durchsucht.
      */

@@ -94,6 +94,47 @@ jobs:
             browser-runtime/build/test-results/liveTest/
             browser-runtime/build/reports/tests/liveTest/
           if-no-files-found: ignore
+  # Der erste Browser-Schritt eines Chats im Profil Intern wie in der App (Seite öffnen und interne Suche in einer
+  # Runde), mit dem Firefox des Runners, auch unter Unternehmensrichtlinien wie auf dem Dienstrechner.
+  chat-browser-firefox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        policy: [none, addons-blocked, start-page]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Firefox des Runners
+        id: firefox
+        run: |
+          path="$(readlink -f "$(command -v firefox)")"
+          "$path" --version
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+      - name: Unternehmensrichtlinie ${{ matrix.policy }}
+        run: |
+          case "${{ matrix.policy }}" in
+            none) exit 0 ;;
+            addons-blocked) policy='{"policies":{"ExtensionSettings":{"*":{"installation_mode":"blocked"}}}}' ;;
+            start-page) policy='{"policies":{"Homepage":{"URL":"about:home","StartPage":"homepage","Locked":true}}}' ;;
+          esac
+          dir="$(dirname "${{ steps.firefox.outputs.path }}")/distribution"
+          sudo mkdir -p "$dir" /etc/firefox/policies
+          echo "$policy" | sudo tee "$dir/policies.json" /etc/firefox/policies/policies.json
+      - name: Seite öffnen und interne Suche in einer Runde
+        env:
+          CHAT_BROWSER_TEST_CHANNEL: firefox
+        run: xvfb-run -a ./gradlew :space-harvester-app:test --tests '*ChatWebBrowserFirefoxLiveTest' -i --console=plain
+      - name: Nicht übersprungen
+        working-directory: space-harvester-app/build/test-results/test
+        run: |
+          ls TEST-*ChatWebBrowserFirefoxLiveTest.xml
+          ! grep -q "<skipped" TEST-*ChatWebBrowserFirefoxLiveTest.xml
   # Proving Ground (#1153), vertikaler Prototyp mit dem Standard-Firefox des Runners: originaler Playwright-Recorder über
   # WebDriver BiDi, Testfall speichern/laden/bearbeiten, Wiedergabe mit Assertions und Trace. Ein fehlender Firefox
   # schlägt fehl (kein übersprungener Test).

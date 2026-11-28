@@ -158,7 +158,13 @@ public final class BrowserSearchEngineCatalog {
         }
         String wanted = id.trim();
         if (isSearchPage(wanted)) {
-            return new BrowserSearchEngine(wanted, searchPageName(wanted), Collections.singletonList(wanted));
+            if (wanted.contains(QUERY)) {
+                return new BrowserSearchEngine(wanted, searchPageName(wanted), Collections.singletonList(wanted));
+            }
+            // Only the page: asked like the catalog engines, through its own search field (no result URL needed).
+            return new BrowserSearchEngine(wanted, searchPageName(wanted), Collections.singletonList(
+                    new BrowserSearchEngine.SearchForm(wanted, SEARCH_PAGE_FIELDS, SEARCH_PAGE_NEXT)),
+                    SEARCH_PAGE_RESULTS_PER_PAGE);
         }
         for (BrowserSearchEngine engine : ENGINES) {
             if (engine.getId().equals(wanted)) {
@@ -168,16 +174,39 @@ public final class BrowserSearchEngineCatalog {
         return null;
     }
 
+    /** Where the search words go in a search page's result URL. */
+    public static final String QUERY = "{query}";
+
     /**
-     * Whether {@code id} names a search page of the user's own: an http(s) address with the {@code {query}}
-     * placeholder where the search words go, e.g. {@code https://portal.example/suche?q={query}}.
+     * The search field of a search page of the user's own that names only its page: the usual search inputs first,
+     * then any text field. Tried in order like the layout alternatives of a catalog engine.
+     */
+    static final List<String> SEARCH_PAGE_FIELDS = Collections.unmodifiableList(Arrays.asList(
+            "input[type=search]", "input[role=searchbox]", "[role=search] input[type=text]",
+            "form[role=search] input:not([type=hidden])", "input[name=q]", "input[name=query]",
+            "input[name*=search i]", "input[name*=such i]", "input[id*=search i]", "input[id*=such i]",
+            "input[placeholder*=search i]", "input[placeholder*=such i]", "input[aria-label*=search i]",
+            "input[aria-label*=such i]", "input[type=text]", "input:not([type])"));
+    /** The "next result page" control of such a page: the usual link relations and labels. */
+    static final List<String> SEARCH_PAGE_NEXT = Collections.unmodifiableList(Arrays.asList(
+            "a[rel=next]", "a[aria-label*=next i]", "a[aria-label*=nächste i]", "a[title*=next i]",
+            "a[title*=nächste i]", "a[title*=weiter i]"));
+    /** Results a page of such a search shows, for the offsets of deeper pages (only paged by its control). */
+    static final int SEARCH_PAGE_RESULTS_PER_PAGE = 10;
+
+    /**
+     * Whether {@code id} names a search page of the user's own (an intranet portal, for example): an http(s) address.
+     * Either just the page, whose search field is then used like a person uses it, e.g.
+     * {@code https://portal.example/}, or its result URL with {@code {query}} where the search words go, e.g.
+     * {@code https://portal.example/suche?q={query}}.
      */
     public static boolean isSearchPage(String id) {
         if (id == null) {
             return false;
         }
         String text = id.trim().toLowerCase(java.util.Locale.ROOT);
-        return (text.startsWith("https://") || text.startsWith("http://")) && text.contains("{query}");
+        return (text.startsWith("https://") || text.startsWith("http://")) && text.length() > "https://".length()
+                && text.indexOf(' ') < 0;
     }
 
     /** The name a search page shows: its host. */

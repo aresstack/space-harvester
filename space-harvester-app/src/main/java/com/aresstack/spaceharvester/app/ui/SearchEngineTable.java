@@ -35,7 +35,7 @@ import java.util.function.Consumer;
  * (Suche › Suchmaschinen): eine Zeile je Suchmaschinen-Einstellung, dieselbe Suchmaschine beliebig oft. Spalten: Aktiv
  * · Suchmaschine · Priorität · Pause (s) · Seiten · Sprachen · Weitere Sprachen. Priorität 0 sucht zuerst; Zeilen
  * gleicher Priorität bilden eine Gruppe und werden zusammen durchsucht. Neu gegenüber Ask AI: Suchseiten des Hauses
- * (Such-URL mit {@code {query}}, etwa das Unternehmensportal). Im Profil Intern bietet „Hinzufügen“ nur Suchseiten an,
+ * (nur die Adresse der Seite, etwa das Unternehmensportal; gesucht wird über ihr Suchfeld). Im Profil Intern bietet „Hinzufügen“ nur Suchseiten an,
  * damit Suchbegriffe aus dem Intranet nicht an öffentliche Suchmaschinen gehen. Jede Änderung meldet die Liste sofort.
  * Nur auf dem EDT.
  */
@@ -57,10 +57,7 @@ final class SearchEngineTable extends JPanel {
 
     static final String ADD_SEARCH_PAGE = "Suchseite des Hauses …";
     static final String SEARCH_PAGE_TITLE = "Suchseite hinzufügen";
-    static final String SEARCH_PAGE_TEXT = "Adresse der Ergebnisseite; {query} steht für die Suchbegriffe, zum "
-            + "Beispiel https://portal.example/suche?q={query}";
-    static final String NOT_A_SEARCH_PAGE = "Keine Such-URL: Sie beginnt mit http:// oder https:// und enthält "
-            + "{query}.";
+    static final String SEARCH_PAGE_TEXT = "Auf welcher Seite soll gesucht werden?";
 
     /** Eine Zeile, wie die Tabelle sie bearbeitet. */
     static final class Row {
@@ -225,16 +222,12 @@ final class SearchEngineTable extends JPanel {
      * etwas steht, werden alle zusammen durchsucht.
      */
     void addSearchPage() {
-        String typed = searchPageQuestion.ask("");
-        while (typed != null && !BrowserSearchEngineCatalog.isSearchPage(typed.strip())) {
-            status.setText(NOT_A_SEARCH_PAGE);
-            typed = searchPageQuestion.ask(typed);
-        }
-        if (typed == null) {
+        String url = com.aresstack.spaceharvester.app.chat.browser.BrowserSettings.searchPageAddress(
+                searchPageQuestion.ask(""));
+        if (url == null) {
             return;
         }
         stopEditing();
-        String url = typed.strip();
         for (Row row : rows) {
             if (row.engineId.equals(url)) {
                 status.setText("Diese Suchseite steht schon in der Liste.");
