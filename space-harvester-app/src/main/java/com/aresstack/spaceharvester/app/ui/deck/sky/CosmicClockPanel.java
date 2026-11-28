@@ -216,7 +216,7 @@ public class CosmicClockPanel extends JPanel {
             // Subtle horizon gradient (very dark blue at the bottom few pixels)
             int horizonH = Math.max(h / 15, 4);
             GradientPaint horizonGrad = new GradientPaint(
-                    0, h - horizonH, AppColors.of("app.CosmicClockPanel.paintComponent2"),
+                    0, h - horizonH, AppColors.of("app.CosmicClockPanel.horizon"),
                     0, h, AppColors.of("app.CosmicClockPanel.horizonGrad"));
             g.setPaint(horizonGrad);
             g.fillRect(0, h - horizonH, w, horizonH);

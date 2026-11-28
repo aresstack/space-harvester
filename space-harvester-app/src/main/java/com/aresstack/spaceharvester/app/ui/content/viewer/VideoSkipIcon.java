@@ -46,7 +46,7 @@ final class VideoSkipIcon implements Icon {
             }
             paint.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             paint.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            paint.setColor(component.isEnabled() ? AppColors.of("app.VideoSkipIcon.paintIcon") : AppColors.of("app.VideoSkipIcon.paintIcon2"));
+            paint.setColor(component.isEnabled() ? AppColors.of("app.VideoSkipIcon.glyph") : AppColors.of("app.VideoSkipIcon.disabledGlyph"));
             // Ein offener Kreis im Uhrzeigersinn, oben eine Lücke; die Spitze am Ende zeigt in die Lücke hinein.
             paint.draw(new Arc2D.Double(2.5, 3.5, 12, 12, 70, -310, Arc2D.OPEN));
             paint.draw(new Line2D.Double(5.5, 4.3, 2.1, 3.7));

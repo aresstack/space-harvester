@@ -45,7 +45,7 @@ public final class FunctionKeyBar extends JPanel {
         super(new GridLayout(0, 1, 0, 0));
         this.press = press;
         setOpaque(false);
-        setBackground(AppColors.of("app.FunctionKeyBar.functionKeyBar"));
+        setBackground(AppColors.of("app.FunctionKeyBar.barBackground"));
         setBorder(BorderFactory.createEmptyBorder(2, 8, 4, 8));
         getAccessibleContext().setAccessibleName("PF-Tasten");
         show(Map.of());
@@ -189,15 +189,15 @@ public final class FunctionKeyBar extends JPanel {
         } else if (key >= 5 && key <= 8) {
             return blend(orange, red, (key - 5) / 3f * 0.25f);
         } else if (key >= 9 && key <= 12) {
-            return blend(red, AppColors.of("app.FunctionKeyBar.color"), (key - 9) / 3f * 0.15f);
+            return blend(red, AppColors.of("app.FunctionKeyBar.redTarget"), (key - 9) / 3f * 0.15f);
         } else if (key >= 13 && key <= 16) {
             return blend(green, teal, (key - 13) / 3f * 0.25f);
         } else if (key >= 17 && key <= 20) {
             return blend(teal, blue, (key - 17) / 3f * 0.25f);
         } else if (key >= 21 && key <= 24) {
-            return blend(blue, AppColors.of("app.FunctionKeyBar.color2"), (key - 21) / 3f * 0.15f);
+            return blend(blue, AppColors.of("app.FunctionKeyBar.blueTarget"), (key - 21) / 3f * 0.15f);
         }
-        return AppColors.of("app.FunctionKeyBar.color3");
+        return AppColors.of("app.FunctionKeyBar.neutralKey");
     }
 
     /** Blasse Gruppenfarbe für unbelegte Tasten: 75 % Richtung Weiß. */

@@ -88,7 +88,7 @@ public final class MermaidViewerPanel extends JPanel {
         this.renderer = renderer;
         setOpaque(false);
 
-        busy.setForeground(AppColors.of("app.MermaidViewerPanel.mermaidViewerPanel")); // legible on the (light) default surface
+        busy.setForeground(AppColors.of("app.MermaidViewerPanel.busyText")); // legible on the (light) default surface
         busy.setFont(busy.getFont().deriveFont(Font.ITALIC, 12f));
 
         final ViewerButton zoomOut = new ViewerButton(DiagramViewerIcons.zoomOut(), 36, "Verkleinern (−)");
@@ -542,7 +542,7 @@ public final class MermaidViewerPanel extends JPanel {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2.setColor(surfaceColor);
             g2.fillOval(1, 1, getWidth() - 3, getHeight() - 3);
-            g2.setColor(AppColors.of("app.MermaidViewerPanel.paintComponent"));
+            g2.setColor(AppColors.of("app.MermaidViewerPanel.buttonRing"));
             g2.setStroke(new java.awt.BasicStroke(1.4f));
             g2.drawOval(1, 1, getWidth() - 3, getHeight() - 3);
             g2.dispose();

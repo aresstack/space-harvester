@@ -2020,7 +2020,7 @@ public final class SourcesView implements View {
             setBackground(chosen ? Comic.YELLOW : Comic.SURFACE);
             setBorder(BorderFactory.createCompoundBorder(
                     BorderFactory.createLineBorder(chosen ? Comic.INK : entry.config().includeInGlobalSearch()
-                            ? Comic.LINE : AppColors.of("app.SourcesView.update"), chosen ? 2 : 1, true),
+                            ? Comic.LINE : AppColors.of("app.SourcesView.chosenBorder"), chosen ? 2 : 1, true),
                     BorderFactory.createEmptyBorder(chosen ? 7 : 8, chosen ? 7 : 8, chosen ? 5 : 6, chosen ? 7 : 8)));
             AppContext.Connection connection = context.connection(entry.id());
             boolean waiting = context.runtime() != null && context.runtime().waitingForSecret().contains(entry.id());

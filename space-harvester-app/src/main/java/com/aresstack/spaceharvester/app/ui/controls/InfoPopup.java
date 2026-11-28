@@ -324,7 +324,7 @@ public final class InfoPopup extends JPopupMenu {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             // Weicher Schatten nach unten rechts, dann die Fläche mit feinem Rand.
             for (int i = 3; i >= 1; i--) {
-                g.setColor(AppColors.of("app.InfoPopup.paintComponent"));
+                g.setColor(AppColors.of("app.InfoPopup.shadow"));
                 g.fillRoundRect(i, i, getWidth() - i, getHeight() - i, 12, 12);
             }
             g.setColor(AppColors.of("comic.buttonPlate"));

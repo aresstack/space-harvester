@@ -903,9 +903,9 @@ final class ReadingPane extends JPanel {
         BufferedImage image = new BufferedImage(Math.max(1, width), Math.max(1, height), BufferedImage.TYPE_INT_ARGB);
         java.awt.Graphics2D g = image.createGraphics();
         try {
-            g.setColor(AppColors.of("app.ReadingPane.placeholderImage"));
+            g.setColor(AppColors.of("app.ReadingPane.placeholderFill"));
             g.fillRect(0, 0, image.getWidth(), image.getHeight());
-            g.setColor(AppColors.of("app.ReadingPane.placeholderImage2"));
+            g.setColor(AppColors.of("app.ReadingPane.placeholderBorder"));
             g.drawRect(0, 0, image.getWidth() - 1, image.getHeight() - 1);
         } finally {
             g.dispose();

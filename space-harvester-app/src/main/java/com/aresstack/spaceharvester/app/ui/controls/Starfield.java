@@ -78,7 +78,7 @@ public final class Starfield extends JPanel {
         this.random = random;
         setOpaque(true);
         setBackground(SPACE_TOP);
-        setForeground(AppColors.of("app.Starfield.starfield"));
+        setForeground(AppColors.of("app.Starfield.starWhite"));
         for (int i = 0; i < STARS; i++) {
             spawn(i, random.nextDouble());
         }
@@ -202,7 +202,7 @@ public final class Starfield extends JPanel {
         // Ein schwacher Nebel um den Fluchtpunkt.
         float radius = Math.max(w, h) * 0.45f;
         g.setPaint(new RadialGradientPaint(w / 2f, h / 2f, radius, new float[] {0f, 0.55f, 1f},
-                new Color[] {AppColors.of("app.Starfield.paintSpace"), AppColors.of("app.Starfield.paintSpace2"), new Color(0, 0, 0, 0)}));
+                new Color[] {AppColors.of("app.Starfield.nebulaBlue"), AppColors.of("app.Starfield.nebulaViolet"), new Color(0, 0, 0, 0)}));
         g.fillRect(0, 0, w, h);
     }
 
@@ -242,9 +242,9 @@ public final class Starfield extends JPanel {
             return Comic.YELLOW;
         }
         if (tint < 0.30f) {
-            return AppColors.of("app.Starfield.color");
+            return AppColors.of("app.Starfield.starBlue");
         }
-        return AppColors.of("app.Starfield.color2");
+        return AppColors.of("app.Starfield.starWhite");
     }
 
     private static Color withAlpha(Color color, float alpha) {
@@ -274,7 +274,7 @@ public final class Starfield extends JPanel {
         // Kleine Kontrollleuchten unten im Rahmen.
         int lamp = Math.max(5, inset / 3);
         int lampY = h - inset / 2 - lamp / 2;
-        Color[] lamps = {Comic.GREEN, Comic.YELLOW, AppColors.of("app.Starfield.paintCockpit"), Comic.GREEN};
+        Color[] lamps = {Comic.GREEN, Comic.YELLOW, AppColors.of("app.Starfield.lampBlue"), Comic.GREEN};
         for (int i = 0; i < lamps.length; i++) {
             g.setColor(lamps[i]);
             g.fillOval(w / 2 - (lamps.length * lamp * 3) / 2 + i * lamp * 3, lampY, lamp, lamp);
@@ -293,9 +293,9 @@ public final class Starfield extends JPanel {
             g.setFont(font);
             FontMetrics metrics = g.getFontMetrics();
             int textX = (w - metrics.stringWidth(headline)) / 2;
-            g.setColor(AppColors.of("app.Starfield.paintTexts"));
+            g.setColor(AppColors.of("app.Starfield.captionShadow"));
             g.drawString(headline, textX + 2, baseline + 2);
-            g.setColor(AppColors.of("app.Starfield.paintTexts2"));
+            g.setColor(AppColors.of("app.Starfield.captionInk"));
             g.drawString(headline, textX, baseline);
             baseline += metrics.getDescent() + 8;
             g.setColor(withAlpha(Comic.YELLOW, 0.9f));
@@ -306,7 +306,7 @@ public final class Starfield extends JPanel {
             g.setFont(Comic.regular(Math.max(13f, Math.min(17f, w / 50f))));
             FontMetrics metrics = g.getFontMetrics();
             baseline += metrics.getAscent();
-            g.setColor(AppColors.of("app.Starfield.paintTexts3"));
+            g.setColor(AppColors.of("app.Starfield.captionMuted"));
             g.drawString(caption, (w - metrics.stringWidth(caption)) / 2, baseline);
         }
     }

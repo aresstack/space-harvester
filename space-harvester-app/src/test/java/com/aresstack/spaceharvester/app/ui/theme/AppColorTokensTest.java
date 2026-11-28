@@ -66,6 +66,22 @@ class AppColorTokensTest {
         }
     }
 
+    private static final Pattern METHOD_NAME = Pattern.compile(
+            "(paint|init|update|render|actionPerformed|componentResized|getIcon|getScrollable|windowClosing|enter|apply|"
+                    + "parseViewBox|slideIndex)[A-Za-z0-9]*|.*[0-9]");
+
+    @Test
+    void tokenNamesSayTheRoleNeverTheMethodOrARunningNumber() {
+        List<String> offenders = new ArrayList<>();
+        for (String key : AppColorTokens.classic().keySet()) {
+            String name = key.substring(key.lastIndexOf('.') + 1);
+            if (METHOD_NAME.matcher(name).matches()) {
+                offenders.add(key);
+            }
+        }
+        assertThat(offenders).as("Namen nach Methode oder mit Laufnummer, bitte nach Rolle benennen").isEmpty();
+    }
+
     @Test
     void anUnknownKeyIsRejectedImmediately() {
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,

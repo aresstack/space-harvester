@@ -257,13 +257,13 @@ public final class ShipArchive extends JPanel {
         hull.lineTo(cx - 40, top + 46);
         hull.lineTo(cx - 110, top + 52);
         hull.closePath();
-        g2.setPaint(new GradientPaint(cx - 150, top, AppColors.of("app.ShipArchive.paintSilhouette"), cx + 170, top + 60, AppColors.of("app.ShipArchive.paintSilhouette2")));
+        g2.setPaint(new GradientPaint(cx - 150, top, AppColors.of("app.ShipArchive.hullTop"), cx + 170, top + 60, AppColors.of("app.ShipArchive.hullBottom")));
         g2.fill(hull);
         g2.setColor(new Color(GLOW.getRed(), GLOW.getGreen(), GLOW.getBlue(), 150));
         g2.setStroke(new BasicStroke(1.3f));
         g2.draw(hull);
         // Triebwerke und Fensterreihe
-        g2.setColor(AppColors.of("app.ShipArchive.paintSilhouette3"));
+        g2.setColor(AppColors.of("app.ShipArchive.windowLight"));
         g2.fillOval(cx - 158, top + 38, 8, 8);
         g2.fillOval(cx - 118, top + 46, 6, 6);
         g2.setColor(new Color(GLOW.getRed(), GLOW.getGreen(), GLOW.getBlue(), 200));
@@ -281,7 +281,7 @@ public final class ShipArchive extends JPanel {
     @Override
     protected void paintComponent(Graphics g) {
         Graphics2D g2 = (Graphics2D) g.create();
-        g2.setColor(AppColors.of("app.ShipArchive.paintComponent"));
+        g2.setColor(AppColors.of("app.ShipArchive.dimVeil"));
         g2.fillRect(0, 0, getWidth(), getHeight());
         g2.dispose();
     }

@@ -342,7 +342,7 @@ public final class ReadAloudDial extends JComponent {
             double ringOuter = outer();
             double middle = (ringInner + ringOuter) / 2;
             // Ring als Scheibe mit Loch: hell, dünner Rand wie die übrigen Steuerelemente
-            g.setColor(AppColors.of("app.ReadAloudDial.paintComponent"));
+            g.setColor(AppColors.of("app.ReadAloudDial.faceFill"));
             g.setStroke(new BasicStroke((float) (ringOuter - ringInner)));
             g.draw(new Ellipse2D.Double(cx - middle, cy - middle, 2 * middle, 2 * middle));
             g.setColor(Comic.LINE);

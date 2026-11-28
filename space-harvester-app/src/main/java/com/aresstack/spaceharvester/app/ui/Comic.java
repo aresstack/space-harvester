@@ -487,7 +487,7 @@ public final class Comic {
         table.setRowHeight(26);
         table.setForeground(INK);
         table.setBackground(AppColors.of("comic.fieldBg"));
-        table.setGridColor(AppColors.of("app.Comic.table2"));
+        table.setGridColor(AppColors.of("app.Comic.tableGrid"));
         table.setShowVerticalLines(false);
         table.setSelectionBackground(YELLOW);
         table.setSelectionForeground(INK);

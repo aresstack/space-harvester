@@ -36,7 +36,7 @@ final class VideoFullScreenIcon implements Icon {
             paint.translate(x, y);
             paint.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             paint.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            paint.setColor(component.isEnabled() ? AppColors.of("app.VideoFullScreenIcon.paintIcon") : AppColors.of("app.VideoFullScreenIcon.paintIcon2"));
+            paint.setColor(component.isEnabled() ? AppColors.of("app.VideoFullScreenIcon.glyph") : AppColors.of("app.VideoFullScreenIcon.disabledGlyph"));
             if (restore) {
                 paint.drawLine(6, 2, 6, 6);
                 paint.drawLine(2, 6, 6, 6);

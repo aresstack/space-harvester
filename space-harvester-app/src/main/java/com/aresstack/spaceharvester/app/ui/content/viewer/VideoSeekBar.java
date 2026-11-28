@@ -247,7 +247,7 @@ public final class VideoSeekBar extends JComponent {
             }
             for (int tick = 1; tick < 4; tick++) {
                 int x = INSET + span * tick / 4;
-                g.setColor(AppColors.of("app.VideoSeekBar.paintComponent"));
+                g.setColor(AppColors.of("app.VideoSeekBar.knobRing"));
                 g.fillRect(x, TRACK_TOP + 2, 1, 3);
             }
             if (durationMillis > 0) {
@@ -259,7 +259,7 @@ public final class VideoSeekBar extends JComponent {
             }
             if (canSeek()) {
                 int x = INSET + playedWidth;
-                g.setColor(AppColors.of("app.VideoSeekBar.paintComponent2"));
+                g.setColor(AppColors.of("app.VideoSeekBar.knobEdge"));
                 g.setStroke(new BasicStroke(2f));
                 g.fill(new Ellipse2D.Double(x - 6, TRACK_TOP - 3, 12, 12));
                 g.setColor(AppColors.of("comic.buttonPlate"));

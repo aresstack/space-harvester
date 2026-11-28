@@ -367,7 +367,7 @@ public final class MermaidViewerDialog extends JDialog {
         private boolean fitted;
 
         ZoomableImagePanel() {
-            setBackground(AppColors.of("app.MermaidViewerDialog.zoomableImagePanel"));
+            setBackground(AppColors.of("app.MermaidViewerDialog.canvasDark"));
             // Das Bild wird oft gesetzt, bevor die Fläche eine Größe hat; einpassen, sobald eine da ist.
             addComponentListener(new ComponentAdapter() {
                 @Override

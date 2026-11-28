@@ -179,19 +179,19 @@ public final class FilesIcons {
 
     /** Dateiarten für die Kennfarbe des Symbols (wie die Endungs-Symbole in MainframeMate). */
     enum Kind {
-        MAINFRAME(AppColors.of("app.FilesIcons.getIconHeight"), "jcl", "proc", "prc", "cntl", "cbl", "cob", "cobol", "cpy", "nat", "nsp",
+        MAINFRAME(AppColors.of("app.FilesIcons.kindMainframe"), "jcl", "proc", "prc", "cntl", "cbl", "cob", "cobol", "cpy", "nat", "nsp",
                 "nsn", "nss", "nsh", "nsc", "nsl", "nsa", "nsg", "nsm", "nsd", "ns3", "ns4", "ns5", "ns6", "ns7",
                 "ns8", "asm", "rexx"),
-        CODE(AppColors.of("app.FilesIcons.getIconHeight2"), "java", "kt", "groovy", "gradle", "py", "js", "ts", "c", "h", "cpp", "cs", "go",
+        CODE(AppColors.of("app.FilesIcons.kindCode"), "java", "kt", "groovy", "gradle", "py", "js", "ts", "c", "h", "cpp", "cs", "go",
                 "rb", "php", "sql", "sh", "bat", "cmd", "ps1", "json", "xml", "xsd", "yaml", "yml", "html", "htm",
                 "css", "properties", "ini"),
-        PDF(AppColors.of("app.FilesIcons.getIconHeight3"), "pdf"),
-        WORD(AppColors.of("app.FilesIcons.getIconHeight4"), "doc", "docx", "odt", "rtf"),
-        TABLE(AppColors.of("app.FilesIcons.getIconHeight5"), "xls", "xlsx", "ods", "csv"),
-        SLIDES(AppColors.of("app.FilesIcons.getIconHeight6"), "ppt", "pptx", "odp"),
-        MAIL(AppColors.of("app.FilesIcons.getIconHeight7"), "msg", "eml"),
-        IMAGE(AppColors.of("app.FilesIcons.getIconHeight8"), "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "tif", "tiff"),
-        ARCHIVE(AppColors.of("app.FilesIcons.getIconHeight9"), "zip", "jar", "7z", "rar", "gz", "tar"),
+        PDF(AppColors.of("app.FilesIcons.kindPdf"), "pdf"),
+        WORD(AppColors.of("app.FilesIcons.kindWord"), "doc", "docx", "odt", "rtf"),
+        TABLE(AppColors.of("app.FilesIcons.kindTable"), "xls", "xlsx", "ods", "csv"),
+        SLIDES(AppColors.of("app.FilesIcons.kindSlides"), "ppt", "pptx", "odp"),
+        MAIL(AppColors.of("app.FilesIcons.kindMail"), "msg", "eml"),
+        IMAGE(AppColors.of("app.FilesIcons.kindImage"), "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "tif", "tiff"),
+        ARCHIVE(AppColors.of("app.FilesIcons.kindArchive"), "zip", "jar", "7z", "rar", "gz", "tar"),
         TEXT(null, "txt", "log", "md");
 
         private final Color color;

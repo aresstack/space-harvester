@@ -228,8 +228,8 @@ public final class PerspectiveSwitcher extends JPanel {
                 int y = (getHeight() + metrics.getAscent() - metrics.getDescent()) / 2;
                 int width = metrics.stringWidth(ghost);
                 g2.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.75f * alpha));
-                g2.setPaint(new java.awt.GradientPaint(x, y - metrics.getAscent(), AppColors.of("app.PerspectiveSwitcher.paintComponent"), x,
-                        y, AppColors.of("app.PerspectiveSwitcher.paintComponent2")));
+                g2.setPaint(new java.awt.GradientPaint(x, y - metrics.getAscent(), AppColors.of("app.PerspectiveSwitcher.plateTop"), x,
+                        y, AppColors.of("app.PerspectiveSwitcher.plateBottom")));
                 g2.drawString(ghost, x, y);
                 // Abgeplatzte Stellen: kleine Flecken in der Hintergrundfarbe lassen die Schrift löchrig wirken.
                 g2.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.9f * alpha));

@@ -74,7 +74,7 @@ final class FileFormatIcon implements Icon {
             sheet.lineTo(23.5, 18.5);
             sheet.lineTo(9, 18.5);
             sheet.closePath();
-            paint.setColor(enabled ? SHEET : AppColors.of("app.FileFormatIcon.paintIcon"));
+            paint.setColor(enabled ? SHEET : AppColors.of("app.FileFormatIcon.disabledSheet"));
             paint.fill(sheet);
             Path2D fold = new Path2D.Double();
             fold.moveTo(18, 0.5);

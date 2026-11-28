@@ -204,7 +204,7 @@ public final class AttachmentViewerPanel extends JPanel {
         sharpen.setRepeats(false);
         setOpaque(false);
 
-        busy.setForeground(AppColors.of("app.AttachmentViewerPanel.init"));
+        busy.setForeground(AppColors.of("app.AttachmentViewerPanel.busyText"));
         busy.setFont(busy.getFont().deriveFont(Font.ITALIC, 14f));
 
         textArea.setEditable(false);
@@ -243,7 +243,7 @@ public final class AttachmentViewerPanel extends JPanel {
         layers.add(canvas, JLayeredPane.DEFAULT_LAYER);
         layers.add(busy, JLayeredPane.MODAL_LAYER);
         spinner.setHighlight(com.aresstack.spaceharvester.app.ui.Comic.BLUE);
-        spinner.setCaptionColor(AppColors.of("app.AttachmentViewerPanel.init"));
+        spinner.setCaptionColor(AppColors.of("app.AttachmentViewerPanel.busyText"));
         layers.add(spinner, Integer.valueOf(JLayeredPane.MODAL_LAYER.intValue() + 1));
         for (JComponent button : new JComponent[] {previous, next, download, zoomOut, zoomIn, zoomFit}) {
             layers.add(button, JLayeredPane.PALETTE_LAYER);
