@@ -39,6 +39,13 @@ public final class LeftSidebarPane extends ComicSplitPane {
         hiddenByUser = true;
     }
 
+    /** Zugeklappt, ohne dass der Mensch es wollte (eine Perspektive ohne Leiste, das Ende der Einstellungen). */
+    @Override
+    public void collapseLeft() {
+        super.collapseLeft();
+        hiddenByUser = false;
+    }
+
     @Override
     public void openLeft() {
         super.openLeft();

@@ -33,6 +33,14 @@ class LeftSidebarPaneTest {
             pane.collapseLeft();
             assertThat(pane.hiddenByUser()).isFalse();
             assertThat(pane.getDividerSize()).isZero();
+
+            // Auch nach einem Zuklappen durch den Menschen (etwa in den Einstellungen) gilt das Wegnehmen nicht
+            // als seine Wahl: Sonst überschriebe es den gemerkten Zustand der Leiste davor.
+            pane.openLeft();
+            pane.collapseByUser();
+            assertThat(pane.hiddenByUser()).isTrue();
+            pane.collapseLeft();
+            assertThat(pane.hiddenByUser()).isFalse();
         });
     }
 }
