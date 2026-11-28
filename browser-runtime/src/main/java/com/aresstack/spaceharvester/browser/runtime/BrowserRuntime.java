@@ -368,19 +368,11 @@ public final class BrowserRuntime {
         return firefoxLaunchOptions(executable, headless, true);
     }
 
-    /**
-     * Firefox opens a window of its own at start. Without a fixed profile Playwright never uses or closes it (its
-     * contexts are new windows), so a visible run showed an empty window next to the test's. Playwright starts its own
-     * Firefox build the same way with "-silent" when no profile is given; over BiDi it does not add it itself.
-     */
-    public static final String FIREFOX_NO_START_WINDOW = "-silent";
-
     static BrowserType.LaunchOptions firefoxLaunchOptions(Path executable, boolean headless, boolean acceptRepost) {
         return new BrowserType.LaunchOptions()
                 .setChannel(FIREFOX_BIDI_CHANNEL)
                 .setExecutablePath(executable)
                 .setHeadless(headless)
-                .setArgs(java.util.List.of(FIREFOX_NO_START_WINDOW))
                 .setFirefoxUserPrefs(FirefoxSessionPrefs.apply(new LinkedHashMap<>(), acceptRepost));
     }
 
