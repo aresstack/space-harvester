@@ -118,6 +118,11 @@ public final class TestStep {
                 + "()\n    .setAnimations(ScreenshotAnimations.DISABLED).setCaret(ScreenshotCaret.HIDE)));";
     }
 
+    /** {@code text} as a Java string literal, quoted as Playwright's generator quotes. */
+    public static String javaString(String text) {
+        return QUOTE.toJson(text);
+    }
+
     /** The reference image name of {@code assertScreenshot}, or null. */
     public String snapshot() {
         return string(action(), SNAPSHOT);

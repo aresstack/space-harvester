@@ -284,11 +284,16 @@ final class PlaywrightCode {
 
     /** String literals with {@code {{...}}} become {@code v.apply("...")}: resolved when the step runs. */
     static String withVariables(String code) {
+        return withVariables(code, "v.apply");
+    }
+
+    /** String literals with {@code {{...}}} become {@code <call>("...")}. */
+    static String withVariables(String code, String call) {
         Matcher literal = STRING.matcher(code);
         StringBuilder result = new StringBuilder();
         while (literal.find()) {
             String text = literal.group();
-            literal.appendReplacement(result, Matcher.quoteReplacement(text.contains("{{") ? "v.apply(" + text + ")"
+            literal.appendReplacement(result, Matcher.quoteReplacement(text.contains("{{") ? call + "(" + text + ")"
                     : text));
         }
         literal.appendTail(result);
