@@ -1174,10 +1174,11 @@ public final class MainWindow implements AppContext.Navigator {
             activities.large(large);
             // Groß: die Arbeitsfläche weicht ganz, die Teilung gibt der Leiste dann allen Platz und zeigt keinen Teiler.
             chatSplit.getLeftComponent().setVisible(!large);
-            // Zugeklappt lässt sich der Teiler nicht ziehen, nur doppelt klicken. Die Teilung selbst bleibt
-            // eingeschaltet: Abgeschaltet verlören alle Trenner der Arbeitsfläche ihren Doppelpfeil-Zeiger.
+            // Zugeklappt oder groß gibt es keinen Teiler (Angelo 28.11.2026: kein Griff, der sich nicht bewegen lässt);
+            // auf geht die Leiste über ihre Knöpfe. Die Teilung selbst bleibt eingeschaltet: Abgeschaltet verlören
+            // alle Trenner der Arbeitsfläche ihren Doppelpfeil-Zeiger.
             ComicDivider.draggable(chatSplit, chatOpen && !large);
-            chatSplit.setDividerSize(large ? 0 : chatOpen ? ComicDivider.THICKNESS : COLLAPSED_DIVIDER);
+            chatSplit.setDividerSize(chatOpen && !large ? ComicDivider.THICKNESS : 0);
             int width = chatSplit.getWidth();
             if (width > 0 && !large) {
                 // Die Arbeitsfläche behält ihre Mindestbreite; in einem schmalen Fenster gibt die Leiste nach.
@@ -1206,9 +1207,6 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /** Klappt den linken Drawer zu oder wieder auf. */
-    /** Breite des Teilers bei zugeklapptem Drawer: sichtbar und per Doppelklick erreichbar. */
-    static final int COLLAPSED_DIVIDER = 6;
-
     void toggleDrawer() {
         if (split == null || perspectives == null) {
             return;
@@ -1229,8 +1227,14 @@ public final class MainWindow implements AppContext.Navigator {
         return settingsOver != null || perspectives.isCurrent(Perspectives.HARVESTER);
     }
 
+    /**
+     * Die Seitenleiste der gezeigten Perspektive außerhalb des Space Harvester. Auch Perspektiven ohne eigenen
+     * Umschalter (Proving Ground) klappen ihre Leiste über das Logo wieder auf: Zugeklappt hat sie keinen Trenner
+     * mehr, an dem das ginge.
+     */
     private com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane activeDeckSidebar() {
-        return perspectives.isCurrent(Perspectives.COMMAND_DECK) ? commandDeck.activeSidebar() : null;
+        return perspectives.isCurrent(Perspectives.COMMAND_DECK) ? commandDeck.activeSidebar()
+                : com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane.activeIn(stage);
     }
 
     private void refreshDrawerToggle() {
@@ -1249,7 +1253,7 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     private void collapseDrawer() {
-        split.collapseWithHandle();
+        split.collapseByUser();
     }
 
     /**
@@ -1301,7 +1305,7 @@ public final class MainWindow implements AppContext.Navigator {
             navGroup.clearSelection();
         }
         if (next.drawer() == null) {
-            if (split.getDividerSize() > 0 || !split.isLeftCollapsed()) {
+            if (split.hiddenByUser() || !split.isLeftCollapsed()) {
                 harvesterDrawerCollapsed = split.isLeftCollapsed();
             }
             // Ganz ohne Teiler: die Mitte nimmt die volle Breite; der gemerkte Zustand der Leiste bleibt.

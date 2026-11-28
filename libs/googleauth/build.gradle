@@ -1,0 +1,35 @@
+plugins {
+    id 'java-library'
+}
+
+description = 'BSD-lizenzierte TOTP-Bibliothek GoogleAuth 1.5.0 (wstrange/GoogleAuth), aus festgehaltenen Upstream-Quellen gebaut.'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    // Base32/Base64 der Bibliothek; HttpClient brauchte nur der QR-Code-Erzeuger, der nicht kopiert ist.
+    implementation project(':commons-codec')
+}
+
+tasks.named('processResources') {
+    from('LICENSE') {
+        into 'META-INF/licenses/googleauth'
+    }
+}
+
+// Lokale Änderungen an der Kopie erkennen (gemeinsame Prüfung in gradle/upstream-copy.gradle).
+apply from: rootProject.file('gradle/upstream-copy.gradle')
+def verifyUpstreamCopy = registerUpstreamCopyCheck(name: 'googleauth',
+        manifest: file('UPSTREAM.sha256'),
+        baseDir: projectDir,
+        files: files('LICENSE', fileTree('src/main')),
+        hint: 'Änderungen gehören in den GoogleAuth-Upstream und kommen als neuer Stand zurück',
+        normalizeLineEndings: true)
+
+tasks.named('compileJava') {
+    dependsOn verifyUpstreamCopy
+}

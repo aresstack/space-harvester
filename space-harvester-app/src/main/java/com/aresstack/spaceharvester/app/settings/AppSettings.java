@@ -628,13 +628,23 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      *                        ({@code cache.large-file-timeout})
      * @param queryLimits     Stapelgrößen der Abfragen ({@code query.max-page-limit}, {@code query.max-term-scan})
      * @param sourceTimeouts  Netz-Fristen der Quellen ({@code network.timeouts.*})
+     * @param largeFolderBytes ab dieser Größe weist die App vor dem Abgleich eines lokalen Ordners darauf hin, dass das
+     *                        Indexieren lange dauern kann, und fragt „wirklich?“; blockiert nichts
+     *                        ({@code space-harvester-app.large-folder-size}, nur die App); {@code 0} nie
      */
     public record Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
                           long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
                           Path pdfFont, ExtractionLimits extraction, long maxPageBytes, long maxTextFileBytes,
                           Duration checkTimeout, Duration largeFileTimeout,
                           com.aresstack.spaceharvester.application.query.QueryLimits queryLimits,
-                          com.aresstack.spaceharvester.source.network.SourceTimeouts sourceTimeouts) {
+                          com.aresstack.spaceharvester.source.network.SourceTimeouts sourceTimeouts,
+                          long largeFolderBytes) {
+
+        /**
+         * Vorgabe für {@link #largeFolderBytes}: 5 GiB, ab dann ein Hinweis (Angelo 27.11.2026: 40-GB-Ordner lief im
+         * Schneckentempo). Einstellbar unter Einstellungen › Allgemein › Ablage.
+         */
+        public static final long DEFAULT_LARGE_FOLDER_BYTES = 5L * 1024 * 1024 * 1024;
 
         /** Vorgabe für {@link #checkTimeout}, wie im Core. */
         public static final Duration DEFAULT_CHECK_TIMEOUT =
@@ -668,6 +678,19 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
             queryLimits = queryLimits == null
                     ? com.aresstack.spaceharvester.application.query.QueryLimits.DEFAULTS : queryLimits;
             sourceTimeouts = sourceTimeouts == null ? com.aresstack.spaceharvester.source.network.SourceTimeouts.DEFAULTS : sourceTimeouts;
+            largeFolderBytes = Math.max(0, largeFolderBytes);
+        }
+
+        /** Mit der Vorgabe für große lokale Ordner ({@link #DEFAULT_LARGE_FOLDER_BYTES}). */
+        public Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
+                       long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
+                       Path pdfFont, ExtractionLimits extraction, long maxPageBytes, long maxTextFileBytes,
+                       Duration checkTimeout, Duration largeFileTimeout,
+                       com.aresstack.spaceharvester.application.query.QueryLimits queryLimits,
+                       com.aresstack.spaceharvester.source.network.SourceTimeouts sourceTimeouts) {
+            this(dataDirectory, exportDirectory, assetDirectory, maxAssetBytes, largeAssetBytes, maxLargeAssets,
+                    searchTimeout, maxTreeNodes, pdfFont, extraction, maxPageBytes, maxTextFileBytes, checkTimeout,
+                    largeFileTimeout, queryLimits, sourceTimeouts, DEFAULT_LARGE_FOLDER_BYTES);
         }
 
         /** Mit den Vorgaben der Netz-Fristen der Quellen. */

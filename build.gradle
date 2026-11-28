@@ -19,6 +19,12 @@ allprojects {
                 details.because 'drawio-java needs Batik 1.20; keep one Batik line on the classpath'
             }
         }
+        // Commons Codec kommt aus der Quellkopie libs/commons-codec (1.22.1), nicht von Maven Central (#1648)
+        if (project.path != ':commons-codec') {
+            resolutionStrategy.dependencySubstitution {
+                substitute module('commons-codec:commons-codec') using project(':commons-codec') because 'Quellkopie statt Maven Central'
+            }
+        }
     }
 }
 

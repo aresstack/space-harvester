@@ -91,7 +91,6 @@ class InfoPopupTest {
             }
             assertThat(popup.linkTexts()).hasSize(4000);
             assertThat(popup.sizeFor(600).height).isLessThanOrEqualTo(600);
-            //SHOT
         });
     }
 }

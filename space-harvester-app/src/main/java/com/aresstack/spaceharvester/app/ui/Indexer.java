@@ -47,6 +47,10 @@ public final class Indexer {
             return;
         }
         Background.run(() -> {
+            // Sehr große lokale Ordner: vorher nachfragen und große Unterordner ausschließen (LargeFolders).
+            if (!LargeFolders.confirm(context, sourceId, spaceKey == null ? null : pageId)) {
+                return new Started(List.of(), List.of("Abgleich abgebrochen"));
+            }
             List<String> keys = spaceKey != null ? List.of(spaceKey)
                     : runtime.workspace().spaces(sourceId).stream().map(Partition::key).toList();
             List<JobStatus> jobs = new ArrayList<>();

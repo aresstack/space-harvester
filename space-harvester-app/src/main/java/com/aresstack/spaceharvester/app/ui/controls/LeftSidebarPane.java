@@ -11,7 +11,8 @@ import javax.swing.SwingUtilities;
 /** Reuse the existing Harvester split layout in every workspace. */
 public final class LeftSidebarPane extends ComicSplitPane {
     public static final String HOST = "leftSidebar.host";
-    public static final int COLLAPSED_DIVIDER = 6;
+    /** Ob die Leiste über ihren Knopf zugeklappt wurde (nicht von einer Perspektive ohne Leiste weggenommen). */
+    private boolean hiddenByUser;
 
     public LeftSidebarPane(Component sidebar, Component content, int width) {
         this(sidebar, content, 200, 1200, width);
@@ -29,16 +30,37 @@ public final class LeftSidebarPane extends ComicSplitPane {
         });
     }
 
-    public void collapseWithHandle() {
+    /**
+     * Klappt die Leiste über ihren Knopf zu. Der Trenner verschwindet dabei ganz (Angelo 28.11.2026): Ein sichtbarer
+     * Trenner ließ sich weiter aufziehen, und die Leiste stand danach falsch. Wieder auf geht sie nur über den Knopf.
+     */
+    public void collapseByUser() {
         collapseLeft();
-        setDividerSize(COLLAPSED_DIVIDER);
+        hiddenByUser = true;
+    }
+
+    /** Zugeklappt, ohne dass der Mensch es wollte (eine Perspektive ohne Leiste, das Ende der Einstellungen). */
+    @Override
+    public void collapseLeft() {
+        super.collapseLeft();
+        hiddenByUser = false;
+    }
+
+    @Override
+    public void openLeft() {
+        super.openLeft();
+        hiddenByUser = false;
+    }
+
+    public boolean hiddenByUser() {
+        return hiddenByUser;
     }
 
     public void toggle() {
         if (isLeftCollapsed()) {
             openLeft();
         } else {
-            collapseWithHandle();
+            collapseByUser();
         }
         notifyHost();
     }

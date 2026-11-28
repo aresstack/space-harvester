@@ -173,9 +173,21 @@ class MainWindowPerspectiveTest {
             assertThat(window.perspectiveSwitcher().shownTitle()).isEqualTo("Proving Ground");
             assertThat(visible(window.stage()))
                     .isInstanceOf(com.aresstack.spaceharvester.app.ui.proving.ProvingGroundWorkspace.class);
+            // Die Leiste des Proving Ground hat keinen eigenen Umschalter: Zugeklappt (Doppelklick auf den Trenner)
+            // hat sie keinen Trenner mehr, das Logo klappt sie wieder auf.
+            var provingSidebar = com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane
+                    .activeIn(window.stage());
+            assertThat(provingSidebar).isNotNull();
+            assertThat(logo.getToolTipText()).isEqualTo("Seitenleiste einklappen");
+            provingSidebar.toggle();
+            assertThat(provingSidebar.isLeftCollapsed()).isTrue();
+            assertThat(provingSidebar.getDividerSize()).isZero();
+            logo.doClick();
+            assertThat(provingSidebar.isLeftCollapsed()).as("über das Logo wieder offen").isFalse();
+            assertThat(logo.getToolTipText()).isEqualTo("Seitenleiste einklappen");
             perspectives.select(Perspectives.HARVESTER);
             assertThat(window.split().isLeftCollapsed()).isTrue();
-            assertThat(window.split().getDividerSize()).isEqualTo(MainWindow.COLLAPSED_DIVIDER);
+            assertThat(window.split().getDividerSize()).as("zugeklappt ohne Trenner").isZero();
             window.toggleDrawer();
 
             // Einstellungen aus dem Command Deck: Die Perspektive bleibt, „Zurück“ führt ins Command Deck (Angelo, 23.11.).

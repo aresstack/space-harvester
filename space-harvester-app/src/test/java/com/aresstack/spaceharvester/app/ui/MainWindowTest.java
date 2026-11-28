@@ -552,9 +552,10 @@ class MainWindowTest {
                 java.awt.Rectangle bar = SwingUtilities.convertRectangle(window.windowBar().getParent(),
                         window.windowBar().getBounds(), surface);
                 assertThat(SwingUtilities.isDescendingFrom(window.analysesToggle(), window.windowBar())).isFalse();
-                int gap = com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.EDGE_GAP;
-                assertThat(edge.x + edge.width).as("am rechten Fensterrand")
-                        .isEqualTo(surface.getWidth() - surface.getInsets().right - gap);
+                // Ohne Luft am Fensterrahmen (Angelo 28.11.2026), nicht hinter dessen Polster.
+                int line = com.aresstack.spaceharvester.app.ui.controls.EdgeOverlay.FRAME_LINE;
+                assertThat(edge.x + edge.width).as("ganz am rechten Fensterrand")
+                        .isEqualTo(surface.getWidth() - line);
                 assertThat(edge.height).as("senkrecht: Symbole untereinander").isGreaterThan(2 * edge.width);
                 assertThat(edge.y).as("direkt unter den Kopfleisten").isEqualTo(bar.y + bar.height
                         + com.aresstack.spaceharvester.app.ui.controls.HeadBar.HEIGHT
@@ -579,7 +580,7 @@ class MainWindowTest {
                 layoutAll(surface);
                 java.awt.Rectangle left = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface);
                 assertThat(SwingUtilities.isDescendingFrom(view, window.split())).isFalse();
-                assertThat(left.x).isEqualTo(surface.getInsets().left + gap);
+                assertThat(left.x).as("ganz am linken Fensterrand").isEqualTo(line);
                 assertThat(left.y).as("auf derselben Höhe wie rechts").isEqualTo(edge.y);
                 assertThat(left.height).isGreaterThan(2 * left.width);
                 view.button(Explorer.FAVORITES_TAB).doClick();
@@ -623,11 +624,11 @@ class MainWindowTest {
                         com.aresstack.spaceharvester.app.ui.content.ChatSidebar.class).get(0);
                 assertThat(SwingUtilities.isDescendingFrom(window.deck(), chatSplit.getLeftComponent())).isTrue();
                 assertThat(window.split().getRightComponent()).isSameAs(chatSplit);
-                // Zu: kein Platz für die Leiste, nur der schmale Teiler; der Knopf ist hell.
+                // Zu: kein Platz für die Leiste und kein Trenner; der Knopf ist hell.
                 assertThat(window.chatToggle().isSelected()).isFalse();
                 assertThat(window.chatToggle().getToolTipText()).isEqualTo(MainWindow.CHAT_TOOLTIP);
                 assertThat(sidebar.getWidth()).isZero();
-                assertThat(chatSplit.getDividerSize()).isEqualTo(MainWindow.COLLAPSED_DIVIDER);
+                assertThat(chatSplit.getDividerSize()).as("zugeklappt ohne Trenner").isZero();
                 assertThat(((java.awt.Container) sidebar).getComponents())
                         .as("zugeklappt ist nichts aus der Leiste erreichbar").noneMatch(Component::isVisible);
 
@@ -772,7 +773,7 @@ class MainWindowTest {
             window.content(() -> { }, () -> { });
             window.toggleDrawer();
             assertThat(window.split().isLeftCollapsed()).isTrue();
-            assertThat(window.split().getDividerSize()).isEqualTo(MainWindow.COLLAPSED_DIVIDER);
+            assertThat(window.split().getDividerSize()).as("zugeklappt ohne Trenner").isZero();
             window.toggleDrawer();
             assertThat(window.split().isLeftCollapsed()).isFalse();
             assertThat(window.split().getDividerSize()).isGreaterThan(0);

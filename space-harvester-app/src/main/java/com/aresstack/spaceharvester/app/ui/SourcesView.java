@@ -1409,6 +1409,9 @@ public final class SourcesView implements View {
         // Die ganze Quelle steht in der Auftragsliste als eine aufklappbare Zeile über ihren Spaces (Angelo 22.11.2026).
         String group = whole && keys.size() > 1 ? java.util.UUID.randomUUID().toString() : null;
         Background.run(() -> {
+            if (!LargeFolders.confirm(context, id, null)) {
+                return null;
+            }
             List<String> jobs = new ArrayList<>();
             Map<String, Exception> failed = new LinkedHashMap<>();
             for (String key : keys) {
@@ -1420,6 +1423,16 @@ public final class SourcesView implements View {
             }
             return new CatchUpStarted(jobs, failed);
         }, started -> {
+            if (started == null) {
+                report.failed("Nachholen abgebrochen");
+                if (whole) {
+                    watches.remove(id);
+                    catchingUp.remove(id);
+                    cards.values().forEach(SourceCard::update);
+                }
+                feedback.info("Nachholen abgebrochen", "Nichts gestartet.");
+                return;
+            }
             if (!started.jobs().isEmpty()) {
                 report.accepted(List.copyOf(started.jobs()));
             }
@@ -1614,6 +1627,9 @@ public final class SourcesView implements View {
         // Jeder Space für sich: Scheitert ein späterer Start (Auftragsgrenze, läuft schon), laufen die früheren weiter
         // und die Meldung nennt beides.
         Background.run(() -> {
+            if (!LargeFolders.confirm(context, id, null)) {
+                return null;
+            }
             List<JobStatus> started = new ArrayList<>();
             Map<String, Exception> failed = new LinkedHashMap<>();
             for (String key : keys) {
@@ -1628,6 +1644,10 @@ public final class SourcesView implements View {
             }
             return new java.util.AbstractMap.SimpleEntry<>(started, failed);
         }, result -> {
+            if (result == null) {
+                feedback.info(one + " abgebrochen", "Nichts gestartet.");
+                return;
+            }
             List<JobStatus> started = result.getKey();
             Map<String, Exception> failed = result.getValue();
             String done = started.size() == 1 && failed.isEmpty() ? one + " von " + keys.get(0) + " gestartet"

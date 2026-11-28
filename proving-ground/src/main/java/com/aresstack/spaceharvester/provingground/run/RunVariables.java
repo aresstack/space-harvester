@@ -25,8 +25,8 @@ import java.util.function.Supplier;
  * values of its before hooks (resolved once) and its templates (resolved on every use).
  *
  * <p>Besides, for the user a step runs as: {@code {{user}}} (the user's name in the project), {@code {{user.login}}}
- * (the login name from the vault) and {@code {{secret.<field>}}} (the password from the vault; the recorder writes
- * this for every password field). Every secret and one-time code handed out is remembered only to mask it in
+ * (the login name from the vault) and {@code {{secret.<field>}}} (the vault entry's field of that name, otherwise its
+ * password; the recorder writes this for every password field). Every secret and one-time code handed out is remembered only to mask it in
  * messages.</p>
  */
 public final class RunVariables {
@@ -196,7 +196,7 @@ public final class RunVariables {
             if (USER_LOGIN.equals(name) || name.startsWith(SECRET_PREFIX)) {
                 UserCredentials access = credentials(user);
                 String value = access == null ? null
-                        : USER_LOGIN.equals(name) ? access.login() : access.password().get();
+                        : USER_LOGIN.equals(name) ? access.login() : access.secret(name.substring(SECRET_PREFIX.length()));
                 if (value == null) {
                     throw new UnresolvedSymbolException(name + (user == null ? " (kein Benutzer)"
                             : " (nicht im Tresor für " + user.name() + ")"));

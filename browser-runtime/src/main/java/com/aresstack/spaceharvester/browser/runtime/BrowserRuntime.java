@@ -145,6 +145,16 @@ public final class BrowserRuntime {
         return start(false, null, headless, addon, acceptRepost);
     }
 
+    /**
+     * A browser for one test run or recording: a throw-away profile like {@link #ephemeral(boolean, BrowserAddon,
+     * boolean)} (the same {@code acceptRepost}), but started persistent so that Firefox's own start window is a page
+     * Playwright sees. The caller takes its contexts from {@link RunningBrowser#newTestContext()}, which closes that
+     * window once the test's window is open: one window, not two.
+     */
+    public RunningBrowser forTestRun(boolean headless, boolean acceptRepost) throws BrowserStartException {
+        return start(true, null, headless, null, acceptRepost);
+    }
+
     private RunningBrowser start(boolean persistent, Path profileFolder, boolean headless, BrowserAddon addon,
                                  boolean acceptRepost) throws BrowserStartException {
         BrowserChannel channel = config.channel();
@@ -229,9 +239,9 @@ public final class BrowserRuntime {
                     Path directory = profile.directory();
                     context = switch (channel) {
                         case CAMOUFOX -> playwright.firefox().launchPersistentContext(directory,
-                                withStartTimeout(camoufoxPersistentOptions(executable, camoufox, headless)));
+                                withStartTimeout(camoufoxPersistentOptions(executable, camoufox, headless, acceptRepost)));
                         case FIREFOX -> playwright.firefox().launchPersistentContext(directory,
-                                withStartTimeout(firefoxPersistentOptions(executable, headless)));
+                                withStartTimeout(firefoxPersistentOptions(executable, headless, acceptRepost)));
                         case CHROME, EDGE -> playwright.chromium().launchPersistentContext(directory,
                                 withStartTimeout(chromiumPersistentOptions(channel, headless, extension != null)));
                     };
@@ -355,13 +365,18 @@ public final class BrowserRuntime {
 
     /** The installed Firefox on its own profile: a real window (no viewport emulation), no downloads. */
     static BrowserType.LaunchPersistentContextOptions firefoxPersistentOptions(Path executable, boolean headless) {
+        return firefoxPersistentOptions(executable, headless, true);
+    }
+
+    static BrowserType.LaunchPersistentContextOptions firefoxPersistentOptions(Path executable, boolean headless,
+                                                                              boolean acceptRepost) {
         return new BrowserType.LaunchPersistentContextOptions()
                 .setChannel(FIREFOX_BIDI_CHANNEL)
                 .setExecutablePath(executable)
                 .setHeadless(headless)
                 .setAcceptDownloads(false)
                 .setViewportSize(null)
-                .setFirefoxUserPrefs(FirefoxSessionPrefs.apply(new LinkedHashMap<>()));
+                .setFirefoxUserPrefs(FirefoxSessionPrefs.apply(new LinkedHashMap<>(), acceptRepost));
     }
 
     static BrowserType.LaunchOptions firefoxLaunchOptions(Path executable, boolean headless) {
@@ -383,6 +398,11 @@ public final class BrowserRuntime {
      */
     static BrowserType.LaunchPersistentContextOptions camoufoxPersistentOptions(Path executable, CamoufoxLaunch launch,
                                                                                boolean headless) {
+        return camoufoxPersistentOptions(executable, launch, headless, true);
+    }
+
+    static BrowserType.LaunchPersistentContextOptions camoufoxPersistentOptions(Path executable, CamoufoxLaunch launch,
+                                                                               boolean headless, boolean acceptRepost) {
         BrowserType.LaunchPersistentContextOptions options = new BrowserType.LaunchPersistentContextOptions()
                 .setChannel(FIREFOX_BIDI_CHANNEL)
                 .setExecutablePath(executable)
@@ -394,7 +414,7 @@ public final class BrowserRuntime {
                 .setReducedMotion(null)
                 .setForcedColors(null)
                 .setContrast(null)
-                .setFirefoxUserPrefs(camoufoxPrefs(launch, true));
+                .setFirefoxUserPrefs(camoufoxPrefs(launch, acceptRepost));
         if (!launch.args().isEmpty()) {
             options.setArgs(launch.args());
         }

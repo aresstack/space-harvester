@@ -181,6 +181,10 @@ def ossReportTask = rootProject.tasks.register('generateOssLicenseReport') {
         // (docs/NLP_MODEL_LICENSE.md), Download nur auf Klick unter Einstellungen › Modelle.
         entries << [group: 'io.github.uwol', artifact: 'proleap-cobol-parser', version: '4.0.0 (d1bfe75)',
                     license: 'MIT', module: 'proleap-parser']
+        entries << [group: 'com.warrenstrange', artifact: 'googleauth', version: '1.5.0 (d6dfa11)',
+                    license: 'The BSD 3-Clause License', module: 'googleauth']
+        entries << [group: 'commons-codec', artifact: 'commons-codec', version: '1.22.1 (dc8f6c8)',
+                    license: 'Apache-2.0', module: 'commons-codec']
 
         def runtimeDownloads = [
                 [group: 'github.com/aresstack/space-harvester', artifact: 'maltparser-de-gsd', version: '1.0.0',

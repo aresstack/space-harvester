@@ -14,7 +14,9 @@ import com.aresstack.spaceharvester.app.ui.AppTimeouts;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Glyph;
+import com.aresstack.spaceharvester.app.ui.FindBar;
 import com.aresstack.spaceharvester.app.ui.IconButton;
+import com.aresstack.spaceharvester.app.ui.controls.HelpButton;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.controls.CenterOffer;
 import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
@@ -123,6 +125,44 @@ public final class ProvingGroundWorkspace extends JPanel {
     static final String OFFER_RECORD = "Testfall aufnehmen";
     static final String STEPS = "Schritte";
     static final String HOOKS = "Hooks";
+    /** Größe des „?“-Knopfs, wie die der übrigen Ansichten (Bereich, Leseansicht). */
+    static final int HELP_SIZE = 24;
+    /** Die „?“-Hilfe je Reiter (Angelo 28.11.): jeder Reiter erklärt sich selbst. */
+    static final String HELP_STEPS = "Die Schritte des gewählten Testfalls, so wie Playwright sie aufgenommen hat: "
+            + "jede Zeile ist Playwright-Java-Code und wird beim Abspielen genau so ausgeführt.\n\n"
+            + "Rolle (Given, When, Then) und Beschreibung machen daraus einen lesbaren Ablauf. In der Spalte Benutzer "
+            + "lässt sich ein Schritt einem anderen Testbenutzer geben; er läuft dann in dessen eigenem Browser. "
+            + "„Testfall läuft als“ legt den Benutzer für alle übrigen Schritte fest.\n\n"
+            + "Oben: ● nimmt weitere Schritte auf, ▶ spielt ab, das Bild fügt einen Bildvergleich ein, der Pfeil "
+            + "speichert den Testfall als JUnit-Test oder führt ihn als JUnit-Test aus.\n\n"
+            + "Werte aus KeePass statt fester Texte: {{user.login}} = Benutzername, {{secret.Passwort}} = Passwort des "
+            + "KeePass-Eintrags, {{secret.PIN}} = sein Zusatzfeld „PIN“ (für jedes weitere Passwort ein Zusatzfeld), "
+            + "{{otp()}} = aktueller Einmalcode aus dem Zusatzfeld „otp“, {{otp('pr')}} = der Code des Benutzers pr. "
+            + "Die Aufnahme schreibt bei Passwortfeldern {{secret.…}} von selbst; in den Testdateien steht nie ein "
+            + "Wert.";
+    static final String HELP_HOOKS = "Hooks setzen Werte und prüfen Ergebnisse rund um die Schritte, für die gewählte "
+            + "Ebene: das Projekt, eine Suite oder einen Testfall.\n\n"
+            + "beforeAll und beforeEach setzen Variablen vor den Schritten (einmal je Lauf oder vor jedem Testfall), "
+            + "z. B. start = die Startadresse; in den Schritten steht dann {{start}}. Vorlagen werden bei jeder "
+            + "Verwendung neu ausgewertet. afterEach und afterAll prüfen danach, z. B. ob {{title()}} gleich "
+            + "„Konto“ ist; „Prüfung“ und „Erwartet“ sagen wie.\n\n"
+            + "Ausdrücke in {{…}} dürfen Funktionen nutzen: {{otp()}}, {{title()}}, {{url()}}, {{text('#id')}}. Werte "
+            + "der Ebene darüber gelten weiter, eigene überdecken sie.";
+    static final String HELP_PRECONDITIONS = "Vorbedingungen sind andere Testfälle, die vorher laufen, z. B. „Anmelden“: "
+            + "einmal aufnehmen, überall als Vorbedingung eintragen. Ihr Browser bleibt offen, der Testfall macht "
+            + "dort weiter, wo die Vorbedingung aufgehört hat.\n\n"
+            + "Am Projekt eingetragen gelten sie für jeden Testfall, an einer Suite für deren Testfälle, am Testfall nur "
+            + "für ihn. Jede läuft je Testfall einmal, auch wenn sie mehrfach eingetragen ist. Schlägt eine fehl, "
+            + "läuft der Testfall nicht.";
+    static final String HELP_USERS = "Die Testbenutzer des Projekts. Jeder hat einen Namen (z. B. sb) und einen "
+            + "KeePass-Eintrag; Benutzername, Passwort und weitere Felder holt Space Harvester beim Abspielen still "
+            + "über die bestehende KeePass-Anbindung, gespeichert wird nichts.\n\n"
+            + "So geht es: In KeePass je Testbenutzer einen Eintrag mit Benutzername und Passwort anlegen. Das "
+            + "OTP-Geheimnis als Zusatzfeld „otp“ (Base32 oder otpauth://-Adresse; „TOTP Seed“ geht auch), jedes "
+            + "weitere Passwort als Zusatzfeld mit eigenem Namen, z. B. „PIN“. Hier den Eintrag wählen. In den "
+            + "Schritten dann {{user.login}}, {{secret.Passwort}}, {{secret.PIN}} und {{otp()}}.\n\n"
+            + "Der Standard-Benutzer gilt für alle Schritte ohne eigenen Benutzer. Jeder Benutzer läuft in seinem "
+            + "eigenen Browser-Kontext, so lassen sich z. B. Sachbearbeiter und Prüfer in einem Testfall abwechseln.";
     static final String PRECONDITIONS = "Vorbedingungen";
     static final String USERS = "Benutzer";
     /** Benutzer des Testfalls „Standard“: der Standardbenutzer des Projekts. */
@@ -167,6 +207,11 @@ public final class ProvingGroundWorkspace extends JPanel {
     private final UsersEditor users = new UsersEditor();
     private final JComboBox<String> caseUser = Comic.combo();
     private final CardLayout cards = new CardLayout();
+    /** Die Leiste mit der Lupe unter der Arbeitsfläche, wie überall in Space Harvester; sucht im gezeigten Reiter. */
+    private final FindBar findBar = new FindBar(this::shownView);
+    /** Die „?“-Hilfe unten rechts, je Reiter eine; nur die des gezeigten ist sichtbar. */
+    private final java.util.Map<String, HelpButton> helps = new java.util.LinkedHashMap<>();
+    private String shownCard = STEPS;
     private final JPanel views = new JPanel(cards);
     private final JPanel viewSwitch = new JPanel(new BorderLayout());
     private final SegmentedToggle projectViews = toggle(HOOKS, PRECONDITIONS, USERS);
@@ -271,7 +316,7 @@ public final class ProvingGroundWorkspace extends JPanel {
         views.add(preconditions, PRECONDITIONS);
         views.add(users, USERS);
         for (SegmentedToggle toggle : List.of(projectViews, suiteViews, caseViews)) {
-            toggle.onSelect(name -> cards.show(views, name));
+            toggle.onSelect(this::showCard);
         }
         viewSwitch.setOpaque(false);
         // The report under every view: a run of the project or a suite shows its result there, too (Codex #1770).
@@ -296,6 +341,25 @@ public final class ProvingGroundWorkspace extends JPanel {
         tools.add(stop);
         content.add(DeckBars.head(title, tools), BorderLayout.NORTH);
         content.add(offer, BorderLayout.CENTER);
+        JPanel help = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        help.setOpaque(false);
+        for (String[] each : new String[][] {{STEPS, HELP_STEPS}, {HOOKS, HELP_HOOKS},
+                {PRECONDITIONS, HELP_PRECONDITIONS}, {USERS, HELP_USERS}}) {
+            HelpButton button = new HelpButton(HELP_SIZE, each[0], each[1]);
+            helps.put(each[0], button);
+            help.add(button);
+        }
+        findBar.help(help);
+        content.add(findBar, BorderLayout.SOUTH);
+        getInputMap(WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(javax.swing.KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_DOWN_MASK), "find");
+        getActionMap().put("find", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent event) {
+                findBar.focus();
+            }
+        });
+        showCard(STEPS);
         add(new LeftSidebarPane(sidebar, content, 280).withDividerToggle(), BorderLayout.CENTER);
 
         String remembered = AppState.shared().get(PROJECT_KEY);
@@ -414,14 +478,14 @@ public final class ProvingGroundWorkspace extends JPanel {
         offer.offer(true);
         // solange der Weg geführt wird: leere Schrittansicht, keine Editoren
         viewSwitch.setVisible(false);
-        cards.show(views, STEPS);
+        showCard(STEPS);
     }
 
     private void noOffer() {
         offer.offer(false);
         viewSwitch.setVisible(true);
         if (currentViews != null) {
-            cards.show(views, currentViews.selected());
+            showCard(currentViews.selected());
         }
     }
 
@@ -600,12 +664,45 @@ public final class ProvingGroundWorkspace extends JPanel {
         return toggle;
     }
 
+    /** Zeigt den Reiter {@code name}; Hilfe und Suche folgen ihm. */
+    private void showCard(String name) {
+        shownCard = name;
+        cards.show(views, name);
+        helps.forEach((card, button) -> button.setVisible(card.equals(name)));
+        findBar.areaChanged();
+    }
+
+    /** Der gezeigte Reiter, in dem die Lupe sucht. */
+    private JComponent shownView() {
+        for (java.awt.Component card : views.getComponents()) {
+            if (card.isVisible() && card instanceof JComponent view) {
+                return view;
+            }
+        }
+        return views;
+    }
+
+    /** Der gezeigte Reiter (für Tests). */
+    String shownCard() {
+        return shownCard;
+    }
+
+    /** Die „?“-Hilfe des gezeigten Reiters (für Tests). */
+    HelpButton shownHelp() {
+        return helps.get(shownCard);
+    }
+
+    /** Die Leiste mit der Lupe (für Tests). */
+    FindBar findBar() {
+        return findBar;
+    }
+
     /** Zeigt zum gewählten Knoten die passenden Ansichten: Projekt, Suite oder Testfall. */
     private void showEditors(Node node) {
         viewSwitch.removeAll();
         currentViews = null;
         if (project == null || node == null) {
-            cards.show(views, STEPS);
+            showCard(STEPS);
             viewSwitch.revalidate();
             viewSwitch.repaint();
             return;
@@ -637,7 +734,7 @@ public final class ProvingGroundWorkspace extends JPanel {
         }
         viewSwitch.add(toggle, BorderLayout.CENTER);
         currentViews = toggle;
-        cards.show(views, toggle.selected());
+        showCard(toggle.selected());
         viewSwitch.revalidate();
         viewSwitch.repaint();
     }

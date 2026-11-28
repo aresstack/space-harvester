@@ -102,7 +102,7 @@ public final class JUnitExport {
             if (switching && (first || !java.util.Objects.equals(user, current))) {
                 // each user in an own browser context, as Proving Ground runs it
                 body.append("user = ").append(user == null ? "null" : TestStep.javaString(user)).append(";\n")
-                        .append("context = contexts.computeIfAbsent(String.valueOf(user), name -> browser.newContext());\n")
+                        .append("context = contexts.computeIfAbsent(String.valueOf(user), name -> newContext(browser, start));\n")
                         .append(timeout);
             }
             current = user;
@@ -169,7 +169,7 @@ public final class JUnitExport {
             start = "Map<String, BrowserContext> contexts = new HashMap<>();\nBrowserContext context;\n";
         } else {
             start = (firstUser == null ? "" : "user = " + TestStep.javaString(firstUser) + ";\n")
-                    + "BrowserContext context = browser.newContext();\n" + timeout + pages;
+                    + "BrowserContext context = newContext(browser, start);\n" + timeout + pages;
         }
         String source = TEMPLATE.formatted(testCase.name().replace("*/", "* /"), className,
                 launch.firefox() ? "firefox" : "chromium", launchOptions(launch), indent(start + steps, "      "));
@@ -264,7 +264,10 @@ public final class JUnitExport {
             import com.microsoft.playwright.*;
             import com.microsoft.playwright.options.*;
             import static com.microsoft.playwright.assertions.PlaywrightAssertions.assertThat;
+            import java.io.IOException;
             import java.nio.ByteBuffer;
+            import java.nio.file.Files;
+            import java.nio.file.Path;
             import java.nio.file.Paths;
             import java.util.*;
             import java.util.regex.*;
@@ -287,13 +290,36 @@ public final class JUnitExport {
               private String user;
 
               @Test
-              void test() {
+              void test() throws IOException {
+                Path profile = Files.createTempDirectory("proving-ground-");
                 try (Playwright playwright = Playwright.create()) {
                   if (started != null) {
                     started.accept(playwright);
                   }
-                  Browser browser = playwright.%s().launch(%s);
-            %s    }
+                  // Firefox öffnet beim Start selbst ein Fenster. Mit einem Wegwerfprofil gestartet ist es eine Seite
+                  // von start, und newContext schließt sie, sobald das Fenster des Tests offen ist: ein Fenster.
+                  BrowserContext start = playwright.%s().launchPersistentContext(profile, %s);
+                  Browser browser = start.browser();
+            %s    } finally {
+                  deleteProfile(profile);
+                }
+              }
+
+              /** Ein eigener Browserkontext (Benutzer); sein erstes Fenster schließt das Startfenster des Browsers. */
+              private static BrowserContext newContext(Browser browser, BrowserContext start) {
+                BrowserContext context = browser.newContext();
+                context.onPage(page -> {
+                  for (Page first : new ArrayList<>(start.pages())) {
+                    first.close();
+                  }
+                });
+                return context;
+              }
+
+              private static void deleteProfile(Path profile) throws IOException {
+                try (var files = Files.walk(profile)) {
+                  files.sorted(Comparator.reverseOrder()).forEach(file -> file.toFile().delete());
+                }
               }
 
               private static final Pattern OTP = Pattern.compile("otp\\\\(\\\\s*(?:'([^']*)'|\\"([^\\"]*)\\")?\\\\s*\\\\)");
@@ -418,7 +444,7 @@ public final class JUnitExport {
             """;
 
     private static String launchOptions(Launch launch) {
-        StringBuilder options = new StringBuilder("new BrowserType.LaunchOptions()");
+        StringBuilder options = new StringBuilder("new BrowserType.LaunchPersistentContextOptions()");
         if (launch.channel() != null && !launch.channel().isBlank()) {
             options.append("\n          .setChannel(").append(TestStep.javaString(launch.channel())).append(')');
         }
