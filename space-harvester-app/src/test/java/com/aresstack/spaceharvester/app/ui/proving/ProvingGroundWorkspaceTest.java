@@ -75,6 +75,33 @@ class ProvingGroundWorkspaceTest {
         assertThat(TestCaseFile.read(directory.resolve("anmeldung/login.jsonl")).size()).isEqualTo(1);
         assertThat(ProjectFile.read(directory).testCase("anmeldung/login").steps()).doesNotContainKey(assertId);
 
+        // Bildvergleich einfügen: nach dem gewählten Schritt, auf dessen Seite, mit Playwright-Code zum Abspielen.
+        SwingUtilities.invokeAndWait(() -> workspace.get().insertScreenshotCheck(0, " Startseite "));
+        workspace.get().flush();
+        TestCase withCheck = TestCaseFile.read(directory.resolve("anmeldung/login.jsonl"));
+        assertThat(withCheck.size()).isEqualTo(2);
+        assertThat(withCheck.step(1).name()).isEqualTo(TestStep.ASSERT_SCREENSHOT);
+        assertThat(withCheck.step(1).pageGuid()).isEqualTo(withCheck.step(0).pageGuid());
+        assertThat(withCheck.step(1).snapshot()).isEqualTo("Startseite");
+        assertThat(withCheck.step(1).code()).startsWith("screenshots.expect(\"Startseite\", () -> page.screenshot(");
+
+        // JUnit-Export: Playwright-Java-Code ohne Proving Ground; was nicht geht, wird genannt.
+        AtomicReference<com.aresstack.spaceharvester.provingground.player.JUnitExport.Result> exported =
+                new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> exported.set(workspace.get().exportShownCase()));
+        assertThat(exported.get().className()).isEqualTo("AnmeldenTest");
+        assertThat(exported.get().source()).contains("try (Playwright playwright = Playwright.create())")
+                .doesNotContain("com.aresstack");
+        assertThat(exported.get().notExported()).anyMatch(note -> note.contains("Bildvergleich"));
+        Path target = directory.resolve("export/AnmeldenTest.java");
+        Files.createDirectories(target.getParent());
+        SwingUtilities.invokeAndWait(() -> workspace.get().writeExport(exported.get(), target));
+        workspace.get().flush();
+        assertThat(Files.readString(target)).isEqualTo(exported.get().source());
+
+        SwingUtilities.invokeAndWait(() -> workspace.get().deleteStep(1));
+        workspace.get().flush();
+
         // Neue Suite und ein neuer Testfall bekommen lesbare IDs und eine eigene Datei.
         SwingUtilities.invokeAndWait(() -> workspace.get().createSuite("Konto & Daten"));
         workspace.get().flush();
@@ -91,7 +118,9 @@ class ProvingGroundWorkspaceTest {
         AtomicReference<ProvingGroundWorkspace> workspace = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> workspace.set(new ProvingGroundWorkspace(() -> null, () -> directory)));
         SwingUtilities.invokeAndWait(() -> workspace.get().open(directory));
-        await(() -> ((com.aresstack.spaceharvester.app.ui.controls.StatusLabel) workspace.get().statusLine()).note()
+        // the remembered folder of the constructor may show first; wait for this one
+        await(() -> directory.equals(workspace.get().directory())
+                && ((com.aresstack.spaceharvester.app.ui.controls.StatusLabel) workspace.get().statusLine()).note()
                 .text().equals(ProvingGroundWorkspace.NO_PROJECT));
         assertThat(workspace.get().offer().offered()).isTrue();
         assertThat(workspace.get().offer().button().getText()).isEqualTo(ProvingGroundWorkspace.OFFER_PROJECT);
@@ -106,6 +135,65 @@ class ProvingGroundWorkspaceTest {
         await(() -> ProvingGroundWorkspace.OFFER_RECORD.equals(workspace.get().offer().button().getText()));
         assertThat(workspace.get().offer().offered()).isTrue();
         assertThat(ProjectFile.read(directory).suite("anmeldung")).isNotNull();
+    }
+
+    @Test
+    void whileAnotherFolderIsStillReadTheOfferCannotActOnTheFolderShownBefore() throws Exception {
+        // CI main ffdd05e: the remembered folder was shown, the chosen one still loading, and „Testprojekt anlegen“
+        // wrote into the remembered folder.
+        Path before = directory.resolve("vorher");
+        Path chosen = directory.resolve("gewaehlt");
+        Files.createDirectories(before);
+        Files.createDirectories(chosen);
+        AtomicReference<ProvingGroundWorkspace> workspace = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            workspace.set(new ProvingGroundWorkspace(() -> null, () -> directory));
+            workspace.get().open(before);
+        });
+        await(() -> before.equals(workspace.get().directory()) && workspace.get().offer().offered());
+
+        AtomicReference<Boolean> offeredWhileLoading = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            workspace.get().open(chosen);
+            offeredWhileLoading.set(workspace.get().offer().offered());
+        });
+        assertThat(offeredWhileLoading.get()).isFalse();
+        await(() -> chosen.equals(workspace.get().directory()) && workspace.get().offer().offered());
+        SwingUtilities.invokeAndWait(() -> workspace.get().offer().button().doClick());
+        await(() -> Files.exists(chosen.resolve(ProjectFile.FILE_NAME)));
+        assertThat(before.resolve(ProjectFile.FILE_NAME)).doesNotExist();
+    }
+
+    @Test
+    void anEarlierOpenThatFinishesLastDoesNotReplaceTheFolderOpenedAfterIt() throws Exception {
+        // The workspace opens the remembered folder in its constructor, the caller then opens another one. A slow
+        // first read (large project file) finishes last; it must not take the folder back (CI #1770: project written
+        // into the remembered folder of an earlier test).
+        Path slow = directory.resolve("frueher");
+        ProjectFile.write(TestProject.of("Früher", List.of()), slow);
+        Path big = slow.resolve(ProjectFile.FILE_NAME);
+        String json = Files.readString(big);
+        Files.writeString(big, json.substring(0, json.lastIndexOf('}')) + " ".repeat(40_000_000) + "}\n");
+        Path chosen = directory.resolve("neu");
+        Files.createDirectories(chosen);
+
+        AtomicReference<ProvingGroundWorkspace> workspace = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            workspace.set(new ProvingGroundWorkspace(() -> null, () -> directory));
+            workspace.get().open(slow);
+            workspace.get().open(chosen);
+        });
+        await(() -> ProvingGroundWorkspace.OFFER_PROJECT.equals(workspace.get().offer().button().getText())
+                && ((com.aresstack.spaceharvester.app.ui.controls.StatusLabel) workspace.get().statusLine()).note()
+                .text().equals(ProvingGroundWorkspace.NO_PROJECT));
+        // let the slow read finish (open() reads in the common pool), then the offer must still be for the chosen folder
+        java.util.concurrent.ForkJoinPool.commonPool().awaitQuiescence(1, java.util.concurrent.TimeUnit.MINUTES);
+        SwingUtilities.invokeAndWait(() -> { });
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(workspace.get().offer().button().getText()).isEqualTo(ProvingGroundWorkspace.OFFER_PROJECT);
+        SwingUtilities.invokeAndWait(() -> workspace.get().offer().button().doClick());
+        await(() -> Files.exists(chosen.resolve(ProjectFile.FILE_NAME)));
+        assertThat(ProjectFile.read(chosen).name()).isEqualTo("neu");
     }
 
     @Test

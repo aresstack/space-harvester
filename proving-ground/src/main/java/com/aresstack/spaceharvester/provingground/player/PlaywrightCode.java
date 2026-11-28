@@ -55,12 +55,17 @@ final class PlaywrightCode {
     private static final Pattern USED_PAGE = Pattern.compile("\\b(page\\d*)\\s*\\.");
     private static final Pattern STRING = Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"");
     private static final String CLASS_NAME = "RecordedTest";
+    /** Classes the generated code uses directly; their JARs make the compiler's class path. */
+    private static final List<Class<?>> ANCHORS = List.of(Page.class,
+            com.microsoft.playwright.assertions.PlaywrightAssertions.class,
+            com.microsoft.playwright.options.AriaRole.class, Screenshots.class);
     private static final String[] HEADER = {
             "import com.microsoft.playwright.*;",
             "import com.microsoft.playwright.options.*;",
             "import static com.microsoft.playwright.assertions.PlaywrightAssertions.assertThat;",
             "import java.util.*;",
             "import java.util.function.UnaryOperator;",
+            "import " + Screenshots.class.getName() + ";",
             "",
             "public class " + CLASS_NAME + " {",
     };
@@ -83,17 +88,26 @@ final class PlaywrightCode {
      * whose code does not compile is left out and the rest compiled again, so it fails alone.
      */
     static PlaywrightCode compile(TestCase testCase) {
+        return compile(testCase, PlaywrightCode.class.getClassLoader(), classpath());
+    }
+
+    /**
+     * As {@link #compile(TestCase)}, with the classes the code uses from {@code loader} and only {@code fileClasspath}
+     * as files for the compiler (in the packaged app that is nothing: Playwright lies in nested JARs).
+     */
+    static PlaywrightCode compile(TestCase testCase, ClassLoader loader, String fileClasspath) {
         Map<Integer, String> problems = new HashMap<>();
         while (true) {
             int known = problems.size();
-            PlaywrightCode attempt = compile(testCase, problems);
+            PlaywrightCode attempt = compile(testCase, problems, loader, fileClasspath);
             if (attempt.instance != null || problems.size() == known || problems.size() >= testCase.size()) {
                 return attempt;
             }
         }
     }
 
-    private static PlaywrightCode compile(TestCase testCase, Map<Integer, String> problems) {
+    private static PlaywrightCode compile(TestCase testCase, Map<Integer, String> problems, ClassLoader runtime,
+                                          String fileClasspath) {
         Map<Integer, List<String>> declared = new HashMap<>();
         StringBuilder source = new StringBuilder();
         for (String line : HEADER) {
@@ -128,7 +142,9 @@ final class PlaywrightCode {
         Map<String, ByteArrayOutputStream> classes = new HashMap<>();
         try (StandardJavaFileManager standard = compiler.getStandardFileManager(diagnostics, Locale.GERMAN,
                 StandardCharsets.UTF_8)) {
-            JavaFileManager memory = new ForwardingJavaFileManager<>(standard) {
+            // Packaged app: Playwright lies in nested JARs the compiler cannot open; the loader that loaded it reads them.
+            JavaFileManager loaded = new LoaderClassPath(standard, runtime, ANCHORS);
+            JavaFileManager memory = new ForwardingJavaFileManager<>(loaded) {
                 @Override
                 public JavaFileObject getJavaFileForOutput(Location location, String className, JavaFileObject.Kind kind,
                                                            FileObject sibling) {
@@ -149,7 +165,7 @@ final class PlaywrightCode {
                 }
             };
             boolean compiled = compiler.getTask(null, memory, diagnostics,
-                    List.of("-classpath", classpath(), "-proc:none", "-nowarn", "-g"), null, List.of(unit)).call();
+                    List.of("-classpath", fileClasspath, "-proc:none", "-nowarn", "-g"), null, List.of(unit)).call();
             if (!compiled) {
                 for (Diagnostic<? extends JavaFileObject> diagnostic : diagnostics.getDiagnostics()) {
                     if (diagnostic.getKind() != Diagnostic.Kind.ERROR) {
@@ -174,7 +190,7 @@ final class PlaywrightCode {
             return new PlaywrightCode(null, Map.of(), problems, declared);
         }
         try {
-            ClassLoader loader = new ClassLoader(Page.class.getClassLoader()) {
+            ClassLoader loader = new ClassLoader(runtime) {
                 @Override
                 protected Class<?> findClass(String name) throws ClassNotFoundException {
                     ByteArrayOutputStream bytes = classes.get(name);
@@ -189,13 +205,25 @@ final class PlaywrightCode {
             Map<Integer, Method> methods = new HashMap<>();
             for (int[] range : lines) {
                 methods.put(range[0], type.getMethod("step" + range[0], BrowserContext.class, Page.class,
-                        UnaryOperator.class));
+                        UnaryOperator.class, Screenshots.class));
             }
             return new PlaywrightCode(type.getConstructor().newInstance(), methods, problems, declared);
         } catch (ReflectiveOperationException | LinkageError broken) {
             lines.forEach(range -> problems.put(range[0], "Playwright-Code nicht ladbar: " + broken));
             return new PlaywrightCode(null, Map.of(), problems, declared);
         }
+    }
+
+    /**
+     * Whether {@code code} opens the page it acts on itself ({@code Page page = context.newPage();}) and needs no page
+     * handed in.
+     */
+    static boolean opensOwnPage(String code) {
+        if (code == null) {
+            return false;
+        }
+        List<String> declaredPages = declaredPages(code);
+        return !declaredPages.isEmpty() && otherPages(code, declaredPages).isEmpty();
     }
 
     /** Why step {@code index} cannot run, or null. */
@@ -208,16 +236,19 @@ final class PlaywrightCode {
      *
      * @param page     the page the step acts on (null for opening a page)
      * @param resolve  resolves a string literal with {@code {{...}}}
+     * @param screenshots the screenshot comparison of the run ({@code screenshots.expect(...)} in the code)
      * @return the pages the code opened, in the order it declares them
      */
     @SuppressWarnings("unchecked")
-    List<Page> run(int index, BrowserContext context, Page page, UnaryOperator<String> resolve) throws Throwable {
+    List<Page> run(int index, BrowserContext context, Page page, UnaryOperator<String> resolve,
+                   Screenshots screenshots) throws Throwable {
         Method method = methods.get(index);
         if (method == null) {
             throw new IllegalStateException(problems.getOrDefault(index, NO_CODE));
         }
         try {
-            Map<String, Object> opened = (Map<String, Object>) method.invoke(instance, context, page, resolve);
+            Map<String, Object> opened = (Map<String, Object>) method.invoke(instance, context, page, resolve,
+                    screenshots);
             List<Page> pages = new ArrayList<>();
             for (String alias : declared.getOrDefault(index, List.of())) {
                 if (opened.get(alias) instanceof Page created) {
@@ -232,16 +263,11 @@ final class PlaywrightCode {
 
     /** One method around Playwright's code of one step. */
     static String method(int index, String code, List<String> declaredPages) {
-        Set<String> used = new LinkedHashSet<>();
-        Matcher uses = USED_PAGE.matcher(code);
-        while (uses.find()) {
-            if (!declaredPages.contains(uses.group(1))) {
-                used.add(uses.group(1));
-            }
-        }
+        Set<String> used = otherPages(code, declaredPages);
         StringBuilder method = new StringBuilder();
         method.append("  public Map<String, Object> step").append(index)
-                .append("(BrowserContext context, Page subject, UnaryOperator<String> v) throws Exception {\n");
+                .append("(BrowserContext context, Page subject, UnaryOperator<String> v, Screenshots screenshots)")
+                .append(" throws Exception {\n");
         for (String alias : used) {
             method.append("    Page ").append(alias).append(" = subject;\n");
         }
@@ -258,15 +284,32 @@ final class PlaywrightCode {
 
     /** String literals with {@code {{...}}} become {@code v.apply("...")}: resolved when the step runs. */
     static String withVariables(String code) {
+        return withVariables(code, "v.apply");
+    }
+
+    /** String literals with {@code {{...}}} become {@code <call>("...")}. */
+    static String withVariables(String code, String call) {
         Matcher literal = STRING.matcher(code);
         StringBuilder result = new StringBuilder();
         while (literal.find()) {
             String text = literal.group();
-            literal.appendReplacement(result, Matcher.quoteReplacement(text.contains("{{") ? "v.apply(" + text + ")"
+            literal.appendReplacement(result, Matcher.quoteReplacement(text.contains("{{") ? call + "(" + text + ")"
                     : text));
         }
         literal.appendTail(result);
         return result.toString();
+    }
+
+    /** The pages {@code code} acts on without declaring them: they are the step's page. */
+    static Set<String> otherPages(String code, List<String> declaredPages) {
+        Set<String> used = new LinkedHashSet<>();
+        Matcher uses = USED_PAGE.matcher(code);
+        while (uses.find()) {
+            if (!declaredPages.contains(uses.group(1))) {
+                used.add(uses.group(1));
+            }
+        }
+        return used;
     }
 
     static List<String> declaredPages(String code) {
@@ -281,16 +324,20 @@ final class PlaywrightCode {
     /** Where Playwright Java is (and the rest of the class path), for the compiler. */
     private static String classpath() {
         Set<String> entries = new LinkedHashSet<>();
-        for (Class<?> type : List.of(Page.class, com.microsoft.playwright.assertions.PlaywrightAssertions.class)) {
+        for (Class<?> type : ANCHORS) {
             try {
                 entries.add(Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI()).toString());
             } catch (Exception | LinkageError unknown) {
-                // then the class path of the JVM has to do
+                // nested JAR of the packaged app: LoaderClassPath reads it through the class loader
             }
         }
         String own = System.getProperty("java.class.path");
-        if (own != null && !own.isBlank()) {
-            entries.add(own);
+        if (own != null) {
+            for (String entry : own.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
+                if (LoaderClassPath.openable(entry)) {
+                    entries.add(entry);
+                }
+            }
         }
         return String.join(File.pathSeparator, entries);
     }

@@ -87,6 +87,9 @@ public final class TestPlayer {
             PlaywrightAssertions.setDefaultAssertionTimeout(options.actionTimeout().toMillis());
         }
         PlaywrightCode code = PlaywrightCode.compile(testCase);
+        Path failureShot = options.screenshotOnFailure();
+        Screenshots screenshots = new Screenshots(options.screenshotReferences(),
+                failureShot == null ? null : failureShot.toAbsolutePath().getParent(), options.actionTimeout());
         List<StepResult> results = new ArrayList<>();
         Path screenshot = null;
         boolean failed = false;
@@ -99,7 +102,7 @@ public final class TestPlayer {
             }
             long started = System.nanoTime();
             try {
-                perform(i, step, code, environment, pages);
+                perform(i, step, code, environment, pages, screenshots);
                 waitForMinimum(environment.minDuration(step), started);
                 results.add(new StepResult(i, description, StepResult.Status.PASSED, millisSince(started), null));
             } catch (Throwable failure) {
@@ -115,19 +118,20 @@ public final class TestPlayer {
         return new RunResult(testCase.name(), results, null, screenshot);
     }
 
-    private void perform(int index, TestStep step, PlaywrightCode code, StepEnvironment environment, Pages pages)
-            throws Throwable {
+    private void perform(int index, TestStep step, PlaywrightCode code, StepEnvironment environment, Pages pages,
+                         Screenshots screenshots) throws Throwable {
         String problem = code.problem(index);
         if (problem != null) {
             throw new IllegalStateException(problem);
         }
         BrowserContext context = environment.context(step);
+        screenshots.bind(context);
         java.util.function.UnaryOperator<String> resolve = value -> environment.resolve(value, step);
         if ("openPage".equals(step.name())) {
             if (pages.has(step.pageGuid())) {
                 return; // a precondition opened it already
             }
-            List<Page> opened = code.run(index, context, null, resolve);
+            List<Page> opened = code.run(index, context, null, resolve, screenshots);
             if (!opened.isEmpty()) {
                 pages.put(step.pageGuid(), opened.get(0));
                 pages.setCurrent(opened.get(0));
@@ -135,20 +139,27 @@ public final class TestPlayer {
             return;
         }
         Page page = pages.get(step.pageGuid());
-        if (page == null || page.isClosed() || page.context() != context) {
+        boolean ownPage = step.signal("popup") == null && PlaywrightCode.opensOwnPage(step.code());
+        if (!ownPage && (page == null || page.isClosed() || page.context() != context)) {
             // A test case that starts without openPage (edited, or recorded into an existing page), or another user.
             page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
             pages.put(step.pageGuid(), page);
         }
-        pages.setCurrent(page);
-        List<Page> opened = code.run(index, context, page, resolve);
-        JsonObject popup = step.signal("popup");
-        if (popup != null && !opened.isEmpty()) {
-            if (popup.has("popupPageGuid")) {
-                pages.put(popup.get("popupPageGuid").getAsString(), opened.get(0));
-            }
-            pages.setCurrent(opened.get(0));
+        if (!ownPage) {
+            pages.setCurrent(page);
         }
+        List<Page> opened = code.run(index, context, page, resolve, screenshots);
+        if (opened.isEmpty()) {
+            return;
+        }
+        JsonObject popup = step.signal("popup");
+        if (popup == null) {
+            // the step's code opened its page itself (Page page = context.newPage()): later steps act on that page
+            pages.put(step.pageGuid(), opened.get(0));
+        } else if (popup.has("popupPageGuid")) {
+            pages.put(popup.get("popupPageGuid").getAsString(), opened.get(0));
+        }
+        pages.setCurrent(opened.get(0));
     }
 
     private static Path photograph(Page page, Path target) {
