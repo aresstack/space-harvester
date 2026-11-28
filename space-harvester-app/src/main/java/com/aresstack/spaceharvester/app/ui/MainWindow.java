@@ -1240,6 +1240,33 @@ public final class MainWindow implements AppContext.Navigator {
             }
         }
         leftStack.show(areas);
+        fitLeftWidth(any);
+    }
+
+    /** Die Breite, die die linke Leiste hatte, bevor ein Bereich der rechten sie breiter brauchte; sonst -1. */
+    private int leftWidthBefore = -1;
+
+    /**
+     * Chat, Analysen und Aufträge brauchen ihre Mindestbreite auch am linken Rand (in schmalerer Leiste überlappen
+     * sich die Knöpfe neben „Senden“). Solange einer dort offen ist, ist die linke Leiste mindestens so breit und
+     * lässt sich nicht schmaler ziehen; danach hat sie wieder ihre alte Breite, wenn niemand sie verstellt hat.
+     */
+    private void fitLeftWidth(boolean guests) {
+        int min = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH;
+        leftStack.setMinimumSize(new Dimension(guests ? min : 0, 0));
+        if (split.getWidth() <= 0) {
+            return;
+        }
+        int width = split.getDividerLocation();
+        if (guests && width < min) {
+            leftWidthBefore = width;
+            split.setDividerLocation(min);
+        } else if (!guests && leftWidthBefore >= 0) {
+            if (width == min) {
+                split.setDividerLocation(leftWidthBefore);
+            }
+            leftWidthBefore = -1;
+        }
     }
 
     /** Die Kette am linken Rand (für Tests). */
