@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.app.ui.controls.ComicDivider;
 import com.aresstack.spaceharvester.app.ui.controls.InputFrame;
 import com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle;
 import com.aresstack.spaceharvester.app.ui.deck.editor.DocumentEditor;
+import com.aresstack.spaceharvester.app.ui.deck.editor.EditorIcons;
 import com.aresstack.spaceharvester.deck.editor.EditorSession;
 import com.aresstack.spaceharvester.deck.editor.EditorSessions;
 import com.aresstack.spaceharvester.deck.ndv.NdvBookmark;
@@ -105,11 +106,11 @@ final class NdvBrowser extends JPanel {
     private final PlaceholderField libraryFilter = new PlaceholderField(10, "Bibliothek filtern");
     /**
      * Seitenleiste links (Angelo 24.11.): oben die eine Suche, darunter ein Reiter, unten in der Fußleiste die Reiter.
-     * Nichts mehr neben dem Quelltext; Ressourcen, Callees/Caller, Aufrufe/Daten und Gliederung stehen hier.
+     * Nichts mehr neben dem Quelltext; Ressourcen, Aufrufe/Daten und Gliederung stehen hier. Den Reiter Callees/Caller
+     * des Editors gibt es hier nicht: Er zeigte dasselbe wie „Aufrufe/Daten“ (Angelo 28.11.2026), dessen Symbol er erbt.
      */
     static final String SIDE_LIBRARIES = "Bibliotheken";
     static final String SIDE_RESOURCES = EditorSideBar.RESOURCES;
-    static final String SIDE_CALLS = EditorSideBar.CALLS;
     static final String SIDE_RELATIONS = "Aufrufe/Daten";
     static final String SIDE_OUTLINE = EditorSideBar.OUTLINE;
     /** Nur in der Diagramm-Ansicht („Visuell“): deren Werkzeuge; danach zurück zum vorigen Reiter. */
@@ -905,14 +906,17 @@ final class NdvBrowser extends JPanel {
 
     /** Die Seitenleiste: Suche oben (je Reiter ein Feld, sichtbar immer eins), Reiter, Fußleiste mit den Reitern. */
     private JPanel sideBar() {
+        // Wer zuletzt Callees/Caller offen hatte, landet beim Reiter, der es jetzt zeigt.
+        String remembered = EditorSideBar.CALLS.equals(state.sideTab()) ? SIDE_RELATIONS : state.sideTab();
         sideBar = new EditorSideBar(
                 new EditorSideBar.Home(SIDE_LIBRARIES, FilesIcons.folder(), "Bibliotheken",
                         new com.aresstack.spaceharvester.app.ui.controls.SideHead(SIDE_LIBRARIES, libraryFilter),
                         libraryBusy, null),
-                List.of(new EditorSideBar.Extra(SIDE_RELATIONS, Glyph.GRAPH, "Aufrufe/Aufrufer/Daten aus dem Index der "
-                        + "Bibliothek (Tiefe bis " + NdvAnalysis.HIERARCHY_DEPTH + ")", "Aufrufe/Daten filtern",
-                        relationsPanel, relationsPanel::query)),
-                state.sideTab(), state::sideTab);
+                false,
+                List.of(new EditorSideBar.Extra(SIDE_RELATIONS, EditorIcons.relations(), "Aufrufe/Aufrufer/Daten aus "
+                        + "dem Index der Bibliothek (Tiefe bis " + NdvAnalysis.HIERARCHY_DEPTH + ")",
+                        "Aufrufe/Daten filtern", relationsPanel, relationsPanel::query)),
+                remembered, state::sideTab);
         sideBar.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 6));
         return sideBar;
     }

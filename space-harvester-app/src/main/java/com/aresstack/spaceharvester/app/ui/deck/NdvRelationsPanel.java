@@ -165,7 +165,7 @@ final class NdvRelationsPanel extends JPanel {
             NaturalDependencyGraph.CallHierarchyNode start = graph.get().getCallHierarchy(object, callees,
                     NdvAnalysis.HIERARCHY_DEPTH);
             start.getChildren().forEach(child -> root.add(node(child, start.getObjectName(), callees)));
-            note.setText(start.getChildren().isEmpty() ? (callees ? "Ruft nichts auf" : "Wird von nichts aufgerufen")
+            note.setText(start.getChildren().isEmpty() ? (callees ? "Ruft nichts auf" : noCallers(graph.get()))
                     : (start.totalNodes() - 1) + " Einträge, Tiefe bis " + NdvAnalysis.HIERARCHY_DEPTH);
         }
         com.aresstack.spaceharvester.app.ui.deck.editor.TreeQuery.prune(root, query, String::valueOf);
@@ -175,6 +175,18 @@ final class NdvRelationsPanel extends JPanel {
                 tree.expandRow(row);
             }
         }
+    }
+
+    /**
+     * Aufrufer kennt nur der Graph der Bibliothek: Er enthält die zwischengespeicherten Quelltexte dieser Bibliothek.
+     * Ein Einstiegsprogramm (gestartet aus JCL, einem Menü oder einer anderen Bibliothek) hat dort keinen; der Hinweis
+     * sagt deshalb, worin gesucht wurde.
+     */
+    private static String noCallers(NaturalDependencyGraph graph) {
+        int sources = graph.getKnownSources().size();
+        String library = graph.getLibrary() == null ? "der Bibliothek" : graph.getLibrary();
+        return "Kein Aufrufer in " + library + " (" + sources + (sources == 1 ? " Quelltext" : " Quelltexte")
+                + " durchsucht)";
     }
 
     /**
