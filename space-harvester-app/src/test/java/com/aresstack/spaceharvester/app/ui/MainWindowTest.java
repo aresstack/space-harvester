@@ -746,6 +746,7 @@ class MainWindowTest {
                 Component chatArea = find(surface,
                         com.aresstack.spaceharvester.app.ui.content.ChatSidebar.class).get(0);
                 int full = window.leftStack().getHeight();
+                int leftBefore = window.split().getPreferredLeftWidth();
                 assertThat(window.leftStack().shown()).hasSize(1);
 
                 // Der offene Chat wandert an den linken Rand: Sein Bereich steht unter dem Explorer, rechts ist zu.
@@ -761,6 +762,11 @@ class MainWindowTest {
                         + com.aresstack.spaceharvester.app.ui.controls.AreaStack.GAP).isEqualTo(full);
                 assertThat(window.chatSplit().getDividerSize()).as("rechts ist nichts mehr offen").isZero();
                 assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + harvester)).isEqualTo("L=R,*0:1;R=");
+                // Auch links hat der Chat seine Mindestbreite, sonst überlappen sich die Knöpfe neben „Senden“.
+                assertThat(window.leftStack().getWidth()).isGreaterThanOrEqualTo(
+                        com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH);
+                assertThat(window.leftStack().getMinimumSize().width).isEqualTo(
+                        com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH);
                 // Die Kugel sitzt auf dem linken Trenner, auf Höhe ihres Bereichs.
                 Component ballView = window.chatToggle().getParent();
                 java.awt.Rectangle ballAt = SwingUtilities.convertRectangle(ballView.getParent(),
@@ -799,6 +805,8 @@ class MainWindowTest {
                 layoutAll(surface);
                 assertThat(window.chatOpen()).isFalse();
                 assertThat(window.leftStack().getWidth()).isZero();
+                // Ohne Gast gilt wieder die Breite von vorher, auch wenn die Leiste gerade zu ist.
+                assertThat(window.split().getPreferredLeftWidth()).isEqualTo(leftBefore);
                 window.chatToggle().doClick();
                 window.split().openLeft();
                 layoutAll(surface);
