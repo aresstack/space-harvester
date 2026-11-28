@@ -45,6 +45,8 @@ public final class PearlString {
     private final Map<String, Tool> tools = new LinkedHashMap<>();
     /** Kennung der Knopfleiste in der Reihenfolge der Gruppen ({@link #units}) und in {@link #placement}. */
     public static final String RAIL = "R";
+    /** Vor der Nummer einer Kugel in {@link #placement}: Das Werkzeug gehört der Kette des anderen Rands. */
+    public static final String GUEST = "*";
 
     /** Die Gruppen von oben nach unten: die Knopfleiste ({@link #RAIL}) und jede Kugel mit ihrem Namen. */
     private final List<String> units = new ArrayList<>(List.of(RAIL));
@@ -436,8 +438,10 @@ public final class PearlString {
             if (RAIL.equals(unit)) {
                 text.append(RAIL);
             } else {
-                // Gezählt wird in der Kette, der das Werkzeug gehört: Auch eine Kugel zu Gast ist so wiederzufinden.
-                text.append(guests.getOrDefault(unit, this).tools().indexOf(unit)).append(':')
+                // Gezählt wird in der Kette, der das Werkzeug gehört; ein Gast vom anderen Rand trägt das Zeichen
+                // davor, damit er nicht mit einem eigenen Werkzeug derselben Nummer verwechselt wird.
+                text.append(guests.containsKey(unit) ? GUEST : "")
+                        .append(guests.getOrDefault(unit, this).tools().indexOf(unit)).append(':')
                         .append(open.contains(unit) ? 1 : 0);
             }
         }
@@ -446,18 +450,17 @@ public final class PearlString {
 
     /** Stellt gemerkte Plätze ({@link #placement}) wieder her; Unlesbares wird übergangen. Meldet eine Änderung. */
     public void restore(String placement) {
-        restore(placement, this);
+        restore(placement, null);
     }
 
     /**
-     * Wie {@link #restore(String)}, aber die Nummern meinen die Werkzeuge von {@code origin}: Was dort noch in der
-     * Leiste steht, kommt als Kugel auf diese Kette.
+     * Wie {@link #restore(String)}; Einträge mit {@link #GUEST} davor meinen Werkzeuge von {@code other}, der Kette
+     * des anderen Rands: Was dort noch in der Leiste steht, kommt als Kugel auf diese Kette.
      */
-    public void restore(String placement, PearlString origin) {
+    public void restore(String placement, PearlString other) {
         if (placement == null || placement.isBlank()) {
             return;
         }
-        List<String> names = origin.tools();
         boolean railSeen = false;
         for (String part : placement.split(",")) {
             String[] fields = part.trim().split(":");
@@ -468,8 +471,14 @@ public final class PearlString {
                 railSeen = true;
                 continue;
             }
+            boolean guest = fields[0].startsWith(GUEST);
+            PearlString origin = guest ? other : this;
+            if (origin == null) {
+                continue;
+            }
+            List<String> names = origin.tools();
             try {
-                int number = Integer.parseInt(fields[0]);
+                int number = Integer.parseInt(guest ? fields[0].substring(GUEST.length()) : fields[0]);
                 // Das letzte Symbol bleibt in der Leiste.
                 if (number < 0 || number >= names.size() || origin.pearl(names.get(number))
                         || origin.rail.names().size() == 1) {

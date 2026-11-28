@@ -141,7 +141,7 @@ public final class MainWindow implements AppContext.Navigator {
     static final String SIDE_PEARLS_KEY = "sidebar.right.pearls";
     /**
      * Gemerkte Anordnung der Kugeln je Perspektive (Schlüssel plus Punkt und Kennung der Perspektive): links und
-     * rechts je {@code PearlString.placement}, etwa {@code "L=R,0:1;R=R,2:0"}.
+     * rechts je {@code PearlString.placement}, etwa {@code "L=R,*0:1;R=R,2:0"} (der Stern: ein Werkzeug vom anderen Rand).
      */
     static final String PEARLS_KEY = "sidebar.pearls";
     /**
@@ -1246,7 +1246,7 @@ public final class MainWindow implements AppContext.Navigator {
             }
             for (String part : stored.split(";")) {
                 if (part.startsWith("R=")) {
-                    sidePearls.restore(part.substring(2));
+                    sidePearls.restore(part.substring(2), leftPearls);
                 } else if (part.startsWith("L=")) {
                     leftPearls.restore(part.substring(2), sidePearls);
                 }

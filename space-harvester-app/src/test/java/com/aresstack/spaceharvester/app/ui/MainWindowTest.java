@@ -675,7 +675,7 @@ class MainWindowTest {
                 assertThat(shown.get(0).getHeight() + shown.get(1).getHeight()
                         + com.aresstack.spaceharvester.app.ui.controls.AreaStack.GAP).isEqualTo(full);
                 assertThat(window.chatSplit().getDividerSize()).as("rechts ist nichts mehr offen").isZero();
-                assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + harvester)).isEqualTo("L=R,0:1;R=");
+                assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + harvester)).isEqualTo("L=R,*0:1;R=");
                 // Die Kugel sitzt auf dem linken Trenner, auf Höhe ihres Bereichs.
                 Component ballView = window.chatToggle().getParent();
                 java.awt.Rectangle ballAt = SwingUtilities.convertRectangle(ballView.getParent(),
@@ -716,7 +716,7 @@ class MainWindowTest {
                 right.detach(chat, 0);
                 assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + deck)).startsWith("L=;R=0:");
                 assertThat(AppState.shared().get(MainWindow.PEARLS_KEY + "." + harvester))
-                        .as("die andere Perspektive bleibt, wie sie war").startsWith("L=R,0:");
+                        .as("die andere Perspektive bleibt, wie sie war").startsWith("L=R,*0:");
 
                 // Zurück im Space Harvester steht der Chat wieder links.
                 window.perspectives().select(harvester);

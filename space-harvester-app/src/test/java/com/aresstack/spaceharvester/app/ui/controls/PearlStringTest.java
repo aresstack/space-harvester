@@ -172,7 +172,7 @@ class PearlStringTest {
             assertThat(dock.host(JOBS)).isSameAs(left);
             assertThat(dock.open(JOBS)).as("der offene Bereich zieht mit um").isTrue();
             assertThat(left.openPearls()).containsExactly(JOBS);
-            assertThat(left.placement()).as("gezählt wird in der Kette, der das Werkzeug gehört").isEqualTo("R,2:1");
+            assertThat(left.placement()).as("gezählt wird in der Kette, der das Werkzeug gehört").isEqualTo("R,*2:1");
             assertThat(dock.placement()).isEmpty();
             assertThat(dock.button(JOBS)).as("der Knopf ist der der Kugel am anderen Rand")
                     .isSameAs(left.button(JOBS));
@@ -182,7 +182,7 @@ class PearlStringTest {
             PearlString other = new PearlString(otherRail);
             other.tool(CHAT, Glyph.STAR, "").tool(ANALYSES, Glyph.TABLE, "").tool(JOBS, Glyph.CROSSHAIR, "");
             PearlString otherLeft = new PearlString(new SegmentedToggle());
-            otherLeft.restore("R,2:1", other);
+            otherLeft.restore("R,*2:1", other);
             assertThat(otherLeft.pearls()).containsExactly(JOBS);
             assertThat(other.host(JOBS)).isSameAs(otherLeft);
             assertThat(otherRail.names()).containsExactly(CHAT, ANALYSES);
