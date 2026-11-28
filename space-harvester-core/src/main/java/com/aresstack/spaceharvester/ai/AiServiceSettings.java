@@ -231,7 +231,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     public static final int DEFAULT_DEADLINE_MAX_TOKENS = 8192;
     public static final String DEFAULT_DEADLINE_THINKING = "none";
     /** Tokenlänge der Quellcode-Analysen: kurze Beschreibungen je Block, Verzweigung oder Aufruf. */
-    public static final int DEFAULT_SOURCE_CODE_MAX_TOKENS = 4096;
+    public static final int DEFAULT_SOURCE_CODE_MAX_TOKENS = DEFAULT_CHAT_MAX_TOKENS;
     /** Vorbelegung des Modells der Diagnose (Angelo 26.11.2026: „vorbelegen, GPT OSS“); änderbar. */
     public static final String DEFAULT_DIAGNOSIS_MODEL = "gpt-oss-120b";
 

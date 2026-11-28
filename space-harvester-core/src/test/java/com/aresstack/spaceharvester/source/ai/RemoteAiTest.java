@@ -713,8 +713,13 @@ class RemoteAiTest {
         askChat(chat.withStepThinking("none").sourceCode());
         askChat(chat.withStepThinking("none").withSourceCode(new AiServiceSettings.ModelUse("code-modell", null,
                 "high")).sourceCode());
+        // Angelos Einstellung: eigenes Modell, „denkt wenig“ – genau low geht mit, nie „none“
+        askChat(chat.withStepThinking("none").withSourceCode(new AiServiceSettings.ModelUse("openai/gpt-oss-120b",
+                8192, "low")).sourceCode());
 
-        assertThat(bodies).hasSize(3);
+        assertThat(bodies).hasSize(4);
+        assertThat(bodies.get(3)).contains("\"model\":\"openai/gpt-oss-120b\"", "\"reasoning_effort\":\"low\"",
+                "\"max_tokens\":8192").doesNotContain("\"none\"");
         assertThat(bodies.get(0)).contains("\"model\":\"gpt-oss\"", "\"reasoning_effort\":\"low\"",
                 "\"max_tokens\":" + AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS);
         assertThat(bodies.get(1)).contains("\"model\":\"gpt-oss\"").doesNotContain("reasoning_effort");
