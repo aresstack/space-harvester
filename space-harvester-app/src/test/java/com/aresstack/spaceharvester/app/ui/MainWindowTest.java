@@ -549,6 +549,12 @@ class MainWindowTest {
                         window.sideSwitch().getBounds(), surface);
                 assertThat(onLine.x + onLine.width / 2).as("mittig auf dem Trenner")
                         .isEqualTo(line.x + line.width / 2);
+                assertThat(onLine.y + onLine.height / 2).as("senkrecht mittig, an der Stelle des gelben Griffs")
+                        .isEqualTo(line.y + line.height / 2);
+                // Auch offen ist die Knopfleiste leicht durchscheinend, bis die Maus über ihr steht (Angelo
+                // 28.11.2026: immer, nicht nur zugeklappt).
+                assertThat(((com.aresstack.spaceharvester.app.ui.controls.SegmentedToggle) window.sideSwitch())
+                        .glassy()).isTrue();
                 window.jobsToggle().doClick();
                 assertThat(window.jobsOpen()).isTrue();
                 assertThat(window.jobsToggle().isSelected()).isTrue();
@@ -612,6 +618,8 @@ class MainWindowTest {
                 left = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), surface);
                 assertThat(left.x + left.width / 2).as("mittig auf dem Trenner")
                         .isEqualTo(leftLine.x + leftLine.width / 2);
+                assertThat(left.y + left.height / 2).as("senkrecht mittig, an der Stelle des gelben Griffs")
+                        .isEqualTo(leftLine.y + leftLine.height / 2);
             } finally {
                 // Der Bedienzustand liegt in den Benutzer-Einstellungen: andere Tests starten wieder mit dem Chat, zu.
                 window.chatOpen(true);

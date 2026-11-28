@@ -30,8 +30,8 @@ public final class EdgeOverlay extends JPanel {
     private final JPanel left = slot();
     private final JPanel right = slot();
     private JComponent bar;
-    /** Je Platz die Mitte, um die er steht (negativ: am Fensterrand); ohne Eintrag steht er am Rand. */
-    private final java.util.Map<JComponent, java.util.function.IntSupplier> anchors = new java.util.HashMap<>();
+    /** Je Platz die Mitte, um die er steht ({@code null}: am Fensterrand); ohne Eintrag steht er am Rand. */
+    private final java.util.Map<JComponent, java.util.function.Supplier<Point>> anchors = new java.util.HashMap<>();
 
     public EdgeOverlay() {
         super(new BorderLayout() {
@@ -73,21 +73,23 @@ public final class EdgeOverlay extends JPanel {
     }
 
     /**
-     * Hängt einen Platz an eine Mitte, etwa die eines Trenners ({@link DividerRail}): Solange {@code center} nicht
-     * negativ ist, steht der Platz mittig darum statt am Fensterrand.
+     * Hängt einen Platz an eine Mitte, etwa die eines Trenners ({@link DividerRail}): Solange {@code center} einen
+     * Punkt liefert, steht der Platz waagerecht und senkrecht mittig darum statt oben am Fensterrand.
      */
-    public void anchor(JComponent slot, java.util.function.IntSupplier center) {
+    public void anchor(JComponent slot, java.util.function.Supplier<Point> center) {
         anchors.put(slot, center);
     }
 
-    /** Linke Kante eines Platzes der Breite {@code width}: um seine Mitte, sonst an {@code edge}. */
-    private int placeX(JComponent slot, int width, int edge) {
-        java.util.function.IntSupplier anchor = anchors.get(slot);
-        int center = anchor == null ? -1 : anchor.getAsInt();
-        if (center < 0) {
-            return edge;
+    /** Wo ein Platz der Größe {@code size} steht: um seine Mitte, sonst an {@code edge} unter den Kopfleisten. */
+    private Point place(JComponent slot, Dimension size, int edge, int top) {
+        java.util.function.Supplier<Point> anchor = anchors.get(slot);
+        Point center = anchor == null ? null : anchor.get();
+        if (center == null) {
+            return new Point(edge, top);
         }
-        return Math.max(FRAME_LINE, Math.min(getWidth() - FRAME_LINE - width, center - width / 2));
+        int x = Math.max(FRAME_LINE, Math.min(getWidth() - FRAME_LINE - size.width, center.x - size.width / 2));
+        int y = Math.max(top, Math.min(getHeight() - size.height, center.y - size.height / 2));
+        return new Point(x, y);
     }
 
     /** Stellt {@code part} auf einen Platz ({@code null} leert ihn) und zeichnet neu. */
@@ -118,9 +120,10 @@ public final class EdgeOverlay extends JPanel {
         Point origin = SwingUtilities.convertPoint(bar.getParent(), bar.getLocation(), this);
         int top = origin.y + bar.getHeight() + HeadBar.HEIGHT + HEAD_GAP;
         Dimension leftSize = left.getComponentCount() == 0 ? new Dimension() : left.getPreferredSize();
-        left.setBounds(placeX(left, leftSize.width, FRAME_LINE), top, leftSize.width, leftSize.height);
+        Point leftAt = place(left, leftSize, FRAME_LINE, top);
+        left.setBounds(leftAt.x, leftAt.y, leftSize.width, leftSize.height);
         Dimension rightSize = right.getComponentCount() == 0 ? new Dimension() : right.getPreferredSize();
-        right.setBounds(placeX(right, rightSize.width, getWidth() - FRAME_LINE - rightSize.width), top,
-                rightSize.width, rightSize.height);
+        Point rightAt = place(right, rightSize, getWidth() - FRAME_LINE - rightSize.width, top);
+        right.setBounds(rightAt.x, rightAt.y, rightSize.width, rightSize.height);
     }
 }

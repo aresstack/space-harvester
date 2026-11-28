@@ -30,6 +30,8 @@ public final class ComicDivider extends BasicSplitPaneDivider {
     private boolean draggable = true;
     /** Ob der kleine gelbe Griff gezeichnet wird; sonst trägt der Trenner eine Knopfleiste ({@link DividerRail}). */
     private boolean gripShown = true;
+    /** Länge der Lücke in der Mitte der Linie, in der eine Knopfleiste sitzt; 0 ohne Lücke. */
+    private int gap;
 
     private ComicDivider(BasicSplitPaneUI ui, ComicPalette palette) {
         super(ui);
@@ -92,6 +94,25 @@ public final class ComicDivider extends BasicSplitPaneDivider {
         }
     }
 
+    /**
+     * Unterbricht die Linie in ihrer Mitte auf {@code length} Pixeln (Angelo 28.11.2026): Dort sitzt eine
+     * durchscheinende Knopfleiste, hinter der die Linie nicht durchscheinen soll; darüber und darunter läuft sie
+     * weiter. 0 schließt die Lücke.
+     */
+    public static void gap(JSplitPane pane, int length) {
+        if (pane.getUI() instanceof BasicSplitPaneUI basic && basic.getDivider() instanceof ComicDivider divider
+                && divider.gap != Math.max(0, length)) {
+            divider.gap = Math.max(0, length);
+            divider.repaint();
+        }
+    }
+
+    /** Die Länge der Lücke in der Linie dieser Teilung (für Tests). */
+    public static int gap(JSplitPane pane) {
+        return pane.getUI() instanceof BasicSplitPaneUI basic && basic.getDivider() instanceof ComicDivider divider
+                ? divider.gap : 0;
+    }
+
     /** Ob der Trenner dieser Teilung seinen gelben Griff zeigt (für Tests). */
     public static boolean grip(JSplitPane pane) {
         return pane.getUI() instanceof BasicSplitPaneUI basic && basic.getDivider() instanceof ComicDivider divider
@@ -145,9 +166,15 @@ public final class ComicDivider extends BasicSplitPaneDivider {
             int center = across / 2;
             int grip = Math.min(GRIP_MAX, along / 3);
             int gripStart = (along - grip) / 2;
+            int gapStart = (along - gap) / 2;
             if (lying) {
                 g2.setColor(palette.getInk());
-                g2.fillRoundRect(8, center - 1, Math.max(2, along - 16), 2, 2, 2);
+                if (gap > 0) {
+                    g2.fillRoundRect(8, center - 1, Math.max(2, gapStart - 8), 2, 2, 2);
+                    g2.fillRoundRect(gapStart + gap, center - 1, Math.max(2, along - 8 - gapStart - gap), 2, 2, 2);
+                } else {
+                    g2.fillRoundRect(8, center - 1, Math.max(2, along - 16), 2, 2, 2);
+                }
                 if (gripShown && grip > 10 && across >= 6) {
                     g2.setColor(palette.getAccentYellow());
                     g2.fillRoundRect(gripStart, center - 2, grip, 5, 5, 5);
@@ -156,7 +183,12 @@ public final class ComicDivider extends BasicSplitPaneDivider {
                 }
             } else {
                 g2.setColor(palette.getInk());
-                g2.fillRoundRect(center - 1, 8, 2, Math.max(2, along - 16), 2, 2);
+                if (gap > 0) {
+                    g2.fillRoundRect(center - 1, 8, 2, Math.max(2, gapStart - 8), 2, 2);
+                    g2.fillRoundRect(center - 1, gapStart + gap, 2, Math.max(2, along - 8 - gapStart - gap), 2, 2);
+                } else {
+                    g2.fillRoundRect(center - 1, 8, 2, Math.max(2, along - 16), 2, 2);
+                }
                 if (gripShown && grip > 10 && across >= 6) {
                     g2.setColor(palette.getAccentYellow());
                     g2.fillRoundRect(center - 2, gripStart, 5, grip, 5, 5);

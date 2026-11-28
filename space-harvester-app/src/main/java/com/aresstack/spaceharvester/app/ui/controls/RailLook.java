@@ -45,8 +45,8 @@ public enum RailLook {
         this.chosenMark = chosenMark;
     }
 
-    /** Die Vorgabe: Sie hält das Gelb des Griffs der übrigen Trenner als Erkennungsmerkmal. */
-    public static final RailLook DEFAULT = INK_YELLOW_EDGE;
+    /** Die Vorgabe (Angelo 28.11.2026): die schwarze Leiste, wie sie am Fensterrand schon war. */
+    public static final RailLook DEFAULT = INK;
 
     /** Die gewählte Fassung; ohne Wahl {@link #DEFAULT}. */
     public static RailLook current() {
