@@ -58,9 +58,15 @@ public final class DiagramLabels implements BlockLabelSummarizer {
      * @param chat     streamender Chat-Port, {@code null} ohne KI-Dienst
      * @param model    Modellname, {@code null} ohne Modell
      * @param thinking Nachdenken ({@code none}, {@code low}, …) oder {@code null} = Einstellung des Dienstes
-     * @param budget   Tokenbudget je Anfrage, {@code null} ohne bekannte Kontextlänge (dann eine Anfrage)
+     * @param budget    Tokenbudget je Anfrage, {@code null} ohne bekannte Kontextlänge (dann eine Anfrage)
+     * @param maxTokens Ausgabelimit je Anfrage (dasselbe wie die Antwortreserve im Budget), {@code null} =
+     *                  Einstellung des Dienstes
      */
-    public record Target(AiChat chat, String model, String thinking, ModelBudget budget) {
+    public record Target(AiChat chat, String model, String thinking, ModelBudget budget, Integer maxTokens) {
+
+        public Target(AiChat chat, String model, String thinking, ModelBudget budget) {
+            this(chat, model, thinking, budget, budget == null ? null : budget.answerTokens());
+        }
     }
 
     private final Supplier<Target> target;
@@ -166,7 +172,8 @@ public final class DiagramLabels implements BlockLabelSummarizer {
         CountDownLatch done = new CountDownLatch(1);
         AtomicReference<String> answer = new AtomicReference<>();
         AiChat.Task task = current.chat().stream(new AiChat.Request(List.of(AiChat.Message.system(SYSTEM_PROMPT),
-                AiChat.Message.user(prompt)), current.model(), current.thinking()), new AiChat.Listener() {
+                AiChat.Message.user(prompt)), current.model(), current.thinking(), List.of(), null,
+                current.maxTokens()), new AiChat.Listener() {
             @Override
             public void delta(String text) {
             }

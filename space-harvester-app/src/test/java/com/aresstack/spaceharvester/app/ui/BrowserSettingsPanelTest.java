@@ -69,25 +69,23 @@ class BrowserSettingsPanelTest {
     @Test
     void aSearchPageAddedToInternIsSavedForInternOnly() {
         BrowserSettingsPanel panel = new BrowserSettingsPanel(settings);
-        panel.internal.engines.searchPageQuestion = current -> "https://portal.example/suche?q={query}";
+        panel.internal.engines.searchPageQuestion = current -> "portal.example/";
 
         panel.internal.engines.addSearchPage();
 
         assertThat(settings.engines(BrowserProfile.INTERNAL).getEntries()).extracting(e -> e.getEngineId())
-                .containsExactly("https://portal.example/suche?q={query}");
+                .as("nur die Adresse der Seite, ohne Schema mit https://").containsExactly("https://portal.example/");
         assertThat(settings.engines(BrowserProfile.EXTERNAL).getEntries()).extracting(e -> e.getEngineId())
-                .doesNotContain("https://portal.example/suche?q={query}");
+                .doesNotContain("https://portal.example/");
     }
 
     @Test
-    void anAddressWithoutQueryIsAskedAgainAndCancellingSavesNothing() {
+    void cancellingTheQuestionSavesNothing() {
         BrowserSettingsPanel panel = new BrowserSettingsPanel(settings);
-        java.util.Iterator<String> answers = java.util.Arrays.asList("https://portal.example/", null).iterator();
-        panel.internal.engines.searchPageQuestion = current -> answers.next();
+        panel.internal.engines.searchPageQuestion = current -> null;
 
         panel.internal.engines.addSearchPage();
 
-        assertThat(panel.internal.engines.statusText()).isEqualTo(SearchEngineTable.NOT_A_SEARCH_PAGE);
         assertThat(values).doesNotContainKey("browser.search.internal.engines");
     }
 

@@ -130,11 +130,25 @@ public class BrowserSearchEngineSelectionTest {
     }
 
     @Test
+    public void aSearchPageNamedOnlyByItsAddressIsAskedThroughItsOwnSearchField() {
+        String portal = "https://portal.example/";
+        assertTrue(BrowserSearchEngineCatalog.isSearchPage(portal));
+
+        BrowserSearchEngine engine = BrowserSearchEngineCatalog.byId(portal);
+        assertEquals(portal, engine.getId());
+        assertEquals("portal.example", engine.getDisplayName());
+        assertTrue(engine.usesSearchForms());
+        assertEquals(portal, engine.formOf(0).getHomeUrl());
+        assertTrue(engine.formOf(0).getSearchBoxSelectors().contains("input[type=search]"));
+        org.junit.Assert.assertFalse(BrowserSearchEngineCatalog.runsInSearchBrowser(portal));
+    }
+
+    @Test
     public void aSearchPageOfTheUsersOwnIsAnEngineWithItsUrlAsId() {
         String portal = "https://portal.example:8443/suche?q={query}&bereich=a,b";
         assertTrue(BrowserSearchEngineCatalog.isSearchPage(portal));
-        org.junit.Assert.assertFalse(BrowserSearchEngineCatalog.isSearchPage("https://portal.example/suche"));
         org.junit.Assert.assertFalse(BrowserSearchEngineCatalog.isSearchPage("ftp://portal.example/{query}"));
+        org.junit.Assert.assertFalse(BrowserSearchEngineCatalog.isSearchPage("Reisekosten"));
 
         BrowserSearchEngine engine = BrowserSearchEngineCatalog.byId(portal);
         assertEquals(portal, engine.getId());

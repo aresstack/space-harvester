@@ -150,6 +150,12 @@ public final class SettingsView implements View {
             new NumberSettingsPanel<>(APP_TIMEOUTS_HEADING, "Alle Fristen der App auf ihre Vorgabe zurücksetzen",
                     AppTimeouts.Value.class, () -> AppTimeouts.shared().values(),
                     NumberSettingsPanel.Store.immediately(values -> AppTimeouts.shared().save(values)));
+    /** Bereich „Allgemein“: wie viele Einträge blätternde Listen je Schritt laden (app-state.json). */
+    static final String LIST_STEPS_HEADING = "Listen";
+    final NumberSettingsPanel<ListSteps.Value> listSteps =
+            new NumberSettingsPanel<>(LIST_STEPS_HEADING, "Alle Schritte der Listen auf ihre Vorgabe zurücksetzen",
+                    ListSteps.Value.class, () -> ListSteps.shared().values(),
+                    NumberSettingsPanel.Store.immediately(values -> ListSteps.shared().save(values)));
     /** Bereich „NDV“: Natural-Blockfarben im Editor (wie MainframeMate). */
     final NdvSettingsPanel ndv = new NdvSettingsPanel();
     final NdvAnalysisSettingsPanel ndvAnalysis = new NdvAnalysisSettingsPanel();
@@ -337,6 +343,7 @@ public final class SettingsView implements View {
                 Comic.plate("Ablage", Comic.PETROL, data),
                 Comic.plate(FileAccessEditor.HEADING, Comic.ORANGE, fileAccess.component()),
                 Comic.plate(APP_TIMEOUTS_HEADING, Comic.PETROL, appTimeouts.component()),
+                Comic.plate(LIST_STEPS_HEADING, Comic.PETROL, listSteps.component()),
                 Comic.plate("Diagnose", Comic.DARK, diagnosis),
                 Comic.plate(CONSOLE_TITLE, Comic.DARK, consoleRows)));
         page(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.serviceComponent())));

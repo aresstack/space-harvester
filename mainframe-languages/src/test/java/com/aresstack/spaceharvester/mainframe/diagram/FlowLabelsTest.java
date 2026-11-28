@@ -128,18 +128,79 @@ class FlowLabelsTest {
         assertThat(labels.branch(6)).as("im READ steht kein Zweig").isNull();
     }
 
+    @Test
+    void aCallInsideALoopKeepsTheBranchAroundTheLoop() {
+        String program = """
+                DECIDE ON FIRST VALUE OF #TYP
+                  VALUE 'A'
+                    FOR #I = 1 TO 3
+                      CALLNAT 'SUB' #I
+                    END-FOR
+                  NONE
+                    IGNORE
+                END-DECIDE
+                END
+                """;
+        FlowLabels labels = FlowLabels.of(program, null, null, FlowLabels.Layout.DEFAULT);
+        assertThat(labels.branch(4)).isEqualTo("#TYP = 'A'");
+    }
+
+    @Test
+    void statementsBeforeTheProgramEndAreStillDescribed() {
+        String program = """
+                DEFINE DATA LOCAL
+                1 #X (N1)
+                END-DEFINE
+                CALLNAT 'INIT'
+                MOVE 1 TO #X
+                WRITE #X
+                END
+                """;
+        FakeAi ai = new FakeAi(true);
+        OutlineToMermaidConverter.blockLabelSummarizer(ai);
+
+        SourceDiagrams.generate(program, "ENDE.NSP", Optional.of(SourceLanguage.NATURAL), DiagramType.FLOWCHART, 0,
+                true, false, null, null, true);
+
+        assertThat(ai.codes).anySatisfy(code -> assertThat(code).contains("MOVE 1 TO #X").contains("WRITE #X"));
+    }
+
+    @Test
+    void switchingTheAiOffWhileDescribingStopsFurtherRequests() {
+        int[] askedBeforeOff = {-1};
+        FakeAi ai = new FakeAi(true) {
+            @Override
+            public String describe(String code, int maxLength, String purpose) {
+                String answer = super.describe(code, maxLength, purpose);
+                askedBeforeOff[0] = codes.size();
+                switchOff();
+                return answer;
+            }
+        };
+        OutlineToMermaidConverter.blockLabelSummarizer(ai);
+
+        flow(true, true);
+
+        assertThat(askedBeforeOff[0]).isPositive();
+        assertThat(ai.codes).hasSize(askedBeforeOff[0]);
+    }
+
     private static String flow(boolean ai, boolean collapsed) {
         return SourceDiagrams.generate(PROGRAM, "VERTEIL.NSP", Optional.of(SourceLanguage.NATURAL),
                 DiagramType.FLOWCHART, 0, collapsed, false, SOURCES::get, null, ai).mermaid().orElseThrow();
     }
 
-    private static final class FakeAi implements BlockLabelSummarizer {
-        private final boolean enabled;
+    private static class FakeAi implements BlockLabelSummarizer {
+        private boolean enabled;
         final List<String> codes = new ArrayList<>();
         final List<String> purposes = new ArrayList<>();
 
         FakeAi(boolean enabled) {
             this.enabled = enabled;
+        }
+
+        void switchOff() {
+            enabled = false;
         }
 
         @Override

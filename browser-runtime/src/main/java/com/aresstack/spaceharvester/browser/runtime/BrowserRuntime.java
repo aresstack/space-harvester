@@ -47,6 +47,20 @@ public final class BrowserRuntime {
     /** Playwright's channel for a Firefox driven over WebDriver BiDi (installed Firefox and Camoufox). */
     static final String FIREFOX_BIDI_CHANNEL = BrowserChannel.FIREFOX_BIDI_CHANNEL;
 
+    /**
+     * One browser launch at a time in this process. A launch is measured against the start limit
+     * ({@link BrowserRuntimeConfig#startTimeout}); two launches side by side (the chat's browser and the search browser
+     * of one round) share the machine, so each counted the other's work against its own limit and both failed where
+     * either alone starts in time. Fair: the starts run in the order they were asked for.
+     */
+    private static final java.util.concurrent.locks.ReentrantLock LAUNCHING =
+            new java.util.concurrent.locks.ReentrantLock(true);
+    /** How many launches ran at once at most (the live test checks that it stays one). */
+    private static final java.util.concurrent.atomic.AtomicInteger LAUNCHES_RUNNING =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.concurrent.atomic.AtomicInteger MOST_LAUNCHES_AT_ONCE =
+            new java.util.concurrent.atomic.AtomicInteger();
+
     private final BrowserRuntimeConfig config;
     private final BrowserProbe probe;
 
@@ -199,56 +213,64 @@ public final class BrowserRuntime {
                 }
             }
 
-            stage = "BROWSER_LAUNCH";
-            long launchStarted = System.nanoTime();
-            LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " starting"
-                    + (persistent ? " on a lasting profile" : " (ephemeral)"));
-            if (persistent) {
-                Path directory = profile.directory();
-                context = switch (channel) {
-                    case CAMOUFOX -> playwright.firefox().launchPersistentContext(directory,
-                            withStartTimeout(camoufoxPersistentOptions(executable, camoufox, headless)));
-                    case FIREFOX -> playwright.firefox().launchPersistentContext(directory,
-                            withStartTimeout(firefoxPersistentOptions(executable, headless)));
-                    case CHROME, EDGE -> playwright.chromium().launchPersistentContext(directory,
-                            withStartTimeout(chromiumPersistentOptions(channel, headless, extension != null)));
-                };
-                browser = context.browser();
-                if (extension != null) {
+            stage = "BROWSER_LAUNCH_QUEUE";
+            LAUNCHING.lockInterruptibly();
+            MOST_LAUNCHES_AT_ONCE.accumulateAndGet(LAUNCHES_RUNNING.incrementAndGet(), Math::max);
+            try {
+                stage = "BROWSER_LAUNCH";
+                long launchStarted = System.nanoTime();
+                LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " starting"
+                        + (persistent ? " on a lasting profile" : " (ephemeral)"));
+                if (persistent) {
+                    Path directory = profile.directory();
+                    context = switch (channel) {
+                        case CAMOUFOX -> playwright.firefox().launchPersistentContext(directory,
+                                withStartTimeout(camoufoxPersistentOptions(executable, camoufox, headless)));
+                        case FIREFOX -> playwright.firefox().launchPersistentContext(directory,
+                                withStartTimeout(firefoxPersistentOptions(executable, headless)));
+                        case CHROME, EDGE -> playwright.chromium().launchPersistentContext(directory,
+                                withStartTimeout(chromiumPersistentOptions(channel, headless, extension != null)));
+                    };
+                    browser = context.browser();
+                    if (extension != null) {
+                        stage = "ADDON_LOAD";
+                        try {
+                            ChromeExtension.load(browser, extension, addon.chromiumExtensionId());
+                            addonLoaded = true;
+                        } catch (RuntimeException loadFailed) {
+                            addonFailure = "extension not loaded: " + firstLine(loadFailed);
+                        }
+                    }
+                } else {
+                    BrowserType.LaunchOptions options = switch (channel) {
+                        case CAMOUFOX -> camoufoxLaunchOptions(executable, camoufox, headless, acceptRepost);
+                        case FIREFOX -> firefoxLaunchOptions(executable, headless, acceptRepost);
+                        case CHROME, EDGE -> chromiumLaunchOptions(channel, headless);
+                    };
+                    if (config.startTimeout().toMillis() > 0) {
+                        options.setTimeout(config.startTimeout().toMillis());
+                    }
+                    browser = channel.firefoxFamily() ? playwright.firefox().launch(options)
+                            : playwright.chromium().launch(options);
+                }
+                LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " started after "
+                        + millisSince(launchStarted) + " ms");
+                if (firefoxAddon != null) {
                     stage = "ADDON_LOAD";
+                    long addonStarted = System.nanoTime();
+                    LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " installing its add-on");
                     try {
-                        ChromeExtension.load(browser, extension, addon.chromiumExtensionId());
+                        FirefoxAddon.install(context, browser, firefoxAddon);
                         addonLoaded = true;
+                        LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " add-on installed after "
+                                + millisSince(addonStarted) + " ms");
                     } catch (RuntimeException loadFailed) {
-                        addonFailure = "extension not loaded: " + firstLine(loadFailed);
+                        addonFailure = "add-on not loaded: " + firstLine(loadFailed);
                     }
                 }
-            } else {
-                BrowserType.LaunchOptions options = switch (channel) {
-                    case CAMOUFOX -> camoufoxLaunchOptions(executable, camoufox, headless, acceptRepost);
-                    case FIREFOX -> firefoxLaunchOptions(executable, headless, acceptRepost);
-                    case CHROME, EDGE -> chromiumLaunchOptions(channel, headless);
-                };
-                if (config.startTimeout().toMillis() > 0) {
-                    options.setTimeout(config.startTimeout().toMillis());
-                }
-                browser = channel.firefoxFamily() ? playwright.firefox().launch(options)
-                        : playwright.chromium().launch(options);
-            }
-            LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " started after "
-                    + millisSince(launchStarted) + " ms");
-            if (firefoxAddon != null) {
-                stage = "ADDON_LOAD";
-                long addonStarted = System.nanoTime();
-                LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " installing its add-on");
-                try {
-                    FirefoxAddon.install(context, browser, firefoxAddon);
-                    addonLoaded = true;
-                    LOG.log(System.Logger.Level.INFO, "browser " + channel.id() + " add-on installed after "
-                            + millisSince(addonStarted) + " ms");
-                } catch (RuntimeException loadFailed) {
-                    addonFailure = "add-on not loaded: " + firstLine(loadFailed);
-                }
+            } finally {
+                LAUNCHES_RUNNING.decrementAndGet();
+                LAUNCHING.unlock();
             }
             if (addonFailure != null) {
                 LOG.log(System.Logger.Level.WARNING, "browser " + channel.id() + " runs without its add-on: "
@@ -256,7 +278,10 @@ public final class BrowserRuntime {
             }
             return new RunningBrowser(channel, playwright, browser, context, profile, temporaryFiles, addonLoaded,
                     addonFailure);
-        } catch (IOException | RuntimeException failed) {
+        } catch (IOException | RuntimeException | InterruptedException failed) {
+            if (failed instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             long elapsedMillis = (System.nanoTime() - startedNanos) / 1_000_000L;
             RunningBrowser.closeQuietly(context, browser, playwright);
             if (profile != null) {
@@ -271,6 +296,11 @@ public final class BrowserRuntime {
                     + ", after " + elapsedMillis + " ms): " + firstLine(failed)
                     + (report == null ? "" : " (full report: " + report + ")"), stage, failed);
         }
+    }
+
+    /** How many browser launches ran at once at most in this process (one: they run one after another). */
+    static int mostLaunchesAtOnce() {
+        return MOST_LAUNCHES_AT_ONCE.get();
     }
 
     /** The driver JARs of the host package, then the pathing JAR for a long class path. */
