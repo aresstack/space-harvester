@@ -3,7 +3,6 @@ package com.aresstack.spaceharvester.app.ui.controls;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
-import java.awt.Insets;
 import java.awt.Point;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
@@ -18,8 +17,11 @@ import javax.swing.SwingUtilities;
  */
 public final class EdgeOverlay extends JPanel {
 
-    /** Abstand eines Platzes zum Fensterrand. */
-    public static final int EDGE_GAP = 1;
+    /**
+     * Abstand eines Platzes zur Fensterkante: die Strichbreite des Fensterrahmens ({@code ComicBorder.windowBorder}).
+     * Die Plätze liegen damit ohne Luft am Rahmen (Angelo 28.11.2026), nicht mehr hinter dessen Polster.
+     */
+    public static final int FRAME_LINE = 2;
     /** Abstand eines Platzes zur Unterkante der Kopfleisten darüber. */
     public static final int HEAD_GAP = 4;
 
@@ -94,12 +96,11 @@ public final class EdgeOverlay extends JPanel {
             return;
         }
         Point origin = SwingUtilities.convertPoint(bar.getParent(), bar.getLocation(), this);
-        Insets insets = getInsets();
         int top = origin.y + bar.getHeight() + HeadBar.HEIGHT + HEAD_GAP;
         Dimension leftSize = left.getComponentCount() == 0 ? new Dimension() : left.getPreferredSize();
-        left.setBounds(insets.left + EDGE_GAP, top, leftSize.width, leftSize.height);
+        left.setBounds(FRAME_LINE, top, leftSize.width, leftSize.height);
         Dimension rightSize = right.getComponentCount() == 0 ? new Dimension() : right.getPreferredSize();
-        right.setBounds(getWidth() - insets.right - EDGE_GAP - rightSize.width, top, rightSize.width,
+        right.setBounds(getWidth() - FRAME_LINE - rightSize.width, top, rightSize.width,
                 rightSize.height);
     }
 }
