@@ -175,6 +175,70 @@ class FindBarTest {
         });
     }
 
+    /**
+     * Beim Filtern steht das Feld der Fußleiste für das unsichtbare Filterfeld der Ansicht ein: Was an dem Feld hängt
+     * (Vorschläge des Begriffsgraphen), richtet sich an das Feld unten, und was die Ansicht selbst in ihr Feld setzt
+     * (ein gewählter Vorschlag), steht danach auch unten. Ohne Filtern steht wieder das Feld selbst.
+     */
+    @Test
+    void whileFilteringTheFootFieldStandsInForTheHiddenFilterField() throws Exception {
+        JPanel area = new JPanel(new java.awt.BorderLayout());
+        javax.swing.JTextField filter = new javax.swing.JTextField();
+        FindBar[] bar = new FindBar[1];
+        java.util.concurrent.atomic.AtomicInteger left = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger writes = new java.util.concurrent.atomic.AtomicInteger();
+        SwingUtilities.invokeAndWait(() -> {
+            area.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter),
+                    java.awt.BorderLayout.NORTH);
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.gate(area, false);
+            bar[0] = new FindBar(() -> area);
+            ((com.aresstack.spaceharvester.app.ui.controls.InputFrame) SwingUtilities.getAncestorOfClass(
+                    com.aresstack.spaceharvester.app.ui.controls.InputFrame.class, filter))
+                    .onLeft(left::incrementAndGet);
+            filter.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                @Override
+                public void insertUpdate(javax.swing.event.DocumentEvent event) {
+                    writes.incrementAndGet();
+                }
+
+                @Override
+                public void removeUpdate(javax.swing.event.DocumentEvent event) {
+                    writes.incrementAndGet();
+                }
+
+                @Override
+                public void changedUpdate(javax.swing.event.DocumentEvent event) {
+                }
+            });
+            bar[0].search("Zah");
+            assertThat(com.aresstack.spaceharvester.app.ui.controls.InputFrame.typedAt(filter)).isSameAs(filter);
+            bar[0].filtering(true);
+            assertThat(com.aresstack.spaceharvester.app.ui.controls.InputFrame.typedAt(filter))
+                    .isSameAs(bar[0].field());
+            // Verlässt der Nutzer das Feld unten, erfährt es das Suchfeld der Ansicht.
+            for (java.awt.event.FocusListener listener : bar[0].field().getFocusListeners()) {
+                listener.focusLost(new java.awt.event.FocusEvent(bar[0].field(), java.awt.event.FocusEvent.FOCUS_LOST));
+            }
+            assertThat(left.get()).isEqualTo(1);
+            // Die Ansicht übernimmt einen Vorschlag in ihr Feld.
+            writes.set(0);
+            filter.setText("Zahlungsverkehr");
+            assertThat(writes.get()).isEqualTo(2);
+        });
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(writes.get()).as("das Feld unten schreibt den übernommenen Text nicht zurück").isEqualTo(2);
+            assertThat(bar[0].query()).isEqualTo("Zahlungsverkehr");
+            assertThat(filter.getText()).isEqualTo("Zahlungsverkehr");
+            bar[0].filtering(false);
+            assertThat(filter.getText()).isEmpty();
+        });
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(bar[0].query()).as("der Text unten bleibt beim Zurückschalten stehen")
+                    .isEqualTo("Zahlungsverkehr");
+            assertThat(com.aresstack.spaceharvester.app.ui.controls.InputFrame.typedAt(filter)).isSameAs(filter);
+        });
+    }
+
     private static int centerY(java.awt.Component part, java.awt.Component root) {
         return SwingUtilities.convertPoint(part.getParent(), 0, part.getY(), root).y + part.getHeight() / 2;
     }

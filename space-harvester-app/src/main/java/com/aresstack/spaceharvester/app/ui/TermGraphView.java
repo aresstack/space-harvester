@@ -275,12 +275,8 @@ public final class TermGraphView {
             }
         });
         suggestions.addPopupMenuListener(closed);
-        start.addFocusListener(new java.awt.event.FocusAdapter() {
-            @Override
-            public void focusLost(java.awt.event.FocusEvent e) {
-                catchUp();
-            }
-        });
+        // Auch wenn unten in der Fußleiste für das Startfeld getippt wurde: Verlassen holt Aufgeschobenes nach.
+        startFrame.onLeft(this::catchUp);
         // Nach einem Neustart der Laufzeit an der neuen anmelden, auch wenn der Reiter sichtbar bleibt.
         if (context != null) {
             context.onChange(changed -> javax.swing.SwingUtilities.invokeLater(() -> {
@@ -439,7 +435,12 @@ public final class TermGraphView {
     /** Ob im Startfeld gerade ein anderer Begriff als die Mitte getippt wird. */
     private boolean typing() {
         String text = start.getText() == null ? "" : start.getText().trim();
-        return start.isFocusOwner() && !text.equals(centre);
+        return typedAt().isFocusOwner() && !text.equals(centre);
+    }
+
+    /** Wo für das Startfeld getippt wird: im Feld selbst oder unten in der Fußleiste, die dafür filtert. */
+    private JComponent typedAt() {
+        return com.aresstack.spaceharvester.app.ui.controls.InputFrame.typedAt(start);
     }
 
     /** Eine aufgeschobene Meldung nachholen, sobald der Nutzer fertig ist. */
@@ -691,7 +692,7 @@ public final class TermGraphView {
 
     /** Begriffssuche des Core am Startfeld: passende Begriffe als Vorschläge unter dem Feld. */
     private void suggest() {
-        if (quiet || context == null || context.runtime() == null || !start.isShowing()) {
+        if (quiet || context == null || context.runtime() == null || !typedAt().isShowing()) {
             return;
         }
         String q = start.getText() == null ? "" : start.getText().trim();
@@ -708,7 +709,7 @@ public final class TermGraphView {
                 : runtime.workspace().terms(new TermQueries.TermSearch(null, null, null, q, false,
                 SUGGESTIONS, null, null, null, pages.get())).terms().stream().map(TermQueries.TermSummary::term)
                 .toList(), terms -> {
-            if (current != suggestRequest || !start.isShowing()) {
+            if (current != suggestRequest || !typedAt().isShowing()) {
                 return;
             }
             suggestions.setVisible(false);
@@ -720,7 +721,10 @@ public final class TermGraphView {
             }
             if (!terms.isEmpty()) {
                 suggestions.setFocusable(false);
-                suggestions.show(start, 0, start.getHeight());
+                JComponent typed = typedAt();
+                // Unter dem Startfeld; an der Fußleiste darüber, darunter ist das Fenster zu Ende.
+                suggestions.show(typed, 0, typed == start ? start.getHeight()
+                        : -suggestions.getPreferredSize().height);
             }
         }, failure -> suggestions.setVisible(false));
     }

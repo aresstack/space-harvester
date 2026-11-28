@@ -378,9 +378,53 @@ public final class FindBar extends com.aresstack.spaceharvester.app.ui.controls.
         return frame != null && frame.field() instanceof javax.swing.text.JTextComponent text ? text : null;
     }
 
+    private static com.aresstack.spaceharvester.app.ui.controls.InputFrame frameOf(
+            javax.swing.text.JTextComponent text) {
+        return (com.aresstack.spaceharvester.app.ui.controls.InputFrame) javax.swing.SwingUtilities
+                .getAncestorOfClass(com.aresstack.spaceharvester.app.ui.controls.InputFrame.class, text);
+    }
+
+    private boolean mirroring;
+
+    /** Übernimmt Text, den die Ansicht selbst in ihr Filterfeld setzt, in das Feld dieser Leiste. */
+    private final DocumentListener mirror = new DocumentListener() {
+        @Override
+        public void insertUpdate(DocumentEvent event) {
+            take();
+        }
+
+        @Override
+        public void removeUpdate(DocumentEvent event) {
+            take();
+        }
+
+        @Override
+        public void changedUpdate(DocumentEvent event) {
+        }
+
+        private void take() {
+            javax.swing.text.JTextComponent source = filtered;
+            // Erst nach dem laufenden Ereignis: Ein Dokument lässt sich nicht aus seiner eigenen Meldung ändern.
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                if (source != null && source == filtered && !source.getText().equals(field.getText())) {
+                    // Nur übernehmen, nicht zurückschreiben: Sonst schriebe das Feld den Text noch einmal in das
+                    // Filterfeld, und die Ansicht hielte das für Tippen (Vorschläge gingen wieder auf).
+                    mirroring = true;
+                    try {
+                        field.setText(source.getText());
+                    } finally {
+                        mirroring = false;
+                    }
+                }
+            });
+        }
+    };
+
     /** Nimmt den Text aus dem Filterfeld der Ansicht, damit kein unsichtbarer Filter weiterwirkt. */
     private void release() {
         if (filtered != null) {
+            filtered.getDocument().removeDocumentListener(mirror);
+            frameOf(filtered).standIn(null);
             if (!filtered.getText().isEmpty()) {
                 filtered.setText("");
             }
@@ -456,6 +500,9 @@ public final class FindBar extends com.aresstack.spaceharvester.app.ui.controls.
 
     /** Wie im Browser: Tippen sucht sofort. */
     private void live() {
+        if (mirroring) {
+            return;
+        }
         searched = null;
         step(true);
     }
@@ -479,6 +526,12 @@ public final class FindBar extends com.aresstack.spaceharvester.app.ui.controls.
         if (target != null) {
             // Filtern statt suchen: Der Text steht im Filterfeld der Ansicht, sie schränkt sich selbst ein.
             unmark();
+            if (filtered != target) {
+                // Was die Ansicht selbst ins Filterfeld setzt (ein gewählter Vorschlag), steht auch hier im Feld;
+                // Vorschläge der Ansicht erscheinen an diesem Feld.
+                target.getDocument().addDocumentListener(mirror);
+                frameOf(target).standIn(field);
+            }
             filtered = target;
             if (!field.getText().equals(target.getText())) {
                 target.setText(field.getText());
