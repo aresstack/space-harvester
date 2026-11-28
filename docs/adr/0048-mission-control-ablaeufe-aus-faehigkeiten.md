@@ -17,7 +17,10 @@
   - Angelos Nachricht vom 28.11.2026, 01:06 MEZ. Sie besteht aus einer Antwort aus seiner GPT-Unterhaltung, die er
     ohne eigene Worte weitergegeben hat. Daraus stammen die beiden „Ja“ in Abschnitt 6 und 7 und die Ergänzungen, die
     unten mit „(01:06)“ gekennzeichnet sind.
-- Was nicht aus diesen Nachrichten stammt, ist eine Entscheidung des Architekten und in Abschnitt 11 aufgezählt.
+  - Angelos Nachricht vom 28.11.2026, 01:17 MEZ, ebenfalls eine weitergegebene Antwort aus seiner GPT-Unterhaltung
+    nach deren Durchsicht dieses ADR. Daraus stammen die Punkte, die unten mit „(01:17)“ gekennzeichnet sind. Jeder
+    davon ist vor der Übernahme am Code geprüft worden.
+- Was nicht aus diesen Nachrichten stammt, ist eine Entscheidung des Architekten und in Abschnitt 12 aufgezählt.
 
 ## Kontext
 
@@ -88,11 +91,15 @@ Regeln:
   Schema, Kreis, zwei Erzeuger. Die Prüfung nennt alle Schreibschritte mit ihrem Ziel.
 - Freie Schleifen gibt es nicht, damit jeder Ablauf endet.
 - Der Graph in der Oberfläche ist eine Ansicht der Variablen, nie die gespeicherte Wahrheit.
+- Gelesen und geschrieben wird mit Gson (01:17). Befund: Beide Bibliotheken sind im Projekt, Jackson in Core, App und
+  Server, Gson in `proving-ground`, `browser-runtime` und den `enterprise-ai`-Modulen. Ein zwingender Grund gegen Gson
+  besteht nicht. Die Schnittstelle des Katalogs im Core nennt keine Typen einer JSON-Bibliothek.
 
 ### 5. Ausdrücke
 
 Die meisten Verknüpfungen sind reine Verweise auf eine Variable. Für Bedingungen und kleine Umformungen dient CEL
-(Common Expression Language, `dev.cel:cel`). Ein eigener Parser wird nicht entwickelt (01:06).
+(Common Expression Language, `dev.cel:cel`). Ein eigener Parser wird nicht entwickelt (01:06). **CEL wird erst
+verwendet, wenn der vollständige Klassenpfad der App erfolgreich geprüft ist (01:17).**
 
 Gründe: nicht Turing-vollständig, Auswertung ohne Seiteneffekte, Prüfung von Variablen und Typen vor dem Lauf. SpEL
 liegt zwar über Spring im Klassenpfad, scheidet aber aus: Die Spring-Dokumentation warnt vor Ausdrücken aus nicht
@@ -125,11 +132,28 @@ Eingabe geht.
 - **Ein eingeschalteter Auslöser ist nach einem Neustart der App von selbst wieder eingeschaltet. Bereits
   verarbeitete Ereignisse werden dadurch nicht erneut verarbeitet (01:06).** Das ist eine ausdrückliche Ausnahme von
   „nichts beim App-Start“.
-- Der Auslöser führt dafür ein Verzeichnis der verarbeiteten Ereignisse, das den Neustart überdauert.
 - **Datei-Auslöser erkennen vollständige Dateien und vermeiden doppelte Verarbeitung (01:06).** Das Verfahren für
   „vollständig“ wird im Bau am Windows-Rechner erprobt, auch auf Netzlaufwerken; jede Wartezeit ist eine Einstellung.
-- Für den Ordner bietet das JDK `WatchService` (ereignisgesteuert, kein Abfragen nach ADR 0027). Sein Verhalten auf
+- **Verarbeitet wird eine Anlieferung, nicht eine Datei (01:17).** Eine Anlieferung ist das Erscheinen oder
+  Überschreiben einer Datei an einem Pfad. Der Auslöser führt ein Verzeichnis der verarbeiteten Anlieferungen, das
+  den Neustart überdauert, mit Pfad, Größe, Änderungszeit und Prüfsumme.
+
+  | Ereignis | Verhalten |
+  | --- | --- |
+  | Neue Datei erscheint | Ablauf starten |
+  | App wird neu gestartet | bereits verarbeitete Anlieferungen übergehen |
+  | Datei kam, während die App aus war, und liegt noch da | nachholen, genau einmal |
+  | Datei wird überschrieben | neue Fassung verarbeiten |
+  | Dieselbe Datei wird bewusst erneut angeliefert | als neue Anlieferung verarbeiten |
+  | App endet mitten in einem Schreibschritt | ungewiss, nie von selbst wiederholen (Abschnitt 10) |
+
+- Woran eine erneute Anlieferung derselben Datei sicher erkannt wird, wird im Bau am Windows-Rechner erprobt. Von
+  Hand geht „Erneut verarbeiten“ in der Liste der Anlieferungen immer.
+- **Ereignisgesteuerte Überwachung mit Bestandsabgleich (01:17):** Für den Ordner bietet das JDK `WatchService`. Beim
+  Start und wenn das Dateisystem verlorene Ereignisse meldet (`OVERFLOW`), gleicht der Auslöser den Ordner einmal mit
+  seinem Verzeichnis ab. Das ist kein Abfragen in Abständen (ADR 0027). Das Verhalten von `WatchService` auf
   Netzlaufwerken ist nicht geprüft.
+- Grenze: Eine Datei, die erschienen und wieder verschwunden ist, während die App aus war, kann kein Abgleich sehen.
 
 ### 7. Freigabe
 
@@ -143,6 +167,8 @@ Eingabe geht.
   außerhalb der Freigabe, scheitert der Schritt vor dem Schreiben und nennt den Grund.
 - **Die KI darf einen freigegebenen Ablauf aufrufen, auch mit Schreibschritten, wenn die Freigabe die Aufrufart „durch
   die KI“ einschließt. Die KI erteilt nie eine Freigabe und schaltet nie einen Auslöser ein (01:06).**
+- **Eine Freigabe ist jederzeit widerrufbar (01:17).** Nach dem Widerruf startet kein Lauf mehr, die Auslöser des
+  Ablaufs halten sichtbar an, und ein laufender Lauf beginnt keinen weiteren Schreibschritt.
 - Die Regel des Command Deck bleibt: Im Terminal füllt die KI Masken und schickt nie ab. Schreiben kann die KI nur
   über einen freigegebenen Ablauf.
 
@@ -164,10 +190,14 @@ Ein freigegebener Ablauf mit Eingaben und Ergebnissen erscheint selbst im Katalo
 ihn benutzen. Die Prüfung erkennt Kreise über Abläufe hinweg. Enthält er einen Schreibschritt, gilt er als schreibend.
 So wird ein einmal geplanter Ablauf zu einem Skill, den die KI ohne Training erworben hat.
 
+**Ein Ablauf, der andere benutzt, erklärt deren Schreibwirkungen, Ziele und Berechtigungen vollständig nach außen
+(01:17).** Die Freigabe des äußeren Ablaufs zeigt und umfasst sie alle, über jede Tiefe.
+
 ### 10. Ausführung und Zustand
 
-- Jede Variable wird genau einmal gebunden. In Java ist das ein `CompletableFuture`. Es gibt keinen Durchlauf über
-  offene Schritte und kein Abfragen (ADR 0027).
+- Fachlich ist eine Variable ein Name mit Zustand und Wert, festgehalten im Protokoll des Laufs. Sie wird genau einmal
+  gebunden. **Technisch wartet die Ausführung mit `CompletableFuture`; das ist ein Mittel der Laufzeit und nicht das
+  Modell (01:17).** Es gibt keinen Durchlauf über offene Schritte und kein Abfragen (ADR 0027).
 - Ein Lauf ist ein Auftrag in der vorhandenen Auftragsverwaltung (`Jobs`), jeder Schritt ein Unterauftrag
   (`ChildJobs`). Abbrechen, Anhalten, Diagnose, Beobachter und das Warten bei fehlendem Netz kommen von dort. Es gibt
   keine zweite Auftragsverwaltung (#1141). Ein Ablauf mit nur einem Schritt zeigt keine Klammer.
@@ -182,6 +212,9 @@ So wird ein einmal geplanter Ablauf zu einem Skill, den die KI ohne Training erw
   Fähigkeit einen Fehler, ist das ein Scheitern.
 - **Gleichzeitiges Schreiben auf dieselbe Ressource läuft kontrolliert (01:06):** Je Ressource läuft über alle Läufe
   hinweg höchstens ein Schreibschritt, in der Reihenfolge des Eintreffens. Die übrigen warten sichtbar.
+- **Verschachtelte Abläufe verklemmen sich nicht (01:17):** Eine Sperre hält nur der einzelne Schreibschritt einer
+  elementaren Fähigkeit, nie ein ganzer Ablauf. Braucht eine Fähigkeit mehrere Ressourcen, nimmt sie alle auf einmal
+  in fester Reihenfolge.
 - Je Lauf gibt es ein Protokoll, das nur wächst: Eingaben, je Schritt Start, Ende, Ausgaben, Fehler. Große Werte und
   Dateien stehen als Verweis mit Prüfsumme darin.
 - Wiederaufnahme: Aufgezeichnete Variablen werden gebunden, fertige Schritte nicht wiederholt, der Rest läuft weiter.
@@ -190,7 +223,23 @@ So wird ein einmal geplanter Ablauf zu einem Skill, den die KI ohne Training erw
 - Ablage als Dateien wie die übrigen Speicher. Keine Datenbank.
 - Jede Grenze (Gleichzeitigkeit, Fristen, Wartezeiten) ist eine benannte Einstellung nach ADR 0036 Punkt 12.
 
-## 11. Entscheidungen des Architekten
+### 11. Projekt und Artefakt
+
+Übernommen aus dem Vorschlag von 01:17:
+
+- Ein Ablauf gehört standardmäßig einem Projekt (ADR 0043), wie die globalen Artefakte nach ADR 0047.
+- Ein freigegebener Ablauf kann ausdrücklich für alle Projekte bereitgestellt werden. Dann erscheint diese Version im
+  Katalog jedes Projekts.
+- Auslöser, Zielsysteme und Freigaben bleiben bei dem Projekt, in dem sie eingerichtet wurden.
+- Abläufe erscheinen als eigene Art in der bestehenden Artefaktverwaltung, neben Dokument und Grafik.
+- Mission Control und die Artefaktverwaltung benutzen dieselbe gespeicherte Definition. Es gibt keinen zweiten
+  Speicher.
+
+Befund am Code: `ChatArtifact.Kind` kennt heute `DOCUMENT` und `GRAPHIC`. Der Speicher (`ChatArtifactStore`) führt
+Revisionen und für das Buch benannte Versionen (`editions()`, `newEdition`). Damit ist beides vorhanden, was ein
+Ablauf braucht: Entwurfsstände sind Revisionen, freigegebene Versionen sind benannte Versionen.
+
+## 12. Entscheidungen des Architekten
 
 Diese Punkte stammen nicht aus Angelos Nachrichten:
 
@@ -198,14 +247,18 @@ Diese Punkte stammen nicht aus Angelos Nachrichten:
 2. Der Katalog entsteht als Erledigung des offenen Punkts aus ADR 0036; vorhandene Chat-Werkzeuge ziehen einzeln um.
 3. `CompletableFuture` als Variable; Lauf als Auftrag, Schritt als Unterauftrag.
 4. Protokoll je Lauf und die Regel für ungewisse Schreibschritte.
-5. Lesart zu Abschnitt 6: Dateien, die erschienen sind, während die App aus war, werden nach dem Start nachgeholt,
-   jede genau einmal. Eine Datei gilt als dieselbe bei gleichem Pfad und gleicher Prüfsumme; eine geänderte Datei
-   zählt als neu.
+5. Abschnitt 6: was das Verzeichnis je Anlieferung festhält, und „Erneut verarbeiten“ von Hand. (Das Nachholen nach
+   dem Start war zuerst eine Lesart des Architekten und ist seit 01:17 bestätigt.)
 6. Abschnitt 8: ruhende Freigabe bei geändertem Vertragsstand einer Fähigkeit.
 7. Abschnitt 10: Schreibschritte je Ressource nacheinander in der Reihenfolge des Eintreffens.
 8. Eigenes Gradle-Teilprojekt `mission-control` wie `command-deck` und `proving-ground`: Modell, Prüfung, Ausführung,
    Protokoll. Ohne Swing, ohne KI, ohne MCP. Die Schnittstelle des Katalogs liegt im Core, damit Chat und Mission
    Control sie teilen.
+9. Abschnitt 7: Nach einem Widerruf beginnt ein laufender Lauf keinen weiteren Schreibschritt.
+10. Abschnitt 10: Sperren nur am einzelnen Schreibschritt, mehrere Ressourcen auf einmal in fester Reihenfolge.
+11. Abschnitt 11: Ein anderes Projekt, das einen bereitgestellten Ablauf benutzt, erteilt seine eigene Freigabe. Bei
+    „Nach Art gruppieren“ heißt die Gruppe „Abläufe“. Der Artefaktspeicher liegt im Modul der App;
+    `mission-control` spricht ihn über eine Schnittstelle an.
 
 ## Geprüfte Standards
 
@@ -222,8 +275,8 @@ An den eigenen Seiten der Projekte nachgelesen (28.11.2026):
 | Dexecutor | zuletzt gefundene Version von 2016 | keine Grundlage |
 
 Keiner der geprüften Standards setzt „starte, wenn die Daten da sind“ in einer einbettbaren Java-Form um. Der Kern
-entsteht deshalb mit dem JDK. Bibliotheken kommen für Teile dazu: CEL für Ausdrücke, Jackson für JSON, eine
-Bibliothek für die Schema-Prüfung (noch auszuwählen).
+entsteht deshalb mit dem JDK. Bibliotheken kommen für Teile dazu: CEL für Ausdrücke, Gson für JSON, eine
+Bibliothek für die Schema-Prüfung (noch auszuwählen; sie darf Jackson nicht erzwingen).
 
 ## Verhältnis zu früheren ADRs
 
@@ -232,21 +285,22 @@ Bibliothek für die Schema-Prüfung (noch auszuwählen).
 - ADR 0036: Punkt 9 kennt nur lesende Anwendungsfälle für Mensch und KI. Dieses ADR ergänzt schreibende Fähigkeiten,
   die allein über einen freigegebenen Ablauf laufen. Punkt 5 („keine Schreiboperationen auf dem Mainframe“) betrifft
   das Indexieren und bleibt.
-- ADR 0043 und 0047: siehe „Offen“.
+- ADR 0043 und 0047: Ein Ablauf gehört dem Projekt und ist eine weitere Art globaler Artefakte (Abschnitt 11). Neu
+  gegenüber ADR 0047 ist das Bereitstellen für alle Projekte; es gilt nur für Abläufe.
 
 ## Offen
 
-1. Gehören Abläufe dem Projekt (ADR 0043), und erscheinen sie bei den globalen Artefakten (ADR 0047)? Nicht
-   entschieden. Zu klären vor Schnitt 2.
-2. Gestaltung der Perspektive (Liste, Graph, Protokoll, Freigabe). Entwurf durch den UX-Strang nach den Hausregeln.
-3. Welche Fähigkeiten zuerst in den Katalog kommen.
+1. Gestaltung der Perspektive (Liste, Graph, Protokoll, Freigabe) und wo ein Klick auf einen Ablauf in der Liste der
+   Artefakte ihn öffnet. Entwurf durch den UX-Strang nach den Hausregeln.
+2. Welche Fähigkeiten zuerst in den Katalog kommen.
+3. Im Bau zu erproben: Erkennen einer vollständigen Datei und einer erneuten Anlieferung derselben Datei.
 
 ## Umsetzung (nicht freigegeben)
 
 Kleine Schnitte in dieser Reihenfolge, jeder für sich lieferbar:
 
 1. Katalog im Core mit ersten lesenden Fähigkeiten, Adapter für den Chat.
-2. Definition, Versionen und Prüfung.
+2. Definition als Art im Artefaktspeicher, Versionen und Prüfung.
 3. Ausführung als Auftrag mit den Zuständen der Ausgaben.
 4. Protokoll und Wiederaufnahme.
 5. Auslöser mit dem Verzeichnis verarbeiteter Ereignisse.
