@@ -722,7 +722,8 @@ public final class ProvingGroundWorkspace extends JPanel {
             return;
         }
         String remembered = AppState.shared().get(START_URL_KEY);
-        String url = Dialogs.askText(this, "Neuer Testfall", "Startadresse – leer lassen, um sie im Browser einzugeben",
+        String url = Dialogs.askOptionalText(this, "Neuer Testfall",
+                "Startadresse – leer lassen, um sie im Browser einzugeben",
                 remembered == null ? "" : remembered);
         if (url == null) {
             return;
