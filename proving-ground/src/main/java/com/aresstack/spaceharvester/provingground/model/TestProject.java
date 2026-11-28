@@ -70,6 +70,19 @@ public record TestProject(String name, Scope scope, List<String> preconditions, 
         return new TestProject(name, scope, preconditions, users, defaultUser, copy);
     }
 
+    public TestProject withScope(Scope value) {
+        return new TestProject(name, value, preconditions, users, defaultUser, suites);
+    }
+
+    public TestProject withPreconditions(List<String> value) {
+        return new TestProject(name, scope, value, users, defaultUser, suites);
+    }
+
+    /** This project with other users and default user (null = a context without login). */
+    public TestProject withUsers(List<TestUser> value, String defaultUserName) {
+        return new TestProject(name, scope, preconditions, value, defaultUserName, suites);
+    }
+
     /**
      * An id for {@code name} (lower case, umlauts spelled out, other characters as "-"), not among {@code taken}
      * ("-2", "-3" ... appended if needed).
