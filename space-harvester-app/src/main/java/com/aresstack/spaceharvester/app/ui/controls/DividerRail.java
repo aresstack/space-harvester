@@ -18,8 +18,9 @@ import javax.swing.plaf.basic.BasicSplitPaneUI;
 
 /**
  * Macht eine Knopfleiste zum Griff eines Trenners (Angelo 28.11.2026): Der Trenner ({@link ComicDivider}) bleibt
- * derselbe wie überall, mit seiner Linie über die ganze Länge; nur an der Stelle des kleinen gelben Griffs, in der
- * Mitte der Linie, sitzt die senkrechte Knopfleiste (Angelo 28.11.2026: nur der Griff wird ersetzt). An der Leiste lässt er sich ziehen wie an der Linie darüber und darunter; ein Klick auf einen Knopf
+ * derselbe wie überall, mit seiner Linie von oben bis unten; nur an der Stelle des kleinen gelben Griffs, in der
+ * Mitte, sitzt die senkrechte Knopfleiste (Angelo 28.11.2026: nur der Griff wird ersetzt). Hinter der Leiste ist die
+ * Linie unterbrochen, damit sie durch die durchscheinende Leiste nicht zu sehen ist. An der Leiste lässt er sich ziehen wie an der Linie darüber und darunter; ein Klick auf einen Knopf
  * schaltet um oder klappt zu. Ohne sichtbaren Trenner (Leiste zugeklappt) steht dieselbe Knopfleiste am Fensterrand
  * ({@link EdgeOverlay}) und öffnet von dort.
  */
@@ -67,6 +68,12 @@ public final class DividerRail {
         }
         pane.addPropertyChangeListener(JSplitPane.DIVIDER_SIZE_PROPERTY, event -> follow());
         ComicDivider.grip(pane, false);
+        gap();
+    }
+
+    /** Die Linie des Trenners ist hinter der Knopfleiste unterbrochen, damit sie nicht durchscheint. */
+    private void gap() {
+        ComicDivider.gap(pane, active ? rail.getPreferredSize().height : 0);
     }
 
     /**
@@ -85,6 +92,7 @@ public final class DividerRail {
         if (this.active != active) {
             this.active = active;
             ComicDivider.grip(pane, !active);
+            gap();
             follow();
         }
     }
@@ -123,6 +131,7 @@ public final class DividerRail {
     }
 
     private void follow() {
+        gap();
         overlay.revalidate();
         overlay.repaint();
     }
