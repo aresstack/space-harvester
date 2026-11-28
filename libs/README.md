@@ -21,8 +21,9 @@ Nicht kopiert werden die CI des Upstreams (`.github/`) und sein Gradle-Wrapper; 
 des Space Harvester. Research4j und Writing4j finden Knowledge4j wie in ihren eigenen Repositorys als Nachbarordner.
 
 Fremde Bibliotheken, die neu dazukommen, kommen nicht von Maven Central, sondern als festgehaltene Quellkopie mit eigenem
-`UPSTREAM.md` und Prüfsummen (wie `proleap-parser/`): `googleauth/` (TOTP, wstrange/GoogleAuth 1.5.0) ist ein normales
-Unterprojekt `:googleauth`, kein Composite Build.
+`UPSTREAM.md` und Prüfsummen (wie `proleap-parser/`): `googleauth/` (TOTP, wstrange/GoogleAuth 1.5.0) und `commons-codec/`
+(Apache Commons Codec 1.22.1, ersetzt `commons-codec:commons-codec` in allen Projekten) sind normale Unterprojekte, kein
+Composite Build.
 
 Bibliotheken, deren veröffentlichte Fassung genügt, kommen weiter von Maven Central (bereits veröffentlichte Fassungen bleiben
 dort abrufbar): Playwright4j, Serp4j, win-proxy-java, win-trust-java, mermaid-java, drawio-java, die DirectML-Bibliotheken.

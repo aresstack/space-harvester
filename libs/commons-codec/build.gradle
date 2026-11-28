@@ -1,0 +1,43 @@
+plugins {
+    id 'java-library'
+}
+
+description = 'Apache Commons Codec 1.22.1 (Apache License 2.0), aus festgehaltenen Upstream-Quellen gebaut.'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 8 // wie upstream (maven.compiler.target 1.8)
+    options.compilerArgs << '-Xlint:-options'
+}
+
+tasks.named('jar') {
+    manifest {
+        attributes('Automatic-Module-Name': 'org.apache.commons.codec')
+    }
+}
+
+tasks.named('processResources') {
+    into('META-INF/licenses/commons-codec') {
+        from file('LICENSE.txt')
+        from file('NOTICE.txt')
+    }
+}
+
+// Lokale Änderungen an der Kopie erkennen (gemeinsame Prüfung in gradle/upstream-copy.gradle).
+apply from: rootProject.file('gradle/upstream-copy.gradle')
+def verifyUpstreamCopy = registerUpstreamCopyCheck(name: 'commons-codec',
+        manifest: file('UPSTREAM.sha256'),
+        baseDir: projectDir,
+        files: files('LICENSE.txt', 'NOTICE.txt', fileTree('src/main')),
+        hint: 'Änderungen gehören in den Commons-Codec-Upstream und kommen als neuer Stand zurück',
+        normalizeLineEndings: true)
+
+tasks.named('compileJava') {
+    dependsOn verifyUpstreamCopy
+}

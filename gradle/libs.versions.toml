@@ -52,7 +52,6 @@ junit = "5.13.4"
 # enterprise-ai-sources: dieselben Versionen wie im Upstream (aresstack/enterprise-ai-client)
 gson = "2.10.1"
 # Einmalcodes (TOTP) wie WD4J (TotpService)
-commons-codec = "1.22.1"
 javaWebsocket = "1.5.2"
 reflections = "0.10.2"
 jsoup = "1.17.2"
@@ -112,7 +111,6 @@ reactor-netty-http = { module = "io.projectreactor.netty:reactor-netty-http", ve
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 springdoc-openapi-webmvc-ui = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
-commons-codec = { module = "commons-codec:commons-codec", version.ref = "commons-codec" }
 java-websocket = { module = "org.java-websocket:Java-WebSocket", version.ref = "javaWebsocket" }
 reflections = { module = "org.reflections:reflections", version.ref = "reflections" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
