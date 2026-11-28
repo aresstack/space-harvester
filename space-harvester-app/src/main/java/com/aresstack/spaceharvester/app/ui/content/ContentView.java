@@ -379,6 +379,11 @@ public final class ContentView implements View {
         detail.openPassage(passageId);
     }
 
+    /** Was „Jetzt analysieren“ in den leeren Analysen der Auswahl tut (wie „Analysieren“ im Baum). */
+    public void onAnalyzeArea(Runnable action) {
+        detail.onAnalyzeArea(action);
+    }
+
     /** Setzt den Inhalt des Unterreiters „Analysen → Aussagen“ (#499), siehe {@link PageDetailPanel#statementsTab}. */
     public void statementsTab(JComponent component) {
         detail.statementsTab(component);

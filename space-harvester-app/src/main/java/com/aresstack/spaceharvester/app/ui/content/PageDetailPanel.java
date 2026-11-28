@@ -1069,6 +1069,11 @@ public final class PageDetailPanel extends JPanel {
             loadVerbs();
         });
         graphView.onDeleted(statementsView::reload);
+        // Der leere Graph bietet die Analyse an; sie läuft unter „Aussagen“, wo auch ihr Fortschritt steht.
+        graphView.onAnalyze(() -> {
+            analysisTabs.select(STATEMENTS);
+            statementsView.analyzeNow();
+        });
         knowledgeGraphTab(graphView);
         images.onDescribe(() -> describeImages(false));
         images.onDescribeOne(this::describeImage);
@@ -1659,6 +1664,11 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Was die Seitenleiste mit den Analysen aufklappt (das Hauptfenster); etwa wenn ein Sprung dorthin führt. */
+    /** Was „Jetzt analysieren“ in den leeren Analysen der Auswahl tut; das bestimmt das Hauptfenster. */
+    void onAnalyzeArea(Runnable action) {
+        standing.onAnalyze(action);
+    }
+
     void onOpenAnalyses(Runnable action) {
         openAnalyses = java.util.Objects.requireNonNull(action, "action");
     }
