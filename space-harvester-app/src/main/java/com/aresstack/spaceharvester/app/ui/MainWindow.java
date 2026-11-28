@@ -613,8 +613,7 @@ public final class MainWindow implements AppContext.Navigator {
         JPanel west = new JPanel(new BorderLayout());
         west.setOpaque(false);
         perspectives = new Perspectives();
-        switcher = new PerspectiveSwitcher(
-                new com.aresstack.spaceharvester.app.ui.controls.SantaHat(ApplicationIcons.titleLogo()), perspectives);
+        switcher = new PerspectiveSwitcher(ApplicationIcons.titleLogo(), perspectives);
         // Avenger-Easter-Egg (#1141): vorläufiger Auslöser fünf Klicks auf das Logo; Ablauf und Auslöser sind getrennt.
         avenger = new AvengerEasterEgg(switcher);
         switcher.onSidebarToggle(this::logoClicked);

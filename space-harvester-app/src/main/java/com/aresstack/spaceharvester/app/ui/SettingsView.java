@@ -213,7 +213,7 @@ public final class SettingsView implements View {
             + "sitzt. Gilt sofort.";
     /** Zeile der Platte „Darstellung“ (Angelo 28.11.2026): die Weihnachtsgestaltung lässt sich abschalten. */
     static final String SEASON_TITLE = "Saisonale Gestaltung";
-    static final String SEASON_HINT = "Vom 1. Advent bis einschließlich 6. Januar trägt das Logo eine Weihnachtsmütze, "
+    static final String SEASON_HINT = "Vom 1. Advent bis einschließlich 6. Januar trägt der Titel eine Weihnachtsmütze, "
             + "und in der Titelleiste liegt etwas Schnee. Gilt sofort.";
     final javax.swing.JCheckBox season = Comic.checkBox("Weihnachtszeit zeigen");
     /** Auswahl „Knopfleiste der Seitenleisten“; Einträge in der Reihenfolge von {@link RailLook}. */

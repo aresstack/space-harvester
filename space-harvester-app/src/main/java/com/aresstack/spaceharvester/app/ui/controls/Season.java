@@ -10,7 +10,7 @@ import java.util.function.Supplier;
 
 /**
  * Die saisonale Gestaltung der App (Angelo 28.11.2026): In der Weihnachtszeit, vom 1. Advent bis einschließlich
- * 6. Januar, trägt das Logo eine rote Mütze, und in der Titelleiste liegen ein paar Schneeflocken und Schneehäufchen.
+ * 6. Januar, trägt das „H“ von „Harvester“ im Titel eine rote Mütze, und in der Titelleiste liegen ein paar Schneeflocken und Schneehäufchen.
  * Der Zeitraum wird für jedes Jahr berechnet; gefragt wird beim Zeichnen, es läuft nichts im Hintergrund. Abschalten
  * lässt sich das unter Einstellungen, Darstellung.
  */

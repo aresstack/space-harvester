@@ -70,44 +70,88 @@ class SeasonTest {
     }
 
     @Test
-    void theLogoWearsARedHatAndTheBarCarriesSnowOnlyInTheSeason() {
-        SantaHat hat = new SantaHat(PLAIN);
-        assertThat(hat.getIconWidth()).isEqualTo(24);
-        assertThat(hat.getIconHeight()).isEqualTo(24);
+    void theHOfHarvesterWearsARedHatAndTheBarCarriesSnowOnlyInTheSeason() throws Exception {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            var perspectives = new com.aresstack.spaceharvester.app.ui.perspective.Perspectives();
+            perspectives.add(perspective("harvester", "Space Harvester"));
+            perspectives.add(perspective("deck", "Command Deck"));
+            PerspectiveSwitcher switcher = new PerspectiveSwitcher(PLAIN, perspectives);
+            switcher.setSize(switcher.getPreferredSize());
+            layoutAll(switcher);
 
-        Season.today(() -> LocalDate.of(2026, 6, 10));
-        assertThat(painted(hat)).as("außerhalb der Weihnachtszeit unverändert").isZero();
-        assertThat(snow()).isZero();
+            Season.today(() -> LocalDate.of(2026, 6, 10));
+            assertThat(switcher.hatLetter()).as("außerhalb der Weihnachtszeit keine Mütze").isNull();
+            assertThat(red(switcher)).isZero();
+            assertThat(snow()).isZero();
 
-        Season.today(() -> LocalDate.of(2026, 12, 10));
-        BufferedImage image = new BufferedImage(24, 24, BufferedImage.TYPE_INT_ARGB);
+            Season.today(() -> LocalDate.of(2026, 12, 10));
+            java.awt.Rectangle letter = switcher.hatLetter();
+            assertThat(letter).isNotNull();
+            assertThat(red(switcher)).as("rote Mütze").isGreaterThan(10);
+            assertThat(snow()).as("Schnee in der Leiste").isPositive();
+            // Die Mütze sitzt auf dem „H“: Alles Rote liegt bei ihm, nicht beim Logo am Anfang.
+            BufferedImage image = paint(switcher);
+            java.awt.Component title = switcher.getComponent(1);
+            for (int x = 0; x < image.getWidth(); x++) {
+                for (int y = 0; y < image.getHeight(); y++) {
+                    if (isRed(image.getRGB(x, y))) {
+                        assertThat(x - title.getX()).isBetween(letter.x - SantaHat.WIDTH, letter.x + SantaHat.WIDTH + 4);
+                        assertThat(y - title.getY()).isLessThan(letter.y + letter.height);
+                    }
+                }
+            }
+
+            perspectives.select("deck");
+            layoutAll(switcher);
+            assertThat(switcher.hatLetter()).as("ohne „Harvester“ im Titel keine Mütze").isNull();
+            perspectives.select("harvester");
+
+            Season.enabled(false);
+            assertThat(switcher.hatLetter()).isNull();
+            assertThat(red(switcher)).isZero();
+            assertThat(snow()).isZero();
+        });
+    }
+
+    private static com.aresstack.spaceharvester.app.ui.perspective.Perspective perspective(String id, String title) {
+        return new com.aresstack.spaceharvester.app.ui.perspective.Perspective(id, title, "", true,
+                new javax.swing.JPanel(), new javax.swing.JPanel(), null, null, () -> { }, () -> { });
+    }
+
+    private static void layoutAll(java.awt.Component component) {
+        component.doLayout();
+        if (component instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                layoutAll(child);
+            }
+        }
+    }
+
+    private static BufferedImage paint(java.awt.Component component) {
+        BufferedImage image = new BufferedImage(component.getWidth(), component.getHeight(),
+                BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = image.createGraphics();
-        hat.paintIcon(null, g, 0, 0);
+        component.paint(g);
         g.dispose();
+        return image;
+    }
+
+    private static boolean isRed(int argb) {
+        Color color = new Color(argb, true);
+        return color.getAlpha() > 200 && color.getRed() > 150 && color.getGreen() < 110 && color.getBlue() < 110;
+    }
+
+    private static int red(java.awt.Component component) {
+        BufferedImage image = paint(component);
         int red = 0;
-        for (int x = 0; x < 24; x++) {
-            for (int y = 0; y < 24; y++) {
-                Color color = new Color(image.getRGB(x, y), true);
-                if (color.getAlpha() > 200 && color.getRed() > 150 && color.getGreen() < 110) {
-                    assertThat(y).as("die Mütze sitzt oben").isLessThan(16);
+        for (int x = 0; x < image.getWidth(); x++) {
+            for (int y = 0; y < image.getHeight(); y++) {
+                if (isRed(image.getRGB(x, y))) {
                     red++;
                 }
             }
         }
-        assertThat(red).as("rote Mütze").isGreaterThan(10);
-        assertThat(snow()).as("Schnee in der Leiste").isPositive();
-
-        Season.enabled(false);
-        assertThat(painted(hat)).isZero();
-        assertThat(snow()).isZero();
-    }
-
-    private static int painted(Icon icon) {
-        BufferedImage image = new BufferedImage(24, 24, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = image.createGraphics();
-        icon.paintIcon(null, g, 0, 0);
-        g.dispose();
-        return count(image);
+        return red;
     }
 
     private static int snow() {

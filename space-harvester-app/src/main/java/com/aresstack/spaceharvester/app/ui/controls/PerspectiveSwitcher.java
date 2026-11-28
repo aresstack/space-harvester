@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.app.ui.perspective.Perspectives;
 import java.awt.BorderLayout;
 import java.awt.Cursor;
 import java.awt.Dimension;
+import java.awt.Rectangle;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import javax.swing.AbstractAction;
@@ -241,7 +242,49 @@ public final class PerspectiveSwitcher extends JPanel {
                 g2.dispose();
             }
             super.paintComponent(g);
+            paintHat(g);
         }
+
+        /**
+         * In der Weihnachtszeit sitzt die Mütze auf dem „H“ von „Harvester“ (Angelo 28.11.2026), nicht auf dem Logo.
+         * Ist der Name so weit gekürzt, dass das „H“ fehlt, oder heißt die Perspektive anders, gibt es keine Mütze.
+         */
+        private void paintHat(java.awt.Graphics g) {
+            Rectangle letter = hatLetter();
+            if (letter != null) {
+                SantaHat.paint(g, letter.x - SantaHat.WIDTH * HAT_OVERHANG, letter.y + SantaHat.height() * HAT_SINK);
+            }
+        }
+
+        /** Die Oberkante des „H“, auf dem die Mütze sitzt (x, y, Breite); {@code null} ohne Mütze. */
+        Rectangle hatLetter() {
+            String text = getText();
+            int at = text == null ? -1 : text.indexOf(HAT_WORD);
+            if (at < 0 || !Season.christmasNow()) {
+                return null;
+            }
+            java.awt.FontMetrics metrics = getFontMetrics(getFont());
+            int x = getInsets().left + metrics.stringWidth(text.substring(0, at));
+            int width = metrics.charWidth(HAT_WORD.charAt(0));
+            if (x + width > getWidth() - getInsets().right) {
+                return null;
+            }
+            int baseline = (getHeight() - metrics.getHeight()) / 2 + metrics.getAscent();
+            int capHeight = (int) Math.round(getFont().createGlyphVector(metrics.getFontRenderContext(),
+                    HAT_WORD.substring(0, 1)).getVisualBounds().getHeight());
+            return new Rectangle(x, baseline - capHeight, width, capHeight);
+        }
+    }
+
+    /** Das Wort im Titel, dessen erster Buchstabe in der Weihnachtszeit die Mütze trägt. */
+    static final String HAT_WORD = "Harvester";
+    /** Wie weit die Mütze links über den Buchstaben ragt und wie tief sie in ihn sinkt, als Anteil ihrer Maße. */
+    static final double HAT_OVERHANG = 0.2;
+    static final double HAT_SINK = 0.25;
+
+    /** Wo im Titel die Mütze sitzt (für Tests); {@code null} ohne Mütze. */
+    java.awt.Rectangle hatLetter() {
+        return title.hatLetter();
     }
 
     /** Der Name im Titel (für Tests). */

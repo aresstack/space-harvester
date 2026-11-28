@@ -3,48 +3,49 @@ package com.aresstack.spaceharvester.app.ui.controls;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import java.awt.BasicStroke;
 import java.awt.Color;
-import java.awt.Component;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.RoundRectangle2D;
-import javax.swing.Icon;
 
 /**
- * Ein Symbol mit Weihnachtsmütze (Angelo 28.11.2026): In der Weihnachtszeit ({@link Season#christmasNow()}) sitzt
- * oben links schräg eine rote Mütze mit weißem Rand und weißer Bommel auf dem Symbol, sonst zeigt es sich
- * unverändert. Die Größe bleibt die des Symbols; die Mütze ist gezeichnet und in jeder Skalierung scharf.
+ * Die Weihnachtsmütze (Angelo 28.11.2026): rot mit weißem Rand und weißer Bommel, leicht schräg. Sie sitzt in der
+ * Weihnachtszeit auf dem „H“ von „Harvester“ im Titel ({@link PerspectiveSwitcher}); gezeichnet und in jeder
+ * Skalierung scharf.
  */
-public final class SantaHat implements Icon {
+public final class SantaHat {
 
-    /** Breite der Mütze im Verhältnis zur Breite des Symbols. */
-    static final double WIDTH_SHARE = 0.46;
+    /** Breite der Mütze in Pixeln, passend zu einem Großbuchstaben des Titels. */
+    public static final int WIDTH = 11;
+    /** Höhe der Mütze im Verhältnis zu ihrer Breite. */
+    static final double HEIGHT_SHARE = 0.8;
     /** Neigung der Mütze nach links, in Grad. */
     static final double TILT_DEGREES = -18;
     static final Color RED = Comic.RED;
     static final Color FUR = Color.WHITE;
 
-    private final Icon base;
-
-    public SantaHat(Icon base) {
-        this.base = base;
+    private SantaHat() {
     }
 
-    @Override
-    public void paintIcon(Component component, Graphics graphics, int x, int y) {
-        base.paintIcon(component, graphics, x, y);
-        if (!Season.christmasNow()) {
-            return;
-        }
+    /** Die Höhe der Mütze. */
+    public static double height() {
+        return WIDTH * HEIGHT_SHARE;
+    }
+
+    /**
+     * Zeichnet die Mütze so, dass ihr Rand mit der linken Kante bei {@code left} und der Unterkante bei
+     * {@code bottom} sitzt.
+     */
+    public static void paint(Graphics graphics, double left, double bottom) {
         Graphics2D g = (Graphics2D) graphics.create();
         try {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
-            double w = getIconWidth() * WIDTH_SHARE;
-            double h = w * 0.8;
-            g.translate(x, y + h * 0.1);
+            double w = WIDTH;
+            double h = height();
+            g.translate(left, bottom - h);
             g.rotate(Math.toRadians(TILT_DEGREES), w / 2, h);
             float line = (float) Math.max(0.8, w / 16);
             // Der rote Kegel, die Spitze fällt nach rechts.
@@ -74,15 +75,5 @@ public final class SantaHat implements Icon {
         } finally {
             g.dispose();
         }
-    }
-
-    @Override
-    public int getIconWidth() {
-        return base.getIconWidth();
-    }
-
-    @Override
-    public int getIconHeight() {
-        return base.getIconHeight();
     }
 }
