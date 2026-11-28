@@ -158,7 +158,12 @@ public final class ProvingGroundRuns implements AutoCloseable {
                         recorder.onStep(step -> steps.accept(List.copyOf(target.steps())));
                         com.microsoft.playwright.Page page = context.newPage();
                         if (startUrl != null && !startUrl.isBlank()) {
-                            page.navigate(startUrl.strip());
+                            try {
+                                page.navigate(startUrl.strip());
+                            } catch (PlaywrightException unreachable) {
+                                // Adresse falsch oder langsam: die Aufnahme läuft weiter, die Adresse lässt sich im
+                                // Browser korrigieren, Stopp speichert, was bis dahin aufgenommen ist
+                            }
                         }
                         try {
                             recorder.pump(() -> recording.stopRequested || context.pages().isEmpty());
