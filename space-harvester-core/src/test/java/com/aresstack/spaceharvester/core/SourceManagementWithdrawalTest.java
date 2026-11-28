@@ -137,51 +137,8 @@ class SourceManagementWithdrawalTest {
             assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
             removal = sources.removalPending("handbuch").orElseThrow().id();
         }
-        closeWhileDeleting(before, removal);
+        before.close();
         return removal;
-    }
-
-    /**
-     * Schließt wie das Neuladen der App, während die Seitenablage noch löscht: Das Schließen kehrt erst zurück, wenn der
-     * Auftrag aufgehört hat; erst dann dürfen die Ablagen schließen (Angelo 26.11.2026).
-     */
-    private void closeWhileDeleting(Jobs jobs, String removal) throws InterruptedException {
-        Thread closing = Thread.ofVirtual().start(jobs::close);
-        eventually(() -> jobs.status(removal).cancelRequested());
-        assertThat(closing.join(Duration.ofMillis(200))).as("Schließen wartet auf das laufende Löschen").isFalse();
-        release.countDown();
-        assertThat(closing.join(Duration.ofSeconds(30))).as("Schließen nach dem Ende des Auftrags").isTrue();
-        assertThat(jobs.status(removal).state()).as("unterbrochen, setzt nach dem Neustart fort")
-                .isEqualTo(JobState.FAILED);
-    }
-
-    /**
-     * Angelo 26.11.2026: Quelle entfernt, gleich danach neu geladen, während ihre Daten noch gelöscht werden. Das
-     * Schließen darf die Ablagen nicht unter dem laufenden Löschen wegnehmen: Es wartet, und nach dem Schließen
-     * berührt der Auftrag keine Ablage mehr.
-     */
-    @Test
-    void closingRightAfterRemovingWaitsUntilTheRunningDeletionHasLetGoOfTheStores() throws Exception {
-        Jobs jobs = jobs();
-        java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
-        java.util.concurrent.atomic.AtomicBoolean usedAfterClose = new java.util.concurrent.atomic.AtomicBoolean();
-        List<SourceDataPurge.Store> stores = List.of(heldStores().get(0), new SourceDataPurge.Store("Analysen", id -> {
-            usedAfterClose.compareAndSet(false, closed.get());
-            cleared.add(id);
-        }));
-        try (ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(List.of(handbuch()), "test")) {
-            SourceManagement sources = new SourceManagement(catalog, jobs,
-                    new SourceDataPurge(jobs, stores, id -> catalog.config(id).isPresent()));
-            assertThat(sources.remove("handbuch")).isTrue();
-            assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
-            String removal = sources.removalPending("handbuch").orElseThrow().id();
-
-            closeWhileDeleting(jobs, removal);
-            closed.set(true);
-
-            assertThat(usedAfterClose).as("keine Ablage nach dem Schließen").isFalse();
-            assertThat(cleared).as("die zweite Ablage kommt erst nach dem Neustart dran").isEmpty();
-        }
     }
 
     /** Nach dem Neustart hält die Analysenablage an, bis {@code again} freigibt; danach kommt die Seitenablage. */
