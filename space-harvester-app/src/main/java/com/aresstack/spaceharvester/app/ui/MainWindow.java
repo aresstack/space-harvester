@@ -192,6 +192,27 @@ public final class MainWindow implements AppContext.Navigator {
     static final String RESTORE_TOOLTIP = "Doppelklick: Verkleinern";
     private final JPanel top = new JPanel(new HeaderLayout(12)) {
         @Override
+        protected void paintComponent(java.awt.Graphics graphics) {
+            super.paintComponent(graphics);
+            // In der Weihnachtszeit liegt dezenter Schnee in der Titelleiste (Angelo 28.11.2026).
+            com.aresstack.spaceharvester.app.ui.controls.Snow.paint(graphics, getWidth(), getHeight(),
+                    this::freeOfControls);
+        }
+
+        /** Ob in diesem Rechteck nur leere Fläche der Leiste liegt, kein Knopf, Text oder Feld. */
+        private boolean freeOfControls(java.awt.Rectangle box) {
+            int[][] points = {{box.x, box.y}, {box.x + box.width, box.y}, {box.x, box.y + box.height},
+                    {box.x + box.width, box.y + box.height}, {box.x + box.width / 2, box.y + box.height / 2}};
+            for (int[] point : points) {
+                java.awt.Component at = javax.swing.SwingUtilities.getDeepestComponentAt(this, point[0], point[1]);
+                if (at != null && !(at instanceof JPanel)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        @Override
         public String getToolTipText(java.awt.event.MouseEvent event) {
             // Nur die freien Flächen fragen hier: Knöpfe und Felder zeigen ihre eigenen Tooltips.
             return windowBarTooltip(
@@ -592,7 +613,8 @@ public final class MainWindow implements AppContext.Navigator {
         JPanel west = new JPanel(new BorderLayout());
         west.setOpaque(false);
         perspectives = new Perspectives();
-        switcher = new PerspectiveSwitcher(ApplicationIcons.titleLogo(), perspectives);
+        switcher = new PerspectiveSwitcher(
+                new com.aresstack.spaceharvester.app.ui.controls.SantaHat(ApplicationIcons.titleLogo()), perspectives);
         // Avenger-Easter-Egg (#1141): vorläufiger Auslöser fünf Klicks auf das Logo; Ablauf und Auslöser sind getrennt.
         avenger = new AvengerEasterEgg(switcher);
         switcher.onSidebarToggle(this::logoClicked);
