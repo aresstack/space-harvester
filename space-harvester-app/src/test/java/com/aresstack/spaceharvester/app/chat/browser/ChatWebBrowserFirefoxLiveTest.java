@@ -130,6 +130,82 @@ class ChatWebBrowserFirefoxLiveTest {
         }
     }
 
+    /**
+     * Angelo 28.11.: Mit einer Adresse im Auftrag startete ein Fenster, dann ein zweites, und erst das zweite öffnete
+     * die Adresse. Eine genannte Adresse öffnet genau einen Browser mit genau einem Fenster, auch beim zweiten Aufruf.
+     */
+    @Test
+    void aNamedAddressOpensInTheOneBrowserThatStarts() throws Exception {
+        String channel = System.getenv(CHANNEL_ENV);
+        assumeTrue(channel != null && !channel.isBlank(), "ohne " + CHANNEL_ENV + " übersprungen");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        String base = "http://127.0.0.1:" + server.getAddress().getPort();
+        server.createContext("/", exchange -> respond(exchange, "<html><head><title>Seite</title></head><body><p>"
+                + "Inhalt " + exchange.getRequestURI().getPath() + "</p></body></html>"));
+        server.start();
+        Map<String, String> values = new HashMap<>();
+        BrowserSettings settings = new BrowserSettings(new BrowserSettings.Store() {
+            @Override
+            public synchronized String get(String key) {
+                return values.get(key);
+            }
+
+            @Override
+            public synchronized void putAll(Map<String, String> changes) {
+                values.putAll(changes);
+            }
+        });
+        settings.saveChannel(channel);
+        String executable = System.getenv(EXECUTABLE_ENV);
+        if (executable != null && !executable.isBlank()) {
+            settings.saveExecutable(channel, executable);
+        }
+        ChatWebBrowser browser = ChatWebBrowser.start(data, settings);
+        assertThat(browser).as(ChatWebBrowser.unavailable()).isNotNull();
+        browser.searchPageQuestion(() -> {
+            throw new AssertionError("mit einer Adresse wird nicht nach der Suchseite gefragt");
+        });
+        browser.profile("chat-2", true);
+        ApprovalPromptPort approve = (request, timeout) -> ApprovalDecision.of(request,
+                ApprovalDecision.Outcome.APPROVED);
+        BrowserChatTools tools = new BrowserChatTools(browser.tools("chat-2"), call -> browser.asking(approve, call));
+        JsonMapper json = JsonMapper.builder().build();
+        ExecutorService round = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "chat-tool");
+            thread.setDaemon(true);
+            return thread;
+        });
+        int before = com.aresstack.spaceharvester.browser.runtime.BrowserRuntime.launches();
+        long turn = browser.beginTurn("chat-2", progress -> { });
+        try {
+            String page = await("browser_navigate", round.submit(() -> tools.run("browser_navigate",
+                    json.readTree("{\"url\":\"" + base + "/reisekosten\"}"))));
+            String tabs = await("browser_tabs", round.submit(() -> tools.run("browser_tabs",
+                    json.readTree("{}"))));
+            System.out.println("[chat-browser] browser_tabs:\n" + tabs);
+            String again = await("browser_navigate", round.submit(() -> tools.run("browser_navigate",
+                    json.readTree("{\"url\":\"" + base + "/trennungsgeld\"}"))));
+
+            assertThat(page).contains("Inhalt /reisekosten");
+            assertThat(again).contains("Inhalt /trennungsgeld");
+            assertThat(com.aresstack.spaceharvester.browser.runtime.BrowserRuntime.launches() - before)
+                    .as("Browserstarts für eine genannte Adresse").isEqualTo(1);
+            assertThat(tabs.lines().filter(line -> line.contains(base)).count())
+                    .as("Fenster mit der Adresse:\n" + tabs).isEqualTo(1);
+            assertThat(tabs.lines().filter(line -> line.contains("tab-")).count())
+                    .as("Fenster des Browsers:\n" + tabs).isEqualTo(1);
+        } finally {
+            Path failures = data.resolve("logs").resolve("browser-start-failures.log");
+            if (java.nio.file.Files.exists(failures)) {
+                System.out.println("[chat-browser] " + failures + ":\n" + java.nio.file.Files.readString(failures));
+            }
+            browser.endTurn("chat-2", turn);
+            browser.shutdown();
+            round.shutdownNow();
+            server.stop(0);
+        }
+    }
+
     private static String await(String call, Future<String> result) throws Exception {
         try {
             String text = result.get(CALL_SECONDS, TimeUnit.SECONDS);
