@@ -375,11 +375,11 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
     private SearchTabs searchTabs;
     /**
      * Per search page that names only its page (an intranet portal): the result URL its own search field led to,
-     * with {@code {query}} for the words, so the next search opens it directly. A result URL that delivers nothing is
-     * forgotten and found again through the field.
+     * with {@code {query}} for the words, so the next search opens it directly. A result URL that cannot be opened or
+     * delivers nothing is forgotten and found again through the field.
      */
-    private final java.util.Map<String, String> derivedSearchUrls =
-            new java.util.concurrent.ConcurrentHashMap<String, String>();
+    private final java.util.Map<String, SearchUrl> derivedSearchUrls =
+            new java.util.concurrent.ConcurrentHashMap<String, SearchUrl>();
 
     /** Per engine id: its tab, the start page's load problem (null = loaded) and what typing the query did. */
     private static final class SearchTabs {
@@ -395,8 +395,9 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
 
     /**
      * Opens the start page of every form engine in a tab of its own (one parallel fan-out) and types the query into
-     * all of them at the same time, Enter in each. Engines asked by URL template (the dev/test override) are not part
-     * of it. Null when there is no form engine or the driver has no tabs.
+     * all of them at the same time, Enter in each. A search page with a remembered result URL gets that URL in its tab
+     * and is not typed into. Engines asked by URL template (the dev/test override) are not part of it. Null when there
+     * is no form engine or the driver has no tabs.
      */
     private SearchTabs openAndTypeSearchTabs(
             java.util.List<com.aresstack.askai.browser.search.engine.BrowserSearchEngine> formEngines, String query)
@@ -405,17 +406,27 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
             return null;
         }
         java.util.List<String> homes = new ArrayList<String>();
+        java.util.List<Boolean> remembered = new ArrayList<Boolean>();
         for (com.aresstack.askai.browser.search.engine.BrowserSearchEngine engine : formEngines) {
-            homes.add(engine.formOf(0).getHomeUrl());
+            SearchUrl derived = derivedSearchUrls.get(engine.getId());
+            homes.add(derived != null ? derived.forQuery(query) : engine.formOf(0).getHomeUrl());
+            remembered.add(derived != null);
         }
         searchTabsUsed = true;
         try {
             java.util.List<String> loaded = driver.openSearchTabs(homes);
             java.util.List<java.util.List<String>> fields = new ArrayList<java.util.List<String>>();
             for (int i = 0; i < formEngines.size(); i++) {
-                fields.add(loaded.get(i) == null ? formEngines.get(i).formOf(0).getSearchBoxSelectors() : null);
+                fields.add(loaded.get(i) == null && !remembered.get(i)
+                        ? formEngines.get(i).formOf(0).getSearchBoxSelectors() : null);
             }
-            SearchTabs tabs = new SearchTabs(loaded, new ArrayList<String>(driver.submitSearchInTabs(fields, query)));
+            java.util.List<String> typed = new ArrayList<String>();
+            if (fields.stream().anyMatch(java.util.Objects::nonNull)) {
+                typed.addAll(driver.submitSearchInTabs(fields, query));
+            } else {
+                typed.addAll(java.util.Collections.nCopies(fields.size(), "skipped")); // nothing to type into
+            }
+            SearchTabs tabs = new SearchTabs(loaded, typed);
             for (int i = 0; i < formEngines.size(); i++) {
                 tabs.tabOf.put(formEngines.get(i).getId(), i);
             }
@@ -452,8 +463,7 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
                 continue; // the loop records the lock and opens nothing for it
             }
             budget--;
-            // A search page with a remembered result URL opens that URL in the loop instead of its field.
-            if (engine.usesSearchForms() && !derivedSearchUrls.containsKey(engine.getId())) {
+            if (engine.usesSearchForms()) {
                 together.add(engine);
             }
             if (mode == com.aresstack.askai.browser.search.engine.EngineAcquisitionMode.FIRST_USABLE) {
@@ -468,13 +478,14 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
      * the other engines), or its fallback start page loaded in the same tab and typed into alone. A start page whose
      * field is covered gets one consent dismissal and one more try. A start page that shows a challenge is returned
      * as it is, so the challenge handling below sees it. Null (with the attempt recorded) when the field could not be
-     * used: never a result URL instead.
+     * used: never a result URL instead. {@code again}: the tab showed a remembered result URL that failed; its start
+     * page is loaded there and typed into now.
      */
     private BrowserPageSnapshot firstResultPageThroughForm(
             com.aresstack.askai.browser.search.engine.BrowserSearchEngine engine, int endpointIndex,
             com.aresstack.askai.browser.search.engine.BrowserSearchEngine.SearchForm form, String query,
-            String engineHost, List<com.aresstack.askai.browser.LegacySearchEngineAttemptResult> attempts)
-            throws BrowserException {
+            String engineHost, List<com.aresstack.askai.browser.LegacySearchEngineAttemptResult> attempts,
+            boolean again) throws BrowserException {
         Integer tab = searchTabs == null ? null : searchTabs.tabOf.get(engine.getId());
         if (tab == null && endpointIndex == 0) {
             // Not typed together with the others (FIRST_USABLE asks the next engine only now): its own tab, typed alone.
@@ -492,7 +503,7 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
             return null;
         }
         String typed;
-        if (endpointIndex == 0) {
+        if (endpointIndex == 0 && !again) {
             String loadProblem = searchTabs.loadProblems.get(tab);
             if (loadProblem != null) {
                 attempts.add(attempt(engineHost,
@@ -520,6 +531,30 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
         attempts.add(attempt(engineHost,
                 com.aresstack.askai.browser.LegacySearchAttemptOutcome.SEARCH_BOX_UNAVAILABLE, typed));
         return null;
+    }
+
+    /**
+     * Result page 1 of a search page with a remembered result URL: its tab, which opened that URL for this query (its
+     * own tab now when it was not opened with the others). Fails like a navigation when the URL did not load, so the
+     * caller forgets it and asks the field.
+     */
+    private BrowserPageSnapshot rememberedResultPage(
+            com.aresstack.askai.browser.search.engine.BrowserSearchEngine engine, String query)
+            throws BrowserException {
+        Integer tab = searchTabs == null ? null : searchTabs.tabOf.get(engine.getId());
+        if (tab == null) {
+            SearchTabs own = openAndTypeSearchTabs(java.util.Collections.singletonList(engine), query);
+            if (own == null) {
+                throw new BrowserException("no tab for the remembered result page");
+            }
+            searchTabs = own;
+            tab = own.tabOf.get(engine.getId());
+        }
+        String loadProblem = searchTabs.loadProblems.get(tab);
+        if (loadProblem != null) {
+            throw new BrowserException("remembered result page not loaded: " + loadProblem);
+        }
+        return checkedSnapshot(driver.useSearchTab(tab));
     }
 
     /** Types the query into ONE search tab (a fallback endpoint or a retry after a consent banner). */
@@ -633,20 +668,18 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
                     }
                     engineRequestedBefore = true;
                     BrowserPageSnapshot page;
+                    SearchUrl derived = housePage && resultPage == 1 && !derivedOpened
+                            ? derivedSearchUrls.get(engine.getId()) : null;
                     try {
-                        String derived = housePage && resultPage == 1 && !derivedOpened
-                                ? derivedSearchUrls.get(engine.getId()) : null;
                         if (form == null) {
                             page = open(pageUrl);
                         } else if (derived != null) {
                             derivedOpened = true;
-                            page = open(derived.replace(
-                                    com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog.QUERY,
-                                    encoded));
+                            page = rememberedResultPage(engine, query.trim());
                         } else if (resultPage == 1) {
                             // Asked like a person: the query typed into the start page's field, never a result URL.
                             page = firstResultPageThroughForm(engine, endpointIndex, form, query.trim(), engineHost,
-                                    attempts);
+                                    attempts, derivedOpened);
                             if (page == null) {
                                 anyEngineReached = true;
                                 break;
@@ -662,6 +695,11 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
                             // The USER closed the window: no other engine can help, and degrading
                             // their stop into an ATTEMPT line would launder it into a technical end.
                             throw engineUnreachable;
+                        }
+                        if (derived != null && derivedSearchUrls.remove(engine.getId()) != null) {
+                            resultPage--; // the remembered result URL cannot be opened: through the field again
+                            resultPagesRead.clear();
+                            continue;
                         }
                         lastFailure = engineUnreachable;
                         attempts.add(attempt(engineHost,
@@ -731,12 +769,13 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
                     CapturedPageVerdict verdict = consumer.accept(document, host, attempts);
                     if (housePage && resultPage == 1) {
                         if (verdict == CapturedPageVerdict.DELIVERED) {
-                            String searchUrl = deriveSearchUrl(page.getUrl(), query.trim());
+                            SearchUrl searchUrl = deriveSearchUrl(page.getUrl(), query.trim());
                             if (searchUrl != null) {
                                 derivedSearchUrls.put(engine.getId(), searchUrl);
                             }
                         } else if (derivedOpened && derivedSearchUrls.remove(engine.getId()) != null) {
                             resultPage--; // the remembered result URL no longer works: through the field again
+                            resultPagesRead.clear(); // the field's page may show the same links, now readable
                             continue;
                         }
                     }
@@ -1176,40 +1215,101 @@ final class PlaywrightBrowserSession implements BrowserSession, EngineGroupSessi
     }
 
     /**
-     * The result URL a search page's own field led to as a template: the search words in it replaced by
-     * {@code {query}}, in whichever form the page wrote them (form encoding, percent encoding or as typed); {@code null}
-     * when the URL does not carry them (a page that searches by POST or in its own script).
+     * The result URL a search page's own field led to, with {@code {query}} where the search words stood, and how the
+     * page wrote them there: form encoding ({@code +} for a space) or percent encoding.
      */
-    static String deriveSearchUrl(String resultUrl, String query) {
-        if (resultUrl == null || query == null || query.isEmpty()) {
+    static final class SearchUrl {
+        final String template;
+        final boolean formEncoded;
+
+        SearchUrl(String template, boolean formEncoded) {
+            this.template = template;
+            this.formEncoded = formEncoded;
+        }
+
+        /** The result URL for {@code query}, written the way the page wrote its own search words. */
+        String forQuery(String query) throws BrowserException {
+            String written = formEncoded ? encode(query) : encode(query).replace("+", "%20");
+            return template.replace(
+                    com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog.QUERY, written);
+        }
+    }
+
+    /**
+     * The result URL a search page's own field led to as a {@link SearchUrl}: the URL part that carries the search
+     * words, whole, replaced by {@code {query}}. Looked for first among the values of the URL's own parameters (form
+     * encoded), then in its hash route (its parameter values, then its segments) and last in its path segments; a word
+     * that only happens to occur in a path, a parameter name or the host is never taken for the search words.
+     * {@code null} when the URL does not carry them (a page that searches by POST or in its own script).
+     */
+    static SearchUrl deriveSearchUrl(String resultUrl, String query) {
+        if (resultUrl == null || query == null || query.trim().isEmpty()) {
             return null;
         }
-        java.util.LinkedHashSet<String> forms = new java.util.LinkedHashSet<String>();
-        try {
-            String formEncoded = URLEncoder.encode(query, "UTF-8");
-            forms.add(formEncoded);
-            forms.add(formEncoded.replace("+", "%20"));
-        } catch (UnsupportedEncodingException ex) {
-            return null;
-        }
-        forms.add(query);
-        forms.add(query.replace(' ', '+'));
+        String wanted = query.trim();
         int scheme = resultUrl.indexOf("//");
         int path = scheme < 0 ? -1 : resultUrl.indexOf('/', scheme + 2);
-        int afterHost = path >= 0 ? path : resultUrl.length();
-        for (String written : forms) {
-            int at = indexOfIgnoreCase(resultUrl, written);
-            if (at > afterHost) {
-                return resultUrl.substring(0, at)
-                        + com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog.QUERY
-                        + resultUrl.substring(at + written.length());
+        if (path < 0) {
+            return null;
+        }
+        int hash = resultUrl.indexOf('#', path);
+        int beforeHash = hash < 0 ? resultUrl.length() : hash;
+        int parameters = resultUrl.indexOf('?', path);
+        if (parameters >= beforeHash) {
+            parameters = -1;
+        }
+        SearchUrl found = null;
+        if (parameters >= 0) {
+            found = searchWordsIn(resultUrl, parameters + 1, beforeHash, wanted, true, true);
+        }
+        if (found == null && hash >= 0) {
+            found = searchWordsIn(resultUrl, hash + 1, resultUrl.length(), wanted, true, false);
+            if (found == null) {
+                found = searchWordsIn(resultUrl, hash + 1, resultUrl.length(), wanted, false, false);
             }
+        }
+        if (found == null) {
+            found = searchWordsIn(resultUrl, path + 1, parameters >= 0 ? parameters : beforeHash, wanted, false,
+                    false);
+        }
+        return found;
+    }
+
+    /**
+     * The part of {@code url} between {@code from} and {@code to}, cut at {@code / ? & = ;}, that reads as the search
+     * words: a parameter value only ({@code valuesOnly}) or any part; {@code formPart}: the URL's own parameters, which
+     * the browser always form-encodes; elsewhere percent encoding unless only the {@code +}-for-space reading fits.
+     */
+    private static SearchUrl searchWordsIn(String url, int from, int to, String wanted, boolean valuesOnly,
+                                           boolean formPart) {
+        int start = from;
+        char before = from > 0 ? url.charAt(from - 1) : '/';
+        for (int i = from; i <= to; i++) {
+            char c = i < to ? url.charAt(i) : '/';
+            if (c != '/' && c != '?' && c != '&' && c != '=' && c != ';') {
+                continue;
+            }
+            if (i > start && (!valuesOnly || before == '=')) {
+                String part = url.substring(start, i);
+                boolean percent = !formPart && wanted.equalsIgnoreCase(decoded(part.replace("+", "%2B")));
+                if (percent || wanted.equalsIgnoreCase(decoded(part))) {
+                    return new SearchUrl(url.substring(0, start)
+                            + com.aresstack.askai.browser.search.engine.BrowserSearchEngineCatalog.QUERY
+                            + url.substring(i), !percent);
+                }
+            }
+            before = c;
+            start = i + 1;
         }
         return null;
     }
 
-    private static int indexOfIgnoreCase(String text, String part) {
-        return text.toLowerCase(java.util.Locale.ROOT).indexOf(part.toLowerCase(java.util.Locale.ROOT));
+    private static String decoded(String part) {
+        try {
+            return java.net.URLDecoder.decode(part, "UTF-8").trim();
+        } catch (UnsupportedEncodingException | IllegalArgumentException notEncoded) {
+            return part;
+        }
     }
 
     private static String encode(String value) throws BrowserException {
