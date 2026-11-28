@@ -1393,7 +1393,23 @@ public final class PageDetailPanel extends JPanel {
         areaPodcast.tools().setVisible(SOURCE_CARD.equals(pageCard) && READ.equals(selected) && area);
         sourceProperties.tools().setVisible(SOURCE_CARD.equals(pageCard) && ADVANCED.equals(selected) && wide
                 && PROPERTIES.equals(wideAdvanced.selected()));
-        readingHelp.setVisible(PAGE.equals(pageCard) && READING.equals(selected));
+        // Die Hilfe einer Ansicht ist zu sehen, solange ihre Werkzeuge im Kopf zu sehen sind.
+        sourceView.help().setVisible(sourceView.tools().isVisible());
+        sourceChanges.help().setVisible(sourceChanges.tools().isVisible());
+        areaView.help().setVisible(areaView.tools().isVisible());
+        areaPodcast.help().setVisible(areaPodcast.tools().isVisible());
+        sourceProperties.help().setVisible(sourceProperties.tools().isVisible());
+        // Jede Ansicht hat ihr „?“ (Angelo 27.11.2026): Wo keine eigene Hilfe einer Quelle oder eines Bereichs
+        // steht, erklärt die des Reiters, was er zeigt.
+        boolean other = sourceView.help().isVisible() || sourceChanges.help().isVisible()
+                || areaView.help().isVisible() || areaPodcast.help().isVisible()
+                || sourceProperties.help().isVisible();
+        readingHelp.setVisible(!other && READING.equals(selected));
+        podcastHelp.setVisible(!other && READ.equals(selected));
+        attachmentsHelp.setVisible(!other && ATTACHMENTS.equals(selected));
+        infoHelp.setVisible(!other && ADVANCED.equals(selected));
+        exportHelp.setVisible(!other && EXPORT.equals(selected));
+        reload.setEnabled(pageId != null || SOURCE_CARD.equals(pageCard));
         analysisActions.setVisible(PAGE.equals(pageCard) && analysesOpen && !wide);
         advancedActions.setVisible(PAGE.equals(pageCard) && ADVANCED.equals(selected) && !wide);
         // Analysen ohne Seite (Wissensquellen-Kopf, Quelle, Space, Ordner): der Stand der Auswahl links, mit den
@@ -6515,8 +6531,86 @@ public final class PageDetailPanel extends JPanel {
     JComponent headerActions() {
         return Comic.row(advancedActions, sourceView.tools(), sourceChanges.tools(),
                 areaView.tools(), areaPodcast.tools(),
-                sourceProperties.tools(), readingHelp, star, more);
+                sourceProperties.tools(), reload, star, more);
     }
+
+    /**
+     * „Seite neu laden“ im Kopf, an der früheren Stelle des „?“ (Angelo 27.11.2026): in jeder Ansicht derselbe Knopf.
+     * Eine Seite wird bei der Quelle geprüft und, wenn sie dort neuer ist, neu geholt; Quelle und Bereich laden ihre
+     * gezeigte Ansicht neu.
+     */
+    private final com.aresstack.spaceharvester.app.ui.IconButton reload =
+            new com.aresstack.spaceharvester.app.ui.IconButton(com.aresstack.spaceharvester.app.ui.Glyph.SYNC,
+                    ReadingPane.RELOAD);
+
+    {
+        reload.addActionListener(event -> reloadClicked());
+    }
+
+    com.aresstack.spaceharvester.app.ui.IconButton reloadButton() {
+        return reload;
+    }
+
+    private void reloadClicked() {
+        if (PAGE.equals(pageCard) || !SOURCE_CARD.equals(pageCard)) {
+            if (sourceId != null && pageId != null) {
+                load(sourceId, pageId, true, null);
+            }
+            return;
+        }
+        if (sourceView.tools().isVisible()) {
+            sourceView.reload();
+        } else if (sourceChanges.tools().isVisible()) {
+            sourceChanges.reload();
+        } else if (areaView.tools().isVisible()) {
+            areaView.reload();
+        } else if (areaPodcast.tools().isVisible()) {
+            areaPodcast.reload();
+        } else if (sourceProperties.tools().isVisible()) {
+            sourceProperties.reload();
+        }
+    }
+
+    /**
+     * Die „?“-Hilfe der gezeigten Ansicht für die Ecke unten rechts in der Werkzeugleiste: Nur die passende ist
+     * sichtbar; hat die Ansicht keine, bleibt die Ecke leer.
+     */
+    JComponent help() {
+        if (help == null) {
+            help = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
+            help.setOpaque(false);
+            for (JComponent part : new JComponent[] {sourceView.help(), sourceChanges.help(), areaView.help(),
+                    areaPodcast.help(), sourceProperties.help(), readingHelp, podcastHelp, attachmentsHelp,
+                    infoHelp, exportHelp}) {
+                help.add(part);
+            }
+        }
+        return help;
+    }
+
+    private JPanel help;
+
+    static final String PODCAST_HELP = "Die Podcast-Ansicht zeigt den Text der Seite zum Lesen und zum Hören. Der "
+            + "Podcast erzählt die Seite; die gerade erzählte Stelle ist gelb markiert, Stellen ohne Ton sind grau.\n\n"
+            + "Unten neben der Lupe kopierst du das Transkript. Der Podcast entsteht erst, wenn du ihn startest; "
+            + "dafür geht der Text der Seite an das eingestellte Modell.";
+    static final String ATTACHMENTS_HELP = "Hier stehen die Anhänge der Seite. Wähle einen Anhang, um ihn in der "
+            + "Vorschau zu sehen oder als Datei zu speichern.\n\n„Alle Anhänge ablegen“ lädt die Anhänge dieser Seite "
+            + "in die lokale Anhangsablage; danach stehen sie auch ohne Verbindung zur Quelle bereit.";
+    static final String INFO_HELP = "„Info“ zeigt, was der Bestand über die Seite weiß: unter „Eigenschaften“ Titel, "
+            + "Version und Adresse, daneben die technischen Angaben und die Rohdaten, wie die Quelle sie geliefert "
+            + "hat.\n\nDie Unterreiter stehen mittig in der Leiste unten; ihre Aktionen stehen oben links vom Stern.";
+    static final String EXPORT_HELP = "Der Export gibt die Auswahl links aus, auch ohne geöffnete Seite. Die Formate "
+            + "stehen unten in der Leiste; ein Klick öffnet einen eigenen Export-Reiter für diese Auswahl.\n\n"
+            + "Exportierte Dateien liegen im Ausgabeordner und heißen nach dem Titel.";
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton podcastHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, READ, PODCAST_HELP);
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton attachmentsHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, ATTACHMENTS, ATTACHMENTS_HELP);
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton infoHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, ADVANCED, INFO_HELP);
+    private final com.aresstack.spaceharvester.app.ui.controls.HelpButton exportHelp =
+            new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, EXPORT, EXPORT_HELP);
 
     /** Return the existing document-history control for the fixed viewer header. */
     JComponent navigation() {

@@ -773,6 +773,13 @@ public final class AppContext {
         return aiKey;
     }
 
+    /** Der Datenordner der App (Einstellungen › Speicher), ohne Einstellungen neben der Konfigurationsdatei. */
+    public Path dataDirectory() {
+        AppSettings current = settings();
+        return current == null || current.storage() == null ? configFile.toAbsolutePath().getParent()
+                : current.storage().dataDirectory();
+    }
+
     /**
      * Der Browser der Websuche im Chat (Research4j über Playwright, ADR 0046; Edge, Chrome oder Camoufox nach
      * Einstellungen › Browser), beim ersten Gebrauch angelegt; {@code null}, wenn der gewählte Browser fehlt. Die
@@ -781,10 +788,7 @@ public final class AppContext {
     public synchronized com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser webBrowser() {
         if (!webBrowserLocated) {
             webBrowserLocated = true;
-            AppSettings current = settings();
-            Path data = current == null || current.storage() == null ? configFile.toAbsolutePath().getParent()
-                    : current.storage().dataDirectory();
-            webBrowser = com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser.start(data,
+            webBrowser = com.aresstack.spaceharvester.app.chat.browser.ChatWebBrowser.start(dataDirectory(),
                     com.aresstack.spaceharvester.app.chat.browser.BrowserSettings.shared());
         }
         return webBrowser;

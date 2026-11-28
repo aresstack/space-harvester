@@ -28,6 +28,15 @@ public interface View {
     }
 
     /**
+     * Die „?“-Hilfe des Bereichs. Sie steht für jeden Bereich an derselben Stelle: unten rechts in der Ecke der
+     * Werkzeugleiste (Angelo 27.11.2026), nicht mehr im Kopf. {@code null}, wenn der Bereich keine hat; wechselt die
+     * Hilfe mit der Ansicht, liefert der Bereich eine Zeile, in der nur die passende sichtbar ist.
+     */
+    default JComponent help() {
+        return null;
+    }
+
+    /**
      * Umschalter des Bereichs mittig in der Werkzeugleiste unten; die Lupe links klappt über sie auf. {@code null},
      * wenn der Bereich keine hat. Die Seitenreiter der Leseansicht stehen seit dem 13.11.2026 nicht mehr hier,
      * sondern in der Icon-Leiste oben ({@code ContentView.tabBar()}).
