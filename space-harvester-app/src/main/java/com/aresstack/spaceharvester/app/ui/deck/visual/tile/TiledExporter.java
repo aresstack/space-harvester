@@ -94,7 +94,7 @@ public final class TiledExporter {
         Graphics2D g = outputImage.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
                 RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        g.setColor(AppColors.of("app.TiledExporter.init"));
+        g.setColor(AppColors.of("app.TiledExporter.paper"));
         g.fillRect(0, 0, totalWidth, totalHeight);
 
         // Parallel rendering of all tiles
@@ -424,7 +424,7 @@ public final class TiledExporter {
 
             BufferedImage strip = new BufferedImage(stripW, maxH, BufferedImage.TYPE_INT_ARGB);
             Graphics2D g = strip.createGraphics();
-            g.setColor(AppColors.of("app.TiledExporter.parseViewBox"));
+            g.setColor(AppColors.of("app.TiledExporter.paper"));
             g.fillRect(0, 0, stripW, maxH);
 
             int xOff = 0;
@@ -456,7 +456,7 @@ public final class TiledExporter {
         BufferedImage finalImg = new BufferedImage(
                 Math.max(totalW, 1), Math.max(totalH, 1), BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = finalImg.createGraphics();
-        g.setColor(AppColors.of("app.TiledExporter.parseViewBox"));
+        g.setColor(AppColors.of("app.TiledExporter.paper"));
         g.fillRect(0, 0, totalW, totalH);
 
         int yOff = 0;

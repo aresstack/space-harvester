@@ -262,7 +262,7 @@ public final class VideoSeekBar extends JComponent {
                 g.setColor(AppColors.of("app.VideoSeekBar.paintComponent2"));
                 g.setStroke(new BasicStroke(2f));
                 g.fill(new Ellipse2D.Double(x - 6, TRACK_TOP - 3, 12, 12));
-                g.setColor(AppColors.of("app.VideoSeekBar.paintComponent3"));
+                g.setColor(AppColors.of("comic.buttonPlate"));
                 g.fill(new Ellipse2D.Double(x - 4, TRACK_TOP - 1, 8, 8));
             }
             g.setColor(light ? LIGHT_LABEL : LABEL);

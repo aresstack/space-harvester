@@ -472,7 +472,7 @@ public final class MermaidViewerDialog extends JDialog {
             try {
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.5f));
-                g2.setColor(AppColors.of("app.MermaidViewerDialog.paintComponent"));
+                g2.setColor(AppColors.of("app.MermaidViewerDialog.dimVeil"));
                 g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
             } finally {
                 g2.dispose();

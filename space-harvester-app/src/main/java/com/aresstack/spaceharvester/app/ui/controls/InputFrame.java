@@ -63,7 +63,7 @@ public class InputFrame extends JPanel {
         // Aussehen wie die übrigen Felder der App (Comic.style): weiß, schlichter abgerundeter Rahmen; nur
         // Verhalten und Aufbau kommen aus AskAI, nicht dessen Stil.
         setBorder(com.aresstack.spaceharvester.app.ui.Comic.fieldBorder());
-        setBackground(AppColors.of("app.InputFrame.inputFrame"));
+        setBackground(AppColors.of("comic.fieldBg"));
         setOpaque(true);
         if (field instanceof JTextComponent text) {
             text.setBorder(new EmptyBorder(2, 4, 2, 4));

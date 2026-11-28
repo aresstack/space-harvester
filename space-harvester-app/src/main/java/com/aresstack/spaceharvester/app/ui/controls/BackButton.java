@@ -40,7 +40,7 @@ public final class BackButton extends JButton {
     public static final int MAX_ENTRIES = 15;
     /** Platz unter dem Knopf für den Schatten. */
     private static final int SHADOW = 2;
-    private static final Color TOP = AppColors.of("app.BackButton.top");
+    private static final Color TOP = AppColors.of("comic.buttonPlate");
     private static final Color BOTTOM = AppColors.of("app.BackButton.bottom");
     private static final Color SHADOW_COLOR = AppColors.of("app.BackButton.shadowColor");
     private static final Color DISABLED_FILL = AppColors.of("app.BackButton.disabledFill");

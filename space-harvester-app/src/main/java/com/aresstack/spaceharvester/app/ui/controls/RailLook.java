@@ -16,11 +16,11 @@ import com.aresstack.spaceharvester.app.ui.theme.AppColors;
  */
 public enum RailLook {
     /** Schwarzer Grund, weiße Symbole; gewählt hell. */
-    INK("Schwarz", Comic.INK, AppColors.of("app.RailLook.init"), Comic.INK, 1, Comic.SURFACE, Comic.INK),
+    INK("Schwarz", Comic.INK, AppColors.of("bubble.userForeground"), Comic.INK, 1, Comic.SURFACE, Comic.INK),
     /** Gelber Grund wie der kleine Griff der übrigen Trenner, nur größer; gewählt schwarz. */
-    YELLOW("Gelb", Comic.YELLOW, Comic.INK, Comic.INK, 1, Comic.INK, AppColors.of("app.RailLook.init")),
+    YELLOW("Gelb", Comic.YELLOW, Comic.INK, Comic.INK, 1, Comic.INK, AppColors.of("bubble.userForeground")),
     /** Schwarzer Grund mit gelbem Rand; gewählt gelb. */
-    INK_YELLOW_EDGE("Schwarz mit gelbem Rand", Comic.INK, AppColors.of("app.RailLook.init"), Comic.YELLOW, 2, Comic.YELLOW, Comic.INK);
+    INK_YELLOW_EDGE("Schwarz mit gelbem Rand", Comic.INK, AppColors.of("bubble.userForeground"), Comic.YELLOW, 2, Comic.YELLOW, Comic.INK);
 
     /** Schlüssel der Wahl in den Benutzer-Einstellungen (Platz in {@link #values()}). */
     public static final String KEY = "ui.rail.look";

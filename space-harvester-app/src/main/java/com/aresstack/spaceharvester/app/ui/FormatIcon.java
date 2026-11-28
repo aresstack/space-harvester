@@ -59,7 +59,7 @@ public final class FormatIcon implements Icon {
             sheet.lineTo(15.5f, 19.5f);
             sheet.lineTo(2.5f, 19.5f);
             sheet.closePath();
-            g.setColor(AppColors.of("app.FormatIcon.paintIcon"));
+            g.setColor(AppColors.of("bubble.userForeground"));
             g.fill(sheet);
             g.setStroke(new BasicStroke(1.2f));
             g.setColor(Comic.INK);

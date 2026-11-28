@@ -3115,7 +3115,7 @@ public final class SearchView implements View {
         boolean useful = variant.status() == ProgressiveResult.Status.DONE && variant.newHits() > 0;
         boolean dropped = variant.status() == ProgressiveResult.Status.FAILED
                 || variant.status() == ProgressiveResult.Status.SKIPPED;
-        tag.setBackground(useful ? Comic.YELLOW : AppColors.of("app.SearchView.tag"));
+        tag.setBackground(useful ? Comic.YELLOW : AppColors.of("comic.buttonPlate"));
         tag.setForeground(dropped ? Comic.MUTED : Comic.INK);
         tag.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(dropped ? Comic.LINE
                 : Comic.INK, 1, true), BorderFactory.createEmptyBorder(1, 7, 1, 7)));

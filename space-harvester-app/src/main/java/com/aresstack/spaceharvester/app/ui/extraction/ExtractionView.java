@@ -447,7 +447,7 @@ public final class ExtractionView extends JPanel {
             setToolTipText(null);
             setForeground(Comic.INK);
             if (!selected) {
-                setBackground(AppColors.of("app.ExtractionView.renderer"));
+                setBackground(AppColors.of("comic.fieldBg"));
             }
             ExtractionRows.Row shownRow = model.row(row);
             if (shownRow == null) {

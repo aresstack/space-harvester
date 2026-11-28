@@ -151,7 +151,7 @@ final class SetupStepTrail extends JComponent {
                             cx + slot - DIAMETER / 2f - 4, top + DIAMETER / 2f));
                 }
                 Color fill = done[i] ? ResearchUiPalette.WAVE_GREEN
-                        : i == current ? ResearchUiPalette.ACCENT_BLUE : AppColors.of("app.SetupStepTrail.paintComponent");
+                        : i == current ? ResearchUiPalette.ACCENT_BLUE : AppColors.of("bubble.userForeground");
                 Ellipse2D circle = new Ellipse2D.Float(cx - DIAMETER / 2f, top, DIAMETER, DIAMETER);
                 g2.setColor(fill);
                 g2.fill(circle);
@@ -159,12 +159,12 @@ final class SetupStepTrail extends JComponent {
                 g2.setStroke(new BasicStroke(i == current ? 2.6f : 1.8f));
                 g2.draw(circle);
                 if (done[i]) {
-                    g2.setColor(AppColors.of("app.SetupStepTrail.paintComponent"));
+                    g2.setColor(AppColors.of("bubble.userForeground"));
                     g2.setStroke(new BasicStroke(2.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                     g2.drawPolyline(new int[] {cx - 6, cx - 1, cx + 7}, new int[] {top + 13, top + 18, top + 8}, 3);
                 } else {
                     g2.setFont(bold.deriveFont(13f));
-                    g2.setColor(i == current ? AppColors.of("app.SetupStepTrail.paintComponent") : Comic.INK);
+                    g2.setColor(i == current ? AppColors.of("bubble.userForeground") : Comic.INK);
                     String number = Integer.toString(i + 1);
                     FontMetrics fm = g2.getFontMetrics();
                     g2.drawString(number, cx - fm.stringWidth(number) / 2,

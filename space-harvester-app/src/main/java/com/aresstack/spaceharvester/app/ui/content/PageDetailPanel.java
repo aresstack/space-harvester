@@ -7138,7 +7138,7 @@ public final class PageDetailPanel extends JPanel {
 
     private static JPanel padded(JComponent content) {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBackground(AppColors.of("app.PageDetailPanel.padded"));
+        panel.setBackground(AppColors.of("comic.fieldBg"));
         panel.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
         panel.add(content, BorderLayout.NORTH);
         return panel;

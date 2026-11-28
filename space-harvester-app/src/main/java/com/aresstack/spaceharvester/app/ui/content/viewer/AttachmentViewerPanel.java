@@ -217,7 +217,7 @@ public final class AttachmentViewerPanel extends JPanel {
         textPane.setVisible(false);
         documentArea.setEditable(false);
         documentArea.setBorder(BorderFactory.createEmptyBorder(16, 20, 16, 20));
-        documentArea.setBackground(AppColors.of("app.AttachmentViewerPanel.init2"));
+        documentArea.setBackground(AppColors.of("comic.fieldBg"));
         documentPane = com.aresstack.spaceharvester.app.ui.Comic.scroll(documentArea);
         documentPane.setBorder(BorderFactory.createEmptyBorder());
         documentPane.setVisible(false);
@@ -2005,7 +2005,7 @@ public final class AttachmentViewerPanel extends JPanel {
             try {
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.5f));
-                g2.setColor(AppColors.of("app.AttachmentViewerPanel.paintComponent"));
+                g2.setColor(AppColors.of("app.AttachmentViewerPanel.dimVeil"));
                 g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
             } finally {
                 g2.dispose();

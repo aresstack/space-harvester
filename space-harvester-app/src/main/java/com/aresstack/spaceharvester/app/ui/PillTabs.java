@@ -171,7 +171,7 @@ public final class PillTabs extends JPanel {
                 g.fillRoundRect(x, y, width, height, height, height);
                 g.setFont(font);
                 java.awt.FontMetrics metrics = g.getFontMetrics();
-                g.setColor(AppColors.of("app.PillTabs.paintIcon"));
+                g.setColor(AppColors.of("bubble.userForeground"));
                 g.drawString(text, x + (width - metrics.stringWidth(text)) / 2,
                         y + (height - metrics.getHeight()) / 2 + metrics.getAscent());
             } finally {

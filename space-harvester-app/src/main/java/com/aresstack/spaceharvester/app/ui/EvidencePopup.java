@@ -243,7 +243,7 @@ public final class EvidencePopup extends JPopupMenu {
 
     public EvidencePopup() {
         setOpaque(true);
-        setBackground(AppColors.of("app.EvidencePopup.evidencePopup"));
+        setBackground(AppColors.of("comic.fieldBg"));
         setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Comic.INK, 2),
                 BorderFactory.createEmptyBorder(10, 12, 12, 12)));
         setLayout(new BorderLayout(0, 8));

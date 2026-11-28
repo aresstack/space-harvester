@@ -60,7 +60,7 @@ public final class FilesIcons {
                 g2.translate(x, y);
                 int[] xs = {3, 10, 13, 13, 3};
                 int[] ys = {1, 1, 4, 15, 15};
-                g2.setColor(AppColors.of("app.FilesIcons.paintIcon"));
+                g2.setColor(AppColors.of("bubble.userForeground"));
                 g2.fillPolygon(xs, ys, xs.length);
                 g2.setColor(PAPER_EDGE);
                 g2.drawPolygon(xs, ys, xs.length);

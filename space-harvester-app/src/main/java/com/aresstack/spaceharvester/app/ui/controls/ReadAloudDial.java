@@ -401,7 +401,7 @@ public final class ReadAloudDial extends JComponent {
         double y = cy - Math.cos(radians) * radius;
         g.setColor(color);
         g.fill(new Ellipse2D.Double(x - KNOB, y - KNOB, 2 * KNOB, 2 * KNOB));
-        g.setColor(AppColors.of("app.ReadAloudDial.knob"));
+        g.setColor(AppColors.of("comic.buttonPlate"));
         g.setStroke(new BasicStroke(1.5f));
         g.draw(new Ellipse2D.Double(x - KNOB, y - KNOB, 2 * KNOB, 2 * KNOB));
     }
@@ -418,7 +418,7 @@ public final class ReadAloudDial extends JComponent {
         double height = metrics.getHeight();
         RoundRectangle2D shape = new RoundRectangle2D.Double(cx - width / 2, cy - height / 2, width, height,
                 height, height);
-        g.setColor(AppColors.of("app.ReadAloudDial.pill"));
+        g.setColor(AppColors.of("comic.buttonPlate"));
         g.fill(shape);
         g.setColor(color);
         g.setStroke(new BasicStroke(1f));

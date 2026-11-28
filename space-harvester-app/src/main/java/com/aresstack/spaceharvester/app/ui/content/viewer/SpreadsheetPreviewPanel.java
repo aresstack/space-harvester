@@ -21,7 +21,7 @@ final class SpreadsheetPreviewPanel extends JPanel {
     SpreadsheetPreviewPanel(SpreadsheetPreviewData data) {
         super(new BorderLayout());
         setOpaque(true);
-        setBackground(AppColors.of("app.SpreadsheetPreviewPanel.spreadsheetPreviewPanel"));
+        setBackground(AppColors.of("comic.fieldBg"));
         if (data.tabs.size() == 1) {
             add(sheet(data.tabs.get(0)), BorderLayout.CENTER);
         } else {

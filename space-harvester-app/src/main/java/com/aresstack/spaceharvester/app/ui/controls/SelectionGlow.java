@@ -8,6 +8,7 @@ import java.awt.RenderingHints;
 import java.util.function.IntSupplier;
 import javax.swing.JPanel;
 import javax.swing.Timer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Eine Fläche, die sich als Ganzes gewählt zeigen kann (Angelo 28.11.2026: „Alles auswählen“ färbt nicht nur den Kopf

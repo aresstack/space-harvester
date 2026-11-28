@@ -370,7 +370,9 @@ public final class SettingsView implements View {
         showingTheme = false;
         theme.setToolTipText("Farbschema der App");
         theme.addActionListener(e -> chooseTheme());
-        displayRows.add(THEME_TITLE, theme, THEME_HINT);
+        if (com.aresstack.spaceharvester.app.ui.theme.ThemeSwitcher.names().size() > 1) {
+            displayRows.add(THEME_TITLE, theme, THEME_HINT);
+        }
         season.setSelected(com.aresstack.spaceharvester.app.ui.controls.Season.enabled());
         season.addActionListener(e -> com.aresstack.spaceharvester.app.ui.controls.Season.enabled(
                 season.isSelected()));

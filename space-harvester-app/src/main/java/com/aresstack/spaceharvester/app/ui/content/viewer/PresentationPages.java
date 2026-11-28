@@ -54,7 +54,7 @@ final class PresentationPages implements RenderedPages {
         BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
         Graphics2D graphics = image.createGraphics();
         try {
-            graphics.setColor(AppColors.of("app.PresentationPages.render"));
+            graphics.setColor(AppColors.of("app.PresentationPages.paper"));
             graphics.fillRect(0, 0, width, height);
             graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);

@@ -152,7 +152,7 @@ public class MermaidExportDialog extends JDialog {
         // ── Progress section ──
         progressLabel = new JLabel(" ");
         progressLabel.setFont(progressLabel.getFont().deriveFont(Font.ITALIC, 11f));
-        progressLabel.setForeground(AppColors.of("app.MermaidExportDialog.actionPerformed"));
+        progressLabel.setForeground(AppColors.of("app.MermaidExportDialog.progressText"));
         progressLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
         mainPanel.add(progressLabel);
         mainPanel.add(Box.createVerticalStrut(4));

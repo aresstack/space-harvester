@@ -209,7 +209,7 @@ public final class Comic {
         ComicScrollPane scroll = new ComicScrollPane(view, ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
                 ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED, PALETTE);
         scroll.getVerticalScrollBar().setUnitIncrement(16);
-        scroll.getViewport().setBackground(view instanceof JTable ? AppColors.of("app.Comic.scroll") : SURFACE);
+        scroll.getViewport().setBackground(view instanceof JTable ? AppColors.of("comic.fieldBg") : SURFACE);
         scroll.setBorder(BorderFactory.createEmptyBorder());
         // Liegt die Fläche in einer Seite, die selbst scrollt (Einstellungen), reicht sie das Rad weiter, sobald
         // sie nichts mehr zu scrollen hat; sonst verschluckt eine Tabelle das Rad.
@@ -439,7 +439,7 @@ public final class Comic {
         field.setBorder(fieldBorder());
         field.setForeground(INK);
         field.setCaretColor(INK);
-        field.setBackground(AppColors.of("app.Comic.style"));
+        field.setBackground(AppColors.of("comic.fieldBg"));
         field.setFont(regular(13f));
         field.setOpaque(true);
     }
@@ -450,7 +450,7 @@ public final class Comic {
         area.setEditable(false);
         area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         area.setForeground(INK);
-        area.setBackground(AppColors.of("app.Comic.code"));
+        area.setBackground(AppColors.of("comic.fieldBg"));
         area.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
         return area;
     }
@@ -486,7 +486,7 @@ public final class Comic {
         table.setFont(regular(13f));
         table.setRowHeight(26);
         table.setForeground(INK);
-        table.setBackground(AppColors.of("app.Comic.table"));
+        table.setBackground(AppColors.of("comic.fieldBg"));
         table.setGridColor(AppColors.of("app.Comic.table2"));
         table.setShowVerticalLines(false);
         table.setSelectionBackground(YELLOW);

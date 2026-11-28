@@ -1022,7 +1022,7 @@ public final class DocumentNavigationSky extends JPanel {
             Graphics2D g2 = ResearchUiPainter.prepare(graphics);
             try {
                 if (hovered) {
-                    g2.setColor(ResearchUiPainter.mix(ResearchUiPalette.SKY_BAR_SURFACE, AppColors.of("app.DocumentNavigationSky.paintComponent"),
+                    g2.setColor(ResearchUiPainter.mix(ResearchUiPalette.SKY_BAR_SURFACE, AppColors.of("comic.buttonPlate"),
                             0.35f));
                     g2.fillOval(0, 0, getWidth(), getHeight());
                 }

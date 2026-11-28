@@ -456,7 +456,7 @@ public final class BusyOverlay extends JPanel {
                 g.fill(new Ellipse2D.Double(x, y, STOP_DIAMETER, STOP_DIAMETER));
                 g.setFont(font());
                 FontMetrics metrics = g.getFontMetrics();
-                g.setColor(AppColors.of("app.BusyOverlay.paintComponent"));
+                g.setColor(AppColors.of("bubble.userForeground"));
                 g.drawString(STOP, (getWidth() - metrics.stringWidth(STOP)) / 2,
                         (getHeight() - metrics.getHeight()) / 2 + metrics.getAscent());
             } finally {

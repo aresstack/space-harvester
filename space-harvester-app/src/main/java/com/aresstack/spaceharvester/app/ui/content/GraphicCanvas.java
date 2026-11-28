@@ -122,7 +122,7 @@ class GraphicCanvas extends JPanel {
         this.graphicId = graphic.id();
         this.status = status;
         setOpaque(false);
-        canvas.setBackground(AppColors.of("app.GraphicCanvas.init"));
+        canvas.setBackground(AppColors.of("comic.fieldBg"));
         canvas.setBorder(BorderFactory.createLineBorder(Comic.LINE));
         canvas.setDocumentState(JSVGCanvas.ALWAYS_DYNAMIC);
         canvas.setEnableRotateInteractor(false);
@@ -506,7 +506,7 @@ class GraphicCanvas extends JPanel {
             g.draw(box);
             g.setStroke(new BasicStroke(1f));
             Rectangle2D grip = handle(box);
-            g.setColor(AppColors.of("app.GraphicCanvas.paintSelection"));
+            g.setColor(AppColors.of("comic.buttonPlate"));
             g.fill(grip);
             g.setColor(Comic.ORANGE);
             g.draw(grip);

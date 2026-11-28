@@ -837,7 +837,7 @@ final class TermsTab extends JPanel {
     static FindablePill textForm(FindablePill chip, VerbQueries.Verb verb) {
         if (verb.fromText()) {
             chip.setFont(Comic.semiBold(12f).deriveFont(java.awt.Font.ITALIC));
-            chip.setForegrounds(Comic.MUTED, AppColors.of("app.TermsTab.textForm"), AppColors.of("app.TermsTab.textForm"));
+            chip.setForegrounds(Comic.MUTED, AppColors.of("bubble.userForeground"), AppColors.of("bubble.userForeground"));
         }
         return chip;
     }
@@ -1137,7 +1137,7 @@ final class TermsTab extends JPanel {
         FindablePill chip = new FindablePill(label, 26, 26, 10);
         chip.setFont(Comic.semiBold(12f));
         chip.setFills(Comic.SURFACE, ResearchUiPalette.SECONDARY_SURFACE, ResearchUiPalette.ACCENT_BLUE);
-        chip.setForegrounds(Comic.INK, AppColors.of("app.TermsTab.chip"), AppColors.of("app.TermsTab.chip"));
+        chip.setForegrounds(Comic.INK, AppColors.of("bubble.userForeground"), AppColors.of("bubble.userForeground"));
         chip.setBorders(Comic.MUTED, Comic.INK, ResearchUiPalette.ACCENT_BLUE);
         chip.setToolTipText(tooltip);
         chip.setEnabled(!spans.isEmpty());

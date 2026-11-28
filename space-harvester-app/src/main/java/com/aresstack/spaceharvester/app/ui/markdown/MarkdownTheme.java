@@ -58,8 +58,8 @@ public final class MarkdownTheme {
      * Markdown-Antworten und Fehler-/Hinweisblasen gleich wirken.
      */
     public static MarkdownTheme forBubble(Color background, Color foreground) {
-        Color fg = foreground == null ? color("Label.foreground", AppColors.of("app.MarkdownTheme.forBubble")) : foreground;
-        Color bg = background == null ? color("TextArea.background", AppColors.of("app.MarkdownTheme.forBubble2")) : background;
+        Color fg = foreground == null ? color("Label.foreground", AppColors.of("app.MarkdownTheme.fallbackText")) : foreground;
+        Color bg = background == null ? color("TextArea.background", AppColors.of("comic.fieldBg")) : background;
         Color muted = blend(bg, fg, 0.55f);
         Color link = linkColorFor(bg, fg);
         Color codeBackground = blend(bg, fg, 0.10f);
@@ -74,11 +74,11 @@ public final class MarkdownTheme {
 
     /** Derive a readable document theme from the actual transcript surface and look and feel. */
     public static MarkdownTheme forSurface(Color background) {
-        Color bg = background == null ? color("Panel.background", AppColors.of("app.MarkdownTheme.forSurface")) : background;
-        Color fg = color("Label.foreground", AppColors.of("app.MarkdownTheme.fg"));
+        Color bg = background == null ? color("Panel.background", AppColors.of("comic.fieldBg")) : background;
+        Color fg = color("Label.foreground", AppColors.of("app.MarkdownTheme.fallbackInk"));
         if (ColorContrast.ratio(fg, bg) < 4.5) {
-            fg = ColorContrast.ratio(AppColors.of("app.MarkdownTheme.fg"), bg) >= ColorContrast.ratio(AppColors.of("app.MarkdownTheme.forSurface"), bg)
-                    ? AppColors.of("app.MarkdownTheme.forSurface2") : AppColors.of("app.MarkdownTheme.forSurface");
+            fg = ColorContrast.ratio(AppColors.of("app.MarkdownTheme.fallbackInk"), bg) >= ColorContrast.ratio(AppColors.of("comic.fieldBg"), bg)
+                    ? AppColors.of("app.MarkdownTheme.fallbackInk") : AppColors.of("comic.fieldBg");
         }
         Font body = bodyFont();
         Color muted = blend(bg, fg, 0.72f);

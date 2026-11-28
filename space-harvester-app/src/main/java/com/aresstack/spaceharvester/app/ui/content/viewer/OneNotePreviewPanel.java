@@ -45,7 +45,7 @@ final class OneNotePreviewPanel extends JPanel {
         text.setEditable(false);
         text.setFont(Comic.regular(14f));
         text.setForeground(Comic.TEXT);
-        text.setBackground(AppColors.of("app.OneNotePreviewPanel.oneNotePreviewPanel"));
+        text.setBackground(AppColors.of("comic.fieldBg"));
         text.setBorder(BorderFactory.createEmptyBorder(18, 24, 18, 24));
         text.setLineWrap(true);
         text.setWrapStyleWord(true);
@@ -55,7 +55,7 @@ final class OneNotePreviewPanel extends JPanel {
             }
         });
         JScrollPane document = Comic.scroll(text);
-        document.getViewport().setBackground(AppColors.of("app.OneNotePreviewPanel.oneNotePreviewPanel"));
+        document.getViewport().setBackground(AppColors.of("comic.fieldBg"));
         if (preview.hasPageBoundaries()) {
             ComicSplitPane split = new ComicSplitPane(Comic.scroll(sections), document, 140, 360, Comic.PALETTE);
             split.setBackground(Comic.SURFACE);

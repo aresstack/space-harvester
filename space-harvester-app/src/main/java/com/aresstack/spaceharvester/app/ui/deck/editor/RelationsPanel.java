@@ -475,7 +475,7 @@ final class RelationsPanel extends JPanel {
                     : object + " — " + total + " Knoten");
             kindFilter.marked(!hidden.isEmpty());
             nameField.setBackground(names == null && !nameField.getText().isBlank() ? Comic.CHANGE_REMOVED
-                    : AppColors.of("app.RelationsPanel.apply"));
+                    : AppColors.of("comic.fieldBg"));
         }
 
         private void title(String text) {

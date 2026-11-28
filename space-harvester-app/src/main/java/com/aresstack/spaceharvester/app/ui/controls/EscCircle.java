@@ -83,7 +83,7 @@ public final class EscCircle extends JComponent {
             double y = (getHeight() - size) / 2.0;
             g.setColor(hover ? BusyOverlay.STOP_LIT : BusyOverlay.STOP_MUTED);
             g.fill(new Ellipse2D.Double(x, y, size, size));
-            g.setColor(AppColors.of("app.EscCircle.paintComponent"));
+            g.setColor(AppColors.of("bubble.userForeground"));
             g.setFont(Comic.semiBold(10.5f));
             FontMetrics metrics = g.getFontMetrics();
             g.drawString(BusyOverlay.STOP, (getWidth() - metrics.stringWidth(BusyOverlay.STOP)) / 2,

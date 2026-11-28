@@ -163,7 +163,7 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
         super(new BorderLayout());
         this.session = session;
         setOpaque(true);
-        setBackground(AppColors.of("app.DocumentEditor.documentEditor"));
+        setBackground(AppColors.of("comic.fieldBg"));
         configure(area);
         blocks = new javax.swing.Timer(300, e -> NaturalBlockHighlighter.apply(area));
         blocks.setRepeats(false);
@@ -671,7 +671,7 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
         if (centerSearch != null) {
             String query = findField.getText().trim();
             int count = query.isEmpty() ? 0 : centerSearch.search(query);
-            findField.setBackground(!query.isEmpty() && count == 0 ? Comic.CHANGE_REMOVED : AppColors.of("app.DocumentEditor.find"));
+            findField.setBackground(!query.isEmpty() && count == 0 ? Comic.CHANGE_REMOVED : AppColors.of("comic.fieldBg"));
             findFrame.setBackground(findField.getBackground());
             findCount.setText(query.isEmpty() ? "" : count == 0 ? "kein Treffer" : "1 / " + count);
             findCount.setToolTipText(null);
@@ -682,7 +682,7 @@ public final class DocumentEditor extends JPanel implements com.aresstack.spaceh
         matches.clear();
         current = -1;
         Optional<String> problem = TextSearch.problem(regex);
-        findField.setBackground(problem.isPresent() ? Comic.CHANGE_REMOVED : AppColors.of("app.DocumentEditor.find"));
+        findField.setBackground(problem.isPresent() ? Comic.CHANGE_REMOVED : AppColors.of("comic.fieldBg"));
         findFrame.setBackground(findField.getBackground());
         if (regex.isBlank() || problem.isPresent()) {
             RegexFolds.clear(area);

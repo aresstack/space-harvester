@@ -629,7 +629,7 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
                 && browser == browseTabs.get(0).browser) {
             AppState.shared().put(LOCATION_KEY, location);
         }
-        filter.setBackground(browser.filterValid() ? AppColors.of("app.FilesWorkspace.render") : Comic.CHANGE_REMOVED);
+        filter.setBackground(browser.filterValid() ? AppColors.of("comic.fieldBg") : Comic.CHANGE_REMOVED);
         filterFrame.setBackground(filter.getBackground());
         Set<String> chosen = new HashSet<>();
         selectedEntries().forEach(entry -> chosen.add(entry.location()));

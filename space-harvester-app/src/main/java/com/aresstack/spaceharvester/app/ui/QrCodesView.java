@@ -280,7 +280,7 @@ public final class QrCodesView {
         protected void paintComponent(Graphics graphics) {
             Graphics2D g = (Graphics2D) graphics.create();
             try {
-                g.setColor(AppColors.of("app.QrCodesView.paintComponent"));
+                g.setColor(AppColors.of("app.QrCodesView.quietZone"));
                 g.fillRect(0, 0, getWidth(), getHeight());
                 if (image == null) {
                     return;

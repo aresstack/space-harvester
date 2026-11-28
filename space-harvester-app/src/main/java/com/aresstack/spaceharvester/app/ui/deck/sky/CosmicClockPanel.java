@@ -54,7 +54,7 @@ public class CosmicClockPanel extends JPanel {
         this.timeModel = new CosmicClockTimeModel(timeFactor);
         this.projection = new SkyProjection(); // south-facing default
         setOpaque(true);
-        setBackground(AppColors.of("app.CosmicClockPanel.cosmicClockPanel"));
+        setBackground(AppColors.of("app.CosmicClockPanel.space"));
 
         // Enable Swing tooltips and speed up the initial delay
         ToolTipManager ttm = ToolTipManager.sharedInstance();
@@ -206,7 +206,7 @@ public class CosmicClockPanel extends JPanel {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
             // Black sky background
-            g.setColor(AppColors.of("app.CosmicClockPanel.paintComponent"));
+            g.setColor(AppColors.of("app.CosmicClockPanel.space"));
             g.fillRect(0, 0, w, h);
             if (!skyEnabled) {
                 visibleBodies.clear();

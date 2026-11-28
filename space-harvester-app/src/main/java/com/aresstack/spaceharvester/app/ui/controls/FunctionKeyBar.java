@@ -202,7 +202,7 @@ public final class FunctionKeyBar extends JPanel {
 
     /** Blasse Gruppenfarbe für unbelegte Tasten: 75 % Richtung Weiß. */
     static Color pale(int key) {
-        return blend(color(key), AppColors.of("app.FunctionKeyBar.pale"), 0.75f);
+        return blend(color(key), AppColors.of("comic.buttonPlate"), 0.75f);
     }
 
     private static Color blend(Color a, Color b, float t) {
@@ -222,7 +222,7 @@ public final class FunctionKeyBar extends JPanel {
             boolean assigned = label != null;
             fill = assigned ? color(number) : pale(number);
             float brightness = (fill.getRed() * 299 + fill.getGreen() * 587 + fill.getBlue() * 114) / 255000f;
-            ink = !assigned ? AppColors.of("app.FunctionKeyBar.keyCap") : brightness > 0.55f ? AppColors.of("app.FunctionKeyBar.ink") : AppColors.of("app.FunctionKeyBar.ink2");
+            ink = !assigned ? AppColors.of("app.FunctionKeyBar.keyCap") : brightness > 0.55f ? AppColors.of("app.FunctionKeyBar.darkInk") : AppColors.of("bubble.userForeground");
             setToolTipText(assigned ? "F" + number + " – " + label : "F" + number + " (nicht belegt)");
             setFont(getFont().deriveFont(Font.PLAIN, 11f));
             setMargin(new Insets(1, 4, 1, 4));

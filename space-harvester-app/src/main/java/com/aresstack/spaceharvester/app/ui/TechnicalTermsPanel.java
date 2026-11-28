@@ -678,7 +678,7 @@ final class TechnicalTermsPanel extends JPanel {
 
         RowList() {
             setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
-            setBackground(AppColors.of("app.TechnicalTermsPanel.rowList"));
+            setBackground(AppColors.of("comic.fieldBg"));
         }
 
         @Override
@@ -721,7 +721,7 @@ final class TechnicalTermsPanel extends JPanel {
             super(new BorderLayout(6, 0));
             this.confirmed = confirmed;
             setOpaque(true);
-            setBackground(selected ? Comic.CHANGE_CHANGED : AppColors.of("app.TechnicalTermsPanel.getScrollableTracksViewportHeight"));
+            setBackground(selected ? Comic.CHANGE_CHANGED : AppColors.of("comic.fieldBg"));
             setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 4));
             setAlignmentX(LEFT_ALIGNMENT);
             Dot dot = new Dot(confirmed);

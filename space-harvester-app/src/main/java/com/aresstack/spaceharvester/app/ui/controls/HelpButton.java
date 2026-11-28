@@ -76,7 +76,7 @@ public final class HelpButton extends JButton {
             float diameter = Math.min(getWidth(), getHeight()) - 5f;
             Ellipse2D chip = new Ellipse2D.Float(2f, 2f, diameter, diameter);
             boolean hot = getModel().isRollover() || getModel().isPressed() || popup.isVisible();
-            g2.setColor(hot ? Comic.YELLOW : AppColors.of("app.HelpButton.paintComponent"));
+            g2.setColor(hot ? Comic.YELLOW : AppColors.of("bubble.userForeground"));
             g2.fill(chip);
             g2.setColor(Comic.INK);
             g2.setStroke(new BasicStroke(1.6f));

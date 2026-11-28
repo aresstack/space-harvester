@@ -86,7 +86,7 @@ final class FileFormatIcon implements Icon {
             // Das Schild mit dem Kürzel, links über den Rand des Blatts hinaus.
             paint.setColor(enabled ? color : DISABLED);
             paint.fill(new RoundRectangle2D.Double(0, 6.5, 19, 10, 3, 3));
-            paint.setColor(AppColors.of("app.FileFormatIcon.paintIcon2"));
+            paint.setColor(AppColors.of("app.FileFormatIcon.paper"));
             float size = label.length() > 1 ? 7f : 9.5f;
             paint.setFont(paint.getFont().deriveFont(Font.BOLD, size));
             FontMetrics metrics = paint.getFontMetrics();

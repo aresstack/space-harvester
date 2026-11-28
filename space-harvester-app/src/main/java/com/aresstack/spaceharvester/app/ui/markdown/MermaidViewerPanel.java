@@ -51,7 +51,7 @@ public final class MermaidViewerPanel extends JPanel {
     private static final int HIGH_RES_WIDTH = 2600;
 
     /** The diagram surface color — white like the overlay frame. THE retheme constant. */
-    public static final Color DEFAULT_SURFACE_COLOR = AppColors.of("app.MermaidViewerPanel.defaultSurfaceColor");
+    public static final Color DEFAULT_SURFACE_COLOR = AppColors.of("app.MermaidViewerPanel.paper");
     /** Surface opacity in percent: 100 = solid, 0 = fully transparent (the frame shines through). */
     public static final int DEFAULT_SURFACE_OPACITY_PERCENT = 100;
 
@@ -582,7 +582,7 @@ public final class MermaidViewerPanel extends JPanel {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.5f));
-            g2.setColor(AppColors.of("app.MermaidViewerPanel.paintComponent2"));
+            g2.setColor(AppColors.of("app.MermaidViewerPanel.dimVeil"));
             g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
             g2.dispose();
             super.paintComponent(g);

@@ -879,7 +879,7 @@ public final class TermGraphView {
 
         public Canvas() {
             setOpaque(true);
-            setBackground(AppColors.of("app.TermGraphView.canvas"));
+            setBackground(AppColors.of("comic.fieldBg"));
             setPreferredSize(new Dimension(640, 420));
             setFont(Comic.semiBold(13f));
             javax.swing.ToolTipManager.sharedInstance().registerComponent(this);
@@ -2294,7 +2294,7 @@ public final class TermGraphView {
             FontMetrics metrics = g2.getFontMetrics(font);
             RoundRectangle2D tag = new RoundRectangle2D.Double(box.getX(), box.getY(), box.getWidth(),
                     box.getHeight(), 10, 10);
-            g2.setColor(AppColors.of("app.TermGraphView.paintEdge"));
+            g2.setColor(AppColors.of("comic.buttonPlate"));
             g2.fill(tag);
             g2.setStroke(new BasicStroke(1.2f));
             g2.setColor(color);
@@ -2454,7 +2454,7 @@ public final class TermGraphView {
                     box.getHeight(), 16, 16);
             g2.setColor(Comic.INK);
             g2.fill(shadow);
-            g2.setColor(depth == 0 ? Comic.YELLOW : depth == 1 ? AppColors.of("app.TermGraphView.paintNode") : Comic.SURFACE);
+            g2.setColor(depth == 0 ? Comic.YELLOW : depth == 1 ? AppColors.of("comic.buttonPlate") : Comic.SURFACE);
             g2.fill(shape);
             g2.setColor(Comic.INK);
             g2.setStroke(new BasicStroke(depth == 0 ? 2.6f : 2f));

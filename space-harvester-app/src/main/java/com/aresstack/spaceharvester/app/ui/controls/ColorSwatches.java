@@ -140,7 +140,7 @@ public final class ColorSwatches extends JComponent {
                 if (colors[i] == selected) {
                     g.setStroke(new BasicStroke(2f));
                     g.drawOval(x - RING, y - RING, SWATCH + 2 * RING - 1, SWATCH + 2 * RING - 1);
-                    g.setColor(AppColors.of("app.ColorSwatches.paintComponent"));
+                    g.setColor(AppColors.of("bubble.userForeground"));
                     g.drawPolyline(new int[] {x + 5, x + 8, x + 13}, new int[] {y + 9, y + 12, y + 6}, 3);
                 }
                 if (colors[i] == selected && isFocusOwner()) {

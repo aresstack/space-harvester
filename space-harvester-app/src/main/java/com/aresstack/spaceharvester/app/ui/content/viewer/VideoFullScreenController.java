@@ -91,7 +91,7 @@ final class VideoFullScreenController implements AutoCloseable {
 
         JFrame window = new JFrame("Video-Vollbild");
         window.setUndecorated(true);
-        window.setBackground(AppColors.of("app.VideoFullScreenController.enter"));
+        window.setBackground(AppColors.of("app.VideoFullScreenController.stage"));
         window.setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         window.addWindowListener(new WindowAdapter() {
             @Override
@@ -101,7 +101,7 @@ final class VideoFullScreenController implements AutoCloseable {
         });
 
         placeholder = new JPanel(new BorderLayout());
-        placeholder.setBackground(AppColors.of("app.VideoFullScreenController.windowClosing"));
+        placeholder.setBackground(AppColors.of("app.VideoFullScreenController.stage"));
         fullScreenWindow = window;
         transferring = true;
         try {
@@ -109,7 +109,7 @@ final class VideoFullScreenController implements AutoCloseable {
             originalParent.remove(videoView);
             putBack(originalParent, placeholder);
             window.getContentPane().setLayout(new BorderLayout());
-            window.getContentPane().setBackground(AppColors.of("app.VideoFullScreenController.windowClosing"));
+            window.getContentPane().setBackground(AppColors.of("app.VideoFullScreenController.stage"));
             window.getContentPane().add(videoView, BorderLayout.CENTER);
             originalParent.revalidate();
             originalParent.repaint();

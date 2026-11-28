@@ -268,7 +268,7 @@ public final class ReviewToggle extends JPanel {
                 if (set()) {
                     g.setColor(!enabled ? LOCKED_FILL : value == State.CONFIRMED ? CONFIRMED_FILL : REJECTED_FILL);
                     g.fill(circle);
-                    mark = AppColors.of("app.ReviewToggle.paintComponent");
+                    mark = AppColors.of("bubble.userForeground");
                 } else {
                     // Ungesetzt durchsichtig, nur der dünne Rand; unter der Maus hell gelb wie die Pillen.
                     if (enabled && (getModel().isRollover() || getModel().isPressed())) {

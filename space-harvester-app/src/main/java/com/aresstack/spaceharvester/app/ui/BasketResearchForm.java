@@ -494,7 +494,7 @@ final class BasketResearchForm {
         javax.swing.JScrollPane scroll = Comic.scroll(area);
         scroll.setHorizontalScrollBarPolicy(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         scroll.setBorder(Comic.fieldBorder());
-        scroll.getViewport().setBackground(AppColors.of("app.BasketResearchForm.field"));
+        scroll.getViewport().setBackground(AppColors.of("comic.fieldBg"));
         Dimension rows = area.getPreferredScrollableViewportSize();
         Insets frame = scroll.getInsets();
         Dimension least = new Dimension(0, rows.height + frame.top + frame.bottom);

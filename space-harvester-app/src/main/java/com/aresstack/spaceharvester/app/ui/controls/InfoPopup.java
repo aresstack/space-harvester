@@ -327,7 +327,7 @@ public final class InfoPopup extends JPopupMenu {
                 g.setColor(AppColors.of("app.InfoPopup.paintComponent"));
                 g.fillRoundRect(i, i, getWidth() - i, getHeight() - i, 12, 12);
             }
-            g.setColor(AppColors.of("app.InfoPopup.paintComponent2"));
+            g.setColor(AppColors.of("comic.buttonPlate"));
             g.fillRoundRect(0, 0, getWidth() - 3, getHeight() - 3, 12, 12);
             g.setColor(Comic.LINE);
             g.drawRoundRect(0, 0, getWidth() - 4, getHeight() - 4, 12, 12);

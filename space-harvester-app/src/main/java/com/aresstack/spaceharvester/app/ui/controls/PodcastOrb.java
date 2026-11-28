@@ -85,7 +85,7 @@ public final class PodcastOrb extends JButton {
         Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         setPreferredSize(new Dimension(SIZE, SIZE));
         setSize(SIZE, SIZE);
-        setForeground(AppColors.of("app.PodcastOrb.podcastOrb"));
+        setForeground(AppColors.of("bubble.userForeground"));
         updateName();
     }
 
@@ -147,7 +147,7 @@ public final class PodcastOrb extends JButton {
             g.setColor(state == State.FAILED ? FAILED_EDGE : fill.darker());
             g.setStroke(new BasicStroke(1.3f));
             g.drawOval(1, 1, size - 3, size - 3);
-            Color ink = state == State.FAILED && !flash ? FLASH : AppColors.of("app.PodcastOrb.paintComponent");
+            Color ink = state == State.FAILED && !flash ? FLASH : AppColors.of("bubble.userForeground");
             g.setColor(ink);
             double c = size / 2.0;
             switch (state) {
