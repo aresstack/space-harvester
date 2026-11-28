@@ -55,8 +55,15 @@ public final class VisualAction {
         DiagramLabels next = new DiagramLabels(target);
         labels = next;
         com.aresstack.spaceharvester.mainframe.diagram.OutlineToMermaidConverter.blockLabelSummarizer(next);
+        com.aresstack.spaceharvester.mainframe.diagram.OutlineToMermaidConverter.labelLayout(DiagramLabels::layout);
         SystemFunctionsStore store = SystemFunctionsStore.shared();
         com.aresstack.spaceharvester.mainframe.diagram.OutlineToMermaidConverter.systemFunctions(store::names);
+    }
+
+    /** Ob die KI-Beschreibung an Diagrammen mitschreiben kann (Schalter an und Modell eingerichtet). */
+    static boolean aiAvailable() {
+        DiagramLabels current = labels;
+        return current != null && current.enabled();
     }
 
     /** Grund, warum die KI-Kurzbeschriftung zuletzt ausblieb, einmalig; {@code null} ohne Problem. */
