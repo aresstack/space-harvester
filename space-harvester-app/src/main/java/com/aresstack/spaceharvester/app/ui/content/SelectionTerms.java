@@ -81,7 +81,7 @@ final class SelectionTerms implements TermsTab.Selection {
     @Override
     public Pager<VerbQueries.Verb> verbs(String q) {
         Pager.Fetch<VerbQueries.Verb> fetch = cursor -> {
-            VerbQueries.VerbList list = workspace.verbs(pages(), q == null || q.isBlank() ? null : q, TermsTab.STEP,
+            VerbQueries.VerbList list = workspace.verbs(pages(), q == null || q.isBlank() ? null : q, TermsTab.step(),
                     cursor);
             return new Pager.Page<>(list.verbs(), list.nextCursor());
         };
@@ -96,7 +96,7 @@ final class SelectionTerms implements TermsTab.Selection {
     private Pager.Fetch<TermQueries.TermSummary> fetch(TermKind kind, String q) {
         return cursor -> {
             TermQueries.TermList list = workspace.terms(new TermQueries.TermSearch(null, null, kind,
-                    q == null || q.isBlank() ? null : q, false, TermsTab.STEP, cursor, null).within(pages()));
+                    q == null || q.isBlank() ? null : q, false, TermsTab.step(), cursor, null).within(pages()));
             return new Pager.Page<>(list.terms(), list.nextCursor());
         };
     }
@@ -105,7 +105,7 @@ final class SelectionTerms implements TermsTab.Selection {
     public Pager<Relation> relations(String q) {
         Pager.Fetch<Relation> fetch = cursor -> {
             TermRelations.RelationList list = workspace.termRelations(null, null, null,
-                    q == null || q.isBlank() ? null : q, TermsTab.STEP, cursor, pages());
+                    q == null || q.isBlank() ? null : q, TermsTab.step(), cursor, pages());
             return new Pager.Page<>(list.relations().stream().map(Relation::of).toList(), list.nextCursor());
         };
         return new Pager<>((one, other) -> 0, List.of(List.of(fetch)));
@@ -126,9 +126,9 @@ final class SelectionTerms implements TermsTab.Selection {
                 && node.pageId() == null;
         if (managed) {
             return new TermQueries.TermSearch(selection.sourceId(), selection.spaceKey(), null, null, false,
-                    TermsTab.STEP, null, null);
+                    TermsTab.step(), null, null);
         }
-        return new TermQueries.TermSearch(null, null, null, null, false, TermsTab.STEP, null, null).within(within);
+        return new TermQueries.TermSearch(null, null, null, null, false, TermsTab.step(), null, null).within(within);
     }
 
     /** Von Hand neu aufbauen: die Quelle der Auswahl samt ihren Spaces, bei „Wissensquellen“ alle Quellen. */

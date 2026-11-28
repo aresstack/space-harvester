@@ -49,8 +49,11 @@ final class TermsTab extends JPanel {
     static final String NOT_YET = "–";
     /** Kennzahl einer Auswahl, solange der Core die Gesamtzahl noch nicht geliefert hat. */
     static final String COUNTING = "…";
-    /** So viele Begriffe bzw. Beziehungen lädt ein Schritt beim Scrollen. */
-    static final int STEP = 120;
+    /** So viele Begriffe bzw. Beziehungen lädt ein Schritt beim Scrollen; einstellbar ({@code ListSteps}). */
+    static int step() {
+        return com.aresstack.spaceharvester.app.ui.ListSteps.shared()
+                .get(com.aresstack.spaceharvester.app.ui.ListSteps.Value.TERMS);
+    }
     static final String NO_TERMS = "In der Auswahl wurden keine Begriffe erkannt.";
     static final String NO_MATCH = "Kein Begriff passt zum Filter.";
 
@@ -732,7 +735,7 @@ final class TermsTab extends JPanel {
     private <T> void load(Section<T> section) {
         int mine = request;
         loading = true;
-        runner.run(() -> section.pager.next(STEP), items -> {
+        runner.run(() -> section.pager.next(step()), items -> {
             if (mine != request) {
                 return;
             }
@@ -1762,7 +1765,7 @@ final class TermsTab extends JPanel {
     private <T> void loadBelow(Section<T> section) {
         int mine = belowRequest;
         belowLoading = true;
-        runner.run(() -> section.pager.next(STEP), items -> {
+        runner.run(() -> section.pager.next(step()), items -> {
             if (mine != belowRequest) {
                 return;
             }

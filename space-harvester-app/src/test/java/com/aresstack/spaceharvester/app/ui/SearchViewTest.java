@@ -194,13 +194,13 @@ class SearchViewTest {
         // Treffer, ein anderer Klick den nächsten, geöffnet wird dabei nichts.
         assertThat(view[0].help()).isSameAs(view[0].previewToggle());
         assertThat(view[0].previewOpen()).isFalse();
-        assertThat(view[0].previewPane().isVisible()).isFalse();
+        assertThat(view[0].previewArea().isVisible()).isFalse();
         assertThat(view[0].previewToggle().getToolTipText()).isEqualTo(SearchView.PREVIEW_SHOW);
         javax.swing.Icon up = view[0].previewToggle().getIcon();
         SearchView.HitsModel hits = (SearchView.HitsModel) table.getModel();
         SwingUtilities.invokeAndWait(() -> view[0].previewToggle().doClick());
         assertThat(view[0].previewOpen()).isTrue();
-        assertThat(view[0].previewPane().isVisible()).isTrue();
+        assertThat(view[0].previewArea().isVisible()).isTrue();
         assertThat(view[0].previewToggle().getToolTipText()).isEqualTo(SearchView.PREVIEW_HIDE);
         assertThat(view[0].previewToggle().getIcon()).isNotSameAs(up)
                 .isInstanceOf(com.aresstack.spaceharvester.app.ui.controls.Flipped.class);
@@ -216,7 +216,7 @@ class SearchViewTest {
         assertThat(view[0].previewPane().titleText()).isBlank();
         SwingUtilities.invokeAndWait(() -> view[0].previewToggle().doClick());
         assertThat(view[0].previewOpen()).isFalse();
-        assertThat(view[0].previewPane().isVisible()).isFalse();
+        assertThat(view[0].previewArea().isVisible()).isFalse();
         assertThat(AppState.shared().getBoolean(SearchView.STATE_PREVIEW, true)).isFalse();
     }
 
