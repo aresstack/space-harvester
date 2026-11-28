@@ -865,6 +865,10 @@ public final class Explorer {
         this.context = context;
         this.favorites = new FavoritesView(context, this::selectedItem, sourceId -> reveal(sourceId, null));
         this.artifacts = new ArtifactList(context);
+        panes.put(FAVORITES_TAB, new Pane(FAVORITES_TAB, FAVORITES, favorites.component(),
+                favorites.newFolderButton(), FAVORITES_HELP, null));
+        panes.put(ARTIFACTS_TAB, new Pane(ARTIFACTS_TAB, ARTIFACTS, artifacts.component(), groupByKind,
+                ARTIFACTS_HELP, artifacts::filter));
         this.states = new TreeStates(context, this::statesChanged);
         states.onSpaceChanged(this::spaceStructureChanged);
         tree.setRootVisible(false);
@@ -1152,7 +1156,9 @@ public final class Explorer {
         viewRow.add(viewHolder, BorderLayout.EAST);
         title.add(viewRow, BorderLayout.CENTER);
         artifacts.onNote(text -> {
-            if (artifactsShown()) {
+            if (panes.get(ARTIFACTS_TAB).out) {
+                panes.get(ARTIFACTS_TAB).hint.setText(text);
+            } else if (artifactsShown()) {
                 note.setText(text);
             }
         });
@@ -1178,32 +1184,25 @@ public final class Explorer {
         showCurrent.setEnabled(false);
         showCurrent.addActionListener(e -> showCurrent());
         // Hinweise nur beim Titelfilter und bei Fehlern; die Anzahl der Wissensquellen sieht man im Baum.
-        note.setBorder(BorderFactory.createEmptyBorder(2, 6, 0, 0));
-        groupByKind.setVisible(false);
+        panes.get(ARTIFACTS_TAB).wanted(false);
         groupByKind.setSelected(artifacts.grouped());
         groupByKind.addActionListener(e -> {
             artifacts.grouped(!artifacts.grouped());
             groupByKind.setSelected(artifacts.grouped());
         });
         // „Neuer Ordner“ nur, solange die Favoriten gezeigt werden (Angelo 24.11.2026: unten in der Fußleiste).
-        favorites.newFolderButton().setVisible(false);
+        panes.get(FAVORITES_TAB).wanted(false);
         // Die gemeinsame Fußleiste aller Seitenleisten, so hoch wie die Leiste mit der Lupe daneben.
         // Dieselbe Leiste wie unter der Arbeitsfläche und unter den Aufträgen (Angelo 27.11.2026): links die Lupe
         // (markiert Titel im Baum), mittig die Aktionen, rechts das Bestandszeichen und in der Ecke die Hilfe.
         footBar = new FindBar(() -> deck);
-        footBar.tools(com.aresstack.spaceharvester.app.ui.controls.SideFoot.centered(collapseAll, showCurrent,
-                favorites.newFolderButton(), groupByKind));
+        for (JComponent tool : new JComponent[] {collapseAll, showCurrent, favorites.newFolderButton(),
+                groupByKind}) {
+            toolRow.add(tool);
+        }
+        footBar.tools(toolRow);
         footBar.help(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, HELP_HEADING, HELP));
-        footBar.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(4, 2, 4, 2)));
-        // Der Hinweis der Leiste steht über der Fußleiste und nimmt nur Platz, solange er etwas sagt.
-        note.setVisible(false);
-        note.addPropertyChangeListener("text", event -> note.setVisible(!note.getText().isBlank()));
-        JPanel south = new JPanel(new BorderLayout());
-        south.setOpaque(false);
-        south.add(note, BorderLayout.NORTH);
-        south.add(footBar, BorderLayout.SOUTH);
-        root.add(south, BorderLayout.SOUTH);
+        root.add(foot(note, footBar), BorderLayout.SOUTH);
         footBar.viewChanged();
         context.onChange(ignored -> refreshSources());
         refreshSources();
@@ -2998,6 +2997,14 @@ public final class Explorer {
      * Zurück von den Artefakten steht wieder, was davor stand.
      */
     void showArtifacts(boolean shown) {
+        if (panes.get(ARTIFACTS_TAB).out) {
+            // Als Kugel hat die Liste ihren eigenen Bereich: Er geht auf, die Leiste behält, was sie zeigt.
+            if (shown) {
+                opener.accept(ARTIFACTS_TAB);
+            }
+            front(shown);
+            return;
+        }
         if (shown != artifactsShown()) {
             view.select(shown ? ARTIFACTS_TAB : onlyFavorites ? FAVORITES_TAB : SOURCES_TAB);
         }
@@ -3018,12 +3025,11 @@ public final class Explorer {
         }
         // „Alles aktualisieren“ gehört zum Baum der Wissensquellen, nicht zu Favoriten oder Artefakten.
         allBadge.setVisible(SOURCES_TAB.equals(tab));
-        groupByKind.setVisible(shown);
-        favorites.newFolderButton().setVisible(!shown && onlyFavorites);
+        panes.get(ARTIFACTS_TAB).wanted(shown);
+        panes.get(FAVORITES_TAB).wanted(!shown && onlyFavorites);
         allGlow.on(!shown && global);
-        if (shown != artifactsFront) {
-            artifactsFront = shown;
-            artifactsListener.accept(shown);
+        if (!panes.get(ARTIFACTS_TAB).out) {
+            front(shown);
         }
         note.setText(" ");
         if (shown) {
@@ -3037,6 +3043,201 @@ public final class Explorer {
         if (footBar != null) {
             // Lupe und Ecke der Fußleiste folgen der gezeigten Ansicht (Baum oder Artefakte).
             footBar.viewChanged();
+        }
+    }
+
+    private static final String NO_FAVORITES = "Noch keine Favoriten: Stern an Quelle, Space oder Seite";
+    static final String FAVORITES_HELP = "Hier stehen nur die mit dem Stern markierten Quellen, Spaces und Seiten, "
+            + "in ihren Ordnern. Die Lupe unten links markiert die Einträge mit dem Suchtext; in der Mitte unten "
+            + "legst du einen neuen Ordner an. Zurück auf die Knopfleiste gezogen, ist die Liste wieder eine ihrer "
+            + "Hälften.";
+    static final String ARTIFACTS_HELP = "Hier stehen die Dokumente, Grafiken und Bücher des aktiven Projekts; ein "
+            + "Klick öffnet eines in der Mitte. Die Lupe unten links sucht in der Liste, das Filtersymbol daneben "
+            + "zeigt nur die Titel mit dem Text. In der Mitte unten gruppierst du nach Art. Zurück auf die "
+            + "Knopfleiste gezogen, ist die Liste wieder eine ihrer Hälften.";
+
+    /** Die Knöpfe mittig in der gemeinsamen Fußleiste; der einer herausgezogenen Hälfte steht in deren eigener. */
+    private final JPanel toolRow = com.aresstack.spaceharvester.app.ui.controls.SideFoot.centered();
+    /** Die Hälften, die als Kugel für sich stehen können, nach ihrem Namen am Umschalter. */
+    private final java.util.Map<String, Pane> panes = new java.util.LinkedHashMap<>();
+    /** Wer den Bereich einer herausgezogenen Hälfte öffnet (die Kette am Fensterrand). */
+    private Consumer<String> opener = tab -> { };
+
+    /** Eine Fußleiste mit ihrem Hinweis darüber, der nur Platz nimmt, solange er etwas sagt. */
+    private static JPanel foot(JLabel hint, FindBar bar) {
+        bar.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
+                BorderFactory.createEmptyBorder(4, 2, 4, 2)));
+        hint.setBorder(BorderFactory.createEmptyBorder(2, 6, 0, 0));
+        hint.setVisible(false);
+        hint.addPropertyChangeListener("text", event -> hint.setVisible(!hint.getText().isBlank()));
+        JPanel south = new JPanel(new BorderLayout());
+        south.setOpaque(false);
+        south.add(hint, BorderLayout.NORTH);
+        south.add(bar, BorderLayout.SOUTH);
+        return south;
+    }
+
+    /**
+     * Eine Hälfte des Umschalters, die als Kugel für sich stehen kann (Angelo 28.11.2026: Favoriten und Artefakte
+     * lassen sich wie Chat und Aufträge aus ihrer Knopfleiste ziehen). In der Leiste ist ihre Liste eine Karte des
+     * gemeinsamen Stapels und ihr Knopf steht in der gemeinsamen Fußleiste; herausgezogen stehen beide in ihrem
+     * eigenen Bereich mit eigener Fußleiste. Es ist dieselbe Liste und derselbe Knopf, nur an anderem Platz.
+     */
+    private final class Pane {
+        private final String card;
+        private final JComponent list;
+        private final JComponent tool;
+        private final JPanel area = new JPanel(new BorderLayout());
+        private final JPanel body = new JPanel(new BorderLayout());
+        private final JPanel tools = com.aresstack.spaceharvester.app.ui.controls.SideFoot.centered();
+        private final JLabel hint = Comic.muted(" ");
+        private final FindBar foot = new FindBar(() -> body);
+        private boolean out;
+        /** Ob der eigene Bereich gerade offen ist. */
+        private boolean open;
+        private boolean wanted;
+
+        /** @param narrow filtert die Liste nach einem Text; {@code null}, wenn sie nicht filtert */
+        private Pane(String tab, String card, JComponent list, JComponent tool, String help, Consumer<String> narrow) {
+            this.card = card;
+            this.list = list;
+            this.tool = tool;
+            area.setOpaque(false);
+            body.setOpaque(false);
+            if (narrow != null) {
+                // Das Filterfeld steht hinter der Schleuse: Gefiltert wird über das Filtersymbol der Fußleiste.
+                PlaceholderField field = new PlaceholderField(14, "Titel filtern …");
+                field.getDocument().addDocumentListener(SourceForm.changes(
+                        () -> narrow.accept(field.getText().trim())));
+                body.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(field), BorderLayout.NORTH);
+                com.aresstack.spaceharvester.app.ui.controls.InputFrame.gate(body, false);
+            }
+            foot.tools(tools);
+            foot.help(new com.aresstack.spaceharvester.app.ui.controls.HelpButton(24, tab, help));
+            area.add(body, BorderLayout.CENTER);
+            area.add(Explorer.foot(hint, foot), BorderLayout.SOUTH);
+        }
+
+        /** Ob der Knopf in der gemeinsamen Fußleiste gebraucht wird; im eigenen Bereich steht er immer. */
+        private void wanted(boolean shown) {
+            wanted = shown;
+            tool.setVisible(out || wanted);
+        }
+
+        private void out(boolean standalone) {
+            if (out == standalone) {
+                return;
+            }
+            out = standalone;
+            if (standalone) {
+                deck.remove(list);
+                list.setVisible(true);
+                body.add(list, BorderLayout.CENTER);
+                tools.add(tool);
+            } else {
+                body.remove(list);
+                deck.add(list, card);
+                toolRow.add(tool);
+            }
+            tool.setVisible(out || wanted);
+            for (JComponent changed : new JComponent[] {deck, toolRow, area}) {
+                changed.revalidate();
+                changed.repaint();
+            }
+            foot.areaChanged();
+        }
+    }
+
+    /** Die Hälften, die als Kugel für sich stehen können, in der Reihenfolge des Umschalters. */
+    List<String> standaloneTabs() {
+        return List.copyOf(panes.keySet());
+    }
+
+    /** Der eigene Bereich einer herausgezogenen Hälfte: ihre Liste über ihrer Fußleiste. */
+    JComponent area(String tab) {
+        return panes.get(tab).area;
+    }
+
+    /**
+     * Die Hälfte steht als Kugel für sich oder wieder im Umschalter. Zeigte die Leiste sie gerade, zeigt sie danach
+     * die Wissensquellen: Die Liste steht ja nun in ihrem eigenen Bereich.
+     */
+    void standalone(String tab, boolean out) {
+        Pane pane = panes.get(tab);
+        if (pane.out == out) {
+            return;
+        }
+        pane.out(out);
+        if (out && tab.equals(shownTab)) {
+            showView(SOURCES_TAB);
+        }
+    }
+
+    /** Der Bereich einer herausgezogenen Hälfte ging auf oder zu: Die Mitte folgt den Artefakten, die Liste ist frisch. */
+    void opened(String tab, boolean open) {
+        Pane pane = panes.get(tab);
+        boolean now = pane.out && open;
+        if (pane.open == now) {
+            return;
+        }
+        pane.open = now;
+        if (ARTIFACTS_TAB.equals(tab)) {
+            if (now) {
+                artifacts.reload();
+            }
+            front(now);
+        } else if (now) {
+            favoritesChanged();
+        }
+    }
+
+    /**
+     * Der Umschalter wird die Knopfleiste dieser Kette: Seine Hälften lassen sich herausziehen. Die Wissensquellen
+     * sind die Leiste selbst und bleiben in ihr; Favoriten und Artefakte bekommen als Kugel ihren eigenen Bereich
+     * ({@link #area}), den der Aufrufer an den Rand der Kugel stellt.
+     */
+    void string(com.aresstack.spaceharvester.app.ui.controls.PearlString pearls) {
+        pearls.adopt(SOURCES_TAB, com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.flask(), SOURCES_TIP)
+                .adopt(FAVORITES_TAB, Glyph.STAR, FAVORITES_TIP)
+                .adopt(ARTIFACTS_TAB, SwitchIcons.artifacts(), ARTIFACTS_TIP).keep(SOURCES_TAB);
+        chip = pearls::count;
+        opener = tab -> pearls.open(tab, true);
+        pearls.onChange(() -> {
+            for (String tab : panes.keySet()) {
+                standalone(tab, pearls.pearl(tab));
+                opened(tab, pearls.pearl(tab) && pearls.open(tab));
+            }
+        });
+        // Zurück in der Leiste zeigt sie die Hälfte, deren Bereich eben noch offen war.
+        pearls.onAttach((tab, wasOpen) -> {
+            if (wasOpen && panes.containsKey(tab)) {
+                view.select(tab);
+            }
+        });
+    }
+
+    /** Die Zahl an einer Hälfte, gleich ob sie in der Leiste oder als Kugel steht. */
+    interface Chip {
+        void count(String name, int count, java.awt.Color tone, String tip, String idleTip);
+    }
+
+    private Chip chip = view::count;
+
+    /** Wer den Bereich einer herausgezogenen Hälfte öffnet, wenn etwas sie zeigen will (ein Verweis, ein Ordner). */
+    void onOpen(Consumer<String> listener) {
+        opener = listener == null ? tab -> { } : listener;
+    }
+
+    /** Ob die Mitte zuletzt die Artefakte zeigen sollte (für Tests). */
+    boolean artifactsInFront() {
+        return artifactsFront;
+    }
+
+    /** Meldet dem Beobachter ({@link #onArtifactsShown}), ob die Artefakte vorn stehen, nur bei einer Änderung. */
+    private void front(boolean shown) {
+        if (shown != artifactsFront) {
+            artifactsFront = shown;
+            artifactsListener.accept(shown);
         }
     }
 
@@ -3072,7 +3273,11 @@ public final class Explorer {
                           Consumer<String> open,
                           java.util.function.BiConsumer<String, com.aresstack.spaceharvester.app.chat.ChatExport.Format>
                                   export) {
-        artifacts.connect(store, open, export);
+        // Auch aus der Liste als Kugel heraus: Ein geöffnetes Artefakt steht in der Mitte vorn.
+        artifacts.connect(store, id -> {
+            front(true);
+            open.accept(id);
+        }, export);
         artifacts.books(this::newBookEdition, this::showFavoriteFolder);
     }
 
@@ -3104,7 +3309,7 @@ public final class Explorer {
      * angelegt oder geändert hat; 0 ohne Chip.
      */
     public void unseenArtifacts(int count) {
-        view.count(ARTIFACTS_TAB, count, Comic.PETROL, Texts.count(count, "Artefakt neu oder geändert",
+        chip.count(ARTIFACTS_TAB, count, Comic.PETROL, Texts.count(count, "Artefakt neu oder geändert",
                 "Artefakte neu oder geändert"), ARTIFACTS_TIP);
     }
 
@@ -3120,17 +3325,23 @@ public final class Explorer {
 
     /** Die Hälfte „Favoriten“ (nur die Favoriten als Liste) oder „Wissensquellen“ (der ganze Baum). */
     void showOnlyFavorites(boolean only) {
+        if (panes.get(FAVORITES_TAB).out) {
+            if (only) {
+                opener.accept(FAVORITES_TAB);
+            }
+            return;
+        }
         view.select(only ? FAVORITES_TAB : SOURCES_TAB);
     }
 
     /** Zeigt Baum oder Favoriten nach {@link #onlyFavorites}; ein Titelfilter behält seine Trefferliste. */
     private void favoritesShown() {
-        favorites.newFolderButton().setVisible(onlyFavorites);
+        panes.get(FAVORITES_TAB).wanted(onlyFavorites);
         favoritesChanged();
         if (filter.getText().trim().isEmpty()) {
             cards.show(deck, onlyFavorites ? FAVORITES : TREE);
             note.setText(onlyFavorites && favorites.isEmpty()
-                    ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
+                    ? NO_FAVORITES : " ");
         }
     }
 
@@ -3140,8 +3351,9 @@ public final class Explorer {
 
     private void favoritesChanged() {
         boolean empty = favorites.reload();
+        panes.get(FAVORITES_TAB).hint.setText(empty ? NO_FAVORITES : " ");
         if (onlyFavorites && filter.getText().trim().isEmpty() && !artifactsShown()) {
-            note.setText(empty ? "Noch keine Favoriten: Stern an Quelle, Space oder Seite" : " ");
+            note.setText(empty ? NO_FAVORITES : " ");
         }
         tree.repaint();
     }

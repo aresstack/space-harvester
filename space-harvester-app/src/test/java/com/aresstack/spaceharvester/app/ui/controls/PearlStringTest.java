@@ -53,6 +53,49 @@ class PearlStringTest {
     }
 
     @Test
+    void theHalvesOfAnExistingSwitchBecomeToolsAndAKeptOneStaysInTheRail() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            // Der Umschalter gehört einem anderen (dem Explorer) und hat seine Hälften schon.
+            rail.segment(CHAT, Glyph.STAR).segment(ANALYSES, Glyph.TABLE).segment(JOBS, Glyph.CROSSHAIR);
+            rail.vertical(true);
+            dock.adopt(CHAT, Glyph.STAR, "Chat zeigen").adopt(ANALYSES, Glyph.TABLE, "Analysen zeigen")
+                    .adopt(JOBS, Glyph.CROSSHAIR, "Aufträge zeigen").keep(CHAT);
+            layout();
+            assertThat(rail.names()).as("nichts doppelt").containsExactly(CHAT, ANALYSES, JOBS);
+            assertThat(dock.tools()).containsExactly(CHAT, ANALYSES, JOBS);
+            assertThat(rail.button(ANALYSES).getToolTipText()).isEqualTo("Analysen zeigen");
+
+            // Ein übernommenes Symbol lässt sich herausziehen wie jedes andere.
+            dock.detach(ANALYSES, 1);
+            assertThat(dock.pearls()).containsExactly(ANALYSES);
+            assertThat(rail.names()).containsExactly(CHAT, JOBS);
+
+            // Das feste bleibt in der Leiste, auch wenn sie noch andere hat: Es zu ziehen verschiebt die Leiste.
+            dock.detach(CHAT, 1);
+            assertThat(dock.pearl(CHAT)).isFalse();
+            assertThat(rail.names()).containsExactly(CHAT, JOBS);
+            assertThat(dock.units()).containsExactly(ANALYSES, PearlString.RAIL);
+            PearlString other = new PearlString(new SegmentedToggle());
+            dock.move(CHAT, other, 0);
+            assertThat(dock.host(CHAT)).as("auch nicht an den anderen Rand").isSameAs(dock);
+            // Gemerkte Plätze, die es als Kugel nennen, lassen es ebenfalls in der Leiste.
+            dock.home(ANALYSES);
+            dock.restore("0:1,R");
+            assertThat(dock.pearls()).isEmpty();
+
+            // Die Zahl am Symbol wandert mit ihm aus der Leiste und zurück.
+            dock.count(JOBS, 3, java.awt.Color.RED, "drei neu", "Aufträge zeigen");
+            assertThat(rail.count(JOBS)).isEqualTo(3);
+            dock.detach(JOBS, 1);
+            SegmentedToggle ball = (SegmentedToggle) dock.button(JOBS).getParent();
+            assertThat(ball).isNotSameAs(rail);
+            assertThat(ball.count(JOBS)).isEqualTo(3);
+            dock.home(JOBS);
+            assertThat(rail.count(JOBS)).isEqualTo(3);
+        });
+    }
+
+    @Test
     void aToolLeavesTheRailAsABallAndComesBack() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             threeTools();
