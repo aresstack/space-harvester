@@ -98,7 +98,7 @@ public final class CenterOffer extends JPanel {
             setFocusPainted(false);
             setOpaque(false);
             setRolloverEnabled(true);
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            Cursors.set(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             getModel().addChangeListener(e -> setForeground(getModel().isRollover() ? Comic.INK : Comic.MUTED));
             setBorder(javax.swing.BorderFactory.createEmptyBorder(PAD_Y, PAD_X, PAD_Y, PAD_X));
         }
