@@ -175,7 +175,7 @@ class MainWindowPerspectiveTest {
                     .isInstanceOf(com.aresstack.spaceharvester.app.ui.proving.ProvingGroundWorkspace.class);
             perspectives.select(Perspectives.HARVESTER);
             assertThat(window.split().isLeftCollapsed()).isTrue();
-            assertThat(window.split().getDividerSize()).isEqualTo(MainWindow.COLLAPSED_DIVIDER);
+            assertThat(window.split().getDividerSize()).as("zugeklappt ohne Trenner").isZero();
             window.toggleDrawer();
 
             // Einstellungen aus dem Command Deck: Die Perspektive bleibt, „Zurück“ führt ins Command Deck (Angelo, 23.11.).

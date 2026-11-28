@@ -623,11 +623,11 @@ class MainWindowTest {
                         com.aresstack.spaceharvester.app.ui.content.ChatSidebar.class).get(0);
                 assertThat(SwingUtilities.isDescendingFrom(window.deck(), chatSplit.getLeftComponent())).isTrue();
                 assertThat(window.split().getRightComponent()).isSameAs(chatSplit);
-                // Zu: kein Platz für die Leiste, nur der schmale Teiler; der Knopf ist hell.
+                // Zu: kein Platz für die Leiste und kein Trenner; der Knopf ist hell.
                 assertThat(window.chatToggle().isSelected()).isFalse();
                 assertThat(window.chatToggle().getToolTipText()).isEqualTo(MainWindow.CHAT_TOOLTIP);
                 assertThat(sidebar.getWidth()).isZero();
-                assertThat(chatSplit.getDividerSize()).isEqualTo(MainWindow.COLLAPSED_DIVIDER);
+                assertThat(chatSplit.getDividerSize()).as("zugeklappt ohne Trenner").isZero();
                 assertThat(((java.awt.Container) sidebar).getComponents())
                         .as("zugeklappt ist nichts aus der Leiste erreichbar").noneMatch(Component::isVisible);
 
@@ -772,7 +772,7 @@ class MainWindowTest {
             window.content(() -> { }, () -> { });
             window.toggleDrawer();
             assertThat(window.split().isLeftCollapsed()).isTrue();
-            assertThat(window.split().getDividerSize()).isEqualTo(MainWindow.COLLAPSED_DIVIDER);
+            assertThat(window.split().getDividerSize()).as("zugeklappt ohne Trenner").isZero();
             window.toggleDrawer();
             assertThat(window.split().isLeftCollapsed()).isFalse();
             assertThat(window.split().getDividerSize()).isGreaterThan(0);
