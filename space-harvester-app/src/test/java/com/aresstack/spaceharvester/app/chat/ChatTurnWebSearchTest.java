@@ -87,7 +87,8 @@ class ChatTurnWebSearchTest {
                 .contains("[Browserprofil] Extern");
         List<AiChat.Message> second = port.requests.get(1).messages();
         assertThat(second.get(second.size() - 1).text()).contains("Sonne");
-        assertThat(events.using).containsExactly("Öffnet eine Seite im Browser");
+        assertThat(events.using).as("Browser-Schritte gehören in die Browserkarte, nicht in die Wissenskarte")
+                .isEmpty();
     }
 
     @Test
