@@ -175,6 +175,42 @@ class FindBarTest {
         });
     }
 
+    /**
+     * Beim Filtern steht das Feld der Fußleiste für das unsichtbare Filterfeld der Ansicht ein: Was an dem Feld hängt
+     * (Vorschläge des Begriffsgraphen), richtet sich an das Feld unten, und was die Ansicht selbst in ihr Feld setzt
+     * (ein gewählter Vorschlag), steht danach auch unten. Ohne Filtern steht wieder das Feld selbst.
+     */
+    @Test
+    void whileFilteringTheFootFieldStandsInForTheHiddenFilterField() throws Exception {
+        JPanel area = new JPanel(new java.awt.BorderLayout());
+        javax.swing.JTextField filter = new javax.swing.JTextField();
+        FindBar[] bar = new FindBar[1];
+        SwingUtilities.invokeAndWait(() -> {
+            area.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter),
+                    java.awt.BorderLayout.NORTH);
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.gate(area, false);
+            bar[0] = new FindBar(() -> area);
+            bar[0].search("Zah");
+            assertThat(com.aresstack.spaceharvester.app.ui.controls.InputFrame.typedAt(filter)).isSameAs(filter);
+            bar[0].filtering(true);
+            assertThat(com.aresstack.spaceharvester.app.ui.controls.InputFrame.typedAt(filter))
+                    .isSameAs(bar[0].field());
+            // Die Ansicht übernimmt einen Vorschlag in ihr Feld.
+            filter.setText("Zahlungsverkehr");
+        });
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(bar[0].query()).isEqualTo("Zahlungsverkehr");
+            assertThat(filter.getText()).isEqualTo("Zahlungsverkehr");
+            bar[0].filtering(false);
+            assertThat(filter.getText()).isEmpty();
+        });
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(bar[0].query()).as("der Text unten bleibt beim Zurückschalten stehen")
+                    .isEqualTo("Zahlungsverkehr");
+            assertThat(com.aresstack.spaceharvester.app.ui.controls.InputFrame.typedAt(filter)).isSameAs(filter);
+        });
+    }
+
     private static int centerY(java.awt.Component part, java.awt.Component root) {
         return SwingUtilities.convertPoint(part.getParent(), 0, part.getY(), root).y + part.getHeight() / 2;
     }

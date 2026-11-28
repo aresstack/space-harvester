@@ -249,6 +249,25 @@ public class InputFrame extends JPanel {
         return frame == null || frame.gateOpen() ? null : frame;
     }
 
+    /**
+     * Das Feld, in dem der Nutzer gerade für dieses Suchfeld tippt: Filtert die Fußleiste über ein Feld hinter der
+     * Schleuse, steht ihr eigenes Feld dafür ein; {@code null} nimmt es wieder weg.
+     */
+    public void standIn(JComponent typed) {
+        standIn = typed;
+    }
+
+    /**
+     * Wo der Nutzer für {@code field} tippt: das Feld selbst oder, solange die Fußleiste dafür einsteht, deren Feld.
+     * Was am Feld hängt (Vorschläge, „tippt gerade“), richtet sich danach.
+     */
+    public static JComponent typedAt(JTextComponent field) {
+        InputFrame frame = (InputFrame) javax.swing.SwingUtilities.getAncestorOfClass(InputFrame.class, field);
+        return frame != null && frame.standIn != null ? frame.standIn : field;
+    }
+
+    private JComponent standIn;
+
     private static boolean shownUpTo(Component component) {
         return component == null || component.isVisible();
     }
