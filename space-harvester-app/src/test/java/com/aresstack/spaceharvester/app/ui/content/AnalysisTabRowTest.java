@@ -63,4 +63,31 @@ class AnalysisTabRowTest {
             assertThat(row.tabs().button("Graph").getText()).isNull();
         });
     }
+
+    /**
+     * Derselbe Reiter einer anderen Ebene (Graph der Seite statt Graph des Knotens) ist eine andere Ansicht: Die
+     * Zeile meldet es, damit die Fußleiste Suche und Filter der alten Ansicht räumt.
+     */
+    @Test
+    void aChangeOfTheLevelIsReportedEvenWhenTheSameTabStaysSelected() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            Map<String, Icon> icons = new LinkedHashMap<>();
+            icons.put("Graph", AnalysisTabIcons.terms());
+            icons.put("Aussagen", AnalysisTabIcons.terms());
+            AnalysisTabRow row = new AnalysisTabRow(icons);
+            PillTabs page = new PillTabs().tab("Graph", new JPanel()).tab("Aussagen", new JPanel());
+            PillTabs area = new PillTabs().tab("Graph", new JPanel()).tab("Aussagen", new JPanel());
+            row.follow(page);
+            row.follow(area);
+            row.level(page);
+            java.util.concurrent.atomic.AtomicInteger changes = new java.util.concurrent.atomic.AtomicInteger();
+            row.onChange(changes::incrementAndGet);
+
+            row.level(area);
+            assertThat(row.tabs().selected()).isEqualTo("Graph");
+            assertThat(changes.get()).as("andere Ebene, derselbe Reiter").isEqualTo(1);
+            row.tabs().button("Aussagen").doClick();
+            assertThat(changes.get()).as("anderer Reiter").isGreaterThan(1);
+        });
+    }
 }

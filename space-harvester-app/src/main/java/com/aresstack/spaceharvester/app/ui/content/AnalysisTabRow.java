@@ -24,6 +24,7 @@ final class AnalysisTabRow {
     private final JComponent bar;
     private PillTabs level;
     private boolean syncing;
+    private Runnable onChange = () -> { };
 
     /** @param icons alle bekannten Reiter in der Reihenfolge der Zeile, je mit ihrem Symbol */
     AnalysisTabRow(Map<String, Icon> icons) {
@@ -37,6 +38,14 @@ final class AnalysisTabRow {
                 level.select(name);
             }
         });
+    }
+
+    /**
+     * Meldet, dass eine andere Ansicht zu sehen ist: ein anderer Reiter oder dieselben Reiter einer anderen Ebene
+     * (Seite statt Knoten). Die Fußleiste räumt dann Suche und Filter der alten Ansicht.
+     */
+    void onChange(Runnable listener) {
+        onChange = java.util.Objects.requireNonNull(listener, "listener");
     }
 
     /** Eine Ebene anmelden: Wählt sie selbst einen Reiter, solange sie gezeigt wird, zieht die Zeile nach. */
@@ -79,6 +88,7 @@ final class AnalysisTabRow {
         } finally {
             syncing = false;
         }
+        onChange.run();
     }
 
     /** Eine kurze Marke hinter dem Symbol eines Reiters, etwa die Zahl der Widersprüche; {@code null} nimmt sie weg. */

@@ -1228,7 +1228,8 @@ public final class PageDetailPanel extends JPanel {
         bar.tools(analysisRow.bar());
         bar.help(Comic.row(statementsHelp, standingHelp, glossaryHelp, graphHelp));
         // Anderer Reiter, anderes Filterfeld: Die Leiste räumt das alte und filtert oder sucht im neuen weiter.
-        analysisRow.tabs().alsoOnSelect(name -> javax.swing.SwingUtilities.invokeLater(bar::viewChanged));
+        // Auch derselbe Reiter einer anderen Ebene (Seite statt Knoten) ist eine andere Ansicht.
+        analysisRow.onChange(() -> javax.swing.SwingUtilities.invokeLater(bar::viewChanged));
         analysisFoot = bar;
         analysesFoot.add(analysisFoot, BorderLayout.CENTER);
         // „mit Unterseiten“ steht als eigene Zeile über der Fußleiste, nur solange es etwas zu wählen gibt.

@@ -139,6 +139,14 @@ public final class OverflowRow extends JPanel {
                 used += part.getPreferredSize().width - last.getPreferredSize().width;
                 shown.add(part);
                 hidden.set(hidden.indexOf(part), last);
+                // Ist der gewählte breiter als der getauschte (Reiter mit Text), weichen weitere, bis er und das
+                // Menü in die Reihe passen; das Menü darf nie hinausgeschoben werden.
+                while (used > budget && shown.size() > 1) {
+                    JComponent gone = shown.remove(shown.size() - 2);
+                    used -= gone.getPreferredSize().width + GAP;
+                    hidden.add(hidden.indexOf(last), gone);
+                    last = gone;
+                }
             }
         }
         if (overflow) {
