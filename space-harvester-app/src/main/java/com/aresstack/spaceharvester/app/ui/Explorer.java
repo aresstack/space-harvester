@@ -3018,27 +3018,6 @@ public final class Explorer {
         view.show(shownTab);
     }
 
-    /** Was die Leiste zeigt, auch solange der Umschalter zugeklappt ohne Wahl am Fensterrand steht. */
-    private String shownTab = SOURCES_TAB;
-    private final JPanel viewHolder = new JPanel(new java.awt.GridBagLayout());
-
-    /** Die Leiste klappt zu: Der Umschalter zeigt keine Wahl und kann an den Fensterrand gestellt werden. */
-    void switchAway() {
-        view.clear();
-        view.vertical(true);
-    }
-
-    /** Die Leiste ist offen: Der Umschalter steht in ihrem Kopf und zeigt, was sie zeigt. */
-    void switchHome() {
-        if (view.getParent() != viewHolder) {
-            view.vertical(false);
-            viewHolder.add(view);
-            viewHolder.revalidate();
-            viewHolder.repaint();
-        }
-        view.show(shownTab);
-    }
-
     /** Ob der Beobachter ({@link #onArtifactsShown}) die Artefakte zuletzt als gezeigt gemeldet bekam. */
     private boolean artifactsFront;
 
