@@ -94,6 +94,16 @@ public final class WordSearch {
     public record Place(String sourceId, String spaceKey, String pageId, String title, int count) {
     }
 
+    /**
+     * Der Textausschnitt einer Fundstelle: der Text davor, die Fundstelle selbst und der Text danach.
+     *
+     * @param cutBefore ob vor dem Ausschnitt noch Text steht
+     * @param cutAfter  ob danach noch Text steht
+     */
+    public record Excerpt(Place place, String before, String match, String after, boolean cutBefore,
+                          boolean cutAfter) {
+    }
+
     /** Wie viele Seiten im Bereich ohne (aktuelle) Aussagenanalyse sind; ihre Verben fehlen. */
     public record VerbCoverage(int analysed, int unanalysed, int stale) {
 
@@ -217,6 +227,42 @@ public final class WordSearch {
             VerbQueries.VerbList list = workspace.verbs(pages(), text, STEP, cursor);
             return new Pager.Page<>(list.verbs().stream().map(Word::of).toList(), list.nextCursor());
         };
+    }
+
+    /**
+     * Die Fundstellen eines Worts im Bereich als Textausschnitte, blätternd in der Ordnung des Core, mit dem
+     * größten Kontext, den der Core liefert. Bei einem Verb
+     * steht der Wortlaut des Prädikats als Ausschnitt; den Satz dazu liefert der Core hier nicht.
+     */
+    public Pager<Excerpt> excerpts(Word word) {
+        Pager.Fetch<Excerpt> fetch;
+        if (word.term() != null) {
+            fetch = cursor -> {
+                TermQueries.OccurrenceList list = workspace.occurrences(new TermQueries.OccurrenceSearch(
+                        word.term().normalized(), word.term().kind(), null, null, STEP, cursor, TermQueries.MAX_SNIPPET_CHARS,
+                        origin).within(pages()));
+                return new Pager.Page<>(list.occurrences().stream().map(WordSearch::excerpt).toList(),
+                        list.nextCursor());
+            };
+        } else {
+            fetch = cursor -> new Pager.Page<>(workspace.verbOccurrences(pages(), word.verb(),
+                    TermQueries.MAX_LIMIT).stream().map(occurrence -> {
+                        var page = occurrence.page();
+                        return new Excerpt(new Place(page.key().sourceId(), page.spaceKey(), page.key().pageId(),
+                                page.title(), 1), "", occurrence.predicateText(), "", false, false);
+                    }).toList(), null);
+        }
+        return new Pager<>((one, other) -> 0, List.of(List.of(fetch)));
+    }
+
+    private static Excerpt excerpt(TermQueries.Occurrence occurrence) {
+        Place place = new Place(occurrence.sourceId(), occurrence.spaceKey(), occurrence.pageId(),
+                occurrence.title(), 1);
+        TermQueries.Snippet snippet = occurrence.snippet();
+        // Ohne Kontext (der Text der Seite hat sich seit der Analyse geändert) steht nur das Wort selbst.
+        return snippet == null ? new Excerpt(place, "", occurrence.term(), "", false, false)
+                : new Excerpt(place, snippet.before(), snippet.match(), snippet.after(), snippet.truncatedBefore(),
+                snippet.truncatedAfter());
     }
 
     /** Die Seiten mit Fundstellen eines Worts im Bereich, je Seite einmal, mit Zahl der Fundstellen. */
