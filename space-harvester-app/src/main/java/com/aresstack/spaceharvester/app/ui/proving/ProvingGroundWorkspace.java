@@ -97,6 +97,9 @@ public final class ProvingGroundWorkspace extends JPanel {
     static final String UP_TIP = "Schritt nach oben";
     static final String DOWN_TIP = "Schritt nach unten";
     static final String DELETE_TIP = "Schritt löschen";
+    static final String SCREENSHOT_TIP = "Bildvergleich der ganzen Seite nach dem gewählten Schritt einfügen"
+            + " (wie toHaveScreenshot): der erste Lauf legt das Referenzbild an, jeder weitere vergleicht";
+    static final String SCREENSHOT_NO_STEP = "Bildvergleich: zuerst einen Testfall mit Schritten wählen";
     /** Ordner des Testprojekts, solange keiner gewählt ist (unter dem Datenordner der App). */
     static final String DEFAULT_PROJECT = "Testprojekt";
     /** Name der Suite, die ● anlegt, wenn das Projekt noch keine hat. */
@@ -140,6 +143,7 @@ public final class ProvingGroundWorkspace extends JPanel {
     private final IconButton up = new IconButton(ComposerIcons.chevronUp(), UP_TIP).compact();
     private final IconButton down = new IconButton(ComposerIcons.chevronDown(), DOWN_TIP).compact();
     private final IconButton delete = new IconButton(Glyph.TRASH, DELETE_TIP).compact();
+    private final IconButton screenshot = new IconButton(ComposerIcons.picture(), SCREENSHOT_TIP).compact();
     /** Schreibt Dateien nacheinander, nie auf dem EDT. */
     private final ExecutorService io = Executors.newSingleThreadExecutor(runnable -> {
         Thread worker = new Thread(runnable, "proving-ground-io");
@@ -224,6 +228,7 @@ public final class ProvingGroundWorkspace extends JPanel {
                 deleteStep(row);
             }
         });
+        screenshot.addActionListener(event -> askScreenshotCheck());
         steps.onEdit(this::bindingEdited);
         table.getColumnModel().getColumn(0).setMaxWidth(48);
         table.getColumnModel().getColumn(1).setMaxWidth(110);
@@ -264,6 +269,7 @@ public final class ProvingGroundWorkspace extends JPanel {
         tools.add(viewSwitch);
         tools.add(up);
         tools.add(down);
+        tools.add(screenshot);
         tools.add(delete);
         tools.add(record);
         tools.add(pause);
@@ -810,6 +816,33 @@ public final class ProvingGroundWorkspace extends JPanel {
         shownCase.move(row, row + delta);
         steps.show(shownCase, shownEntry, null);
         table.setRowSelectionInterval(row + delta, row + delta);
+        writeShownCase(project);
+    }
+
+    private void askScreenshotCheck() {
+        if (shownCase == null || shownCase.size() == 0) {
+            status.show(new StatusNote(SCREENSHOT_NO_STEP, StatusNote.Tone.WARNING, null, null));
+            return;
+        }
+        int row = table.getSelectedRow() >= 0 ? table.getSelectedRow() : shownCase.size() - 1;
+        String name = Dialogs.askText(this, "Bildvergleich", "Name des Referenzbilds",
+                shownCase.name() + "-" + (row + 2));
+        if (name != null) {
+            insertScreenshotCheck(row, name);
+        }
+    }
+
+    /**
+     * Fügt nach Schritt {@code row} einen Bildvergleich der ganzen Seite dieses Schritts ein; der erste Lauf legt das
+     * Referenzbild an, jeder weitere vergleicht.
+     */
+    void insertScreenshotCheck(int row, String name) {
+        if (shownCase == null || row < 0 || row >= shownCase.size() || name == null || name.isBlank()) {
+            return;
+        }
+        shownCase.insert(row + 1, TestStep.assertScreenshot(shownCase.step(row).pageGuid(), null, name.strip()));
+        steps.show(shownCase, shownEntry, null);
+        table.setRowSelectionInterval(row + 1, row + 1);
         writeShownCase(project);
     }
 

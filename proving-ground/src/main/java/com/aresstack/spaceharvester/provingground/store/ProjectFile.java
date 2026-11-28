@@ -72,6 +72,22 @@ public final class ProjectFile {
         return file;
     }
 
+    /**
+     * Where the reference images of {@code testCase} are, as Playwright names the folder: {@code <case>-snapshots}
+     * next to its file (e.g. {@code login/anmelden-snapshots/}); null if the file lies outside the project.
+     */
+    public static Path screenshotReferences(Path directory, TestCaseEntry testCase) {
+        try {
+            Path file = caseFile(directory, testCase);
+            String name = file.getFileName().toString();
+            String stem = name.endsWith(TestCaseFile.EXTENSION)
+                    ? name.substring(0, name.length() - TestCaseFile.EXTENSION.length()) : name;
+            return file.resolveSibling(stem + "-snapshots");
+        } catch (IOException outside) {
+            return null;
+        }
+    }
+
     /** Reads the actions of {@code testCase}. */
     public static TestCase readCase(Path directory, TestCaseEntry testCase) throws IOException {
         return TestCaseFile.read(caseFile(directory, testCase));

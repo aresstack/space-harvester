@@ -58,13 +58,14 @@ final class PlaywrightCode {
     /** Classes the generated code uses directly; their JARs make the compiler's class path. */
     private static final List<Class<?>> ANCHORS = List.of(Page.class,
             com.microsoft.playwright.assertions.PlaywrightAssertions.class,
-            com.microsoft.playwright.options.AriaRole.class);
+            com.microsoft.playwright.options.AriaRole.class, Screenshots.class);
     private static final String[] HEADER = {
             "import com.microsoft.playwright.*;",
             "import com.microsoft.playwright.options.*;",
             "import static com.microsoft.playwright.assertions.PlaywrightAssertions.assertThat;",
             "import java.util.*;",
             "import java.util.function.UnaryOperator;",
+            "import " + Screenshots.class.getName() + ";",
             "",
             "public class " + CLASS_NAME + " {",
     };
@@ -204,13 +205,25 @@ final class PlaywrightCode {
             Map<Integer, Method> methods = new HashMap<>();
             for (int[] range : lines) {
                 methods.put(range[0], type.getMethod("step" + range[0], BrowserContext.class, Page.class,
-                        UnaryOperator.class));
+                        UnaryOperator.class, Screenshots.class));
             }
             return new PlaywrightCode(type.getConstructor().newInstance(), methods, problems, declared);
         } catch (ReflectiveOperationException | LinkageError broken) {
             lines.forEach(range -> problems.put(range[0], "Playwright-Code nicht ladbar: " + broken));
             return new PlaywrightCode(null, Map.of(), problems, declared);
         }
+    }
+
+    /**
+     * Whether {@code code} opens the page it acts on itself ({@code Page page = context.newPage();}) and needs no page
+     * handed in.
+     */
+    static boolean opensOwnPage(String code) {
+        if (code == null) {
+            return false;
+        }
+        List<String> declaredPages = declaredPages(code);
+        return !declaredPages.isEmpty() && otherPages(code, declaredPages).isEmpty();
     }
 
     /** Why step {@code index} cannot run, or null. */
@@ -223,16 +236,19 @@ final class PlaywrightCode {
      *
      * @param page     the page the step acts on (null for opening a page)
      * @param resolve  resolves a string literal with {@code {{...}}}
+     * @param screenshots the screenshot comparison of the run ({@code screenshots.expect(...)} in the code)
      * @return the pages the code opened, in the order it declares them
      */
     @SuppressWarnings("unchecked")
-    List<Page> run(int index, BrowserContext context, Page page, UnaryOperator<String> resolve) throws Throwable {
+    List<Page> run(int index, BrowserContext context, Page page, UnaryOperator<String> resolve,
+                   Screenshots screenshots) throws Throwable {
         Method method = methods.get(index);
         if (method == null) {
             throw new IllegalStateException(problems.getOrDefault(index, NO_CODE));
         }
         try {
-            Map<String, Object> opened = (Map<String, Object>) method.invoke(instance, context, page, resolve);
+            Map<String, Object> opened = (Map<String, Object>) method.invoke(instance, context, page, resolve,
+                    screenshots);
             List<Page> pages = new ArrayList<>();
             for (String alias : declared.getOrDefault(index, List.of())) {
                 if (opened.get(alias) instanceof Page created) {
@@ -247,16 +263,11 @@ final class PlaywrightCode {
 
     /** One method around Playwright's code of one step. */
     static String method(int index, String code, List<String> declaredPages) {
-        Set<String> used = new LinkedHashSet<>();
-        Matcher uses = USED_PAGE.matcher(code);
-        while (uses.find()) {
-            if (!declaredPages.contains(uses.group(1))) {
-                used.add(uses.group(1));
-            }
-        }
+        Set<String> used = otherPages(code, declaredPages);
         StringBuilder method = new StringBuilder();
         method.append("  public Map<String, Object> step").append(index)
-                .append("(BrowserContext context, Page subject, UnaryOperator<String> v) throws Exception {\n");
+                .append("(BrowserContext context, Page subject, UnaryOperator<String> v, Screenshots screenshots)")
+                .append(" throws Exception {\n");
         for (String alias : used) {
             method.append("    Page ").append(alias).append(" = subject;\n");
         }
@@ -282,6 +293,18 @@ final class PlaywrightCode {
         }
         literal.appendTail(result);
         return result.toString();
+    }
+
+    /** The pages {@code code} acts on without declaring them: they are the step's page. */
+    static Set<String> otherPages(String code, List<String> declaredPages) {
+        Set<String> used = new LinkedHashSet<>();
+        Matcher uses = USED_PAGE.matcher(code);
+        while (uses.find()) {
+            if (!declaredPages.contains(uses.group(1))) {
+                used.add(uses.group(1));
+            }
+        }
+        return used;
     }
 
     static List<String> declaredPages(String code) {

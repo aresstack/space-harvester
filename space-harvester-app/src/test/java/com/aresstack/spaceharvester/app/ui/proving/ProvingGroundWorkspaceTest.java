@@ -75,6 +75,18 @@ class ProvingGroundWorkspaceTest {
         assertThat(TestCaseFile.read(directory.resolve("anmeldung/login.jsonl")).size()).isEqualTo(1);
         assertThat(ProjectFile.read(directory).testCase("anmeldung/login").steps()).doesNotContainKey(assertId);
 
+        // Bildvergleich einfügen: nach dem gewählten Schritt, auf dessen Seite, mit Playwright-Code zum Abspielen.
+        SwingUtilities.invokeAndWait(() -> workspace.get().insertScreenshotCheck(0, " Startseite "));
+        workspace.get().flush();
+        TestCase withCheck = TestCaseFile.read(directory.resolve("anmeldung/login.jsonl"));
+        assertThat(withCheck.size()).isEqualTo(2);
+        assertThat(withCheck.step(1).name()).isEqualTo(TestStep.ASSERT_SCREENSHOT);
+        assertThat(withCheck.step(1).pageGuid()).isEqualTo(withCheck.step(0).pageGuid());
+        assertThat(withCheck.step(1).snapshot()).isEqualTo("Startseite");
+        assertThat(withCheck.step(1).code()).startsWith("screenshots.expect(\"Startseite\", () -> page.screenshot(");
+        SwingUtilities.invokeAndWait(() -> workspace.get().deleteStep(1));
+        workspace.get().flush();
+
         // Neue Suite und ein neuer Testfall bekommen lesbare IDs und eine eigene Datei.
         SwingUtilities.invokeAndWait(() -> workspace.get().createSuite("Konto & Daten"));
         workspace.get().flush();
