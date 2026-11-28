@@ -2321,7 +2321,8 @@ public final class ChatPanel extends JPanel {
     private void showEffortMenu() {
         JPopupMenu menu = new JPopupMenu();
         for (String level : EFFORTS) {
-            JMenuItem item = new JMenuItem((level.equals(effortLevel) ? "✓ " : "    ") + level);
+            JMenuItem item = new JMenuItem(level,
+                    com.aresstack.spaceharvester.app.ui.controls.CheckMark.of(level.equals(effortLevel)));
             item.addActionListener(e -> {
                 effortLevel = level;
                 fitFooter();
@@ -4323,8 +4324,10 @@ public final class ChatPanel extends JPanel {
     private JMenuItem chatItem(ChatStore.Entry entry, boolean deleted) {
         ChatRecord record = entry.record();
         boolean current = !deleted && record.id().equals(chat.id());
-        String label = (current ? "✓ " : "    ") + com.aresstack.spaceharvester.app.chat.ChatExport.displayTitle(record);
-        JMenuItem item = new JMenuItem(deleted ? "<html><s>" + escapeHtml(label) + "</s></html>" : label);
+        String label = com.aresstack.spaceharvester.app.chat.ChatExport.displayTitle(record);
+        // Der Haken des offenen Chats ist gezeichnet: Die Schrift der Einträge hat kein „✓“ (Kästchen im Verlauf).
+        JMenuItem item = new JMenuItem(deleted ? "<html><s>" + escapeHtml(label) + "</s></html>" : label,
+                com.aresstack.spaceharvester.app.ui.controls.CheckMark.of(current));
         item.setFont(Comic.regular(item.getFont().getSize2D()));
         String area = lastArea(record);
         item.setToolTipText(deleted ? DELETED_TIP : Texts.count(record.messages().size(), "Nachricht", "Nachrichten")

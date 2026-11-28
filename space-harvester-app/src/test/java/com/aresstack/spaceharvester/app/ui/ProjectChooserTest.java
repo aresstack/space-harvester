@@ -38,7 +38,10 @@ class ProjectChooserTest {
     }
 
     private static List<String> texts(List<Component> items) {
-        return items.stream().filter(JMenuItem.class::isInstance).map(item -> ((JMenuItem) item).getText()).toList();
+        // Der gezeichnete Haken des aktiven Projekts steht hier als „✓ “, sein leerer Platz als Lücke.
+        return items.stream().filter(JMenuItem.class::isInstance).map(item -> (JMenuItem) item)
+                .map(item -> item.getIcon() instanceof com.aresstack.spaceharvester.app.ui.controls.CheckMark mark
+                        ? (mark.checked() ? "✓ " : "    ") + item.getText() : item.getText()).toList();
     }
 
     @Test

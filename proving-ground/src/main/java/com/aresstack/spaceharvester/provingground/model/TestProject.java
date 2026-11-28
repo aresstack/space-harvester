@@ -53,6 +53,41 @@ public record TestProject(String name, Scope scope, List<String> preconditions, 
         return users.stream().filter(user -> user.name().equals(userName)).findFirst().orElse(null);
     }
 
+    /** This project with {@code suite} replacing the one of the same id, or appended. */
+    public TestProject withSuite(TestSuite suite) {
+        List<TestSuite> copy = new ArrayList<>(suites);
+        int index = -1;
+        for (int i = 0; i < copy.size(); i++) {
+            if (copy.get(i).id().equals(suite.id())) {
+                index = i;
+            }
+        }
+        if (index < 0) {
+            copy.add(suite);
+        } else {
+            copy.set(index, suite);
+        }
+        return new TestProject(name, scope, preconditions, users, defaultUser, copy);
+    }
+
+    /**
+     * An id for {@code name} (lower case, umlauts spelled out, other characters as "-"), not among {@code taken}
+     * ("-2", "-3" ... appended if needed).
+     */
+    public static String newId(String name, java.util.Collection<String> taken) {
+        String base = (name == null ? "" : name).toLowerCase(java.util.Locale.ROOT)
+                .replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+                .replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
+        if (base.isEmpty()) {
+            base = "neu";
+        }
+        String id = base;
+        for (int n = 2; taken.contains(id); n++) {
+            id = base + "-" + n;
+        }
+        return id;
+    }
+
     public static String reference(TestSuite suite, TestCaseEntry testCase) {
         return suite.id() + "/" + testCase.id();
     }

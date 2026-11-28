@@ -108,7 +108,8 @@ final class ProjectChooser {
         Project active = projects.active();
         for (Project project : projects.list()) {
             boolean current = project.id().equals(active.id());
-            JMenuItem item = new JMenuItem((current ? "✓ " : "    ") + project.name());
+            JMenuItem item = new JMenuItem(project.name(),
+                    com.aresstack.spaceharvester.app.ui.controls.CheckMark.of(current));
             item.addActionListener(e -> projects.activate(project.id()));
             items.add(item);
         }

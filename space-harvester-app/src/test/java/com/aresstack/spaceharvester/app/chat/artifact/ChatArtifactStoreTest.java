@@ -80,6 +80,28 @@ class ChatArtifactStoreTest {
     }
 
     @Test
+    void anArtifactWrittenBeforeChatAndEditionExistedStaysReadableAndMovesOver() throws Exception {
+        // Dateien von vor #1675 haben weder „chatId“ noch „edition“; sie müssen in Liste, Verweis und Umzug erscheinen.
+        ChatStore chats = chats();
+        Path folder = chats.folder(node);
+        Path project = home.resolve("projekte").resolve("standard").resolve("artefakte");
+        ChatRecord chat = chat(chats);
+        Path old = chats.artifacts(folder, chat.id());
+        Files.createDirectories(old);
+        Files.writeString(old.resolve("D3" + ChatArtifactStore.SUFFIX), "{\"id\":\"D3\",\"kind\":\"DOCUMENT\","
+                + "\"title\":\"Flyer\",\"createdAt\":1000,\"revisions\":[{\"number\":1,\"parent\":0,\"at\":1000,"
+                + "\"origin\":\"AI\",\"note\":\"angelegt\",\"changed\":[\"a1\"],\"document\":{\"sections\":[{\"id\":"
+                + "\"a1\",\"level\":1,\"heading\":\"Flyer\",\"text\":\"Text\"}],\"nextId\":2},\"svg\":\"\"}]}");
+        ChatArtifactStore store = new ChatArtifactStore(chats);
+        store.projects(id -> project);
+
+        assertThat(store.adoptAll()).isEqualTo(1);
+        assertThat(store.listInProject(null)).extracting(ChatArtifact::id, ChatArtifact::title)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("D1", "Flyer"));
+        assertThat(store.read(folder, chat.id(), "D1").current().edition()).isZero();
+    }
+
+    @Test
     void theStandardProjectOwnsItsArtifactsAndOldOnesMoveOverOnce() throws Exception {
         // ADR 0047: das Projekt besitzt immer, auch „AresStack“; ein neuer Chat sieht die Artefakte älterer Chats.
         ChatStore chats = chats();
