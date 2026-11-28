@@ -1,19 +1,22 @@
 package com.aresstack.spaceharvester.provingground.run;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
+import com.warrenstrange.googleauth.GoogleAuthenticator;
+import com.warrenstrange.googleauth.GoogleAuthenticatorConfig;
+import com.warrenstrange.googleauth.HmacHashFunction;
+
 import java.net.URI;
 import java.net.URLDecoder;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.security.GeneralSecurityException;
 import java.time.Instant;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 
 /**
- * Time-based one-time codes (RFC 6238), as WD4J's {@code TotpService} computed them with the googleauth library.
- * The secret is Base32, or an {@code otpauth://totp/...} URI as authenticator apps and KeePass store it; its
- * {@code digits}, {@code period} and {@code algorithm} parameters override the RFC's defaults.
+ * Time-based one-time codes (RFC 6238) with the googleauth library, as WD4J's {@code TotpService} computes them
+ * ({@code GoogleAuthenticator.getTotpPassword}). The secret is Base32 (googleauth's default), or an
+ * {@code otpauth://totp/...} URI as authenticator apps and KeePass store it; its {@code digits}, {@code period} and
+ * {@code algorithm} parameters go into googleauth's configuration. Unlike WD4J ({@code String.valueOf(int)}) the code
+ * keeps its leading zeros: "012345" stays six digits, as the page expects.
  */
 public final class Totp {
 
@@ -50,44 +53,26 @@ public final class Totp {
                 }
             }
         }
-        return code(base32(secret), now.getEpochSecond() / period, digits, algorithm);
+        String clean = secret.replace(" ", "").replace("-", "").replace("=", "").toUpperCase(Locale.ROOT);
+        if (clean.isEmpty() || !clean.matches("[A-Z2-7]+")) {
+            throw new IllegalArgumentException("OTP-Geheimnis ist kein Base32");
+        }
+        GoogleAuthenticator authenticator = new GoogleAuthenticator(new GoogleAuthenticatorConfig
+                .GoogleAuthenticatorConfigBuilder()
+                .setCodeDigits(digits)
+                .setTimeStepSizeInMillis(TimeUnit.SECONDS.toMillis(period))
+                .setHmacHashFunction(function(algorithm))
+                .build());
+        int code = authenticator.getTotpPassword(clean, now.toEpochMilli());
+        return String.format("%0" + digits + "d", code);
     }
 
-    static String code(byte[] key, long counter, int digits, String algorithm) {
-        try {
-            String mac = "Hmac" + algorithm;
-            Mac hmac = Mac.getInstance(mac);
-            hmac.init(new SecretKeySpec(key, mac));
-            byte[] hash = hmac.doFinal(ByteBuffer.allocate(Long.BYTES).putLong(counter).array());
-            int offset = hash[hash.length - 1] & 0x0f;
-            int binary = ((hash[offset] & 0x7f) << 24) | ((hash[offset + 1] & 0xff) << 16)
-                    | ((hash[offset + 2] & 0xff) << 8) | (hash[offset + 3] & 0xff);
-            long modulus = (long) Math.pow(10, digits);
-            return String.format("%0" + digits + "d", binary % modulus);
-        } catch (GeneralSecurityException unsupported) {
-            throw new IllegalArgumentException("OTP-Verfahren nicht unterstützt: " + algorithm, unsupported);
-        }
-    }
-
-    /** RFC 4648 Base32, case and spaces ignored, padding optional. */
-    static byte[] base32(String text) {
-        String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-        String clean = text.replace(" ", "").replace("-", "").replace("=", "").toUpperCase(Locale.ROOT);
-        ByteBuffer out = ByteBuffer.allocate(clean.length() * 5 / 8);
-        int buffer = 0;
-        int bits = 0;
-        for (char c : clean.toCharArray()) {
-            int value = alphabet.indexOf(c);
-            if (value < 0) {
-                throw new IllegalArgumentException("OTP-Geheimnis ist kein Base32");
-            }
-            buffer = (buffer << 5) | value;
-            bits += 5;
-            if (bits >= 8) {
-                out.put((byte) (buffer >> (bits - 8)));
-                bits -= 8;
-            }
-        }
-        return out.array();
+    private static HmacHashFunction function(String algorithm) {
+        return switch (algorithm) {
+            case "SHA1" -> HmacHashFunction.HmacSHA1;
+            case "SHA256" -> HmacHashFunction.HmacSHA256;
+            case "SHA512" -> HmacHashFunction.HmacSHA512;
+            default -> throw new IllegalArgumentException("OTP-Verfahren nicht unterstützt: " + algorithm);
+        };
     }
 }

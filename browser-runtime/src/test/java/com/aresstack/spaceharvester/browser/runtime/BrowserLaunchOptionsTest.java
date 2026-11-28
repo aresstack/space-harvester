@@ -45,4 +45,15 @@ class BrowserLaunchOptionsTest {
         assertEquals(0, launch.firefoxUserPrefs.get(FirefoxSessionPrefs.NO_BFCACHE));
         assertFalse(launch.firefoxUserPrefs.containsKey(FirefoxSessionPrefs.ALWAYS_ACCEPT_REPOST));
     }
+
+    /**
+     * Proving Ground (Angelo 28.11.): a visible run showed Firefox's own empty start window and then the test's window.
+     * Without a fixed profile the start window is suppressed, as Playwright does for its own Firefox build.
+     */
+    @Test
+    void firefoxWithoutAFixedProfileOpensNoStartWindowOfItsOwn() {
+        BrowserType.LaunchOptions launch = BrowserRuntime.firefoxLaunchOptions(temp.resolve("firefox"), false, false);
+        assertEquals(java.util.List.of(BrowserRuntime.FIREFOX_NO_START_WINDOW), launch.args);
+        assertEquals("-silent", BrowserRuntime.FIREFOX_NO_START_WINDOW);
+    }
 }

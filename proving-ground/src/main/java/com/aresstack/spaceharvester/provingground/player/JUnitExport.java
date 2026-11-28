@@ -428,6 +428,10 @@ public final class JUnitExport {
                     .append(TestStep.javaString(EXECUTABLE_PROPERTY)).append(", ")
                     .append(TestStep.javaString(executable)).append(")))");
         }
+        if (launch.firefox()) {
+            // Firefox's own start window would stay empty beside the test's (as Playwright starts its Firefox build)
+            options.append("\n          .setArgs(List.of(\"-silent\"))");
+        }
         return options.append("\n          .setHeadless(false)").toString();
     }
 

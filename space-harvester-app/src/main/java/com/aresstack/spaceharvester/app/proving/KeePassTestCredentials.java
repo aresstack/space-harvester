@@ -13,7 +13,8 @@ import java.util.function.Supplier;
 
 /**
  * Zugangsdaten der Testbenutzer aus KeePass (Proving Ground, #1153): der KeePass-Eintrag des Benutzers
- * ({@link TestUser#vaultEntry()}) liefert Login und Passwort, ein Zusatzfeld das OTP-Geheimnis. Über dieselbe Kopplung
+ * ({@link TestUser#vaultEntry()}) liefert Login und Passwort, ein Zusatzfeld das OTP-Geheimnis, weitere Zusatzfelder
+ * weitere Passwörter ({@code {{secret.<Feldname>}}}). Über dieselbe Kopplung
  * wie das Command Deck und immer still (kein Kopplungsdialog mitten im Testlauf). Gelesen wird erst, wenn ein Schritt
  * den Wert braucht, und nichts davon wird gespeichert; nur der Login (kein Geheimnis) bleibt für einen Testlauf im
  * Speicher. Darum je Testlauf eine neue Instanz.
@@ -40,7 +41,8 @@ public final class KeePassTestCredentials implements Credentials {
         String entry = user.vaultEntry();
         return users.computeIfAbsent(user.name(), name -> new UserCredentials(read(entry, VaultEntryDraft::userName),
                 () -> read(entry, KeePassTestCredentials::password),
-                () -> read(entry, draft -> otp(draft.fields()))));
+                () -> read(entry, draft -> otp(draft.fields())),
+                field -> read(entry, draft -> field(draft.fields(), field))));
     }
 
     private interface Field {
@@ -70,6 +72,23 @@ public final class KeePassTestCredentials implements Credentials {
                 Arrays.fill(password, '\0');
             }
         }
+    }
+
+    /**
+     * Ein weiteres Passwort auf derselben Seite ({@code {{secret.PIN}}}): das Zusatzfeld „PIN“ des Eintrags (Groß- und
+     * Kleinschreibung egal), oder null – dann gilt das Passwort des Eintrags.
+     */
+    static String field(Map<String, String> fields, String name) {
+        if (fields == null || name == null) {
+            return null;
+        }
+        for (Map.Entry<String, String> field : fields.entrySet()) {
+            if (field.getKey() != null && field.getKey().equalsIgnoreCase(name.strip())
+                    && field.getValue() != null && !field.getValue().isEmpty()) {
+                return field.getValue();
+            }
+        }
+        return null;
     }
 
     /** Das OTP-Geheimnis aus den Zusatzfeldern des Eintrags, oder null. */

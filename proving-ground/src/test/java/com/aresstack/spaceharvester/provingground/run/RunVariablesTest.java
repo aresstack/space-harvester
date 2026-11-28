@@ -65,4 +65,14 @@ class RunVariablesTest {
                 () -> variables.resolve("{{secret.Passwort}}", null));
         assertTrue(none.getMessage().contains("kein Benutzer"));
     }
+
+    /** More passwords on one page: {{secret.PIN}} is the entry's field "PIN", every other name its password. */
+    @Test
+    void aFurtherPasswordIsTheEntrysFieldOfThatNameAndMasked() throws ExpressionException {
+        RunVariables variables = new RunVariables(user -> new UserCredentials("sb.login", () -> "geheim", null,
+                field -> field.equals("PIN") ? "4711" : null));
+        variables.enter("Projekt", List.of());
+        assertEquals("geheim/4711", variables.resolve("{{secret.Passwort}}/{{secret.PIN}}", SB));
+        assertEquals("{{secret}} {{secret}}", variables.redact("geheim 4711"));
+    }
 }

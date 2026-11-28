@@ -54,6 +54,7 @@ class JUnitExportTest {
         assertTrue(source.contains("try (Playwright playwright = Playwright.create())"), source);
         assertTrue(source.contains("playwright.firefox().launch(new BrowserType.LaunchOptions()"), source);
         assertTrue(source.contains(".setChannel(\"moz-firefox\")"), source);
+        assertTrue(source.contains(".setArgs(List.of(\"-silent\"))"), "no empty start window: " + source);
         assertTrue(source.contains("\"C:\\\\Programme\\\\Mozilla Firefox\\\\firefox.exe\""), source);
         assertTrue(source.contains("page.navigate(v(\"{{start}}login\"));"), source);
         assertTrue(source.contains(".fill(v(\"{{secret.Passwort}}\"));"), source);
@@ -75,6 +76,7 @@ class JUnitExportTest {
         assertTrue(result.source().contains("Page page = context.newPage();\n      page.locator(\"#a\").click();"),
                 result.source());
         assertFalse(result.source().contains("setExecutablePath"), result.source());
+        assertFalse(result.source().contains("-silent"), "Chromium opens no start window: " + result.source());
         assertEquals("", compile(result), result.source());
     }
 
