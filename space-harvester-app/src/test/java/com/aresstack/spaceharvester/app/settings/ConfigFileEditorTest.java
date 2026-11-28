@@ -322,7 +322,27 @@ class ConfigFileEditorTest {
         assertThat(text).doesNotContain("id: zwei", "ZWEI_TOKEN").contains("# zwei ist das Wiki", "id: drei");
         assertThat(loader.load(file).sources()).extracting(AppSettings.SourceEntry::id).containsExactly("eins", "drei");
         assertThat(editor.hasPlaintextSecret(file, "eins")).isFalse();
-        assertThatThrownBy(() -> editor.remove(file, "zwei")).hasMessageContaining("zwei");
+        assertThatThrownBy(() -> editor.replace(file, files("zwei", "/tmp/zwei"))).hasMessageContaining("zwei")
+                .hasMessageContaining("steht nicht in der Konfigurationsdatei");
+    }
+
+    /**
+     * Angelo 26.11.2026: Das erste Entfernen der Quelle „z“ schrieb die Datei, das Neuladen scheiterte, die Oberfläche
+     * zeigte „z“ weiter; das zweite Entfernen scheiterte mit „ließ sich in der Datei nicht abgrenzen“. Eine schon
+     * entfernte Quelle lässt die Datei unverändert, statt zu scheitern.
+     */
+    @Test
+    void removingASourceThatIsAlreadyGoneLeavesTheFileUnchanged() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, THREE);
+        editor.save(file, editor.remove(file, "eins"));
+        editor.save(file, editor.remove(file, "drei"));
+        String afterFirst = Files.readString(file);
+
+        ConfigFileEditor.Draft again = editor.remove(file, "drei");
+
+        assertThat(again.text()).isEqualTo(afterFirst);
+        assertThat(again.settings().sources()).extracting(AppSettings.SourceEntry::id).containsExactly("zwei");
     }
 
     @Test

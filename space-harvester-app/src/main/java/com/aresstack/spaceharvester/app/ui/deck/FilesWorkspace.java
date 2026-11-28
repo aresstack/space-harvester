@@ -427,6 +427,8 @@ public final class FilesWorkspace extends JPanel implements DeckBars.FootTools {
         if (!filter.getText().equals(tab.filter)) {
             filter.setText(tab.filter);
         }
+        // Reiterwechsel: Pfadfeld immer auf den Ort des neuen Reiters setzen, auch wenn es den Fokus hat.
+        path.setText(browser.location().orElse(""));
         collapsed.clear();
         select(null);
         render();
