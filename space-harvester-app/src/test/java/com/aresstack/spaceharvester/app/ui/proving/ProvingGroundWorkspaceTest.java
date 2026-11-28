@@ -87,15 +87,56 @@ class ProvingGroundWorkspaceTest {
     }
 
     @Test
-    void anEmptyFolderOffersANewProject() throws Exception {
+    void fromAnEmptyFolderTheOfferInTheMiddleLeadsToProjectSuiteAndRecording() throws Exception {
         AtomicReference<ProvingGroundWorkspace> workspace = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> workspace.set(new ProvingGroundWorkspace(() -> null, () -> directory)));
         SwingUtilities.invokeAndWait(() -> workspace.get().open(directory));
         await(() -> ((com.aresstack.spaceharvester.app.ui.controls.StatusLabel) workspace.get().statusLine()).note()
-                .text().startsWith("Kein Testprojekt"));
-        SwingUtilities.invokeAndWait(() -> workspace.get().createProject());
-        await(() -> Files.exists(directory.resolve(ProjectFile.FILE_NAME)));
+                .text().equals(ProvingGroundWorkspace.NO_PROJECT));
+        assertThat(workspace.get().offer().offered()).isTrue();
+        assertThat(workspace.get().offer().button().getText()).isEqualTo(ProvingGroundWorkspace.OFFER_PROJECT);
+
+        SwingUtilities.invokeAndWait(() -> workspace.get().offer().button().doClick());
+        await(() -> ProvingGroundWorkspace.OFFER_SUITE.equals(workspace.get().offer().button().getText()));
         assertThat(ProjectFile.read(directory).suites()).isEmpty();
+        assertThat(workspace.get().offer().offered()).isTrue();
+
+        SwingUtilities.invokeAndWait(() -> workspace.get().createSuite("Anmeldung"));
+        workspace.get().flush();
+        await(() -> ProvingGroundWorkspace.OFFER_RECORD.equals(workspace.get().offer().button().getText()));
+        assertThat(workspace.get().offer().offered()).isTrue();
+        assertThat(ProjectFile.read(directory).suite("anmeldung")).isNotNull();
+    }
+
+    @Test
+    void withoutAChosenFolderTheProjectGoesBelowTheDataDirectory() throws Exception {
+        String before = com.aresstack.spaceharvester.app.ui.AppState.shared().get(ProvingGroundWorkspace.PROJECT_KEY);
+        com.aresstack.spaceharvester.app.ui.AppState.shared().put(ProvingGroundWorkspace.PROJECT_KEY, "");
+        try {
+            AtomicReference<ProvingGroundWorkspace> workspace = new AtomicReference<>();
+            SwingUtilities.invokeAndWait(() -> workspace.set(new ProvingGroundWorkspace(() -> null,
+                    () -> directory)));
+            await(() -> workspace.get().offer().offered());
+            SwingUtilities.invokeAndWait(() -> workspace.get().offer().button().doClick());
+            Path expected = directory.resolve("proving-ground").resolve(ProvingGroundWorkspace.DEFAULT_PROJECT);
+            await(() -> Files.exists(expected.resolve(ProjectFile.FILE_NAME)));
+        } finally {
+            com.aresstack.spaceharvester.app.ui.AppState.shared().put(ProvingGroundWorkspace.PROJECT_KEY,
+                    before == null ? "" : before);
+        }
+    }
+
+    /** Die Schrift der App hat nicht jedes Zeichen (Angelo 28.11.: Tofu statt ＋): Alle Meldungen müssen darstellbar sein. */
+    @Test
+    void everyMessageCanBeDrawnInTheAppFont() {
+        java.awt.Font font = com.aresstack.spaceharvester.app.ui.Comic.regular(13f);
+        for (String text : List.of(ProvingGroundWorkspace.NO_PROJECT, ProvingGroundWorkspace.NO_SUITE,
+                ProvingGroundWorkspace.NO_CASES, ProvingGroundWorkspace.RECORDING,
+                ProvingGroundWorkspace.RECORDING_PAUSED, ProvingGroundWorkspace.OFFER_PROJECT,
+                ProvingGroundWorkspace.OFFER_SUITE, ProvingGroundWorkspace.OFFER_RECORD, ProvingGroundWorkspace.RUN_TIP,
+                ProvingGroundWorkspace.RECORD_TIP, ProvingGroundWorkspace.CREATE_TIP, ProvingGroundWorkspace.SUITE_TIP)) {
+            assertThat(font.canDisplayUpTo(text)).as(text).isEqualTo(-1);
+        }
     }
 
     private static void await(BooleanSupplier condition) throws Exception {
