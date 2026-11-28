@@ -148,7 +148,8 @@ class ProjectRunLiveTest {
         }
     }
 
-    private static TestStep step(String page, String name, String selector, String field, String value) {
+    /** A step as the recorder delivers it: Playwright's action and the Java code Playwright's generator writes. */
+    private static TestStep step(String page, String name, String selector, String field, String value, String code) {
         JsonObject action = new JsonObject();
         action.addProperty("name", name);
         if (selector != null) {
@@ -157,28 +158,45 @@ class ProjectRunLiveTest {
         if (field != null) {
             action.addProperty(field, value);
         }
-        return TestStep.action(page, action);
+        return TestStep.action(page, action).withCode(code);
+    }
+
+    private static TestStep check(TestStep assertion, String code) {
+        return assertion.withCode(code);
     }
 
     @Test
     void usersPreconditionsHooksAndSecretsInARealBrowser() throws Exception {
         Path project = data.resolve("tests");
         TestCase login = new TestCase("Anmelden", List.of(
-                step("page@login", "openPage", null, "url", "{{start}}login"),
-                step("page@login", "fill", "#user", "text", "{{user.login}}"),
-                step("page@login", "fill", "#pw", "text", "{{secret.Passwort}}"),
-                step("page@login", "fill", "#code", "text", "{{otp()}}"),
-                step("page@login", "click", "internal:role=button[name=\"Anmelden\"i]", null, null),
-                TestStep.assertText("page@login", "#status", "Angemeldet als {{user.login}}", false)));
+                step("page@login", "openPage", null, "url", "{{start}}login",
+                        "Page page = context.newPage();\npage.navigate(\"{{start}}login\");"),
+                step("page@login", "fill", "#user", "text", "{{user.login}}",
+                        "page.locator(\"#user\").fill(\"{{user.login}}\");"),
+                step("page@login", "fill", "#pw", "text", "{{secret.Passwort}}",
+                        "page.locator(\"#pw\").fill(\"{{secret.Passwort}}\");"),
+                step("page@login", "fill", "#code", "text", "{{otp()}}",
+                        "page.locator(\"#code\").fill(\"{{otp()}}\");"),
+                step("page@login", "click", "internal:role=button[name=\"Anmelden\"i]", null, null,
+                        "page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName(\"Anmelden\")).click();"),
+                check(TestStep.assertText("page@login", "#status", "Angemeldet als {{user.login}}", false),
+                        "assertThat(page.locator(\"#status\")).hasText(\"Angemeldet als {{user.login}}\");")));
         TestCase twoUsers = new TestCase("Zwei Benutzer", List.of(
-                step("page@sb", "openPage", null, "url", "{{start}}konto"),
-                TestStep.assertText("page@sb", "#status", "Angemeldet als sb.login", false),
-                step("page@pr", "openPage", null, "url", "{{start}}konto"),
-                TestStep.assertText("page@pr", "#status", "Nicht angemeldet", false)));
+                step("page@sb", "openPage", null, "url", "{{start}}konto",
+                        "Page page = context.newPage();\npage.navigate(\"{{start}}konto\");"),
+                check(TestStep.assertText("page@sb", "#status", "Angemeldet als sb.login", false),
+                        "assertThat(page.locator(\"#status\")).hasText(\"Angemeldet als sb.login\");"),
+                step("page@pr", "openPage", null, "url", "{{start}}konto",
+                        "Page page1 = context.newPage();\npage1.navigate(\"{{start}}konto\");"),
+                check(TestStep.assertText("page@pr", "#status", "Nicht angemeldet", false),
+                        "assertThat(page1.locator(\"#status\")).hasText(\"Nicht angemeldet\");")));
         TestCase wrong = new TestCase("Falscher Wert", List.of(
-                step("page@w", "openPage", null, "url", "{{start}}login"),
-                step("page@w", "fill", "#pw", "text", "{{secret.Passwort}}"),
-                TestStep.assertValue("page@w", "#pw", "{{secret.Passwort}}x")));
+                step("page@w", "openPage", null, "url", "{{start}}login",
+                        "Page page = context.newPage();\npage.navigate(\"{{start}}login\");"),
+                step("page@w", "fill", "#pw", "text", "{{secret.Passwort}}",
+                        "page.locator(\"#pw\").fill(\"{{secret.Passwort}}\");"),
+                check(TestStep.assertValue("page@w", "#pw", "{{secret.Passwort}}x"),
+                        "assertThat(page.locator(\"#pw\")).hasValue(\"{{secret.Passwort}}x\");")));
         TestCaseFile.write(login, project.resolve("anmeldung/login.jsonl"));
         TestCaseFile.write(twoUsers, project.resolve("konto/zwei.jsonl"));
         TestCaseFile.write(wrong, project.resolve("konto/falsch.jsonl"));

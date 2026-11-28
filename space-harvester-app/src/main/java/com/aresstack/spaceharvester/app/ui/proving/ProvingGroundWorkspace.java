@@ -777,7 +777,8 @@ public final class ProvingGroundWorkspace extends JPanel {
                     StepRole role = binding.role() != null ? binding.role() : StepRole.of(step);
                     String user = binding.user() != null ? binding.user()
                             : shownEntry.user() != null ? shownEntry.user() : "";
-                    String what = binding.description().isEmpty() ? step.describe() : binding.description();
+                    String what = !binding.description().isEmpty() ? binding.description()
+                            : step.code() != null ? step.code().strip() : step.describe();
                     String outcome = i < played.size() ? outcome(played.get(i)) : "";
                     rows.add(new Object[]{i + 1, label(role), user, what, outcome});
                 }

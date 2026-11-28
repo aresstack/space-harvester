@@ -63,17 +63,18 @@ final class RecordingCollector {
         if ("actionUpdated".equals(kind) && lastDropped) {
             kind = "actionAdded"; // the action began during the pause: what follows it is a step of its own
         }
+        String code = event.has("code") && event.get("code").isJsonPrimitive() ? event.get("code").getAsString() : null;
         switch (kind) {
             case "actionAdded" -> {
                 lastDropped = false;
-                TestStep step = TestStep.of(data);
+                TestStep step = TestStep.of(data).withCode(code);
                 lastIsSecret = maskPasswords && "fill".equals(step.name()) && isPasswordField.test(step);
                 step = masked(step);
                 target.add(step);
                 return step;
             }
             case "actionUpdated" -> {
-                TestStep step = masked(TestStep.of(data));
+                TestStep step = masked(TestStep.of(data).withCode(code));
                 if (target.size() == 0) {
                     target.add(step);
                 } else {
@@ -92,6 +93,7 @@ final class RecordingCollector {
                 for (int i = target.size() - 1; i >= 0; i--) {
                     if (page == null || page.equals(target.step(i).pageGuid())) {
                         TestStep step = target.step(i).withSignal(signal);
+                        step = step.withCode(withSignal(step.code(), signal, i));
                         target.replace(i, step);
                         return step;
                     }
@@ -108,7 +110,52 @@ final class RecordingCollector {
         if (!lastIsSecret || !"fill".equals(step.name())) {
             return step;
         }
-        return step.withText("{{" + SECRET_PREFIX + fieldName(step.selector()) + "}}");
+        String typed = step.text();
+        // withText also replaces the typed text in Playwright's code; should it still be there, the code goes
+        TestStep masked = step.withText("{{" + SECRET_PREFIX + fieldName(step.selector()) + "}}");
+        if (masked.code() != null && typed != null && !typed.isEmpty() && masked.code().contains(typed)) {
+            masked = masked.withCode(null);
+        }
+        return masked;
+    }
+
+    private static final Pattern USED_PAGE = Pattern.compile("\\b(page\\d*)\\s*\\.");
+
+    /**
+     * Playwright's code of an action with a signal that arrived after it. In the program mode the recorder sends the
+     * code with the action, before it knows of the popup, download or dialog; this wraps it as Playwright's
+     * {@code JavaLanguageGenerator.generateAction} writes it once the signal is there.
+     */
+    String withSignal(String code, JsonObject signal, int stepIndex) {
+        if (code == null || code.isBlank()) {
+            return code;
+        }
+        Matcher used = USED_PAGE.matcher(code);
+        String subject = used.find() ? used.group(1) : "page";
+        String name = signal.has("name") ? signal.get("name").getAsString() : "";
+        String body = code.strip();
+        return switch (name) {
+            case "popup" -> "Page " + popupAlias(signal, stepIndex) + " = " + subject + ".waitForPopup(() -> {\n  "
+                    + body + "\n});";
+            case "download" -> "Download download" + (signal.has("downloadAlias")
+                    ? signal.get("downloadAlias").getAsString() : "") + " = " + subject
+                    + ".waitForDownload(() -> {\n  " + body + "\n});";
+            case "dialog" -> subject + ".onceDialog(dialog -> {\n  System.out.println(String.format(\"Dialog message: %s\","
+                    + " dialog.message()));\n  dialog.dismiss();\n});\n" + body;
+            default -> code;
+        };
+    }
+
+    /** Playwright's alias rule: pages are named page, page1, page2 ... in the order they first appear. */
+    private String popupAlias(JsonObject signal, int stepIndex) {
+        java.util.LinkedHashSet<String> guids = new java.util.LinkedHashSet<>();
+        for (int i = 0; i <= stepIndex && i < target.size(); i++) {
+            guids.add(target.step(i).pageGuid());
+        }
+        String popup = signal.has("popupPageGuid") ? signal.get("popupPageGuid").getAsString() : null;
+        int index = new java.util.ArrayList<>(guids).indexOf(popup);
+        int n = index >= 0 ? index : guids.size();
+        return "page" + (n == 0 ? "" : String.valueOf(n));
     }
 
     /** A variable name for the field of {@code selector}: its accessible name or label, else "password". */

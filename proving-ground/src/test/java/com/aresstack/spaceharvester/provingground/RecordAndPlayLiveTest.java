@@ -157,10 +157,14 @@ class RecordAndPlayLiveTest {
         System.out.println("RECORDED " + names);
         recorded.steps().forEach(step -> System.out.println("  " + step.describe()));
         assertTrue(names.containsAll(List.of("navigate", "fill", "select", "check", "click")), names.toString());
+        // Every recorded step carries the Java code Playwright's generator wrote for it: that is what is played back.
+        recorded.steps().forEach(step -> System.out.println("  CODE " + step.code()));
+        assertTrue(recorded.steps().stream().allMatch(step -> step.code() != null && !step.code().isBlank()), "Playwright's code for each step");
         TestStep password = recorded.steps().stream()
                 .filter(step -> "fill".equals(step.name()) && step.selector().contains("Passwort")).findFirst()
                 .orElseThrow();
         assertEquals("{{secret.Passwort}}", password.text(), "the password is not in the recording");
+        assertTrue(password.code().contains("{{secret.Passwort}}"), password.code());
         assertEquals(2, recorded.steps().stream().filter(step -> "fill".equals(step.name())).count(),
                 "one fill per field, both fields kept");
         assertTrue(recorded.steps().stream().anyMatch(step -> step.signal("popup") != null), "popup noticed");
@@ -185,12 +189,15 @@ class RecordAndPlayLiveTest {
         loaded.replace(nameStep, loaded.step(nameStep).withText("Bea"));
         int save = indexOf(loaded, "click", "Speichern");
         String pageGuid = loaded.step(save).pageGuid();
-        loaded.insert(save + 1, TestStep.assertText(pageGuid, "internal:role=status", "Gespeichert: Bea", false));
-        loaded.insert(save + 2, TestStep.assertChecked(pageGuid, "internal:label=\"AGB gelesen\"i", true));
+        loaded.insert(save + 1, TestStep.assertText(pageGuid, "internal:role=status", "Gespeichert: Bea", false)
+                .withCode("assertThat(page.getByRole(AriaRole.STATUS)).hasText(\"Gespeichert: Bea\");"));
+        loaded.insert(save + 2, TestStep.assertChecked(pageGuid, "internal:label=\"AGB gelesen\"i", true)
+                .withCode("assertThat(page.getByLabel(\"AGB gelesen\")).isChecked();"));
         // The new tab: a check on the page the click opened (the popup's page id from Playwright's signal).
         String helpPage = loaded.steps().stream().filter(step -> step.signal("popup") != null).findFirst()
                 .orElseThrow().signal("popup").get("popupPageGuid").getAsString();
-        loaded.add(TestStep.assertText(helpPage, "internal:role=heading", "Hilfe zur Anmeldung", false));
+        loaded.add(TestStep.assertText(helpPage, "internal:role=heading", "Hilfe zur Anmeldung", false)
+                .withCode("assertThat(page1.getByRole(AriaRole.HEADING)).hasText(\"Hilfe zur Anmeldung\");"));
         TestCaseFile.write(loaded, file);
         TestCase edited = TestCaseFile.read(file);
         // The step ids survive editing, inserting and saving: subject matter keeps its link to the action.
