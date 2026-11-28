@@ -44,8 +44,9 @@ import java.util.function.Supplier;
  * steht unter Einstellungen › Browser; ist er nicht installiert, gibt es keine Websuche ({@link #start} liefert
  * {@code null}, {@link #unavailable} sagt warum). Jede Adresse prüft die Richtlinie des aktiven Profils (Extern oder Intern);
  * unbekannte Websites und verändernde Aktionen fragt der Chat nach. Nach jeder Antwort schließt der Browser, das
- * Profil bleibt. Gesucht wird im eigenen Suchbrowser ({@link SearchBrowserWebSearch}) mit den Suchmaschinen des
- * Profils; das Chat-Fenster öffnet nur die Treffer.
+ * Profil bleibt. Gesucht wird mit den Suchmaschinen des Profils in Tabs desselben Browsers
+ * ({@link SearchBrowserWebSearch}, Angelo 28.11.2026: ein Browser, die Suche als Tab); nur Google sucht im
+ * Serp4j-Suchbrowser.
  */
 public final class ChatWebBrowser {
 
@@ -61,7 +62,7 @@ public final class ChatWebBrowser {
     /** Der jüngste Turn je Chat; ein älterer räumt nicht mehr auf. */
     private final Map<ChatConversationId, Long> turns = new ConcurrentHashMap<>();
     private long nextTurn;
-    /** Die Websuche der Chats im eigenen Suchbrowser ({@link #start}), sonst {@code null}. */
+    /** Die Websuche der Chats in Tabs ihrer Browser ({@link #start}), sonst {@code null}. */
     private volatile AutoCloseable webSearch;
     /** Fragt bei der ersten internen Suche ohne Suchseite nach einer (Angelo 27.11.2026). */
     private volatile SearchPageQuestion searchPageQuestion = SearchPageQuestion.DIALOG;
@@ -106,8 +107,8 @@ public final class ChatWebBrowser {
         }
         unavailable = "";
         DelegatingBrowserAccessGuard guard = new DelegatingBrowserAccessGuard();
-        // Die Suche aus Ask AI im eigenen Suchbrowser (Angelo 27.11.2026): Google im Serp4j-Suchbrowser, die übrigen
-        // Suchmaschinen und die Suchseiten des Hauses in einem eigenen Browser; das Chat-Fenster öffnet nur Treffer.
+        // Die Suche aus Ask AI in Tabs des Browsers des Chats (Angelo 28.11.2026: ein Browser, die Suche als Tab); nur
+        // Google sucht im Serp4j-Suchbrowser, dessen Fenster die Einstellung zeigt.
         AtomicReference<ChatWebBrowser> built = new AtomicReference<>();
         SearchBrowserWebSearch webSearch = new SearchBrowserWebSearch(launcher, () -> !settings.searchWindowShown(),
                 LegacyBrowserSearchDefaults::create, chat -> built.get().engines(chat));

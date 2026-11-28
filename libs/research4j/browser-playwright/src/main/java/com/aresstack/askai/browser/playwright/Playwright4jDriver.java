@@ -1168,6 +1168,53 @@ final class Playwright4jDriver implements PlaywrightDriver {
         return hash < 0 ? url : url.substring(0, hash);
     }
 
+    /** The tab of the running search ({@link #beginSearchTab}) and the page the driver was on before it. */
+    private Page searchOwnTab;
+    private Page pageBeforeSearchTab;
+
+    @Override
+    public void beginSearchTab() throws BrowserException {
+        owner.check();
+        requireOpen();
+        endSearchTab();
+        Page tab;
+        try {
+            tab = context.newPage(); // never brought to the front: the user keeps watching the tab they chose
+            tab.onPopup(popupCloser());
+            watchNavigations(tab);
+        } catch (PlaywrightException failed) {
+            throw asBrowserException("The search tab could not be opened", failed);
+        }
+        pageBeforeSearchTab = page;
+        searchOwnTab = tab;
+        page = tab;
+    }
+
+    @Override
+    public void endSearchTab() {
+        owner.check();
+        Page tab = searchOwnTab;
+        if (tab == null) {
+            return;
+        }
+        searchOwnTab = null;
+        page = pageBeforeSearchTab; // first: closing the tab that is still the driver's page counts as a lost browser
+        pageBeforeSearchTab = null;
+        if (tab != challengePage) { // a parked challenge stays open for the user, still bound to its add-on tab
+            pageKeys.remove(tab);
+            navigationCounts.remove(tab);
+            lastNavigationMethods.remove(tab);
+            tabPointers.remove(tab);
+            try {
+                if (!tab.isClosed()) {
+                    tab.close();
+                }
+            } catch (RuntimeException ignored) {
+                // already gone
+            }
+        }
+    }
+
     @Override
     public void closeSearchTabs() {
         owner.check();
@@ -1887,6 +1934,12 @@ final class Playwright4jDriver implements PlaywrightDriver {
             challengePage = page;
             page = context.newPage();
             page.onPopup(popupCloser());
+            if (challengePage == searchOwnTab) {
+                // The search's own tab shows the challenge: the replacement is the search's tab now and closes with
+                // it (endSearchTab), the challenge stays open for the user.
+                searchOwnTab = page;
+                watchNavigations(page);
+            }
             if (!ownsGeneration) {
                 page.onClose(activeTabCloseWatcher());
             }
