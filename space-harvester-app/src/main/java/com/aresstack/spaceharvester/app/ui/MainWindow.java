@@ -328,28 +328,28 @@ public final class MainWindow implements AppContext.Navigator {
                 context.vault() == null ? null : context.vault().scope("sharepoint")));
         // NDV im Command Deck: „Indexieren (Regel anlegen)“ legt eine Wissensquelle an (globale Suche, KI-Suche).
         com.aresstack.spaceharvester.app.ui.deck.NdvAnalysisSettings.searchLink(new NdvSourceRules(context));
-        // Diagramm-Ansicht „Visuell“: KI-Beschreibung über das Modell der Zeile „Quellcode“ (sonst das Chat-Modell),
-        // gestreamt; Systemfunktionen aus Einstellungen › Diagramme.
+        // Diagramm-Ansicht „Visuell“: KI-Beschreibung über die Zeile „Quellcode“, auf demselben Weg wie jede
+        // Modellzeile des Chats (Workspace#aiChat(ModelUse)): Modell, Tokenlänge und Nachdenken setzt der Zugang selbst,
+        // „aus“ richtig je Dienst; die Anfragen tragen kein eigenes reasoning_effort (Angelo 28.11.2026).
         com.aresstack.spaceharvester.app.ui.deck.visual.VisualAction.connect(() -> {
             var runtime = context.runtime();
             var settings = context.settings();
             if (runtime == null || settings == null || settings.ai() == null) {
                 return null;
             }
-            var use = settings.ai().sourceCode();
+            var use = com.aresstack.spaceharvester.ai.AiServiceSettings.sourceCodeUse(settings.ai().sourceCode());
             String model = use.model() != null ? use.model() : settings.ai().chatModel();
-            // Tokenbudget aus Kontextlänge und Ausgabelimit (F41-7); fehlt eines, geht der Code in einer Anfrage.
-            // Kontextlänge aus den Einstellungen, sonst aus dem schon bekannten Modellkatalog des Dienstes.
-            // Dasselbe Ausgabelimit geht in jede Anfrage, damit Budget und Anfrage übereinstimmen.
-            int maxTokens = use.maxTokens() != null ? use.maxTokens()
-                    : com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_SOURCE_CODE_MAX_TOKENS;
+            // Was die Zeile offen lässt, kommt vom Text-Modell (Chat): dessen Tokenlänge, dessen Nachdenken.
+            int maxTokens = use.maxTokens() != null ? use.maxTokens() : settings.ai().chatMaxTokens() != null
+                    ? settings.ai().chatMaxTokens()
+                    : com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_CHAT_MAX_TOKENS;
+            // Tokenbudget aus Kontextlänge und demselben Ausgabelimit (F41-7); fehlt eines, geht der Code in einer
+            // Anfrage. Kontextlänge aus den Einstellungen, sonst aus dem schon bekannten Modellkatalog des Dienstes.
             com.aresstack.spaceharvester.app.runtime.ModelBudget budget = com.aresstack.spaceharvester.app.runtime
                     .ModelBudget.chat(settings.ai().contextTokens(), runtime.workspace().catalogContextTokens(model,
                             false), maxTokens);
             return new com.aresstack.spaceharvester.app.ui.deck.visual.DiagramLabels.Target(
-                    runtime.workspace().aiChat(), model, use.thinking() != null ? use.thinking()
-                    : com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_SOURCE_CODE_THINKING, budget,
-                    maxTokens);
+                    runtime.workspace().aiChat(use), model, null, budget, null);
         });
         statusView = new StatusView(context);
         sources = new SourcesView(context);

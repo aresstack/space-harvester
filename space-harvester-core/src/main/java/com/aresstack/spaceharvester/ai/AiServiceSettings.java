@@ -90,7 +90,8 @@ import java.util.Set;
  *                                  (Chat, Leseansicht); {@code null} heißt überall die automatische Wahl
  * @param sourceCodeUse             Zeile „Quellcode“ (Angelo 28.11.2026): Modell, Tokenlänge und Nachdenken der
  *                                  Quellcode-Analysen (Beschreibung der Diagramme von Natural, COBOL, JCL);
- *                                  {@code null} heißt Chat-Modell, {@link #DEFAULT_SOURCE_CODE_MAX_TOKENS}, Nachdenken aus
+ *                                  {@code null} heißt: die Zeile des Text-Modells (Chat) vollständig
+ *                                  ({@link #sourceCodeUse(ModelUse)})
  */
 public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
                                 Integer embeddingDimensions, Duration timeout, String trustBundle,
@@ -231,7 +232,6 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     public static final String DEFAULT_DEADLINE_THINKING = "none";
     /** Tokenlänge der Quellcode-Analysen: kurze Beschreibungen je Block, Verzweigung oder Aufruf. */
     public static final int DEFAULT_SOURCE_CODE_MAX_TOKENS = 4096;
-    public static final String DEFAULT_SOURCE_CODE_THINKING = "none";
     /** Vorbelegung des Modells der Diagnose (Angelo 26.11.2026: „vorbelegen, GPT OSS“); änderbar. */
     public static final String DEFAULT_DIAGNOSIS_MODEL = "gpt-oss-120b";
 
@@ -1237,14 +1237,28 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     }
 
     /**
-     * Die Einstellungen der Quellcode-Analysen als Chat (Zeile „Quellcode“): Chat-Modell = {@code source-code-model}
-     * oder das Chat-Modell, Tokenlänge = {@code source-code-max-tokens} (Standard
-     * {@value #DEFAULT_SOURCE_CODE_MAX_TOKENS}), Nachdenken = {@code source-code-thinking} (Standard aus).
+     * Die Einstellungen der Quellcode-Analysen als Chat (Zeile „Quellcode“), siehe {@link #sourceCodeUse(ModelUse)}.
+     * Derselbe Weg wie jede Modellzeile des Chats ({@link #forChat(String, Integer, String)}): „aus“ schickt bei einem
+     * OpenAI-kompatiblen Dienst kein {@code reasoning_effort}, bei Ollama {@code think: false}.
      */
     public AiServiceSettings sourceCode() {
-        return forChat(sourceCodeUse.model(), sourceCodeUse.maxTokens() == null ? DEFAULT_SOURCE_CODE_MAX_TOKENS
-                : sourceCodeUse.maxTokens(), sourceCodeUse.thinking() == null ? DEFAULT_SOURCE_CODE_THINKING
-                : sourceCodeUse.thinking());
+        ModelUse use = sourceCodeUse(sourceCodeUse);
+        return forChat(use.model(), use.maxTokens(), use.thinking());
+    }
+
+    /**
+     * Die wirksame Zeile „Quellcode“ (Angelo 28.11.2026): Ist ein eigenes Modell gesetzt, gilt die Zeile, ohne eigene
+     * Tokenlänge {@value #DEFAULT_SOURCE_CODE_MAX_TOKENS}. Ohne eigenes Modell wird die Zeile des Text-Modells (Chat)
+     * vollständig übernommen: Modell, Tokenlänge und Nachdenken genau wie im Chat; nur was in der Zeile selbst steht,
+     * gilt zusätzlich. Leere Felder bleiben {@code null} und kommen in {@link #forChat(String, Integer, String)} vom
+     * Text-Modell.
+     */
+    public static ModelUse sourceCodeUse(ModelUse row) {
+        if (row == null || row.model() == null || row.model().isBlank()) {
+            return row == null ? ModelUse.DEFAULT : new ModelUse(null, row.maxTokens(), row.thinking());
+        }
+        return new ModelUse(row.model(), row.maxTokens() == null ? DEFAULT_SOURCE_CODE_MAX_TOKENS : row.maxTokens(),
+                row.thinking());
     }
 
     /** Dieselben Einstellungen mit eigener Zeile der Diagnose; {@code null} heißt Vorbelegung. */
