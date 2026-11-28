@@ -1726,22 +1726,16 @@ public class Jobs implements AutoCloseable {
         }
     }
 
-    /**
-     * So lange wartet, wer laufende Aufträge beendet, bis sie an ihrem nächsten {@link JobContext#checkpoint()}
-     * aufgehört haben: das Schließen ({@link #close}), das Entfernen einer Quelle und das Löschen ihrer Daten.
-     */
-    public static final Duration STOP_TIMEOUT = Duration.ofSeconds(30);
+    private volatile Duration stopTimeout = STOP_GRACE;
 
-    private volatile Duration stopTimeout = STOP_TIMEOUT;
-
-    /** Für Tests: kürzere Wartezeit beim Schließen ({@link #STOP_TIMEOUT}). */
+    /** Für Tests: kürzere Wartezeit beim Schließen ({@link #STOP_GRACE}). */
     void stopTimeout(Duration timeout) {
         this.stopTimeout = Objects.requireNonNull(timeout, "timeout");
     }
 
     /**
      * Nimmt keine Aufträge mehr an, bricht wartende ab, fordert den Abbruch der laufenden an und wartet höchstens
-     * {@link #STOP_TIMEOUT}, bis sie aufgehört haben. Erst danach dürfen die Ablagen schließen, auf denen sie arbeiten
+     * {@link #STOP_GRACE}, bis sie aufgehört haben. Erst danach dürfen die Ablagen schließen, auf denen sie arbeiten
      * (Angelo 26.11.2026: Entfernen einer Quelle, sofort danach Neuladen, während ihre Daten noch gelöscht werden;
      * das Schließen der Lucene-Ablagen unter dem laufenden Löschen ließ das Neuladen scheitern). Mehrfaches Schließen
      * tut nichts mehr.
