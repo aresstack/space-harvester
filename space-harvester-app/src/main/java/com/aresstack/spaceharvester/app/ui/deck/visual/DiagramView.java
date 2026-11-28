@@ -84,6 +84,7 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
             }
         });
         diagram.setNodeDoubleClickListener(this::openTarget);
+        diagram.setNodeDetailHandler(this::explain);
 
         // Zoom, Einpassen, Neu zeichnen und Export als Symbolknöpfe vorn in der Werkzeugzeile des Editors, keine eigene
         // Zeile und nichts über dem Diagramm.
@@ -98,7 +99,8 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
                 action(Glyph.PLUS, "Vergrößern", diagram::zoomIn),
                 action(Glyph.FIT, "Einpassen", diagram::fit),
                 action(Glyph.REFRESH, "Neu zeichnen in dieser Vergrößerung", diagram::reRender),
-                action(Glyph.EXPORT, "Diagramm exportieren (SVG oder PNG)", this::export)};
+                action(Glyph.EXPORT, "Diagramm exportieren (SVG oder PNG)", this::export),
+                action(Glyph.SPARKLE, ASK_IN_CHAT, this::askInChat)};
         sideTools = buildSideTools();
 
         add(plate, BorderLayout.NORTH);
@@ -376,6 +378,12 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
         boolean auto = autoCollapse;
         // Große Quelltexte nur beim Öffnen automatisch kompakt (wie MainframeMate), danach entscheidet der Schalter
         autoCollapse = false;
+        // Einmal zeichnen (Angelo 28.11.2026: nicht erst ohne KI und dann alles noch einmal): mit KI wird erst
+        // gezeichnet, wenn die Beschriftungen da sind.
+        boolean ai = !mermaid && VisualAction.aiAvailable();
+        if (ai) {
+            diagram.getStatusLabel().setText("KI beschriftet das Diagramm …");
+        }
         new SwingWorker<SourceDiagrams.Result, Void>() {
             @Override
             protected SourceDiagrams.Result doInBackground() {
@@ -385,9 +393,8 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
                             wanted, false);
                 }
                 VisualAction.takeLabelProblem();
-                // Erst das Bild ohne KI (sofort da), die KI-Fassung zieht danach nach
                 return SourceDiagrams.generate(text, name, language, wanted, depth, compact, auto, targets,
-                        preparedOutline.get(), false);
+                        preparedOutline.get(), ai);
             }
 
             @Override
@@ -415,63 +422,70 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
                     collapsed = result.collapsed();
                     showCollapse();
                 }
+                details = result.details();
                 diagram.setMermaidSource(result.mermaid().get());
-                if (!mermaid && VisualAction.aiAvailable()) {
-                    describe(mine, text, name, language, result, depth, preparedOutline);
-                }
                 String labelProblem = VisualAction.takeLabelProblem();
+                diagram.getStatusLabel().setText(ai && labelProblem == null
+                        ? "Von der KI beschriftet. Klick auf einen Block erklärt ihn." : " ");
                 if (result.type() != wanted && language.orElse(null) == SourceLanguage.COBOL
                         && (wanted == DiagramType.FLOWCHART || wanted == DiagramType.SEQUENCE)) {
                     plate.show("COBOL: Statische Struktur und Aufrufbeziehungen – der tatsächliche Ablauf "
                             + "ist noch nicht vollständig analysiert.", null, null);
                 } else if (labelProblem != null) {
-                    plate.show("KI-Kurzbeschriftung nicht möglich (" + labelProblem
-                            + ") – die Blöcke tragen die einfache Beschriftung.", null, null);
+                    plate.show("KI-Beschriftung nicht vollständig (" + labelProblem
+                            + ") – Blöcke ohne KI-Antwort tragen die einfache Beschriftung.", null, null);
                 }
             }
         }.execute();
     }
 
-    /**
-     * Zweiter Durchgang mit KI: dasselbe Diagramm (gleicher Typ, gleiche Kompaktheit), aber Blöcke, Verzweigungen und
-     * aufgerufene Programme von der KI beschrieben. Ersetzt das Bild nur, solange keine neuere Erzeugung läuft.
-     */
-    private void describe(long mine, String text, String name, Optional<SourceLanguage> language,
-            SourceDiagrams.Result first, int depth,
-            java.util.function.Supplier<com.aresstack.spaceharvester.mainframe.outline.Outline> outline) {
-        diagram.getStatusLabel().setText("KI beschreibt das Diagramm …");
-        new SwingWorker<SourceDiagrams.Result, Void>() {
-            @Override
-            protected SourceDiagrams.Result doInBackground() {
-                return SourceDiagrams.generate(text, name, language, first.type(), depth, first.collapsed(), false,
-                        targets, outline.get(), true);
-            }
+    /** Was beim Klick auf einen Knoten im Detailbereich steht, je Mermaid-ID (aus der letzten Erzeugung). */
+    private java.util.Map<String, com.aresstack.spaceharvester.mainframe.diagram.FlowLabels.Detail> details =
+            java.util.Map.of();
+    /** Der zuletzt angeklickte Block mit Quelltext, {@code null} ohne. */
+    private com.aresstack.spaceharvester.mainframe.diagram.FlowLabels.Detail selected;
 
-            @Override
-            protected void done() {
-                if (mine != ticket) {
-                    return;
-                }
-                SourceDiagrams.Result described;
-                try {
-                    described = get();
-                } catch (Exception e) {
-                    described = null;
-                }
-                String problem = VisualAction.takeLabelProblem();
-                if (described != null && described.mermaid().isPresent()
-                        && !described.mermaid().equals(first.mermaid())) {
-                    diagram.setMermaidSource(described.mermaid().get());
-                    diagram.getStatusLabel().setText("Von der KI beschrieben.");
-                } else {
-                    diagram.getStatusLabel().setText(" ");
-                }
-                if (problem != null) {
-                    plate.show("KI-Beschreibung nicht möglich (" + problem
-                            + ") – das Diagramm trägt die einfache Beschriftung.", null, null);
-                }
-            }
-        }.execute();
+    static final String ASK_IN_CHAT = "Gewählten Block im Chat erklären lassen (mit Zugriff auf Programme und Suche)";
+
+    /**
+     * Detailbereich für einen angeklickten Knoten: Überschrift, die Erklärung der KI aus der Erklärbox und der
+     * Quelltext (Angelo 28.11.2026: im Knoten nur der kurze Titel, die Erklärung daneben).
+     */
+    private boolean explain(String nodeId) {
+        var detail = details.get(nodeId);
+        selected = detail;
+        if (detail == null) {
+            return false;
+        }
+        javax.swing.JTextArea area = diagram.getDetailArea();
+        StringBuilder text = new StringBuilder(detail.heading()).append("\n\n");
+        if (detail.explanation() != null) {
+            text.append(com.aresstack.spaceharvester.mainframe.diagram.FlowLabels.mark(detail.number())).append(' ')
+                    .append(detail.explanation()).append("\n\n");
+        }
+        text.append(detail.code());
+        area.setText(text.toString());
+        area.setCaretPosition(0);
+        return true;
+    }
+
+    /**
+     * Fragt im Chat des Bereichs nach dem gewählten Block: derselbe Chat mit derselben Werkzeugschleife, die KI holt
+     * sich das ganze Programm, aufgerufene und aufrufende Programme und Suchtreffer selbst (Angelo 28.11.2026).
+     */
+    private void askInChat() {
+        var detail = selected;
+        if (detail == null) {
+            diagram.getStatusLabel().setText("Erst einen Block im Diagramm anklicken.");
+            return;
+        }
+        String question = "Erkläre mir diesen Abschnitt aus " + editor.session().name() + " (" + detail.heading()
+                + "): wozu ist er da, und wie passt er in das ganze Programm und die Programme, die es aufruft oder "
+                + "die es aufrufen? Hole dir dazu selbst, was du brauchst. "
+                + (detail.purpose() == null ? "" : detail.purpose());
+        if (!VisualAction.askInChat(question, detail.code(), editor.session().name() + " – " + detail.heading())) {
+            diagram.getStatusLabel().setText("Der Abschnitt steht als Zitat im Chat; bitte dort fragen.");
+        }
     }
 
     private void showElement(JclElement element) {

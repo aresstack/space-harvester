@@ -661,7 +661,7 @@ public final class OutlineToMermaidConverter {
                 sb.append("    ").append(stepId).append("[\"").append(esc(label));
                 if (pgm != null) sb.append("\\nPGM=").append(esc(pgm));
                 else if (proc != null) sb.append("\\nPROC=").append(esc(proc));
-                sb.append(jclStepAbout(step, all, labels, model.getTotalLines()));
+                sb.append(jclStepAbout(stepId, step, all, labels, model.getTotalLines()));
                 sb.append("\"]\n");
 
                 // Style system function steps with IBM Blue
@@ -749,7 +749,7 @@ public final class OutlineToMermaidConverter {
                         String label = step.getName() != null ? step.getName() : "(Step)";
                         String stepId = safeId("STEP_" + label, usedIds);
                         sb.append("    ").append(stepId).append("[\"").append(esc(label))
-                    .append(jclStepAbout(step, all, labels, totalLines)).append("\"]\n");
+                    .append(jclStepAbout(stepId, step, all, labels, totalLines)).append("\"]\n");
                         sb.append("    ").append(trueEnd).append(" -->|Ja| ").append(stepId).append("\n");
                         trueEnd = stepId;
                     }
@@ -766,7 +766,7 @@ public final class OutlineToMermaidConverter {
                             String label = step.getName() != null ? step.getName() : "(Step)";
                             String stepId = safeId("STEP_" + label, usedIds);
                             sb.append("    ").append(stepId).append("[\"").append(esc(label))
-                    .append(jclStepAbout(step, all, labels, totalLines)).append("\"]\n");
+                    .append(jclStepAbout(stepId, step, all, labels, totalLines)).append("\"]\n");
                             sb.append("    ").append(falseEnd).append(" -->|Nein| ").append(stepId).append("\n");
                             falseEnd = stepId;
                         }
@@ -789,7 +789,7 @@ public final class OutlineToMermaidConverter {
                     String label = step.getName() != null ? step.getName() : "(Step)";
                     String stepId = safeId("STEP_" + label, usedIds);
                     sb.append("    ").append(stepId).append("[\"").append(esc(label))
-                    .append(jclStepAbout(step, all, labels, totalLines)).append("\"]\n");
+                    .append(jclStepAbout(stepId, step, all, labels, totalLines)).append("\"]\n");
                     sb.append("    ").append(prevId).append(" --> ").append(stepId).append("\n");
                     prevId = stepId;
                 }
@@ -800,11 +800,12 @@ public final class OutlineToMermaidConverter {
     }
 
     /**
-     * Was ein JCL-Schritt tut, als weitere Zeilen seines Knotens (mit führendem Zeilenumbruch): mit KI die
-     * Beschreibung seiner Zeilen (EXEC bis vor den nächsten Schritt, IF, ELSE, ENDIF), sonst nichts.
+     * Was ein JCL-Schritt tut, als weitere Zeile seines Knotens (mit führendem Zeilenumbruch): mit KI eine kurze
+     * Überschrift seiner Zeilen (EXEC bis vor den nächsten Schritt, IF, ELSE, ENDIF), sonst nichts. Die Zeilen kommen
+     * in den Detailbereich des Knotens; dort beschreibt die KI sie beim Klick ausführlich.
      */
-    private static String jclStepAbout(JclElement step, List<JclElement> all, FlowLabels labels, int totalLines) {
-        if (!labels.ai()) return "";
+    private static String jclStepAbout(String stepId, JclElement step, List<JclElement> all, FlowLabels labels,
+                                       int totalLines) {
         int to = totalLines;
         boolean after = false;
         for (JclElement e : all) {
@@ -818,7 +819,9 @@ public final class OutlineToMermaidConverter {
                 break;
             }
         }
-        String about = labels.describeLines(step.getLineNumber(), to, FlowLabels.STEP_PURPOSE);
+        String name = step.getName() != null ? step.getName() : "Schritt";
+        String about = labels.titleLines(stepId, name + " (Zeilen " + step.getLineNumber() + "–" + to + ")",
+                step.getLineNumber(), to, FlowLabels.STEP_TITLE_PURPOSE, FlowLabels.STEP_PURPOSE);
         return about == null ? "" : "\\n" + esc(labels.wrap(about));
     }
 
@@ -1862,7 +1865,7 @@ public final class OutlineToMermaidConverter {
         String id = safeId("EXT_" + target, usedIds);
         boolean sysFunc = isSysFunc(target, sysFuncs);
         String branch = labels.branch(e.getLineNumber());
-        String about = sysFunc ? null : labels.callee(target, e, branch);
+        String about = sysFunc ? null : labels.callee(id, target, e, branch);
         sb.append("    ").append(id).append(">\"").append(esc(target))
           .append("\\n(").append(esc(t.getDisplayName())).append(")");
         if (about != null) {
@@ -2059,9 +2062,10 @@ public final class OutlineToMermaidConverter {
         // inhaltliche Kurzbeschreibung. Schlägt der Aufruf fehl (Timeout, Service
         // nicht erreichbar), liefert SummarizerService den Fallback (=heuristisches
         // Label) zurück, sodass das Diagramm immer rendert.
-        String finalLabel = trySummarizeDetails(labels.blockCode(details, from, to), label.toString(), labels);
-
         String id = safeId("BLOCK", usedIds);
+        String finalLabel = trySummarizeDetails(id, from, to, labels.blockCode(details, from, to), label.toString(),
+                labels);
+
         sb.append("    ").append(id).append("[\"").append(finalLabel).append("\"]\n");
         sb.append("    ").append(prevId).append(" --> ").append(id).append("\n");
         sb.append("    style ").append(id)
@@ -2291,19 +2295,20 @@ public final class OutlineToMermaidConverter {
      * @param heuristicLabel heuristisch berechnetes Label
      * @return KI-Beschreibung (umbrochen, für Mermaid maskiert) oder das heuristische Label
      */
-    private static String trySummarizeDetails(String code, String heuristicLabel, FlowLabels labels) {
-        if (code == null || code.isBlank() || !labels.ai()) return heuristicLabel;
+    private static String trySummarizeDetails(String id, int from, int to, String code, String heuristicLabel,
+                                              FlowLabels labels) {
+        if (code == null || code.isBlank()) return heuristicLabel;
         try {
-            String summary = labels.describeBlock(code);
-            if (summary == null || summary.trim().isEmpty()) return heuristicLabel;
-            String trimmed = summary.trim();
-            if (trimmed.equals(heuristicLabel)) return heuristicLabel;
-            // Mermaid-Label-Escaping: Anführungszeichen + Newlines neutralisieren.
-            return esc(labels.wrap(trimmed.replace("\"", "'").replace("\r", " ")));
+            // Der Code kommt in den Detailbereich des Knotens; im Knoten steht nur die kurze Überschrift.
+            String heading = from >= 1 && to >= from ? "Zeilen " + from + "–" + to : "Block";
+            String title = labels.title(id, heading, code, FlowLabels.BLOCK_TITLE_PURPOSE, FlowLabels.BLOCK_PURPOSE);
+            if (title == null || title.trim().isEmpty()) return heuristicLabel;
+            return esc(labels.wrap(title.trim().replace("\"", "'").replace("\r", " ")));
         } catch (Throwable t) {
             // Niemals die Diagramm-Generierung wegen eines AI-Glitches abbrechen.
             return heuristicLabel;
         }
     }
+
 
 }

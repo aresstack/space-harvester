@@ -61,7 +61,8 @@ class CobolJclBlocksTest {
 
         assertThat(full).doesNotContain("📦");
         // MOVE, ADD, MOVE werden ein Block, in Quelltextreihenfolge; die Verzweigung bleibt eine Raute
-        assertThat(compact).contains("📦 3 Anweisungen (L9–L11)\\nMOVE 1 TO WS-A\\nADD 2 TO WS-A\\nMOVE WS-A TO WS-B");
+        // Ohne KI nur die Tatsache, kein nacherzählter Code im Knoten
+        assertThat(compact).contains("📦 3 Anweisungen (L9–L11)\"]").doesNotContain("\\nMOVE 1 TO WS-A");
         assertThat(compact).contains("IF WS-A");
         assertThat(compact).contains("PERFORM_CALL", "TERMINATE");
         // jede Kante des Blocks führt zu einem Knoten, den es gibt; keine Kante innerhalb des Blocks
@@ -122,7 +123,8 @@ class CobolJclBlocksTest {
         String compact = SourceDiagrams.generate(JCL, "SORT.jcl", Optional.of(SourceLanguage.JCL),
                 DiagramType.FLOWCHART, 0, true, false, null, null, true).mermaid().orElseThrow();
 
-        assertThat(flow).contains("STEP_STEP1[\"STEP1\\nPGM=SORT\\nBeschreibung");
+        assertThat(flow).contains("STEP_STEP1[\"STEP1\\nPGM=SORT\\n① Frage")
+                .contains("erklaerung_1[\"① Beschreibung\"]");
         assertThat(compact).contains("Beschreibung");
         // Der Block nach dem Schritt kennt auch die EXEC-Zeile: welches Programm die Dateien benutzt
         assertThat(ai.codes).allSatisfy(code -> assertThat(code).contains("EXEC PGM=SORT").contains("SORTIN"));
