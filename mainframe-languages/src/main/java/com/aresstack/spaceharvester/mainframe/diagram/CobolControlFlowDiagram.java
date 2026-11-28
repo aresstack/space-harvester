@@ -150,31 +150,20 @@ public final class CobolControlFlowDiagram {
             to = Math.max(to, node.span().end().line());
         }
         String fact = "📦 " + nodes.size() + " Anweisungen (L" + from + "–L" + to + ")";
-        String about = null;
+        String title = null;
         if (labels != null) {
-            // Teilen sich Zeilen mit Anweisungen außerhalb des Blocks (mehrere Anweisungen je Zeile), bekommt die KI
-            // nur die Anweisungen des Blocks, sonst beschriebe sie auch den anderen Zweig.
-            about = sharesLines(nodes, graph, from, to)
-                    ? labels.describeBlock(String.join("\n", nodes.stream().map(CobolControlFlow.Node::label).toList()))
-                    : labels.describeLines(from, to, FlowLabels.BLOCK_PURPOSE);
+            // Im Knoten nur die kurze Überschrift; der Code kommt in den Detailbereich, dort erklärt ihn die KI beim
+            // Klick. Teilen sich Zeilen mit Anweisungen außerhalb des Blocks (mehrere Anweisungen je Zeile), bekommt
+            // die KI nur die Anweisungen des Blocks, sonst erklärte sie auch den anderen Zweig.
+            String heading = "Zeilen " + from + "–" + to;
+            title = sharesLines(nodes, graph, from, to)
+                    ? labels.title(id, heading, String.join("\n", nodes.stream().map(CobolControlFlow.Node::label)
+                            .toList()), FlowLabels.BLOCK_TITLE_PURPOSE, FlowLabels.BLOCK_PURPOSE)
+                    : labels.titleLines(id, heading, from, to, FlowLabels.BLOCK_TITLE_PURPOSE,
+                            FlowLabels.BLOCK_PURPOSE);
         }
-        out.append("  ").append(id).append("[\"").append(escape(fact));
-        if (about != null) {
-            out.append(NEWLINE).append(lines(labels, about));
-        } else {
-            // Ohne KI die Anweisungen selbst, so viele, wie die eingestellte Länge erlaubt
-            int budget = (labels == null ? FlowLabels.Layout.DEFAULT : labels.layout()).detailLength();
-            int used = 0;
-            for (var node : nodes) {
-                if (used + node.label().length() > budget) {
-                    out.append(NEWLINE).append("…");
-                    break;
-                }
-                out.append(NEWLINE).append(escape(node.label()));
-                used += node.label().length();
-            }
-        }
-        out.append("\"]\n");
+        out.append("  ").append(id).append("[\"").append(title != null ? lines(labels, title) : escape(fact))
+                .append("\"]\n");
         out.append("  style ").append(id).append(" fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5\n");
     }
 
@@ -196,7 +185,7 @@ public final class CobolControlFlowDiagram {
             return null;
         }
         Matcher m = CALL_TARGET.matcher(node.label());
-        return m.find() ? labels.callee(m.group(1), node.label(), null) : null;
+        return m.find() ? labels.callee(node.id(), m.group(1), node.label(), null) : null;
     }
 
     /** Zeilenumbruch in einem Mermaid-Label (wie im Natural-Flussdiagramm). */

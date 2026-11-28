@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.background;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
+import com.aresstack.spaceharvester.application.acquisition.AcquisitionStatus;
 import com.aresstack.spaceharvester.application.changelog.ChangeTrigger;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
@@ -515,6 +516,8 @@ public final class PageLoads {
         com.aresstack.spaceharvester.application.observe.Subscription full = null;
         AutoCloseable stop = context.whenStopRequested(wake::ring);
         try {
+            int requested = 0;
+            pages:
             for (PageKey key : missing) {
                 // Höchstens WINDOW Abrufe zugleich, und ein voller Planer heißt warten statt scheitern.
                 while (true) {
@@ -526,8 +529,18 @@ public final class PageLoads {
                     long seen = wake.mark();
                     try {
                         open.addLast(scheduler.request(caller, key, priority, mode));
+                        requested++;
                         break;
                     } catch (java.util.concurrent.RejectedExecutionException e) {
+                        if (scheduler.status().pause() == AcquisitionStatus.Pause.CLOSED) {
+                            // Beendeter Planer meldet nichts mehr: Warten hinge für immer. Was er nicht mehr
+                            // annimmt, fehlt wie eine von ihm abgeworfene Seite.
+                            int dropped = missing.size() - requested;
+                            context.processed(dropped);
+                            context.failed(dropped);
+                            failed += dropped;
+                            break pages;
+                        }
                         if (!open.isEmpty()) {
                             failed += finish(context, open.pollFirst(), wake);
                         } else {

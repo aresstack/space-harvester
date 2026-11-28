@@ -9,9 +9,7 @@ import com.aresstack.enterpriseai.proasteion.application.config.BrowserProfile;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -38,8 +36,8 @@ class ChatWebBrowserSearchEnginesTest {
 
     @Test
     void externSearchesItsEnginesWithoutAsking() {
-        browser.searchPageQuestion(problem -> {
-            asked.add(String.valueOf(problem));
+        browser.searchPageQuestion(() -> {
+            asked.add("gefragt");
             return null;
         });
 
@@ -48,41 +46,35 @@ class ChatWebBrowserSearchEnginesTest {
     }
 
     @Test
-    void theFirstInternalSearchAsksForTheCompanysSearchPageUntilItIsOneAndKeepsIt() {
+    void theFirstInternalSearchAsksOnceForTheAddressOfThePageAndKeepsIt() {
         browser.profile("chat-1", true);
-        Iterator<String> answers = Arrays.asList("https://www.google.com", "https://portal.example/suche?q={query}")
-                .iterator();
-        browser.searchPageQuestion(problem -> {
-            asked.add(String.valueOf(problem));
-            return answers.next();
+        browser.searchPageQuestion(() -> {
+            asked.add("gefragt");
+            return "https://mapz.example/";
         });
 
         BrowserSearchEngineSelection engines = browser.engines(new ChatConversationId("chat-1"));
 
         assertThat(engines.getEntries()).extracting(BrowserSearchEngineSelection.Entry::getEngineId)
-                .containsExactly("https://portal.example/suche?q={query}");
-        assertThat(asked).hasSize(2);
-        assertThat(asked.get(0)).isEqualTo("null");
-        assertThat(asked.get(1)).contains("keine Such-URL");
-        assertThat(settings.engines(BrowserProfile.INTERNAL).getEntries()).hasSize(1);
+                .as("nur die Adresse, ohne {query} und ohne Ablehnung").containsExactly("https://mapz.example/");
+        assertThat(asked).hasSize(1);
 
         browser.engines(new ChatConversationId("chat-1"));
-        assertThat(asked).as("eingetragen: keine zweite Frage").hasSize(2);
+        assertThat(asked).as("eingetragen: keine zweite Frage").hasSize(1);
     }
 
     @Test
     void cancellingTheQuestionSearchesNothingAndStoresNothing() {
         browser.profile("chat-1", true);
-        browser.searchPageQuestion(problem -> null);
+        browser.searchPageQuestion(() -> null);
 
         assertThat(browser.engines(new ChatConversationId("chat-1")).getEntries()).isEmpty();
         assertThat(values).doesNotContainKey("browser.search.internal.engines");
     }
 
     @Test
-    void theQuestionSaysThatACompanyPageIsMeantAndNotAPublicSearchEngine() {
-        assertThat(ChatWebBrowser.INTERNAL_SEARCH_HINT).contains("Unternehmens").contains("nur intern erreichbar")
-                .contains("nicht Google").contains("{query}");
+    void theQuestionAsksOnlyForThePage() {
+        assertThat(ChatWebBrowser.INTERNAL_SEARCH_HINT).isEqualTo("Auf welcher Seite soll intern gesucht werden?");
     }
 
     /** Kein Browser: die Suchmaschinenwahl braucht keinen. */

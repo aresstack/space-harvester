@@ -72,6 +72,24 @@ public final class VisualAction {
         return current == null ? null : current.takeProblem();
     }
 
+    /** Frage an den Chat des Bereichs: Frage, zitierter Ausschnitt und woher er stammt; {@code true} = gesendet. */
+    public interface ChatQuestion {
+        boolean ask(String question, String excerpt, String reference);
+    }
+
+    private static volatile ChatQuestion chat;
+
+    /** Schließt den Chat an (beim Start des Hauptfensters). */
+    public static void chat(ChatQuestion question) {
+        chat = question;
+    }
+
+    /** Fragt im Chat des Bereichs; {@code false}, wenn kein Chat da ist oder er gerade antwortet. */
+    static boolean askInChat(String question, String excerpt, String reference) {
+        ChatQuestion current = chat;
+        return current != null && current.ask(question, excerpt, reference);
+    }
+
     /** Hängt den Knopf an einen Editor (auch für Tests). */
     public static VisualAction attach(DocumentEditor editor, EditorSessions editors) {
         return new VisualAction(editor, editors);

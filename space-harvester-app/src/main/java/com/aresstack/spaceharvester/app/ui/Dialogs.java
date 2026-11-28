@@ -298,8 +298,23 @@ public final class Dialogs {
      * @return der Text ohne Rand oder {@code null}, wenn abgebrochen wurde
      */
     public static String askText(Component parent, String title, String text, String current) {
+        return askText(parent, title, text, current, false);
+    }
+
+    /**
+     * Wie {@link #askText(Component, String, String, String)}, für eine Frage, auf die ein Hintergrund-Auftrag wartet:
+     * Der Dialog liegt über allen Fenstern, auch über einem fremden Programm im Vordergrund (dem Browser des Chats).
+     * Windows holt das Fenster eines Programms im Hintergrund sonst nicht nach vorn, und der Auftrag wartete auf eine
+     * Frage, die niemand sah.
+     */
+    public static String askTextInFront(Component parent, String title, String text, String current) {
+        return askText(parent, title, text, current, true);
+    }
+
+    private static String askText(Component parent, String title, String text, String current, boolean inFront) {
         String[] result = {null};
         JDialog dialog = dialog(parent, title);
+        dialog.setAlwaysOnTop(inFront);
         javax.swing.JTextField field = new javax.swing.JTextField(current == null ? "" : current, 28);
         Comic.style(field);
         ComposerButton ok = Comic.primary("Übernehmen", null);

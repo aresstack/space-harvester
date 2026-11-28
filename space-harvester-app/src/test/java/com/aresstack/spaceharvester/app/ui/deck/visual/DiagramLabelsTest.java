@@ -87,6 +87,29 @@ class DiagramLabelsTest {
         assertThat(labels.takeProblem()).isNull();
     }
 
+    @Test
+    void aLaterAnswerDoesNotHideTheFailureOfAnEarlierQuestionAndTheParallelSettingIsUsed() {
+        AiChat chat = (request, listener) -> {
+            if (request.messages().get(1).text().contains("MOVE 1")) {
+                listener.failed(new com.aresstack.spaceharvester.ai.AiChatException(
+                        com.aresstack.spaceharvester.ai.AiChatException.Kind.PROVIDER_ERROR, 503,
+                        "Dienst antwortet 503", null));
+            } else {
+                listener.completed("Satz zählen");
+            }
+            return () -> { };
+        };
+        AppState.shared().put(DiagramLabels.ENABLED_KEY, true);
+        DiagramLabels labels = new DiagramLabels(() -> new DiagramLabels.Target(chat, "m", null, null, null, 6));
+
+        assertThat(labels.summarize("MOVE 1 TO #A", 60, "x")).isNull();
+        assertThat(labels.summarize("ADD 1 TO #N", 60, "x")).isEqualTo("Satz zählen");
+        assertThat(labels.takeProblem()).contains("503");
+        assertThat(labels.parallel()).isEqualTo(6);
+        assertThat(new DiagramLabels(() -> new DiagramLabels.Target(chat, "m", null, null)).parallel())
+                .isEqualTo(com.aresstack.spaceharvester.ai.AiServiceSettings.DEFAULT_PARALLEL);
+    }
+
     /** F41-7: Langer Code wird nicht abgeschnitten, sondern in Teilen beschriftet; jede Zeile kommt beim Modell an. */
     @Test
     void longCodeIsLabelledInPartsWithoutLosingALine() {

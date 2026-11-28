@@ -33,4 +33,12 @@ public interface BlockLabelSummarizer {
     default String describe(String code, int maxLength, String purpose) {
         return explain(code, maxLength, purpose);
     }
+
+    /**
+     * So viele Fragen dürfen gleichzeitig laufen (Einstellung {@code ai.parallel} des KI-Dienstes); die Fragen eines
+     * Diagramms werden gesammelt und parallel gestellt ({@code ParallelLabels}).
+     */
+    default int parallel() {
+        return 1;
+    }
 }

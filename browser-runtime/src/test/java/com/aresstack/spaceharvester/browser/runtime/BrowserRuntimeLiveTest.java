@@ -74,6 +74,28 @@ class BrowserRuntimeLiveTest {
         }
     }
 
+    /**
+     * The chat's browser and the search browser of one round start at the same moment: the launches run one after
+     * the other, each against its own start limit, and both browsers come up.
+     */
+    @Test
+    void twoStartsAtOnceLaunchOneAfterTheOther() throws Exception {
+        java.util.concurrent.ExecutorService starts = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.Future<RunningBrowser> chat = starts.submit(
+                    () -> runtime.persistent("chat-at-once", true, null));
+            java.util.concurrent.Future<RunningBrowser> search = starts.submit(
+                    () -> runtime.ephemeral(true, null));
+            try (RunningBrowser first = chat.get(); RunningBrowser second = search.get()) {
+                assertNotNull(first.browser());
+                assertNotNull(second.browser());
+            }
+            assertEquals(1, BrowserRuntime.mostLaunchesAtOnce(), "never two launches side by side");
+        } finally {
+            starts.shutdownNow();
+        }
+    }
+
     /** playwright4j#79: without the back-forward cache a history traversal settles and page.url() follows it. */
     @Test
     void backNavigationSettlesOnAPersistentProfile() throws Exception {

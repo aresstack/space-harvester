@@ -19,7 +19,7 @@ proving-ground ──► browser-runtime ──► Playwright Java 1.62 + playwr
 | Interne Anbindung | `recorder.RecorderBridge` | Einzige Stelle mit Playwright-Interna (siehe 3) |
 | Testfall | `model.TestCase`, `model.TestStep` | Schritte im Playwright-Format, Bearbeiten (ändern, einfügen, verschieben, löschen, Assertions ergänzen) |
 | Speicher | `store.TestCaseFile` | JSONL-Datei wie Playwrights eigenes JSONL (siehe 2) |
-| Wiedergabe | `player.TestPlayer` | Originale Playwright Java API, ohne Swing; Trace, Bildschirmfoto beim Fehler, Variablen |
+| Wiedergabe | `player.TestPlayer`, `player.PlaywrightCode` | Spielt den Java-Code ab, den Playwrights Generator beim Aufnehmen schreibt (mit dem JDK übersetzt, über Playwright4j ausgeführt); Trace, Bildschirmfoto beim Fehler, Variablen (siehe 2a) |
 | Ausdrücke | `expressions.*` | `{{name}}`, `{{funktion(arg;{{verschachtelt}})}}`, aus WD4J übernommen (siehe 6) |
 | Testmodell | `model.TestProject`, `TestSuite`, `TestCaseEntry`, `Scope`, `StepBinding`, `TestUser` | Fachliches aus WD4J (siehe 6) |
 | Projektdatei | `store.ProjectFile` | `projekt.json` neben den JSONL-Dateien |
@@ -45,12 +45,31 @@ er, dort ist er der Sollwert).
 {"pageGuid":"page@…","action":{"name":"assertText","selector":"internal:role=status","text":"Gespeichert: Angelo","substring":false,"signals":[]}}
 ```
 
-Einzige Ergänzung zu Playwrights Format ist `stepId`, eine feste ID je Schritt. Fachliches (Given/When/Then,
+Ergänzungen zu Playwrights Format sind `stepId`, eine feste ID je Schritt, und `code` (siehe 2a). Fachliches (Given/When/Then,
 Variablen, Benutzer) verweist darüber auf die Aktion; Einfügen, Löschen, Verschieben und Bearbeiten ändern sie nicht.
 
 Warum `ActionInContext` und nicht Playwrights JSONL-Zeile: Die JSONL-Zeile ist aus `ActionInContext` abgeleitet
 (zusätzlich nur ein Locator-Objekt, das aus dem Selektor folgt). Wir speichern das Original und nichts doppelt. Kein
 eigenes Aktionsmodell, keine Umwandlung; unbekannte Felder späterer Playwright-Fassungen bleiben erhalten.
+
+### 2a. Playwright spielt ab (Angelo 28.11.2026: nur Java, kein Node.js)
+
+JSONL ist bei Playwright nur ein Ausgabeformat des Recorders; Playwright selbst spielt es nicht ab. Deshalb läuft der
+Recorder mit Playwrights Java-Generator (`Recorder.PLAYWRIGHT_LANGUAGE = "java"`), und jede Aktionszeile trägt
+zusätzlich `code`: den Java-Code, den Playwright zu dieser Aktion schreibt, etwa
+`page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("Speichern")).click();`. Abgespielt wird genau
+dieser Code: `PlaywrightCode` setzt um jeden Schritt eine Methode, übersetzt alles mit dem Java-Compiler des JDK
+(`javax.tools`) und führt es über die Playwright-Java-API aus, hinter der Playwright4j Playwright Core in der JVM
+(GraalJS) betreibt. Es gibt keine eigene Nachbildung der Aktionen und kein Node.js.
+
+- Seiten werden über die Seiten-ID der Aufnahme gebunden, nicht über Playwrights Variablennamen (`page`, `page1`).
+- Zeichenketten mit `{{...}}` werden erst beim Abspielen aufgelöst (`v.apply("…")`); Passwörter stehen auch im Code nur
+  als `{{secret.<Feld>}}`.
+- Popup, Download und Dialog meldet der Recorder erst nach der Aktion; ihr Code wird dann so umschlossen, wie
+  Playwrights `JavaLanguageGenerator` es schreibt (`Page page1 = page.waitForPopup(() -> { … });`).
+- Wird Text, Adresse oder Wert eines Schritts geändert, folgt der Code; ein anderer Selektor verwirft ihn (neu
+  aufnehmen). Ein Schritt ohne Code oder mit nicht übersetzbarem Code schlägt allein fehl und sagt warum.
+- Zum Abspielen braucht die App ein JDK (der Compiler); sie läuft ohnehin auf JDK 21.
 
 Fachliches (Suiten, Given/When/Then, Variablen, Benutzer, Vorbedingungen) kommt getrennt dazu und verweist auf diese
 Dateien. Das WD4J-Format wird nicht übernommen; ein Import wäre eine eigene Entscheidung.

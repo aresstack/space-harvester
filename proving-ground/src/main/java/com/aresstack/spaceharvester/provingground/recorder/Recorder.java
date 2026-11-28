@@ -29,6 +29,13 @@ import java.util.function.Consumer;
  */
 public final class Recorder implements AutoCloseable {
 
+    /**
+     * The language of Playwright's code generator in the recorder. The steps are Playwright's actions either way; with
+     * {@code java} every recorder event also carries the Java code Playwright writes for it, which is kept with
+     * the step ({@link com.aresstack.spaceharvester.provingground.model.TestStep#code()}).
+     */
+    public static final String PLAYWRIGHT_LANGUAGE = "java";
+
     private final BrowserContext context;
     private final TestCase target;
     private final RecorderOptions options;
@@ -62,7 +69,7 @@ public final class Recorder implements AutoCloseable {
         JsonObject params = new JsonObject();
         params.addProperty("mode", "recording");
         params.addProperty("recorderMode", "api");
-        params.addProperty("language", "jsonl");
+        params.addProperty("language", PLAYWRIGHT_LANGUAGE);
         if (!effective.testIdAttribute().isEmpty()) {
             params.addProperty("testIdAttributeName", effective.testIdAttribute());
         }
