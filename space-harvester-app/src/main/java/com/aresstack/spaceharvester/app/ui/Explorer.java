@@ -2860,11 +2860,13 @@ public final class Explorer {
     /** Die Leiste klappt zu: Der Umschalter zeigt keine Wahl und kann an den Fensterrand gestellt werden. */
     void switchAway() {
         view.clear();
+        view.vertical(true);
     }
 
     /** Die Leiste ist offen: Der Umschalter steht in ihrem Kopf und zeigt, was sie zeigt. */
     void switchHome() {
         if (view.getParent() != viewHolder) {
+            view.vertical(false);
             viewHolder.add(view);
             viewHolder.revalidate();
             viewHolder.repaint();
