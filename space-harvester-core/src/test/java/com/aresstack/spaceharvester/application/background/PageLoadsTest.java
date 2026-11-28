@@ -455,6 +455,36 @@ class PageLoadsTest {
     }
 
     @Test
+    void pagesTheClosedSchedulerNoLongerTakesEndThePartInsteadOfWaitingForever() throws Exception {
+        // Wettlauf aus ticketsDroppedByTheShutdown…: schließt der Planer, bevor der Unterauftrag alle Seiten
+        // angefordert hat, lehnt er die übrigen ab und meldet nie wieder etwas – Warten darauf hing für immer.
+        AcquisitionScheduler closedScheduler = new AcquisitionScheduler((caller, key) -> cache.add(key),
+                new AcquisitionScheduler.Limits(1, 0, 1, 50));
+        closedScheduler.close();
+        java.util.concurrent.ExecutorService threads = java.util.concurrent.Executors.newCachedThreadPool();
+        Jobs real = new Jobs(new InMemoryJobStore(), threads, new JobLimits(4, 10, Duration.ofHours(1)),
+                java.time.Clock.systemUTC());
+        try {
+            BackgroundJobs own = new BackgroundJobs(real, "app-closed");
+            PageLoads windowed = new PageLoads(own, closedScheduler, AccessContext.technicalClient("app"),
+                    cache::contains, key -> Optional.of("ALPHA"));
+            BackgroundGroup group = windowed.load(AccessContext.technicalClient("app"), "Nachbarseiten laden",
+                    pages("y1", "y2")).orElseThrow();
+            String id = group.parts().getFirst().id();
+            java.time.Instant deadline = java.time.Instant.now().plusSeconds(10);
+            while (!real.status(id).state().terminal() && java.time.Instant.now().isBefore(deadline)) {
+                Thread.sleep(20);
+            }
+            JobStatus part = real.status(id);
+            assertThat(part.state()).isEqualTo(JobState.FAILED);
+            assertThat(cache).isEmpty();
+        } finally {
+            real.close();
+            threads.shutdownNow();
+        }
+    }
+
+    @Test
     void joinsRacingOnVirtualThreadsThroughBothOverloadsStartTheSamePagesOnlyOnce() throws Exception {
         int callers = 64;
         java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
