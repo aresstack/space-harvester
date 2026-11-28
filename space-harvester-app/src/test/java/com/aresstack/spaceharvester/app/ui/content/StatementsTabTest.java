@@ -728,7 +728,7 @@ class StatementsTabTest {
             tab.addNotify();
             tab.validate();
             tab.validate();
-            javax.swing.JScrollPane scroll = (javax.swing.JScrollPane) java.util.Arrays.stream(tab.getComponents())
+            javax.swing.JScrollPane scroll = (javax.swing.JScrollPane) java.util.Arrays.stream(tab.analyzeOffer().getComponents())
                     .filter(javax.swing.JScrollPane.class::isInstance).findFirst().orElseThrow();
             assertThat(scroll.getViewport().getView().getWidth())
                     .as("der Inhalt folgt der Breite des Sichtfensters")

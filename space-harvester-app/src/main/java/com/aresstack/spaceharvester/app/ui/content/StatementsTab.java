@@ -124,6 +124,9 @@ final class StatementsTab extends JPanel {
     private final TabHeader head = new TabHeader("Aussagen dieser Seite");
     private final JLabel progress = Comic.muted(" ");
     private final JTextArea hint = note();
+    /** Mitten in der leeren Fläche derselbe Start wie „Analysieren“ oben, solange die Seite nicht analysiert ist. */
+    static final String ANALYZE_NOW_TIP = "Die Sätze dieser Seite jetzt analysieren";
+    private com.aresstack.spaceharvester.app.ui.controls.CenterOffer analyzeOffer;
     private final JPanel list = new JPanel();
     private final JTextArea syntax = Comic.code();
     private final JPanel syntaxPanel = new JPanel(new BorderLayout(0, 4));
@@ -273,7 +276,9 @@ final class StatementsTab extends JPanel {
         top.add(head, BorderLayout.NORTH);
         top.add(options, BorderLayout.SOUTH);
         add(top, BorderLayout.NORTH);
-        add(Comic.scroll(body), BorderLayout.CENTER);
+        analyzeOffer = new com.aresstack.spaceharvester.app.ui.controls.CenterOffer(Comic.scroll(body), StandingTab.ANALYZE_NOW, ANALYZE_NOW_TIP)
+                .onAccept(analyze::doClick);
+        add(analyzeOffer, BorderLayout.CENTER);
         render(PageStatements.missing(PageStatements.NOT_ANALYSED), List.of());
         if (setup != null) {
             setup.listen(this::modelStatus);
@@ -550,6 +555,7 @@ final class StatementsTab extends JPanel {
         running = cancelled;
         runningCancellation = cancellation;
         analyze.setEnabled(false);
+        analyzeOffer.offer(false);
         check.setEnabled(false);
         boolean withStage = simplify.isSelected();
         keep = null;
@@ -651,6 +657,7 @@ final class StatementsTab extends JPanel {
         running = cancelled;
         runningCancellation = cancellation;
         analyze.setEnabled(false);
+        analyzeOffer.offer(false);
         check.setEnabled(false);
         cancel.setVisible(true);
         progress.setText(CHECKING);
@@ -1120,6 +1127,8 @@ final class StatementsTab extends JPanel {
             case STALE -> setState("Veraltet", Comic.ORANGE);
         }
         hint.setText(hint(statements));
+        analyzeOffer.offer(statements.state() == PageStatements.State.MISSING && analyze.isEnabled()
+                && NOT_ANALYSED.equals(hint.getText()));
         if (statements.analysis() != null) {
             boolean stale = statements.state() == PageStatements.State.STALE;
             // Spannen gelten nur für denselben Lesetext: aktuell, oder veraltet nur wegen des Analysators.
@@ -1868,6 +1877,16 @@ final class StatementsTab extends JPanel {
 
     String stateTooltip() {
         return head.statusTooltip();
+    }
+
+    /** Für Tests: das Angebot in der Mitte. */
+    com.aresstack.spaceharvester.app.ui.controls.CenterOffer analyzeOffer() {
+        return analyzeOffer;
+    }
+
+    /** Startet die Analyse wie der Knopf „Analysieren“, etwa aus dem leeren Graphen heraus. */
+    void analyzeNow() {
+        analyze.doClick();
     }
 
     String analyzeLabel() {

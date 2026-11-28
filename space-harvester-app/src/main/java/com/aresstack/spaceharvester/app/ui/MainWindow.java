@@ -379,6 +379,7 @@ public final class MainWindow implements AppContext.Navigator {
         // Klick auf die Überschrift „Suche in …“: links den Bereich der Suche wählen (Angelo, 23.11.2026).
         searchView.onLocate(explorer::select);
         searchView.onAnalyze(explorer::analyze);
+        content.onAnalyzeArea(() -> explorer.analyze(explorer.scopes()));
         searchView.onSourcesChecked(scopes -> {
             if (current == AppContext.Section.SEARCH) {
                 explorer.select(scopes);
