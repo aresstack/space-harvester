@@ -24,6 +24,7 @@ import java.awt.event.FocusEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.beans.PropertyChangeListener;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Eingabefeld mit integrierten Knöpfen. Aufbau und Verhalten (Lupe links, flache Knöpfe rechts im Feld, ✕ erscheint
@@ -43,7 +44,7 @@ import java.beans.PropertyChangeListener;
  */
 public class InputFrame extends JPanel {
 
-    private static final Color ICON = new Color(0x666666);
+    private static final Color ICON = AppColors.of("app.InputFrame.icon");
 
     private final JComponent field;
     private final JPanel eastPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
@@ -62,7 +63,7 @@ public class InputFrame extends JPanel {
         // Aussehen wie die übrigen Felder der App (Comic.style): weiß, schlichter abgerundeter Rahmen; nur
         // Verhalten und Aufbau kommen aus AskAI, nicht dessen Stil.
         setBorder(com.aresstack.spaceharvester.app.ui.Comic.fieldBorder());
-        setBackground(Color.WHITE);
+        setBackground(AppColors.of("comic.fieldBg"));
         setOpaque(true);
         if (field instanceof JTextComponent text) {
             text.setBorder(new EmptyBorder(2, 4, 2, 4));
@@ -237,6 +238,66 @@ public class InputFrame extends JPanel {
         }
         return null;
     }
+
+    /**
+     * Das Suchfeld der gezeigten Ansicht unter {@code root}, das hinter einer geschlossenen Schleuse steht: Die
+     * Fußleiste filtert darüber, statt es oben einzublenden (Angelo 28.11.2026). {@code null}, wenn die Ansicht keines
+     * hat oder es offen zu sehen ist.
+     */
+    public static InputFrame closed(Component root) {
+        InputFrame frame = gated(root);
+        return frame == null || frame.gateOpen() ? null : frame;
+    }
+
+    /**
+     * Das Feld, in dem der Nutzer gerade für dieses Suchfeld tippt: Filtert die Fußleiste über ein Feld hinter der
+     * Schleuse, steht ihr eigenes Feld dafür ein; {@code null} nimmt es wieder weg.
+     */
+    public void standIn(JComponent typed) {
+        if (standIn != null) {
+            standIn.removeFocusListener(left);
+        }
+        standIn = typed;
+        if (typed != null) {
+            typed.addFocusListener(left);
+        }
+    }
+
+    /**
+     * Was geschieht, wenn der Nutzer das Feld verlässt, in dem er für dieses Suchfeld tippt: das Feld selbst oder
+     * das, das dafür einsteht ({@link #standIn}).
+     */
+    public void onLeft(Runnable listener) {
+        Runnable before = onLeft;
+        onLeft = () -> {
+            before.run();
+            listener.run();
+        };
+        if (!leftInstalled) {
+            leftInstalled = true;
+            field.addFocusListener(left);
+        }
+    }
+
+    private Runnable onLeft = () -> { };
+    private boolean leftInstalled;
+    private final java.awt.event.FocusListener left = new java.awt.event.FocusAdapter() {
+        @Override
+        public void focusLost(java.awt.event.FocusEvent event) {
+            onLeft.run();
+        }
+    };
+
+    /**
+     * Wo der Nutzer für {@code field} tippt: das Feld selbst oder, solange die Fußleiste dafür einsteht, deren Feld.
+     * Was am Feld hängt (Vorschläge, „tippt gerade“), richtet sich danach.
+     */
+    public static JComponent typedAt(JTextComponent field) {
+        InputFrame frame = (InputFrame) javax.swing.SwingUtilities.getAncestorOfClass(InputFrame.class, field);
+        return frame != null && frame.standIn != null ? frame.standIn : field;
+    }
+
+    private JComponent standIn;
 
     private static boolean shownUpTo(Component component) {
         return component == null || component.isVisible();

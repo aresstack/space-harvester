@@ -22,6 +22,7 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.image.BufferedImage;
 import java.util.Objects;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Eine Bühne für ein Bild über dem Inhaltsbereich (Angelo 22.11.2026: Der Podcast zeigt zu jedem Thema ein Bild,
@@ -242,7 +243,7 @@ public final class PictureStage extends JPanel {
         java.awt.Rectangle sheet = sheet(picture, width, height);
         Graphics2D layer = (Graphics2D) g2.create();
         layer.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, Math.max(0f, Math.min(1f, alpha))));
-        layer.setColor(Color.WHITE);
+        layer.setColor(AppColors.of("app.PictureStage.paper"));
         layer.fillRect(sheet.x, sheet.y, sheet.width, sheet.height);
         if (picture.vector() != null) {
             Graphics2D drawing = (Graphics2D) layer.create(sheet.x, sheet.y, sheet.width, sheet.height);

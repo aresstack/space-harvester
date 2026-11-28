@@ -10,6 +10,7 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.geom.Path2D;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Symbol eines Ausgabeformats: ein Blatt mit Eselsohr und darauf das Kürzel in der Farbe des Formats (PDF rot, Word
@@ -58,7 +59,7 @@ public final class FormatIcon implements Icon {
             sheet.lineTo(15.5f, 19.5f);
             sheet.lineTo(2.5f, 19.5f);
             sheet.closePath();
-            g.setColor(Color.WHITE);
+            g.setColor(AppColors.of("bubble.userForeground"));
             g.fill(sheet);
             g.setStroke(new BasicStroke(1.2f));
             g.setColor(Comic.INK);

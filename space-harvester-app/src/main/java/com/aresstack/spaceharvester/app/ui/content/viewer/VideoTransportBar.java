@@ -13,6 +13,7 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Insets;
 import java.util.function.DoubleConsumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Keep playback controls in one opaque dock beneath VLC's heavyweight AWT video surface.
@@ -20,9 +21,9 @@ import java.util.function.DoubleConsumer;
  */
 final class VideoTransportBar extends JPanel {
 
-    private static final Color BACKGROUND = new Color(0x171E27);
-    private static final Color BUTTON = new Color(0x253241);
-    private static final Color FOREGROUND = new Color(0xF1F5F9);
+    private static final Color BACKGROUND = AppColors.of("app.VideoTransportBar.background");
+    private static final Color BUTTON = AppColors.of("app.VideoTransportBar.button");
+    private static final Color FOREGROUND = AppColors.of("app.VideoTransportBar.foreground");
 
     private final JButton play = iconButton("Abspielen", ComposerIcons.play());
     private final JButton pause = iconButton("Pausieren", ComposerIcons.pause());
@@ -210,7 +211,7 @@ final class VideoTransportBar extends JPanel {
         button.setToolTipText(label);
         button.getAccessibleContext().setAccessibleName(label);
         button.addPropertyChangeListener("enabled", event ->
-                button.setForeground(button.isEnabled() ? FOREGROUND : new Color(0x788796)));
+                button.setForeground(button.isEnabled() ? FOREGROUND : AppColors.of("app.VideoTransportBar.iconButton")));
         return button;
     }
 }

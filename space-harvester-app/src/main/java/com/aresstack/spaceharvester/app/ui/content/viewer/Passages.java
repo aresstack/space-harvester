@@ -4,6 +4,7 @@ import java.awt.Color;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Findet eine Textstelle (etwa die Fundstelle einer Extraktion) im gezeigten Text eines Dokuments. Zuerst über den
@@ -14,7 +15,7 @@ import java.util.regex.Pattern;
 public final class Passages {
 
     /** Die Farbe der markierten Fundstelle: durchscheinendes Orange, der Text bleibt lesbar. */
-    public static final Color MARK = new Color(255, 170, 0, 110);
+    public static final Color MARK = AppColors.of("app.Passages.mark");
 
     private Passages() {
     }

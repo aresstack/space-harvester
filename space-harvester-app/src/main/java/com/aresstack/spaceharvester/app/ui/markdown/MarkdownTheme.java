@@ -6,6 +6,7 @@ import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import javax.swing.UIManager;
 import java.awt.Color;
 import java.awt.Font;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Visuelle Werte für gerendertes Markdown, ohne Kopplung an ein konkretes Look-and-Feel (aus askai-java8
@@ -57,8 +58,8 @@ public final class MarkdownTheme {
      * Markdown-Antworten und Fehler-/Hinweisblasen gleich wirken.
      */
     public static MarkdownTheme forBubble(Color background, Color foreground) {
-        Color fg = foreground == null ? color("Label.foreground", Color.DARK_GRAY) : foreground;
-        Color bg = background == null ? color("TextArea.background", Color.WHITE) : background;
+        Color fg = foreground == null ? color("Label.foreground", AppColors.of("app.MarkdownTheme.fallbackText")) : foreground;
+        Color bg = background == null ? color("TextArea.background", AppColors.of("comic.fieldBg")) : background;
         Color muted = blend(bg, fg, 0.55f);
         Color link = linkColorFor(bg, fg);
         Color codeBackground = blend(bg, fg, 0.10f);
@@ -73,11 +74,11 @@ public final class MarkdownTheme {
 
     /** Derive a readable document theme from the actual transcript surface and look and feel. */
     public static MarkdownTheme forSurface(Color background) {
-        Color bg = background == null ? color("Panel.background", Color.WHITE) : background;
-        Color fg = color("Label.foreground", Color.BLACK);
+        Color bg = background == null ? color("Panel.background", AppColors.of("comic.fieldBg")) : background;
+        Color fg = color("Label.foreground", AppColors.of("app.MarkdownTheme.fallbackInk"));
         if (ColorContrast.ratio(fg, bg) < 4.5) {
-            fg = ColorContrast.ratio(Color.BLACK, bg) >= ColorContrast.ratio(Color.WHITE, bg)
-                    ? Color.BLACK : Color.WHITE;
+            fg = ColorContrast.ratio(AppColors.of("app.MarkdownTheme.fallbackInk"), bg) >= ColorContrast.ratio(AppColors.of("comic.fieldBg"), bg)
+                    ? AppColors.of("app.MarkdownTheme.fallbackInk") : AppColors.of("comic.fieldBg");
         }
         Font body = bodyFont();
         Color muted = blend(bg, fg, 0.72f);

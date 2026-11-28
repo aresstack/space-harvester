@@ -27,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Ein Artefakt des Chats in der Mitte (ADR 0045, Abschnitt 5): das Dokument gerendert mit der vorhandenen
@@ -37,7 +38,7 @@ import java.util.function.Consumer;
 final class ArtifactView extends JPanel {
 
     /** Gelb wie der Griff der Teiler: die zuletzt geänderten Abschnitte. */
-    static final Color CHANGED = new Color(0xF2C94C);
+    static final Color CHANGED = AppColors.of("app.ArtifactView.changed");
 
     private final ChatArtifactStore store;
     private final Path folder;

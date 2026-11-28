@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der Reiter „Graph“ unter Analysen ohne Seite: ein Wissensgraph um einen Startbegriff. Begriffe sind Knoten, Beziehungen Kanten,
@@ -196,14 +197,18 @@ public final class TermGraphView {
         lines.setOpaque(false);
         lines.add(heading, BorderLayout.NORTH);
         controls.setOpaque(false);
-        controls.add(start);
+        // Das Startfeld ist ein Suchfeld wie in jedem Reiter: In der Seitenleiste steht es nicht oben in der Zeile,
+        // dort tippt man unten in der Fußleiste (Filtern), Enter zeichnet (Angelo 28.11.2026).
+        com.aresstack.spaceharvester.app.ui.controls.InputFrame startFrame =
+                com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(start);
+        startFrame.addButton(showButton);
+        controls.add(startFrame);
         controls.add(depth);
         controls.add(proposals);
         optionsMenu.add(domain);
         optionsMenu.add(checked);
         com.aresstack.spaceharvester.app.ui.controls.PopupHover.clearOnClose(optionsMenu, options);
         options.addActionListener(e -> optionsMenu.show(options, 0, options.getHeight()));
-        controls.add(showButton);
         controls.add(options);
         head.setOpaque(false);
         head.add(lines, BorderLayout.WEST);
@@ -270,12 +275,8 @@ public final class TermGraphView {
             }
         });
         suggestions.addPopupMenuListener(closed);
-        start.addFocusListener(new java.awt.event.FocusAdapter() {
-            @Override
-            public void focusLost(java.awt.event.FocusEvent e) {
-                catchUp();
-            }
-        });
+        // Auch wenn unten in der Fußleiste für das Startfeld getippt wurde: Verlassen holt Aufgeschobenes nach.
+        startFrame.onLeft(this::catchUp);
         // Nach einem Neustart der Laufzeit an der neuen anmelden, auch wenn der Reiter sichtbar bleibt.
         if (context != null) {
             context.onChange(changed -> javax.swing.SwingUtilities.invokeLater(() -> {
@@ -434,7 +435,12 @@ public final class TermGraphView {
     /** Ob im Startfeld gerade ein anderer Begriff als die Mitte getippt wird. */
     private boolean typing() {
         String text = start.getText() == null ? "" : start.getText().trim();
-        return start.isFocusOwner() && !text.equals(centre);
+        return typedAt().isFocusOwner() && !text.equals(centre);
+    }
+
+    /** Wo für das Startfeld getippt wird: im Feld selbst oder unten in der Fußleiste, die dafür filtert. */
+    private JComponent typedAt() {
+        return com.aresstack.spaceharvester.app.ui.controls.InputFrame.typedAt(start);
     }
 
     /** Eine aufgeschobene Meldung nachholen, sobald der Nutzer fertig ist. */
@@ -686,7 +692,7 @@ public final class TermGraphView {
 
     /** Begriffssuche des Core am Startfeld: passende Begriffe als Vorschläge unter dem Feld. */
     private void suggest() {
-        if (quiet || context == null || context.runtime() == null || !start.isShowing()) {
+        if (quiet || context == null || context.runtime() == null || !typedAt().isShowing()) {
             return;
         }
         String q = start.getText() == null ? "" : start.getText().trim();
@@ -703,7 +709,7 @@ public final class TermGraphView {
                 : runtime.workspace().terms(new TermQueries.TermSearch(null, null, null, q, false,
                 SUGGESTIONS, null, null, null, pages.get())).terms().stream().map(TermQueries.TermSummary::term)
                 .toList(), terms -> {
-            if (current != suggestRequest || !start.isShowing()) {
+            if (current != suggestRequest || !typedAt().isShowing()) {
                 return;
             }
             suggestions.setVisible(false);
@@ -715,7 +721,10 @@ public final class TermGraphView {
             }
             if (!terms.isEmpty()) {
                 suggestions.setFocusable(false);
-                suggestions.show(start, 0, start.getHeight());
+                JComponent typed = typedAt();
+                // Unter dem Startfeld; an der Fußleiste darüber, darunter ist das Fenster zu Ende.
+                suggestions.show(typed, 0, typed == start ? start.getHeight()
+                        : -suggestions.getPreferredSize().height);
             }
         }, failure -> suggestions.setVisible(false));
     }
@@ -878,7 +887,7 @@ public final class TermGraphView {
 
         public Canvas() {
             setOpaque(true);
-            setBackground(Color.WHITE);
+            setBackground(AppColors.of("comic.fieldBg"));
             setPreferredSize(new Dimension(640, 420));
             setFont(Comic.semiBold(13f));
             javax.swing.ToolTipManager.sharedInstance().registerComponent(this);
@@ -2293,7 +2302,7 @@ public final class TermGraphView {
             FontMetrics metrics = g2.getFontMetrics(font);
             RoundRectangle2D tag = new RoundRectangle2D.Double(box.getX(), box.getY(), box.getWidth(),
                     box.getHeight(), 10, 10);
-            g2.setColor(Color.WHITE);
+            g2.setColor(AppColors.of("comic.buttonPlate"));
             g2.fill(tag);
             g2.setStroke(new BasicStroke(1.2f));
             g2.setColor(color);
@@ -2453,7 +2462,7 @@ public final class TermGraphView {
                     box.getHeight(), 16, 16);
             g2.setColor(Comic.INK);
             g2.fill(shadow);
-            g2.setColor(depth == 0 ? Comic.YELLOW : depth == 1 ? Color.WHITE : Comic.SURFACE);
+            g2.setColor(depth == 0 ? Comic.YELLOW : depth == 1 ? AppColors.of("comic.buttonPlate") : Comic.SURFACE);
             g2.fill(shape);
             g2.setColor(Comic.INK);
             g2.setStroke(new BasicStroke(depth == 0 ? 2.6f : 2f));

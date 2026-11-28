@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der Podcast einer Seite im Lesetext (Angelo 23.11.2026: „Bilder … einfügen … in der Textseite, die hat ja sowieso
@@ -50,7 +51,7 @@ final class PagePodcastPictures {
     /** Abstand zwischen Text und Bild und zwischen zwei Bildern. */
     static final int GAP = 12;
     /** Markierung der laufenden Stelle, wie die Podcast-Markierung im Bericht. */
-    static final Color MARK = new Color(0xFF, 0xF1, 0x9E);
+    static final Color MARK = AppColors.of("app.PagePodcastPictures.mark");
 
     /** Ein Bild des Podcasts mit der Stelle im Text, an der sein Thema beginnt. */
     record Placed(int topic, int offset, BufferedImage image, String caption, ImageViewer.Picture viewer) {

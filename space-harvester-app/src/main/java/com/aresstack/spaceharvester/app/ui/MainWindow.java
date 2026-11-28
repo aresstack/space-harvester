@@ -137,8 +137,29 @@ public final class MainWindow implements AppContext.Navigator {
     /** Knopfleiste und Kugeln der rechten Leiste: Jedes Symbol lässt sich herausziehen und zurückschieben. */
     private final com.aresstack.spaceharvester.app.ui.controls.PearlString sidePearls =
             new com.aresstack.spaceharvester.app.ui.controls.PearlString(sideSwitch);
-    /** Gemerkte Kugeln der rechten Leiste ({@code PearlString.placement}). */
+    /** Gemerkte Kugeln der rechten Leiste aus der ersten Fassung; gilt nur noch, solange nichts Neues gemerkt ist. */
     static final String SIDE_PEARLS_KEY = "sidebar.right.pearls";
+    /**
+     * Gemerkte Anordnung der Kugeln je Perspektive (Schlüssel plus Punkt und Kennung der Perspektive): links und
+     * rechts je {@code PearlString.placement}, etwa {@code "L=R,*0:1;R=R,2:0"} (der Stern: ein Werkzeug vom anderen Rand).
+     */
+    static final String PEARLS_KEY = "sidebar.pearls";
+    /**
+     * Gemerkte Höhen von Knopfleisten und Kugeln je Perspektive (Schlüssel plus Punkt und Kennung der Perspektive),
+     * links und rechts je {@code PearlString.seats}: Zugeklappt sitzen sie schon beim Start dort, wo aufgeklappt.
+     */
+    static final String SEATS_KEY = "sidebar.pearls.seats";
+    /**
+     * Die Bereiche der linken Leiste untereinander: ihr eigentlicher Inhalt ({@link #side}) und der Bereich jeder
+     * Kugel, die an den linken Rand verschoben wurde.
+     */
+    private final com.aresstack.spaceharvester.app.ui.controls.AreaStack leftStack =
+            new com.aresstack.spaceharvester.app.ui.controls.AreaStack();
+    /** Die Kette am linken Rand: die Knopfleiste des Explorers und Kugeln, die von rechts herüberkamen. */
+    private com.aresstack.spaceharvester.app.ui.controls.PearlString leftPearls;
+    /** Für welche Perspektive die Kugeln gerade angeordnet sind; jede merkt ihre eigene Anordnung. */
+    private String arrangedFor;
+    private boolean arranging;
     /**
      * Gemerkte Anteile der Bereiche der rechten Leiste an ihrer Höhe, in Tausendsteln des Mittels: zuerst der Bereich
      * der Knopfleiste, dann Chat, Aufträge und Analysen ({@link #SIDE_MODES}).
@@ -518,6 +539,7 @@ public final class MainWindow implements AppContext.Navigator {
 
     /** Öffnet das rahmenlose Fenster; Schließen beendet die Laufzeit (Rückfrage bei laufenden Aufträgen). */
     public JFrame open() {
+        com.aresstack.spaceharvester.app.ui.theme.ThemeSwitcher.activateStored();
         ComicTheme.installMenuDefaults(Comic.PALETTE);
         JFrame frame = new JFrame("Space Harvester");
         frame.setUndecorated(true);
@@ -860,18 +882,47 @@ public final class MainWindow implements AppContext.Navigator {
         chatLarge = WindowSizes.recallInt(CHAT_LARGE_KEY, 0) == 1;
         int recalled = WindowSizes.recallInt(SIDE_JOBS_KEY, 0);
         sideMode = recalled >= 0 && recalled < SIDE_MODES.size() ? SIDE_MODES.get(recalled) : SIDE_CHAT;
-        sidePearls.restore(AppState.shared().get(SIDE_PEARLS_KEY));
         recallShares();
+        placePearls();
+        selectSideToggles();
+        placeChat();
+        leftStack.show(java.util.List.of(side));
+        split = new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
+                leftStack, chatSplit, 200, 520, WindowSizes.recallInt(LEFT_WIDTH_KEY, SIDEBAR_WIDTH));
+        split.setLeftWidthListener(width -> WindowSizes.rememberInt(LEFT_WIDTH_KEY, width));
+        leftRail = com.aresstack.spaceharvester.app.ui.controls.DividerRail.install(split, explorer.view, edges,
+                edges.left()).spanning();
+        // Die Kette am linken Rand nimmt Kugeln auf, die von rechts herübergezogen werden; ihre Bereiche stehen in
+        // der linken Leiste unter deren eigentlichem Inhalt.
+        leftPearls = new com.aresstack.spaceharvester.app.ui.controls.PearlString(explorer.view);
+        leftPearls.carrier(edges);
+        leftPearls.sideways(leftRail::onDivider, leftRail::dragging);
+        leftRail.yieldWhile(leftPearls::carrying);
+        java.util.function.Function<java.awt.Point, com.aresstack.spaceharvester.app.ui.controls.PearlString> sides =
+                point -> point.x < edges.getWidth() / 2 ? leftPearls : sidePearls;
+        leftPearls.sides(sides);
+        sidePearls.sides(sides);
+        leftPearls.centres(tool -> {
+            JComponent area = sideTool(tool) ? sideArea(sideModeOf(tool)) : side;
+            return leftStack.shown().contains(area) && split.getDividerSize() > 0
+                    && (sideTool(tool) || !split.isLeftCollapsed()) ? area.getY() + area.getHeight() / 2 : null;
+        });
+        leftPearls.onLayout(() -> leftRail.rests());
+        leftStack.onLayout(() -> {
+            edges.revalidate();
+            edges.repaint();
+        });
+        split.onPrimary(this::placeLeft);
+        arrange(perspectives.current() == null ? null : perspectives.current().id());
+        // Die wiederhergestellte Anordnung gilt auch für die Bereiche: Jeder steht in der Leiste seines Rands.
         placePearls();
         selectSideToggles();
         placeChat();
         // Erst jetzt hören: Das Wiederherstellen der gemerkten Kugeln ist keine Änderung des Benutzers.
         sidePearls.onChange(this::sideChanged);
-        split = new com.aresstack.spaceharvester.app.ui.controls.LeftSidebarPane(
-                side, chatSplit, 200, 520, WindowSizes.recallInt(LEFT_WIDTH_KEY, SIDEBAR_WIDTH));
-        split.setLeftWidthListener(width -> WindowSizes.rememberInt(LEFT_WIDTH_KEY, width));
-        leftRail = com.aresstack.spaceharvester.app.ui.controls.DividerRail.install(split, explorer.view, edges,
-                edges.left());
+        leftPearls.onChange(this::sideChanged);
+        sidePearls.onSeats(this::rememberSeats);
+        leftPearls.onSeats(this::rememberSeats);
         if (WindowSizes.recallInt(LEFT_OPEN_KEY, 1) == 0) {
             collapseDrawer();
         }
@@ -1090,6 +1141,15 @@ public final class MainWindow implements AppContext.Navigator {
         return SIDE_JOBS.equals(mode) ? SWITCH_JOBS : SIDE_ANALYSES.equals(mode) ? SWITCH_ANALYSES : SWITCH_CHAT;
     }
 
+    private javax.swing.AbstractButton enlargeOf(String mode) {
+        return SIDE_JOBS.equals(mode) ? activities.enlarge
+                : SIDE_ANALYSES.equals(mode) ? analysesSidebar.enlargeButton() : chatSidebar.enlargeButton();
+    }
+
+    private boolean onTheRight(String mode) {
+        return sidePearls.host(switchOf(mode)) == sidePearls;
+    }
+
     private JComponent sideArea(String mode) {
         return SIDE_JOBS.equals(mode) ? activities.component()
                 : SIDE_ANALYSES.equals(mode) ? analysesSidebar : chatSidebar;
@@ -1113,15 +1173,23 @@ public final class MainWindow implements AppContext.Navigator {
     private void placePearls() {
         for (String mode : SIDE_MODES) {
             JComponent area = sideArea(mode);
-            boolean ball = sidePearls.pearl(switchOf(mode));
-            if (ball && area.getParent() != sideStack) {
-                sideDeck.remove(area);
-                sideStack.add(area);
-            } else if (!ball && area.getParent() != sideDeck) {
-                sideStack.remove(area);
-                area.setVisible(true);
-                sideDeck.add(area, mode);
+            String tool = switchOf(mode);
+            // Als Kugel steht der Bereich in der Leiste des Rands, an dem die Kugel sitzt.
+            java.awt.Container home = !sidePearls.pearl(tool) ? sideDeck
+                    : sidePearls.host(tool) == sidePearls ? sideStack : leftStack;
+            if (area.getParent() != home) {
+                if (area.getParent() != null) {
+                    area.getParent().remove(area);
+                }
+                if (home == sideDeck) {
+                    area.setVisible(true);
+                    sideDeck.add(area, mode);
+                } else {
+                    home.add(area);
+                }
             }
+            // Groß wird nur die rechte Leiste (die Arbeitsfläche weicht ihr); am linken Rand gibt es das nicht.
+            enlargeOf(mode).setVisible(home != leftStack);
         }
         if (chatOpen && sidePearls.pearl(switchOf(sideMode))) {
             chatOpen = false;
@@ -1143,6 +1211,119 @@ public final class MainWindow implements AppContext.Navigator {
             }
         }
         sideStack.show(areas);
+        placeLeft();
+    }
+
+    private static boolean sideTool(String tool) {
+        return SWITCH_CHAT.equals(tool) || SWITCH_JOBS.equals(tool) || SWITCH_ANALYSES.equals(tool);
+    }
+
+    /**
+     * Die Bereiche der linken Leiste: ihr eigentlicher Inhalt und darunter oder darüber, in der Reihenfolge der Kette,
+     * der Bereich jeder offenen Kugel am linken Rand. Offene Kugeln halten die Leiste offen, auch wenn ihr
+     * eigentlicher Inhalt zugeklappt ist.
+     */
+    private void placeLeft() {
+        if (split == null || leftPearls == null) {
+            return;
+        }
+        boolean any = !leftPearls.openPearls().isEmpty();
+        split.extras(any);
+        java.util.List<java.awt.Component> areas = new java.util.ArrayList<>();
+        for (String unit : leftPearls.units()) {
+            if (com.aresstack.spaceharvester.app.ui.controls.PearlString.RAIL.equals(unit)) {
+                if (!any || !split.isLeftCollapsed()) {
+                    areas.add(side);
+                }
+            } else if (leftPearls.open(unit)) {
+                areas.add(sideArea(sideModeOf(unit)));
+            }
+        }
+        leftStack.show(areas);
+        fitLeftWidth(any);
+    }
+
+    /** Die Breite, die die linke Leiste hatte, bevor ein Bereich der rechten sie breiter brauchte; sonst -1. */
+    private int leftWidthBefore = -1;
+
+    /**
+     * Chat, Analysen und Aufträge brauchen ihre Mindestbreite auch am linken Rand (in schmalerer Leiste überlappen
+     * sich die Knöpfe neben „Senden“). Solange einer dort offen ist, ist die linke Leiste mindestens so breit und
+     * lässt sich nicht schmaler ziehen; danach hat sie wieder ihre alte Breite, wenn niemand sie verstellt hat.
+     */
+    private void fitLeftWidth(boolean guests) {
+        int min = com.aresstack.spaceharvester.app.ui.content.ChatSidebar.MIN_WIDTH;
+        leftStack.setMinimumSize(new Dimension(guests ? min : 0, 0));
+        // Über die gemerkte Breite der Teilung, nicht über den Teiler: Das gilt auch, solange die Leiste zugeklappt
+        // ist, und zählt nicht als Ziehen des Benutzers (die gespeicherte Breite bleibt seine).
+        int width = split.getPreferredLeftWidth();
+        if (guests && width < min) {
+            leftWidthBefore = width;
+            split.setPreferredLeftWidth(min);
+        } else if (!guests && leftWidthBefore >= 0) {
+            if (width == min) {
+                split.setPreferredLeftWidth(leftWidthBefore);
+            }
+            leftWidthBefore = -1;
+        }
+    }
+
+    /** Die Kette am linken Rand (für Tests). */
+    com.aresstack.spaceharvester.app.ui.controls.PearlString leftPearls() {
+        return leftPearls;
+    }
+
+    /** Die Bereiche der linken Leiste untereinander (für Tests). */
+    com.aresstack.spaceharvester.app.ui.controls.AreaStack leftStack() {
+        return leftStack;
+    }
+
+    private static String side(String[] sides, String prefix) {
+        for (String side : sides) {
+            if (side.startsWith(prefix)) {
+                return side.substring(prefix.length());
+            }
+        }
+        return null;
+    }
+
+    private void rememberSeats() {
+        if (!arranging && arrangedFor != null) {
+            AppState.shared().put(SEATS_KEY + "." + arrangedFor,
+                    "L=" + leftPearls.seats() + ";R=" + sidePearls.seats());
+        }
+    }
+
+    /**
+     * Ordnet die Kugeln so an, wie es für diese Perspektive gemerkt ist (Angelo 28.11.2026: jede Perspektive hat
+     * ihre eigene Anordnung); ohne Gemerktes stehen alle Werkzeuge in ihrer Knopfleiste.
+     */
+    private void arrange(String perspective) {
+        arranging = true;
+        try {
+            for (String tool : sidePearls.tools()) {
+                sidePearls.home(tool);
+            }
+            String stored = perspective == null ? null : AppState.shared().get(PEARLS_KEY + "." + perspective);
+            if (stored == null) {
+                String first = AppState.shared().get(SIDE_PEARLS_KEY);
+                stored = first == null ? "" : "R=" + first;
+            }
+            for (String part : stored.split(";")) {
+                if (part.startsWith("R=")) {
+                    sidePearls.restore(part.substring(2), leftPearls);
+                } else if (part.startsWith("L=")) {
+                    leftPearls.restore(part.substring(2), sidePearls);
+                }
+            }
+            String seats = perspective == null ? null : AppState.shared().get(SEATS_KEY + "." + perspective);
+            String[] sides = seats == null ? new String[0] : seats.split(";");
+            leftPearls.seats(side(sides, "L="), sidePearls);
+            sidePearls.seats(side(sides, "R="), leftPearls);
+        } finally {
+            arranging = false;
+        }
+        arrangedFor = perspective;
     }
 
     /** Die Bereiche der rechten Leiste in der Reihenfolge von {@link #SIDE_SHARES_KEY}. */
@@ -1260,8 +1441,10 @@ public final class MainWindow implements AppContext.Navigator {
         } else {
             explorer.switchHome();
         }
-        edges.place(edges.left(), drawer ? explorer.view : null);
-        leftRail.active(drawer);
+        // Die Knopfleiste des Explorers gibt es nur im Space Harvester; Kugeln am linken Rand stehen überall.
+        leftPearls.rail(drawer);
+        edges.place(edges.left(), leftPearls.column());
+        leftRail.active(drawer || !leftPearls.pearls().isEmpty());
         edges.revalidate();
         edges.repaint();
     }
@@ -1292,7 +1475,13 @@ public final class MainWindow implements AppContext.Navigator {
     /** Nach jeder Änderung rechts: Bereiche stellen, Knopfleiste und Kugeln zeigen den Stand, Plätze merken. */
     private void sideChanged() {
         placePearls();
-        AppState.shared().put(SIDE_PEARLS_KEY, sidePearls.placement());
+        if (!arranging && arrangedFor != null && leftPearls != null) {
+            AppState.shared().put(PEARLS_KEY + "." + arrangedFor,
+                    "L=" + leftPearls.placement() + ";R=" + sidePearls.placement());
+        }
+        if (split != null && leftPearls != null) {
+            placeExplorerSwitch();
+        }
         selectSideToggles();
         if (chatOpen()) {
             chatUnread(false);
@@ -1359,9 +1548,9 @@ public final class MainWindow implements AppContext.Navigator {
             activities.sidebarShown(jobsOpen());
             analysesSidebar.shown(analysesOpen());
             boolean large = shown && chatLarge;
-            chatSidebar.large(large);
-            analysesSidebar.large(large);
-            activities.large(large);
+            chatSidebar.large(large && onTheRight(SIDE_CHAT));
+            analysesSidebar.large(large && onTheRight(SIDE_ANALYSES));
+            activities.large(large && onTheRight(SIDE_JOBS));
             // Groß: die Arbeitsfläche weicht ganz, die Teilung gibt der Leiste dann allen Platz und zeigt keinen Teiler.
             chatSplit.getLeftComponent().setVisible(!large);
             // Zugeklappt oder groß gibt es keinen Teiler (Angelo 28.11.2026: kein Griff, der sich nicht bewegen lässt);
@@ -1451,6 +1640,10 @@ public final class MainWindow implements AppContext.Navigator {
      * Seitenleiste (Chat und Aufträge), Statuszeile und laufende Aufträge bleiben unberührt (#1141).
      */
     private void perspectiveChanged(Perspective next) {
+        if (leftPearls != null && !next.id().equals(arrangedFor)) {
+            arrange(next.id());
+            sideChanged();
+        }
         boolean harvester = Perspectives.HARVESTER.equals(next.id());
         if (settingsOver != null) {
             // Gewechselt, während die Einstellungen über einer Perspektive standen: Sie gehen mit zu.

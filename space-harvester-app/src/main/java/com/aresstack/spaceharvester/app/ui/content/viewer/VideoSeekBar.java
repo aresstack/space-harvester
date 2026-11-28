@@ -19,6 +19,7 @@ import java.awt.geom.Ellipse2D;
 import java.awt.geom.RoundRectangle2D;
 import java.util.Locale;
 import java.util.function.DoubleConsumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Full-width, timeline-style video scrubber inspired by Audio Studio's waveform navigation.
@@ -29,14 +30,14 @@ public final class VideoSeekBar extends JComponent {
     private static final int INSET = 14;
     private static final int TRACK_TOP = 13;
     private static final int TRACK_HEIGHT = 7;
-    private static final Color TRACK = new Color(0x303C4B);
-    private static final Color PLAYED = new Color(0x68BEDD);
-    private static final Color LABEL = new Color(0xC9D6E1);
-    private static final Color SLIDE = new Color(0xF4D35E);
+    private static final Color TRACK = AppColors.of("app.VideoSeekBar.track");
+    private static final Color PLAYED = AppColors.of("app.VideoSeekBar.played");
+    private static final Color LABEL = AppColors.of("app.VideoSeekBar.label");
+    private static final Color SLIDE = AppColors.of("app.VideoSeekBar.slide");
     /** Helle Fassung für die Zeitleiste des Podcasts über der Suchleiste (Angelo 21.11.2026). */
-    private static final Color LIGHT_TRACK = new Color(0xD5DCE4);
-    private static final Color LIGHT_LABEL = new Color(0x5B6876);
-    private static final Color LIGHT_SLIDE = new Color(0xE0A800);
+    private static final Color LIGHT_TRACK = AppColors.of("app.VideoSeekBar.lightTrack");
+    private static final Color LIGHT_LABEL = AppColors.of("app.VideoSeekBar.lightLabel");
+    private static final Color LIGHT_SLIDE = AppColors.of("app.VideoSeekBar.lightSlide");
     private boolean light;
     /** Beschriftung einer Stelle im Tooltip statt „Folie N“; {@code null} = Folien. */
     private java.util.function.LongFunction<String> label;
@@ -246,7 +247,7 @@ public final class VideoSeekBar extends JComponent {
             }
             for (int tick = 1; tick < 4; tick++) {
                 int x = INSET + span * tick / 4;
-                g.setColor(new Color(0x748494));
+                g.setColor(AppColors.of("app.VideoSeekBar.knobRing"));
                 g.fillRect(x, TRACK_TOP + 2, 1, 3);
             }
             if (durationMillis > 0) {
@@ -258,10 +259,10 @@ public final class VideoSeekBar extends JComponent {
             }
             if (canSeek()) {
                 int x = INSET + playedWidth;
-                g.setColor(new Color(0x15212A));
+                g.setColor(AppColors.of("app.VideoSeekBar.knobEdge"));
                 g.setStroke(new BasicStroke(2f));
                 g.fill(new Ellipse2D.Double(x - 6, TRACK_TOP - 3, 12, 12));
-                g.setColor(Color.WHITE);
+                g.setColor(AppColors.of("comic.buttonPlate"));
                 g.fill(new Ellipse2D.Double(x - 4, TRACK_TOP - 1, 8, 8));
             }
             g.setColor(light ? LIGHT_LABEL : LABEL);

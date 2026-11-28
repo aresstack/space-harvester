@@ -57,6 +57,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Aufträge: der Download-Manager dieser App (Angelo, 13.11.2026). Abgleiche, Downloads und Folgeaufträge mit
@@ -224,7 +225,7 @@ public final class ActivitiesView implements View {
     static final String BACKGROUND_TAB = "Hintergrund";
     static final String JOBS_TIP = "Aufträge, die du gestartet hast";
     /** Sehr heller Petrol-Ton hinter der Zeile einer Hintergrundgruppe. */
-    static final java.awt.Color BACKGROUND_TONE = mix(Comic.PETROL, java.awt.Color.WHITE, 0.88);
+    static final java.awt.Color BACKGROUND_TONE = mix(Comic.PETROL, AppColors.of("comic.fieldBg"), 0.88);
     /** Breite des Petrol-Streifens am linken Rand jeder Hintergrundzeile. */
     static final int BACKGROUND_STRIPE = 4;
     /** Kennung der Zeile einer Hintergrundgruppe, die kein eigener Auftrag ist. */
@@ -1745,7 +1746,7 @@ public final class ActivitiesView implements View {
                     int ty = y + (h - fm.getHeight()) / 2 + fm.getAscent();
                     java.awt.Shape clip = g.getClip();
                     g.clipRect(x, y, filled, h);
-                    g.setColor(java.awt.Color.WHITE);
+                    g.setColor(AppColors.of("bubble.userForeground"));
                     g.drawString(label, tx, ty);
                     g.setClip(clip);
                     g.clipRect(x + filled, y, width - filled, h);

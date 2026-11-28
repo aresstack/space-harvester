@@ -12,6 +12,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.File;
 import java.util.List;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Modal export dialog for Mermaid diagrams.
@@ -151,7 +152,7 @@ public class MermaidExportDialog extends JDialog {
         // ── Progress section ──
         progressLabel = new JLabel(" ");
         progressLabel.setFont(progressLabel.getFont().deriveFont(Font.ITALIC, 11f));
-        progressLabel.setForeground(Color.GRAY);
+        progressLabel.setForeground(AppColors.of("app.MermaidExportDialog.progressText"));
         progressLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
         mainPanel.add(progressLabel);
         mainPanel.add(Box.createVerticalStrut(4));

@@ -11,6 +11,7 @@ import javax.swing.table.AbstractTableModel;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Font;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /** Render one or more locally parsed worksheets as read-only Swing tables. */
 final class SpreadsheetPreviewPanel extends JPanel {
@@ -20,7 +21,7 @@ final class SpreadsheetPreviewPanel extends JPanel {
     SpreadsheetPreviewPanel(SpreadsheetPreviewData data) {
         super(new BorderLayout());
         setOpaque(true);
-        setBackground(Color.WHITE);
+        setBackground(AppColors.of("comic.fieldBg"));
         if (data.tabs.size() == 1) {
             add(sheet(data.tabs.get(0)), BorderLayout.CENTER);
         } else {

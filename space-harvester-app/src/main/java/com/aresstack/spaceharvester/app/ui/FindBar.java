@@ -28,7 +28,7 @@ import java.util.function.Supplier;
  * entfernt die Markierungen und klappt die Suche zu, ein zweiter Klick auf die Lupe ebenso. Gesucht und markiert wird
  * mit {@link ReaderFind} unterhalb der Wurzel, die {@code area} gerade liefert.
  */
-public final class FindBar extends JPanel {
+public final class FindBar extends com.aresstack.spaceharvester.app.ui.controls.FootBar {
 
     static final String PLACEHOLDER = "In dieser Ansicht suchen … (Strg+F)";
     private static final int BUTTON_SIZE = 22;
@@ -91,6 +91,17 @@ public final class FindBar extends JPanel {
     private final IconButton foldToggle = new IconButton(null, Own.FOLD_TOOLTIP);
     /** Die Ansicht, die gerade selbst sucht; {@code null}, solange {@link ReaderFind} sucht. */
     private Own own;
+    /** Tooltip des Umschalters im Feld, solange die gezeigte Ansicht ein eigenes Filterfeld hat. */
+    static final String FILTER_TOOLTIP = "Filtern statt suchen: die Ansicht zeigt nur noch, was zum Text passt";
+    static final String FILTER_PLACEHOLDER = "In dieser Ansicht filtern …";
+    /**
+     * Ob das Feld filtert statt sucht (Angelo 28.11.2026: abwechselnd, nie beides). Der Text geht dann in das
+     * Filterfeld der gezeigten Ansicht, das selbst nicht zu sehen ist ({@link
+     * com.aresstack.spaceharvester.app.ui.controls.InputFrame#closed}); markiert wird nichts.
+     */
+    private boolean filtering;
+    /** Das Filterfeld, in dem der Text dieser Leiste gerade steht; {@code null}, solange nicht gefiltert wird. */
+    private javax.swing.text.JTextComponent filtered;
 
     /**
      * Eine Ansicht, die mit dieser Leiste selbst sucht, statt dass {@link ReaderFind} nur hervorhebt (Code-Viewer:
@@ -149,7 +160,7 @@ public final class FindBar extends JPanel {
     public void viewChanged() {
         JComponent root = area.get();
         Own shown = root == null ? null : owner(root);
-        if (shown != own) {
+        if (shown != own || (filtering && target() != filtered)) {
             areaChanged();
         } else {
             showOwn();
@@ -194,6 +205,8 @@ public final class FindBar extends JPanel {
                 own.folding(!own.folding());
                 foldToggle.marked(own.folding());
                 updateCounter();
+            } else if (target() != null) {
+                filtering(!filtering);
             }
         });
         JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
@@ -331,16 +344,101 @@ public final class FindBar extends JPanel {
 
     /** Enter: neuer Text sucht neu, derselbe Text springt zum nächsten Treffer. */
     public void next() {
-        step(true);
+        step(true, true);
     }
 
     /** Shift+Enter: neuer Text sucht neu, derselbe Text springt zum vorigen Treffer. */
     void previous() {
-        step(false);
+        step(false, true);
     }
 
-    /** Entfernt die Markierungen (Esc, Wechsel des Bereichs); der Suchtext bleibt stehen. */
+    /**
+     * Schaltet zwischen Suchen und Filtern um; wirkt nur, wo die gezeigte Ansicht ein Filterfeld hat. Der Text im
+     * Feld gilt sofort in der neuen Betriebsart, die alte räumt hinter sich auf.
+     */
+    public void filtering(boolean on) {
+        filtering = on;
+        clear();
+        if (open && !field.getText().trim().isEmpty()) {
+            step(true);
+        }
+        showOwn();
+    }
+
+    /** Ob gerade gefiltert statt gesucht wird. */
+    public boolean filtering() {
+        return filtering && target() != null;
+    }
+
+    /** Das unsichtbare Filterfeld der gezeigten Ansicht; {@code null}, wenn sie keines hat. */
+    private javax.swing.text.JTextComponent target() {
+        JComponent root = area.get();
+        com.aresstack.spaceharvester.app.ui.controls.InputFrame frame = root == null ? null
+                : com.aresstack.spaceharvester.app.ui.controls.InputFrame.closed(root);
+        return frame != null && frame.field() instanceof javax.swing.text.JTextComponent text ? text : null;
+    }
+
+    private static com.aresstack.spaceharvester.app.ui.controls.InputFrame frameOf(
+            javax.swing.text.JTextComponent text) {
+        return (com.aresstack.spaceharvester.app.ui.controls.InputFrame) javax.swing.SwingUtilities
+                .getAncestorOfClass(com.aresstack.spaceharvester.app.ui.controls.InputFrame.class, text);
+    }
+
+    private boolean mirroring;
+
+    /** Übernimmt Text, den die Ansicht selbst in ihr Filterfeld setzt, in das Feld dieser Leiste. */
+    private final DocumentListener mirror = new DocumentListener() {
+        @Override
+        public void insertUpdate(DocumentEvent event) {
+            take();
+        }
+
+        @Override
+        public void removeUpdate(DocumentEvent event) {
+            take();
+        }
+
+        @Override
+        public void changedUpdate(DocumentEvent event) {
+        }
+
+        private void take() {
+            javax.swing.text.JTextComponent source = filtered;
+            // Erst nach dem laufenden Ereignis: Ein Dokument lässt sich nicht aus seiner eigenen Meldung ändern.
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                if (source != null && source == filtered && !source.getText().equals(field.getText())) {
+                    // Nur übernehmen, nicht zurückschreiben: Sonst schriebe das Feld den Text noch einmal in das
+                    // Filterfeld, und die Ansicht hielte das für Tippen (Vorschläge gingen wieder auf).
+                    mirroring = true;
+                    try {
+                        field.setText(source.getText());
+                    } finally {
+                        mirroring = false;
+                    }
+                }
+            });
+        }
+    };
+
+    /** Nimmt den Text aus dem Filterfeld der Ansicht, damit kein unsichtbarer Filter weiterwirkt. */
+    private void release() {
+        if (filtered != null) {
+            filtered.getDocument().removeDocumentListener(mirror);
+            frameOf(filtered).standIn(null);
+            if (!filtered.getText().isEmpty()) {
+                filtered.setText("");
+            }
+            filtered = null;
+        }
+    }
+
+    /** Entfernt Markierungen und Filter (Esc, Wechsel des Bereichs); der Text im Feld bleibt stehen. */
     void clear() {
+        release();
+        unmark();
+    }
+
+    private void unmark() {
         if (find != null) {
             find.clear();
         }
@@ -402,15 +500,46 @@ public final class FindBar extends JPanel {
 
     /** Wie im Browser: Tippen sucht sofort. */
     private void live() {
+        if (mirroring) {
+            return;
+        }
         searched = null;
         step(true);
     }
 
     private void step(boolean forward) {
+        step(forward, false);
+    }
+
+    /** @param entered ob Enter gedrückt wurde (ein Filterfeld, das erst auf Enter handelt, bekommt es weiter) */
+    private void step(boolean forward, boolean entered) {
         JComponent root = area.get();
         if (root == null) {
             clear();
             showOwn();
+            return;
+        }
+        javax.swing.text.JTextComponent target = filtering ? target() : null;
+        if (target != filtered) {
+            release();
+        }
+        if (target != null) {
+            // Filtern statt suchen: Der Text steht im Filterfeld der Ansicht, sie schränkt sich selbst ein.
+            unmark();
+            if (filtered != target) {
+                // Was die Ansicht selbst ins Filterfeld setzt (ein gewählter Vorschlag), steht auch hier im Feld;
+                // Vorschläge der Ansicht erscheinen an diesem Feld.
+                target.getDocument().addDocumentListener(mirror);
+                frameOf(target).standIn(field);
+            }
+            filtered = target;
+            if (!field.getText().equals(target.getText())) {
+                target.setText(field.getText());
+            }
+            if (entered && target instanceof javax.swing.JTextField line) {
+                line.postActionEvent();
+            }
+            updateCounter();
             return;
         }
         Own owner = owner(root);
@@ -491,11 +620,22 @@ public final class FindBar extends JPanel {
         }
         JComponent root = area.get();
         Own shown = own != null ? own : root == null ? null : owner(root);
-        foldToggle.setVisible(shown != null && shown.canFold());
-        if (shown != null && shown.canFold()) {
+        boolean folds = shown != null && shown.canFold();
+        boolean filters = !folds && target() != null;
+        foldToggle.setVisible(folds || filters);
+        if (folds) {
             foldToggle.setIcon(shown.foldIcon());
             foldToggle.marked(shown.folding());
+            foldToggle.setToolTipText(Own.FOLD_TOOLTIP);
+        } else if (filters) {
+            foldToggle.setIcon(Glyph.FILTER);
+            foldToggle.marked(filtering);
+            foldToggle.setToolTipText(FILTER_TOOLTIP);
         }
+        field.setPlaceholder(filters && filtering ? FILTER_PLACEHOLDER : PLACEHOLDER);
+        boolean steps = !(filters && filtering);
+        previousButton.setVisible(steps);
+        nextButton.setVisible(steps);
         corner(shown == null ? null : shown.findCorner());
     }
 
@@ -546,8 +686,8 @@ public final class FindBar extends JPanel {
             Dimension middle = tools.getPreferredSize();
             Dimension field = search.getPreferredSize();
             int width = button.width + GAP + Math.max(middle.width + cornerWidth(), field.width) + helpWidth();
-            // Überall dieselbe Höhe wie die Fußleisten der Seitenleisten (Angelo 24.11.2026).
-            return new Dimension(width + insets.left + insets.right, Comic.FOOT_HEIGHT);
+            // Die Höhe legt allein die Basisklasse fest (FootBar), nicht dieses Layout.
+            return new Dimension(width + insets.left + insets.right, 0);
         }
 
         @Override

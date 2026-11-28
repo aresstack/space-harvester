@@ -44,6 +44,7 @@ import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Die Beziehungen-Leiste links neben dem Editor wie der {@code LeftDrawer} von MainframeMate: oben „Ressourcen“
@@ -474,7 +475,7 @@ final class RelationsPanel extends JPanel {
                     : object + " — " + total + " Knoten");
             kindFilter.marked(!hidden.isEmpty());
             nameField.setBackground(names == null && !nameField.getText().isBlank() ? Comic.CHANGE_REMOVED
-                    : Color.WHITE);
+                    : AppColors.of("comic.fieldBg"));
         }
 
         private void title(String text) {
@@ -695,8 +696,8 @@ final class RelationsPanel extends JPanel {
      */
     private static final class Renderer extends DefaultTreeCellRenderer {
 
-        private static final Color NATURAL = new Color(34, 139, 34);
-        private static final Color SYSTEM_FUNCTION = new Color(0, 100, 200);
+        private static final Color NATURAL = AppColors.of("app.RelationsPanel.natural");
+        private static final Color SYSTEM_FUNCTION = AppColors.of("app.RelationsPanel.systemFunction");
 
         private final boolean incoming;
 

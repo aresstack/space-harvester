@@ -7,6 +7,7 @@ import java.awt.Component;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /** Draw the familiar four-corner full-screen and restore symbols. */
 final class VideoFullScreenIcon implements Icon {
@@ -35,7 +36,7 @@ final class VideoFullScreenIcon implements Icon {
             paint.translate(x, y);
             paint.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             paint.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            paint.setColor(component.isEnabled() ? new Color(0xE5F2FA) : new Color(0x73818C));
+            paint.setColor(component.isEnabled() ? AppColors.of("app.VideoFullScreenIcon.glyph") : AppColors.of("app.VideoFullScreenIcon.disabledGlyph"));
             if (restore) {
                 paint.drawLine(6, 2, 6, 6);
                 paint.drawLine(2, 6, 6, 6);

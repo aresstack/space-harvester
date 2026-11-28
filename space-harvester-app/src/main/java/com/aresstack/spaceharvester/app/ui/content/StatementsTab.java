@@ -50,6 +50,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der Unterreiter „Analysen → Aussagen“ (#499): experimentelle Aussagenanalyse der geöffneten Seite mit MaltParser.
@@ -288,7 +289,7 @@ final class StatementsTab extends JPanel {
     /** Baut die Meldung „Parsermodell fehlt“ (Strang F stellt sie auf den MessageBanner der Bibliothek um). */
     private JComponent modelBanner() {
         modelBanner.setOpaque(true);
-        modelBanner.setBackground(new Color(0xFFF7E6));
+        modelBanner.setBackground(AppColors.of("app.StatementsTab.modelBanner"));
         modelBanner.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createMatteBorder(0, 3, 0, 0, Comic.ORANGE),
                 BorderFactory.createEmptyBorder(8, 10, 8, 10)));

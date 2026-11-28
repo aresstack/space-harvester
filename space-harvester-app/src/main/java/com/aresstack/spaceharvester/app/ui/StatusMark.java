@@ -12,6 +12,7 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.geom.Arc2D;
 import java.awt.geom.Path2D;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der Verbindungsstand als Zeichen: grüner Haken (verbunden), rotes Ausrufezeichen (Fehler oder fehlende
@@ -89,7 +90,7 @@ final class StatusMark extends JComponent {
                 case CONNECTED -> {
                     g.setColor(Comic.GREEN);
                     g.fillOval(x, y, s, s);
-                    g.setColor(Color.WHITE);
+                    g.setColor(AppColors.of("bubble.userForeground"));
                     g.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                     Path2D tick = new Path2D.Double();
                     tick.moveTo(x + s * 0.27, y + s * 0.52);
@@ -100,7 +101,7 @@ final class StatusMark extends JComponent {
                 case FAILED -> {
                     g.setColor(Comic.RED);
                     g.fillOval(x, y, s, s);
-                    g.setColor(Color.WHITE);
+                    g.setColor(AppColors.of("bubble.userForeground"));
                     g.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                     g.drawLine(x + s / 2, y + (int) (s * 0.25), x + s / 2, y + (int) (s * 0.58));
                     g.fillOval(x + s / 2 - 1, y + (int) (s * 0.70), 3, 3);

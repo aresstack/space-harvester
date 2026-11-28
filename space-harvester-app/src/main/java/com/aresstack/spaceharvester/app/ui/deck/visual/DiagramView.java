@@ -30,6 +30,7 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Frame;
 import java.util.Optional;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Diagramm-Ansicht „Visuell“ eines Editors, übernommen aus MainframeMates {@code SplitPreviewTab} (Diagramm-Modus):
@@ -74,7 +75,7 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
         this.mindmapDepth = Math.max(0, Math.min(10, state.getInt(DEPTH_KEY, 0)));
         this.collapsed = state.getBoolean(COLLAPSED_KEY, false);
         setOpaque(true);
-        setBackground(Color.WHITE);
+        setBackground(AppColors.of("comic.fieldBg"));
         getAccessibleContext().setAccessibleName("Diagramm " + editor.session().name());
 
         diagram.setAutoRefreshThresholdPercent(Math.max(0, state.getInt(REFRESH_KEY, 1)));
@@ -252,7 +253,7 @@ final class DiagramView extends JPanel implements DocumentEditor.CenterSearch, D
         body.setOpaque(false);
         javax.swing.JTextArea details = diagram.getDetailArea();
         details.setFont(Comic.regular(12.5f));
-        details.setBackground(Color.WHITE);
+        details.setBackground(AppColors.of("comic.fieldBg"));
         details.setBorder(new EmptyBorder(4, 6, 4, 6));
         JComponent detail = Comic.scroll(details);
         detail.setBorder(Comic.fieldBorder());

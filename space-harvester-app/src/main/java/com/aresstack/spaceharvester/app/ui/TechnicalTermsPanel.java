@@ -36,6 +36,7 @@ import javax.swing.JSplitPane;
 import javax.swing.Scrollable;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Suchmethode „Nur Fachbegriffe“ (K5b, Angelo 21.11.2026; Form UX-Manager): statt der Treffertabelle zweigeteilt links
@@ -677,7 +678,7 @@ final class TechnicalTermsPanel extends JPanel {
 
         RowList() {
             setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
-            setBackground(Color.WHITE);
+            setBackground(AppColors.of("comic.fieldBg"));
         }
 
         @Override
@@ -720,7 +721,7 @@ final class TechnicalTermsPanel extends JPanel {
             super(new BorderLayout(6, 0));
             this.confirmed = confirmed;
             setOpaque(true);
-            setBackground(selected ? Comic.CHANGE_CHANGED : Color.WHITE);
+            setBackground(selected ? Comic.CHANGE_CHANGED : AppColors.of("comic.fieldBg"));
             setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 4));
             setAlignmentX(LEFT_ALIGNMENT);
             Dot dot = new Dot(confirmed);

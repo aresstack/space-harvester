@@ -48,6 +48,197 @@ class FindBarTest {
         });
     }
 
+    /**
+     * Angelo 28.11.2026: Alle Fußleisten leiten von derselben Klasse ab und sind dadurch gleich hoch. Die Höhe steht
+     * nur in {@link com.aresstack.spaceharvester.app.ui.controls.FootBar}; kein Layout und keine Leiste setzt sie
+     * selbst, und nichts auf der Leiste macht sie höher.
+     */
+    @Test
+    void everyFootBarDerivesFromTheSameClassAndOnlyThatClassSetsTheHeight() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JPanel tall = new JPanel();
+            tall.setPreferredSize(new java.awt.Dimension(40, 200));
+            FindBar find = new FindBar(JPanel::new);
+            find.tools(tall);
+            com.aresstack.spaceharvester.app.ui.controls.SideFoot side =
+                    new com.aresstack.spaceharvester.app.ui.controls.SideFoot(null, null, null);
+            java.util.List<JComponent> bars = java.util.List.of(find, side,
+                    com.aresstack.spaceharvester.app.ui.deck.DeckBars.foot(null, tall));
+            for (JComponent bar : bars) {
+                assertThat(bar).isInstanceOf(com.aresstack.spaceharvester.app.ui.controls.FootBar.class);
+                assertThat(bar.getPreferredSize().height).isEqualTo(Comic.FOOT_HEIGHT);
+                assertThat(bar.getMinimumSize().height).isEqualTo(Comic.FOOT_HEIGHT);
+                assertThat(bar.getMaximumSize().height).isEqualTo(Comic.FOOT_HEIGHT);
+            }
+        });
+        // Kein zweiter Ort, der die Höhe einer Fußleiste festlegt.
+        java.nio.file.Path sources = java.nio.file.Path.of("src/main/java");
+        java.util.List<String> setters = new java.util.ArrayList<>();
+        try (java.util.stream.Stream<java.nio.file.Path> files = java.nio.file.Files.walk(sources)) {
+            for (java.nio.file.Path file : files.filter(path -> path.toString().endsWith(".java")).toList()) {
+                if (file.getFileName().toString().equals("FootBar.java")) {
+                    continue;
+                }
+                for (String line : java.nio.file.Files.readAllLines(file)) {
+                    if (line.contains("FOOT_HEIGHT") && line.contains("Dimension(")) {
+                        setters.add(file.getFileName() + ": " + line.trim());
+                    }
+                }
+            }
+        }
+        assertThat(setters).as("Höhe einer Fußleiste außerhalb von FootBar gesetzt").isEmpty();
+    }
+
+    /** Angelo 28.11.2026: Das Fragezeichen hing oben in der Ecke. Die Hilfe steht auf der Höhe der Lupe. */
+    @Test
+    void theHelpSitsAtTheHeightOfTheMagnifier() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            FindBar bar = new FindBar(JPanel::new);
+            com.aresstack.spaceharvester.app.ui.controls.HelpButton first =
+                    new com.aresstack.spaceharvester.app.ui.controls.HelpButton(22, "Hilfe", "Text");
+            com.aresstack.spaceharvester.app.ui.controls.HelpButton second =
+                    new com.aresstack.spaceharvester.app.ui.controls.HelpButton(22, "Hilfe", "Text");
+            second.setVisible(false);
+            bar.help(Comic.row(first, second));
+            bar.setSize(320, bar.getPreferredSize().height);
+            layoutAll(bar);
+            int magnifier = centerY(bar.findButton(), bar);
+            assertThat(centerY(first, bar)).isBetween(magnifier - 1, magnifier + 1);
+            assertThat(SwingUtilities.convertPoint(first.getParent(), first.getLocation(), bar).x + first.getWidth())
+                    .as("ganz rechts, in der Leiste").isLessThanOrEqualTo(bar.getWidth());
+        });
+    }
+
+    /**
+     * Angelo 28.11.2026: Kein Suchfeld oben in den Reitern. Hat die gezeigte Ansicht ein Filterfeld hinter der
+     * Schleuse, zeigt das Feld der Fußleiste das Filtersymbol; damit wird abwechselnd gesucht oder gefiltert, nie
+     * beides. Beim Filtern steht der Text im Filterfeld der Ansicht, Enter geht an sie weiter; zurück auf Suchen,
+     * beim Schließen und beim Wechsel der Ansicht ist ihr Filter wieder leer.
+     */
+    @Test
+    void theFieldEitherSearchesOrFiltersTheShownView() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JPanel area = new JPanel(new java.awt.CardLayout());
+            JPanel list = new JPanel(new java.awt.BorderLayout());
+            javax.swing.JTextField filter = new javax.swing.JTextField();
+            java.util.concurrent.atomic.AtomicInteger entered = new java.util.concurrent.atomic.AtomicInteger();
+            filter.addActionListener(event -> entered.incrementAndGet());
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame frame =
+                    com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter);
+            list.add(frame, java.awt.BorderLayout.NORTH);
+            JTextArea text = new JTextArea("Alpha Beta Alpha");
+            list.add(text, java.awt.BorderLayout.CENTER);
+            JPanel plain = new JPanel(new java.awt.BorderLayout());
+            plain.add(new JTextArea("Alpha"), java.awt.BorderLayout.CENTER);
+            area.add(list, "list");
+            area.add(plain, "plain");
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.gate(area, false);
+            assertThat(frame.isVisible()).as("oben steht kein Suchfeld").isFalse();
+
+            FindBar bar = new FindBar(() -> area);
+            bar.search("Alpha");
+            assertThat(bar.foldToggle().isVisible()).isTrue();
+            assertThat(bar.foldToggle().getToolTipText()).isEqualTo(FindBar.FILTER_TOOLTIP);
+            assertThat(bar.filtering()).isFalse();
+            assertThat(bar.counterText()).isEqualTo("1 / 2");
+            assertThat(filter.getText()).isEmpty();
+
+            bar.foldToggle().doClick();
+            assertThat(bar.filtering()).isTrue();
+            assertThat(filter.getText()).as("der Text filtert die Ansicht").isEqualTo("Alpha");
+            assertThat(bar.counterText()).as("gefiltert wird ohne Markierungen").isEmpty();
+            assertThat(text.getHighlighter().getHighlights()).isEmpty();
+            assertThat(frame.isVisible()).as("das Feld oben bleibt weg").isFalse();
+            bar.field().setText("Beta");
+            assertThat(filter.getText()).isEqualTo("Beta");
+            bar.next();
+            assertThat(entered.get()).as("Enter geht an die Ansicht").isEqualTo(1);
+
+            // Eine Ansicht ohne Filterfeld: Der alte Filter ist leer, das Symbol weg, es wird gesucht.
+            ((java.awt.CardLayout) area.getLayout()).show(area, "plain");
+            bar.viewChanged();
+            assertThat(filter.getText()).isEmpty();
+            assertThat(bar.foldToggle().isVisible()).isFalse();
+            assertThat(bar.filtering()).isFalse();
+
+            // Zurück: Die gewählte Betriebsart gilt wieder; zurück auf Suchen räumt den Filter und markiert.
+            ((java.awt.CardLayout) area.getLayout()).show(area, "list");
+            bar.viewChanged();
+            assertThat(filter.getText()).isEqualTo("Beta");
+            bar.foldToggle().doClick();
+            assertThat(filter.getText()).isEmpty();
+            assertThat(bar.counterText()).isEqualTo("1 / 1");
+            bar.foldToggle().doClick();
+            assertThat(filter.getText()).isEqualTo("Beta");
+            bar.close();
+            assertThat(filter.getText()).as("zugeklappt wirkt kein unsichtbarer Filter").isEmpty();
+        });
+    }
+
+    /**
+     * Beim Filtern steht das Feld der Fußleiste für das unsichtbare Filterfeld der Ansicht ein: Was an dem Feld hängt
+     * (Vorschläge des Begriffsgraphen), richtet sich an das Feld unten, und was die Ansicht selbst in ihr Feld setzt
+     * (ein gewählter Vorschlag), steht danach auch unten. Ohne Filtern steht wieder das Feld selbst.
+     */
+    @Test
+    void whileFilteringTheFootFieldStandsInForTheHiddenFilterField() throws Exception {
+        JPanel area = new JPanel(new java.awt.BorderLayout());
+        javax.swing.JTextField filter = new javax.swing.JTextField();
+        FindBar[] bar = new FindBar[1];
+        java.util.concurrent.atomic.AtomicInteger left = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger writes = new java.util.concurrent.atomic.AtomicInteger();
+        SwingUtilities.invokeAndWait(() -> {
+            area.add(com.aresstack.spaceharvester.app.ui.controls.InputFrame.search(filter),
+                    java.awt.BorderLayout.NORTH);
+            com.aresstack.spaceharvester.app.ui.controls.InputFrame.gate(area, false);
+            bar[0] = new FindBar(() -> area);
+            ((com.aresstack.spaceharvester.app.ui.controls.InputFrame) SwingUtilities.getAncestorOfClass(
+                    com.aresstack.spaceharvester.app.ui.controls.InputFrame.class, filter))
+                    .onLeft(left::incrementAndGet);
+            filter.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                @Override
+                public void insertUpdate(javax.swing.event.DocumentEvent event) {
+                    writes.incrementAndGet();
+                }
+
+                @Override
+                public void removeUpdate(javax.swing.event.DocumentEvent event) {
+                    writes.incrementAndGet();
+                }
+
+                @Override
+                public void changedUpdate(javax.swing.event.DocumentEvent event) {
+                }
+            });
+            bar[0].search("Zah");
+            assertThat(com.aresstack.spaceharvester.app.ui.controls.InputFrame.typedAt(filter)).isSameAs(filter);
+            bar[0].filtering(true);
+            assertThat(com.aresstack.spaceharvester.app.ui.controls.InputFrame.typedAt(filter))
+                    .isSameAs(bar[0].field());
+            // Verlässt der Nutzer das Feld unten, erfährt es das Suchfeld der Ansicht.
+            for (java.awt.event.FocusListener listener : bar[0].field().getFocusListeners()) {
+                listener.focusLost(new java.awt.event.FocusEvent(bar[0].field(), java.awt.event.FocusEvent.FOCUS_LOST));
+            }
+            assertThat(left.get()).isEqualTo(1);
+            // Die Ansicht übernimmt einen Vorschlag in ihr Feld.
+            writes.set(0);
+            filter.setText("Zahlungsverkehr");
+            assertThat(writes.get()).isEqualTo(2);
+        });
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(writes.get()).as("das Feld unten schreibt den übernommenen Text nicht zurück").isEqualTo(2);
+            assertThat(bar[0].query()).isEqualTo("Zahlungsverkehr");
+            assertThat(filter.getText()).isEqualTo("Zahlungsverkehr");
+            bar[0].filtering(false);
+            assertThat(filter.getText()).isEmpty();
+        });
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(bar[0].query()).as("der Text unten bleibt beim Zurückschalten stehen")
+                    .isEqualTo("Zahlungsverkehr");
+            assertThat(com.aresstack.spaceharvester.app.ui.controls.InputFrame.typedAt(filter)).isSameAs(filter);
+        });
+    }
+
     private static int centerY(java.awt.Component part, java.awt.Component root) {
         return SwingUtilities.convertPoint(part.getParent(), 0, part.getY(), root).y + part.getHeight() / 2;
     }

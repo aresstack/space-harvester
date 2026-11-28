@@ -29,6 +29,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.Map;
 import java.util.Objects;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Ein selbst gezeichnetes Hinweisfenster an der Mausposition: Überschrift, umbrechender Fließtext in Proportionalschrift
@@ -323,10 +324,10 @@ public final class InfoPopup extends JPopupMenu {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             // Weicher Schatten nach unten rechts, dann die Fläche mit feinem Rand.
             for (int i = 3; i >= 1; i--) {
-                g.setColor(new Color(0, 0, 0, 10));
+                g.setColor(AppColors.of("app.InfoPopup.shadow"));
                 g.fillRoundRect(i, i, getWidth() - i, getHeight() - i, 12, 12);
             }
-            g.setColor(Color.WHITE);
+            g.setColor(AppColors.of("comic.buttonPlate"));
             g.fillRoundRect(0, 0, getWidth() - 3, getHeight() - 3, 12, 12);
             g.setColor(Comic.LINE);
             g.drawRoundRect(0, 0, getWidth() - 4, getHeight() - 4, 12, 12);

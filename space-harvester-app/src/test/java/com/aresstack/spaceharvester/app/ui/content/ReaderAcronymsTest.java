@@ -345,36 +345,45 @@ class ReaderAcronymsTest {
         });
         awaitTrue(() -> onEdt(() -> panel.analysisView().below().count() > 0));
         assertThat(onEdt(() -> panel.analysisView().below().table().getColumnName(4))).isEqualTo("Unterseite");
-        // Die sieben Reiter stehen mittig in der unteren Leiste der Seitenleiste, „mit Unterseiten“ darunter rechts;
-        // über dem Inhalt gibt es keine Reiterzeile. Bei 900 px in einer Zeile.
+        // Die sieben Reiter stehen mittig in der Fußleiste der Seitenleiste, „mit Unterseiten“ als Zeile darüber; über
+        // dem Inhalt gibt es keine Reiterzeile. Bei 900 px alle in einer Zeile.
         assertThat(onEdt(() -> {
             javax.swing.JPanel foot = panel.analysisFoot();
-            foot.setSize(900, 40);
+            foot.setSize(900, foot.getPreferredSize().height);
             layoutAll(foot);
             java.util.Set<Integer> rows = new java.util.HashSet<>();
             for (String name : panel.analysisRow().tabs().names()) {
                 javax.swing.AbstractButton tab = panel.analysisRow().tabs().button(name);
                 assertThat(javax.swing.SwingUtilities.isDescendingFrom(tab, foot)).isTrue();
                 assertThat(javax.swing.SwingUtilities.isDescendingFrom(tab, panel)).isFalse();
+                assertThat(tab.isVisible()).as(name).isTrue();
                 rows.add(javax.swing.SwingUtilities.convertPoint(tab.getParent(), tab.getLocation(), foot).y);
             }
             javax.swing.JCheckBox box = panel.subpages().box();
-            assertThat(javax.swing.SwingUtilities.isDescendingFrom(box, foot)).isTrue();
+            assertThat(javax.swing.SwingUtilities.isDescendingFrom(box, panel.analysesFoot())).isTrue();
             return rows.size() + "/" + panel.analysisTabs().names().size();
         })).isEqualTo("1/7");
-        // Zu schmal für eine Zeile: Die Reiter brechen um und die Leiste wächst mit, nichts wird abgeschnitten.
+        // Zu schmal für alle: Die Leiste bleibt so hoch wie jede Fußleiste, was keinen Platz hat, steht hinter dem
+        // Menü am Ende der Reihe; der gewählte Reiter bleibt zu sehen.
         assertThat(onEdt(() -> {
             javax.swing.JPanel foot = panel.analysisFoot();
-            foot.setSize(140, 400);
+            foot.setSize(220, foot.getPreferredSize().height);
             layoutAll(foot);
-            javax.swing.JComponent bar = panel.analysisRow().bar();
-            int bottom = 0;
+            com.aresstack.spaceharvester.app.ui.controls.OverflowRow bar =
+                    (com.aresstack.spaceharvester.app.ui.controls.OverflowRow) panel.analysisRow().bar();
+            assertThat(foot.getPreferredSize().height).isEqualTo(com.aresstack.spaceharvester.app.ui.Comic.FOOT_HEIGHT);
+            assertThat(bar.hiddenParts()).isNotEmpty();
+            assertThat(bar.hiddenParts()).doesNotContain(
+                    panel.analysisRow().tabs().button(panel.analysisRow().tabs().selected()));
             for (String name : panel.analysisRow().tabs().names()) {
                 javax.swing.AbstractButton tab = panel.analysisRow().tabs().button(name);
-                bottom = Math.max(bottom, tab.getY() + tab.getHeight());
+                if (!bar.hiddenParts().contains(tab)) {
+                    int right = javax.swing.SwingUtilities.convertPoint(tab.getParent(), tab.getLocation(), foot).x
+                            + tab.getWidth();
+                    assertThat(right).as(name).isLessThanOrEqualTo(foot.getWidth());
+                }
             }
-            return bar.getPreferredSize().height >= bottom
-                    && bottom > panel.analysisRow().tabs().button("Aussagen").getHeight() * 2;
+            return true;
         })).isTrue();
         assertThat(onEdt(() -> panel.analysisView().createIcon().getAccessibleContext().getAccessibleName()))
                 .isEqualTo("Neue Beziehung …");

@@ -36,6 +36,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Der Reiter „Begriffe“ der Leseansicht (#339): nur für die angezeigte Seite die Zahl der erkannten Akronyme,
@@ -836,7 +837,7 @@ final class TermsTab extends JPanel {
     static FindablePill textForm(FindablePill chip, VerbQueries.Verb verb) {
         if (verb.fromText()) {
             chip.setFont(Comic.semiBold(12f).deriveFont(java.awt.Font.ITALIC));
-            chip.setForegrounds(Comic.MUTED, Color.WHITE, Color.WHITE);
+            chip.setForegrounds(Comic.MUTED, AppColors.of("bubble.userForeground"), AppColors.of("bubble.userForeground"));
         }
         return chip;
     }
@@ -1136,7 +1137,7 @@ final class TermsTab extends JPanel {
         FindablePill chip = new FindablePill(label, 26, 26, 10);
         chip.setFont(Comic.semiBold(12f));
         chip.setFills(Comic.SURFACE, ResearchUiPalette.SECONDARY_SURFACE, ResearchUiPalette.ACCENT_BLUE);
-        chip.setForegrounds(Comic.INK, Color.WHITE, Color.WHITE);
+        chip.setForegrounds(Comic.INK, AppColors.of("bubble.userForeground"), AppColors.of("bubble.userForeground"));
         chip.setBorders(Comic.MUTED, Comic.INK, ResearchUiPalette.ACCENT_BLUE);
         chip.setToolTipText(tooltip);
         chip.setEnabled(!spans.isEmpty());

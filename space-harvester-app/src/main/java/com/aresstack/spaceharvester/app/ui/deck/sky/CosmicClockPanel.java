@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static com.aresstack.spaceharvester.app.ui.deck.sky.CelestialMath.*;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Übernommen aus Miguel0888/MainframeMate (ui/terminal/cosmicclock) für das Command Deck (#1142).
@@ -53,7 +54,7 @@ public class CosmicClockPanel extends JPanel {
         this.timeModel = new CosmicClockTimeModel(timeFactor);
         this.projection = new SkyProjection(); // south-facing default
         setOpaque(true);
-        setBackground(Color.BLACK);
+        setBackground(AppColors.of("app.CosmicClockPanel.space"));
 
         // Enable Swing tooltips and speed up the initial delay
         ToolTipManager ttm = ToolTipManager.sharedInstance();
@@ -205,7 +206,7 @@ public class CosmicClockPanel extends JPanel {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
             // Black sky background
-            g.setColor(Color.BLACK);
+            g.setColor(AppColors.of("app.CosmicClockPanel.space"));
             g.fillRect(0, 0, w, h);
             if (!skyEnabled) {
                 visibleBodies.clear();
@@ -215,8 +216,8 @@ public class CosmicClockPanel extends JPanel {
             // Subtle horizon gradient (very dark blue at the bottom few pixels)
             int horizonH = Math.max(h / 15, 4);
             GradientPaint horizonGrad = new GradientPaint(
-                    0, h - horizonH, new Color(8, 12, 24),
-                    0, h, new Color(3, 5, 12));
+                    0, h - horizonH, AppColors.of("app.CosmicClockPanel.horizon"),
+                    0, h, AppColors.of("app.CosmicClockPanel.horizonGrad"));
             g.setPaint(horizonGrad);
             g.fillRect(0, h - horizonH, w, horizonH);
 

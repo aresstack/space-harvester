@@ -50,6 +50,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import com.aresstack.spaceharvester.app.ui.theme.AppColors;
 
 /**
  * Die Zeichenfläche einer Grafik (ADR 0045 §6, Angelo 27.11.): das SVG auf Apache Batik ({@link JSVGCanvas}, Apache
@@ -121,7 +122,7 @@ class GraphicCanvas extends JPanel {
         this.graphicId = graphic.id();
         this.status = status;
         setOpaque(false);
-        canvas.setBackground(Color.WHITE);
+        canvas.setBackground(AppColors.of("comic.fieldBg"));
         canvas.setBorder(BorderFactory.createLineBorder(Comic.LINE));
         canvas.setDocumentState(JSVGCanvas.ALWAYS_DYNAMIC);
         canvas.setEnableRotateInteractor(false);
@@ -505,7 +506,7 @@ class GraphicCanvas extends JPanel {
             g.draw(box);
             g.setStroke(new BasicStroke(1f));
             Rectangle2D grip = handle(box);
-            g.setColor(Color.WHITE);
+            g.setColor(AppColors.of("comic.buttonPlate"));
             g.fill(grip);
             g.setColor(Comic.ORANGE);
             g.draw(grip);
